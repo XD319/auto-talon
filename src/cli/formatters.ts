@@ -1,5 +1,5 @@
 import type { AgentDoctorReport } from "../runtime";
-import type { TaskRecord, TraceEvent, ToolCallRecord } from "../types";
+import type { ApprovalRecord, AuditLogRecord, TaskRecord, TraceEvent, ToolCallRecord } from "../types";
 
 import { formatTraceEvent } from "../tracing/trace-formatter";
 
@@ -16,12 +16,18 @@ export function formatTaskList(tasks: TaskRecord[]): string {
     .join("\n");
 }
 
-export function formatTask(task: TaskRecord, toolCalls: ToolCallRecord[]): string {
+export function formatTask(
+  task: TaskRecord,
+  toolCalls: ToolCallRecord[],
+  approvals: ApprovalRecord[] = []
+): string {
   const header = [
     `Task ID: ${task.taskId}`,
     `Status: ${task.status}`,
     `Input: ${task.input}`,
     `Provider: ${task.providerName}`,
+    `Profile: ${task.agentProfileId}`,
+    `Requester: ${task.requesterUserId}`,
     `CWD: ${task.cwd}`,
     `Iterations: ${task.currentIteration}/${task.maxIterations}`,
     `Created: ${task.createdAt}`,
@@ -42,7 +48,18 @@ export function formatTask(task: TaskRecord, toolCalls: ToolCallRecord[]): strin
           )
         ].join("\n");
 
-  return `${header}\n${toolCallSection}`;
+  const approvalSection =
+    approvals.length === 0
+      ? "Approvals: none"
+      : [
+          "Approvals:",
+          ...approvals.map(
+            (approval) =>
+              `- ${approval.approvalId} ${approval.toolName} ${approval.status} reviewer=${approval.reviewerId ?? "-"} expires=${approval.expiresAt}`
+          )
+        ].join("\n");
+
+  return `${header}\n${toolCallSection}\n${approvalSection}`;
 }
 
 export function formatTrace(traceEvents: TraceEvent[]): string {
@@ -51,6 +68,32 @@ export function formatTrace(traceEvents: TraceEvent[]): string {
   }
 
   return traceEvents.map((event) => formatTraceEvent(event)).join("\n\n");
+}
+
+export function formatApprovalList(approvals: ApprovalRecord[]): string {
+  if (approvals.length === 0) {
+    return "No pending approvals.";
+  }
+
+  return approvals
+    .map(
+      (approval) =>
+        `${approval.approvalId} | ${approval.taskId} | ${approval.toolName} | ${approval.status} | expires=${approval.expiresAt}`
+    )
+    .join("\n");
+}
+
+export function formatAuditLog(entries: AuditLogRecord[]): string {
+  if (entries.length === 0) {
+    return "No audit log entries found.";
+  }
+
+  return entries
+    .map(
+      (entry) =>
+        `${entry.createdAt} | ${entry.action} | ${entry.outcome} | ${entry.actor} | ${entry.summary}`
+    )
+    .join("\n");
 }
 
 export function formatDoctorReport(report: AgentDoctorReport): string {

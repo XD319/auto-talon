@@ -1,3 +1,6 @@
+import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./approval";
+import type { AuditLogDraft, AuditLogRecord } from "./audit";
+import type { ExecutionCheckpointRecord } from "./checkpoint";
 import type { ArtifactDraft, ArtifactRecord, ToolCallRecord } from "./tool";
 import type { TraceEvent } from "./trace";
 import type { RunMetadataRecord, TaskDraft, TaskRecord, TaskStatus } from "./task";
@@ -27,6 +30,7 @@ export interface TraceRepository {
 
 export interface ToolCallRepository {
   create(record: ToolCallRecord): ToolCallRecord;
+  findById(toolCallId: string): ToolCallRecord | null;
   update(toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord;
   listByTaskId(taskId: string): ToolCallRecord[];
 }
@@ -43,4 +47,24 @@ export interface ArtifactRepository {
 export interface RunMetadataRepository {
   create(record: RunMetadataRecord): RunMetadataRecord;
   findByTaskId(taskId: string): RunMetadataRecord | null;
+}
+
+export interface ApprovalRepository {
+  create(record: ApprovalDraft): ApprovalRecord;
+  findById(approvalId: string): ApprovalRecord | null;
+  findLatestByToolCall(taskId: string, toolCallId: string): ApprovalRecord | null;
+  listByTaskId(taskId: string): ApprovalRecord[];
+  listPending(): ApprovalRecord[];
+  update(approvalId: string, patch: ApprovalUpdatePatch): ApprovalRecord;
+}
+
+export interface AuditLogRepository {
+  append(record: AuditLogDraft): AuditLogRecord;
+  listByTaskId(taskId: string): AuditLogRecord[];
+}
+
+export interface ExecutionCheckpointRepository {
+  save(record: ExecutionCheckpointRecord): ExecutionCheckpointRecord;
+  findByTaskId(taskId: string): ExecutionCheckpointRecord | null;
+  delete(taskId: string): void;
 }

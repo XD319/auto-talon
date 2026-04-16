@@ -1,6 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { JsonObject, JsonValue, ToolCallRecord, ToolCallRepository } from "../../types";
+import type {
+  JsonObject,
+  JsonValue,
+  ToolCallRecord,
+  ToolCallRepository
+} from "../../types";
+import { canTransitionToolCallStatus } from "../../types";
 
 import { parseJsonValue, serializeJsonValue } from "./json";
 
@@ -66,6 +72,14 @@ export class SqliteToolCallRepository implements ToolCallRepository {
     return this.getById(record.toolCallId);
   }
 
+  public findById(toolCallId: string): ToolCallRecord | null {
+    const row = this.database
+      .prepare("SELECT * FROM tool_calls WHERE tool_call_id = ?")
+      .get(toolCallId) as ToolCallRow | undefined;
+
+    return row === undefined ? null : this.mapRow(row);
+  }
+
   public update(toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord {
     const existing = this.getById(toolCallId);
 
@@ -88,6 +102,15 @@ export class SqliteToolCallRepository implements ToolCallRepository {
       toolName: patch.toolName ?? existing.toolName,
       iteration: patch.iteration ?? existing.iteration
     };
+
+    if (
+      nextRecord.status !== existing.status &&
+      !canTransitionToolCallStatus(existing.status, nextRecord.status)
+    ) {
+      throw new Error(
+        `Illegal tool-call status transition: ${existing.status} -> ${nextRecord.status}`
+      );
+    }
 
     this.database
       .prepare(
@@ -140,15 +163,13 @@ export class SqliteToolCallRepository implements ToolCallRepository {
   }
 
   private getById(toolCallId: string): ToolCallRecord {
-    const row = this.database
-      .prepare("SELECT * FROM tool_calls WHERE tool_call_id = ?")
-      .get(toolCallId) as ToolCallRow | undefined;
+    const row = this.findById(toolCallId);
 
-    if (row === undefined) {
+    if (row === null) {
       throw new Error(`Tool call ${toolCallId} was not found.`);
     }
 
-    return this.mapRow(row);
+    return row;
   }
 
   private mapRow(row: ToolCallRow): ToolCallRecord {

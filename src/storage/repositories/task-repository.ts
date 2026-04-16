@@ -18,6 +18,8 @@ interface TaskRow {
   status: TaskRecord["status"];
   cwd: string;
   provider_name: string;
+  agent_profile_id: TaskRecord["agentProfileId"];
+  requester_user_id: TaskRecord["requesterUserId"];
   current_iteration: number;
   max_iterations: number;
   created_at: string;
@@ -45,6 +47,8 @@ export class SqliteTaskRepository implements TaskRepository {
             status,
             cwd,
             provider_name,
+            agent_profile_id,
+            requester_user_id,
             current_iteration,
             max_iterations,
             created_at,
@@ -56,7 +60,7 @@ export class SqliteTaskRepository implements TaskRepository {
             error_message,
             token_budget_json,
             metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -65,6 +69,8 @@ export class SqliteTaskRepository implements TaskRepository {
         "pending",
         task.cwd,
         task.providerName,
+        task.agentProfileId,
+        task.requesterUserId,
         0,
         task.maxIterations,
         now,
@@ -174,7 +180,9 @@ export class SqliteTaskRepository implements TaskRepository {
       input: row.input,
       maxIterations: row.max_iterations,
       metadata: parseJsonValue<JsonObject>(row.metadata_json),
+      agentProfileId: row.agent_profile_id,
       providerName: row.provider_name,
+      requesterUserId: row.requester_user_id,
       startedAt: row.started_at,
       status: row.status,
       taskId: row.task_id,

@@ -1,21 +1,28 @@
 import { join, resolve } from "node:path";
 
 import { MockProvider } from "../agents/mock-provider";
+import { ApprovalService } from "../approvals/approval-service";
+import { AuditService } from "../audit/audit-service";
 import { MemoryPlane } from "../memory/memory-plane";
-import { PathPolicy } from "../policy/path-policy";
-import { ShellPolicy } from "../policy/shell-policy";
+import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config";
+import { PolicyEngine } from "../policy/policy-engine";
+import { AgentProfileRegistry } from "../profiles/agent-profile-registry";
+import { SandboxService } from "../sandbox/sandbox-service";
 import { StorageManager } from "../storage/database";
 import { TraceService } from "../tracing/trace-service";
-import type { Provider, RuntimeRunOptions, TokenBudget } from "../types";
-import { FileReadTool, FileWriteTool, ShellTool, ToolOrchestrator } from "../tools";
+import type { LocalPolicyConfig, Provider, RuntimeRunOptions, TokenBudget } from "../types";
+import { FileReadTool, FileWriteTool, ShellTool, ToolOrchestrator, WebFetchTool } from "../tools";
 import { ShellExecutor } from "../tools/shell/shell-executor";
 
 import { AgentApplicationService } from "./application-service";
 import { ExecutionKernel } from "./execution-kernel";
 
 export interface AppConfig {
+  approvalTtlMs: number;
+  allowedFetchHosts: string[];
   databasePath: string;
   defaultMaxIterations: number;
+  defaultProfileId: "executor" | "planner" | "reviewer";
   defaultTimeoutMs: number;
   runtimeVersion: string;
   tokenBudget: TokenBudget;
@@ -26,12 +33,15 @@ export function resolveAppConfig(cwd = process.cwd()): AppConfig {
   const workspaceRoot = resolve(process.env.AGENT_WORKSPACE_ROOT ?? cwd);
 
   return {
+    approvalTtlMs: 5 * 60_000,
+    allowedFetchHosts: ["example.com"],
     databasePath:
       process.env.AGENT_RUNTIME_DB_PATH ??
       join(workspaceRoot, ".tentaclaw", "agent-runtime.db"),
     defaultMaxIterations: 8,
+    defaultProfileId: "executor",
     defaultTimeoutMs: 30_000,
-    runtimeVersion: "phase1",
+    runtimeVersion: "phase2",
     tokenBudget: {
       inputLimit: 8_000,
       outputLimit: 2_000,
@@ -51,6 +61,7 @@ export interface AppRuntimeHandle {
 
 export interface CreateApplicationOptions {
   config?: Partial<AppConfig>;
+  policyConfig?: LocalPolicyConfig;
   provider?: Provider;
 }
 
@@ -67,26 +78,37 @@ export function createApplication(
     databasePath: config.databasePath
   });
   const traceService = new TraceService(storage.traces);
+  const auditService = new AuditService(storage.auditLogs);
+  const approvalService = new ApprovalService(storage.approvals, {
+    approvalTtlMs: config.approvalTtlMs
+  });
+  const policyEngine = new PolicyEngine(options.policyConfig ?? DEFAULT_LOCAL_POLICY_CONFIG);
+  const agentProfileRegistry = new AgentProfileRegistry();
   const provider = options.provider ?? new MockProvider();
-  const pathPolicy = new PathPolicy({
+  const sandboxService = new SandboxService({
+    allowedEnvKeys: ["CI", "FORCE_COLOR", "NODE_ENV", "NO_COLOR"],
+    allowedFetchHosts: config.allowedFetchHosts,
+    maxShellTimeoutMs: 30_000,
     workspaceRoot: config.workspaceRoot
   });
-  const shellPolicy = new ShellPolicy({
-    allowedEnvKeys: ["CI", "FORCE_COLOR", "NODE_ENV", "NO_COLOR"],
-    maxTimeoutMs: 30_000
-  });
   const toolOrchestrator = new ToolOrchestrator({
+    approvalService,
     artifactRepository: storage.artifacts,
+    auditService,
+    policyEngine,
     toolCallRepository: storage.toolCalls,
     tools: [
-      new FileReadTool(pathPolicy),
-      new FileWriteTool(pathPolicy),
-      new ShellTool(new ShellExecutor(), shellPolicy, pathPolicy)
+      new FileReadTool(sandboxService),
+      new FileWriteTool(sandboxService),
+      new ShellTool(new ShellExecutor(), sandboxService),
+      new WebFetchTool(sandboxService)
     ],
     traceService
   });
 
   const executionKernel = new ExecutionKernel({
+    agentProfileRegistry,
+    executionCheckpointRepository: storage.checkpoints,
     memoryPlane: new MemoryPlane(),
     provider,
     runMetadataRepository: storage.runMetadata,
@@ -103,12 +125,19 @@ export function createApplication(
     service: new AgentApplicationService({
       databasePath: config.databasePath,
       executionKernel,
+      listApprovals: (taskId) => storage.approvals.listByTaskId(taskId),
+      listAuditLogs: (taskId) => storage.auditLogs.listByTaskId(taskId),
+      listPendingApprovals: () => approvalService.listPending(),
+      approvalService,
       findTask: (taskId) => storage.tasks.findById(taskId),
       listTasks: () => storage.tasks.list(),
       listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
       listTrace: (taskId) => storage.traces.listByTaskId(taskId),
+      updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
       provider,
       runtimeVersion: config.runtimeVersion,
+      traceService,
+      auditService,
       workspaceRoot: config.workspaceRoot
     })
   };
@@ -120,10 +149,12 @@ export function createDefaultRunOptions(
   config: AppConfig
 ): RuntimeRunOptions {
   return {
+    agentProfileId: config.defaultProfileId,
     cwd,
     maxIterations: config.defaultMaxIterations,
     taskInput,
     timeoutMs: config.defaultTimeoutMs,
-    tokenBudget: config.tokenBudget
+    tokenBudget: config.tokenBudget,
+    userId: process.env.USERNAME ?? process.env.USER ?? "local-user"
   };
 }

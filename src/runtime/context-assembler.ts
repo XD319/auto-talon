@@ -1,4 +1,5 @@
 import type {
+  AgentProfile,
   ConversationMessage,
   ProviderInput,
   ProviderToolDescriptor,
@@ -20,6 +21,7 @@ export class ExecutionContextAssembler {
   public assemble(input: ContextAssemblerInput): ProviderInput {
     return {
       availableTools: input.availableTools,
+      agentProfileId: input.task.agentProfileId,
       iteration: input.iteration,
       memoryContext: input.memoryContext,
       messages: input.messages,
@@ -29,9 +31,13 @@ export class ExecutionContextAssembler {
     };
   }
 
-  public buildInitialMessages(task: TaskRecord, availableTools: ProviderToolDescriptor[]): ConversationMessage[] {
+  public buildInitialMessages(
+    task: TaskRecord,
+    availableTools: ProviderToolDescriptor[],
+    profile: AgentProfile
+  ): ConversationMessage[] {
     const systemMessage = [
-      "You are a single-agent runtime.",
+      profile.systemPrompt,
       "Use tools only when needed.",
       `Available tools: ${availableTools.map((tool) => tool.name).join(", ")}.`
     ].join(" ");

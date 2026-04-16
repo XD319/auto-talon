@@ -1,8 +1,12 @@
 import { z } from "zod";
 
-import type { PathPolicy } from "../policy/path-policy";
-import type { ShellPolicy } from "../policy/shell-policy";
-import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { PreparedShellInput, SandboxService } from "../sandbox/sandbox-service";
+import type {
+  ToolDefinition,
+  ToolExecutionContext,
+  ToolExecutionResult,
+  ToolPreparation
+} from "../types";
 
 import type { ShellExecutor } from "./shell/shell-executor";
 
@@ -13,10 +17,12 @@ const shellToolSchema = z.object({
   timeoutMs: z.number().int().positive().optional()
 });
 
-export class ShellTool implements ToolDefinition<typeof shellToolSchema> {
+export class ShellTool implements ToolDefinition<typeof shellToolSchema, PreparedShellInput> {
   public readonly name = "shell";
   public readonly description = "Execute a restricted shell command inside the workspace.";
+  public readonly capability = "shell.execute" as const;
   public readonly riskLevel = "high" as const;
+  public readonly privacyLevel = "restricted" as const;
   public readonly inputSchema = shellToolSchema;
   public readonly inputSchemaDescriptor = {
     properties: {
@@ -39,30 +45,54 @@ export class ShellTool implements ToolDefinition<typeof shellToolSchema> {
 
   public constructor(
     private readonly executor: ShellExecutor,
-    private readonly shellPolicy: ShellPolicy,
-    private readonly pathPolicy: PathPolicy
+    private readonly sandboxService: SandboxService
   ) {}
 
-  public async execute(
+  public prepare(
     input: unknown,
     context: ToolExecutionContext
-  ): Promise<ToolExecutionResult> {
+  ): ToolPreparation<PreparedShellInput> {
     const parsedInput = this.inputSchema.parse(input);
-    this.shellPolicy.validateCommand(parsedInput.command);
-
-    const executionCwd = this.pathPolicy.resolvePath(
-      parsedInput.cwd ?? ".",
-      context.cwd
-    );
-    const timeoutMs = this.shellPolicy.clampTimeout(parsedInput.timeoutMs);
-    const env = this.shellPolicy.sanitizeEnv(parsedInput.env);
-
-    const result = await this.executor.execute({
+    const sandboxRequest: {
+      command: string;
+      cwd: string;
+      env?: Record<string, string>;
+      timeoutMs?: number;
+    } = {
       command: parsedInput.command,
-      cwd: executionCwd,
-      env,
+      cwd: parsedInput.cwd ?? context.cwd
+    };
+
+    if (parsedInput.env !== undefined) {
+      sandboxRequest.env = parsedInput.env;
+    }
+
+    if (parsedInput.timeoutMs !== undefined) {
+      sandboxRequest.timeoutMs = parsedInput.timeoutMs;
+    }
+
+    const preparedInput = this.sandboxService.prepareShellExecution(sandboxRequest);
+
+    return {
+      governance: {
+        pathScope: preparedInput.sandboxPlan.pathScope,
+        summary: `Execute shell command ${preparedInput.command}`
+      },
+      preparedInput,
+      sandbox: preparedInput.sandboxPlan
+    };
+  }
+
+  public async execute(
+    input: PreparedShellInput,
+    context: ToolExecutionContext
+  ): Promise<ToolExecutionResult> {
+    const result = await this.executor.execute({
+      command: input.command,
+      cwd: input.cwd,
+      env: input.env,
       signal: context.signal,
-      timeoutMs
+      timeoutMs: input.timeoutMs
     });
 
     return {
@@ -70,22 +100,22 @@ export class ShellTool implements ToolDefinition<typeof shellToolSchema> {
         {
           artifactType: "shell_output",
           content: {
-            command: parsedInput.command,
+            command: input.command,
             stderr: result.stderr,
             stdout: result.stdout
           },
-          uri: `shell:${parsedInput.command}`
+          uri: `shell:${input.command}`
         }
       ],
       output: {
-        cwd: executionCwd,
+        cwd: input.cwd,
         durationMs: result.durationMs,
         exitCode: result.exitCode,
         stderr: result.stderr,
         stdout: result.stdout
       },
       success: true,
-      summary: `Executed shell command "${parsedInput.command}"`
+      summary: `Executed shell command "${input.command}"`
     };
   }
 }

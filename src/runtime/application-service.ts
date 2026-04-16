@@ -1,10 +1,29 @@
-import type { Provider, RuntimeRunOptions, TaskRecord, TraceEvent, ToolCallRecord } from "../types";
+import { z } from "zod";
+
+import type { ApprovalService } from "../approvals/approval-service";
+import type { AuditService } from "../audit/audit-service";
+import type {
+  ApprovalRecord,
+  AuditLogRecord,
+  Provider,
+  RuntimeRunOptions,
+  TaskRecord,
+  TraceEvent,
+  ToolCallRecord
+} from "../types";
+import type { TraceService } from "../tracing/trace-service";
 import type { ExecutionKernel } from "./execution-kernel";
 
 import { AppError } from "./app-error";
- 
+
 export interface RunTaskResult {
   error?: AppError;
+  output: string | null;
+  task: TaskRecord;
+}
+
+export interface ApprovalActionResult {
+  approval: ApprovalRecord;
   output: string | null;
   task: TaskRecord;
 }
@@ -20,18 +39,31 @@ export interface AgentDoctorReport {
 
 export interface RuntimeReadModel {
   findTask(taskId: string): TaskRecord | null;
+  listApprovals(taskId: string): ApprovalRecord[];
+  listAuditLogs(taskId: string): AuditLogRecord[];
+  listPendingApprovals(): ApprovalRecord[];
   listTasks(): TaskRecord[];
   listToolCalls(taskId: string): ToolCallRecord[];
   listTrace(taskId: string): TraceEvent[];
+  updateToolCall(toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord;
 }
 
 export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
+  approvalService: ApprovalService;
+  auditService: AuditService;
   databasePath: string;
   executionKernel: ExecutionKernel;
   provider: Provider;
   runtimeVersion: string;
+  traceService: TraceService;
   workspaceRoot: string;
 }
+
+const approvalActionSchema = z.object({
+  action: z.enum(["allow", "deny"]),
+  approvalId: z.string().min(1),
+  reviewerId: z.string().min(1)
+});
 
 export class AgentApplicationService {
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {}
@@ -71,7 +103,99 @@ export class AgentApplicationService {
     return this.dependencies.listTasks();
   }
 
+  public listPendingApprovals(): ApprovalRecord[] {
+    this.reconcileExpiredApprovals();
+    return this.dependencies.listPendingApprovals();
+  }
+
+  public async resolveApproval(
+    approvalId: string,
+    action: "allow" | "deny",
+    reviewerId: string
+  ): Promise<ApprovalActionResult> {
+    this.reconcileExpiredApprovals();
+    const parsed = approvalActionSchema.parse({
+      action,
+      approvalId,
+      reviewerId
+    });
+
+    const approval = this.dependencies.approvalService.resolve(parsed);
+
+    this.dependencies.traceService.record({
+      actor: `reviewer.${reviewerId}`,
+      eventType: "approval_resolved",
+      payload: {
+        approvalId: approval.approvalId,
+        reviewerId: approval.reviewerId,
+        status: approval.status,
+        toolCallId: approval.toolCallId,
+        toolName: approval.toolName
+      },
+      stage: "governance",
+      summary: `Approval ${approval.status} for ${approval.toolName}`,
+      taskId: approval.taskId
+    });
+
+    this.dependencies.auditService.record({
+      action: "approval_resolved",
+      actor: `reviewer.${reviewerId}`,
+      approvalId: approval.approvalId,
+      outcome:
+        approval.status === "approved"
+          ? "approved"
+          : approval.status === "timed_out"
+            ? "timed_out"
+            : "denied",
+      payload: {
+        reviewerId,
+        status: approval.status,
+        toolName: approval.toolName
+      },
+      summary: `Approval ${approval.status} for ${approval.toolName}`,
+      taskId: approval.taskId,
+      toolCallId: approval.toolCallId
+    });
+
+    if (approval.status === "approved") {
+      const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
+      return {
+        approval,
+        output: result.output,
+        task: result.task
+      };
+    }
+
+    this.dependencies.updateToolCall(approval.toolCallId, {
+      errorCode: approval.status === "timed_out" ? "approval_timeout" : "approval_denied",
+      errorMessage:
+        approval.status === "timed_out"
+          ? `Approval ${approval.approvalId} timed out.`
+          : `Approval ${approval.approvalId} was denied.`,
+      finishedAt: new Date().toISOString(),
+      status: approval.status === "timed_out" ? "timed_out" : "denied"
+    });
+
+    const failedTask = this.dependencies.executionKernel.failWaitingApprovalTask(
+      approval.taskId,
+      new AppError({
+        code: approval.status === "timed_out" ? "approval_timeout" : "approval_denied",
+        message:
+          approval.status === "timed_out"
+            ? `Approval ${approval.approvalId} timed out.`
+            : `Approval ${approval.approvalId} was denied.`
+      })
+    );
+
+    return {
+      approval,
+      output: null,
+      task: failedTask
+    };
+  }
+
   public showTask(taskId: string): {
+    approvals: ApprovalRecord[];
     task: TaskRecord | null;
     toolCalls: ToolCallRecord[];
     trace: TraceEvent[];
@@ -79,6 +203,7 @@ export class AgentApplicationService {
     const task = this.dependencies.findTask(taskId);
 
     return {
+      approvals: task === null ? [] : this.dependencies.listApprovals(taskId),
       task,
       toolCalls: task === null ? [] : this.dependencies.listToolCalls(taskId),
       trace: task === null ? [] : this.dependencies.listTrace(taskId)
@@ -87,6 +212,10 @@ export class AgentApplicationService {
 
   public traceTask(taskId: string): TraceEvent[] {
     return this.dependencies.listTrace(taskId);
+  }
+
+  public auditTask(taskId: string): AuditLogRecord[] {
+    return this.dependencies.listAuditLogs(taskId);
   }
 
   public configDoctor(): AgentDoctorReport {
@@ -98,5 +227,53 @@ export class AgentApplicationService {
       shell: process.env.ComSpec,
       workspaceRoot: this.dependencies.workspaceRoot
     };
+  }
+
+  private reconcileExpiredApprovals(): void {
+    for (const approval of this.dependencies.approvalService.expirePending()) {
+      this.dependencies.traceService.record({
+        actor: "approval.service",
+        eventType: "approval_resolved",
+        payload: {
+          approvalId: approval.approvalId,
+          reviewerId: approval.reviewerId,
+          status: approval.status,
+          toolCallId: approval.toolCallId,
+          toolName: approval.toolName
+        },
+        stage: "governance",
+        summary: `Approval ${approval.status} for ${approval.toolName}`,
+        taskId: approval.taskId
+      });
+
+      this.dependencies.auditService.record({
+        action: "approval_resolved",
+        actor: "approval.service",
+        approvalId: approval.approvalId,
+        outcome: "timed_out",
+        payload: {
+          status: approval.status,
+          toolName: approval.toolName
+        },
+        summary: `Approval ${approval.status} for ${approval.toolName}`,
+        taskId: approval.taskId,
+        toolCallId: approval.toolCallId
+      });
+
+      this.dependencies.updateToolCall(approval.toolCallId, {
+        errorCode: "approval_timeout",
+        errorMessage: `Approval ${approval.approvalId} timed out.`,
+        finishedAt: new Date().toISOString(),
+        status: "timed_out"
+      });
+
+      this.dependencies.executionKernel.failWaitingApprovalTask(
+        approval.taskId,
+        new AppError({
+          code: "approval_timeout",
+          message: `Approval ${approval.approvalId} timed out.`
+        })
+      );
+    }
   }
 }

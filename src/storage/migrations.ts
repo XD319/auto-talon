@@ -11,6 +11,8 @@ export function runMigrations(database: DatabaseSync): void {
       status TEXT NOT NULL,
       cwd TEXT NOT NULL,
       provider_name TEXT NOT NULL,
+      agent_profile_id TEXT NOT NULL DEFAULT 'executor',
+      requester_user_id TEXT NOT NULL DEFAULT 'local-user',
       current_iteration INTEGER NOT NULL,
       max_iterations INTEGER NOT NULL,
       created_at TEXT NOT NULL,
@@ -75,10 +77,88 @@ export function runMigrations(database: DatabaseSync): void {
       runtime_version TEXT NOT NULL,
       provider_name TEXT NOT NULL,
       workspace_root TEXT NOT NULL,
+      agent_profile_id TEXT NOT NULL DEFAULT 'executor',
+      requester_user_id TEXT NOT NULL DEFAULT 'local-user',
       timeout_ms INTEGER NOT NULL,
       created_at TEXT NOT NULL,
       token_budget_json TEXT NOT NULL,
       metadata_json TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS approvals (
+      approval_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      tool_call_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      requester_user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      decided_at TEXT,
+      reviewer_id TEXT,
+      reviewer_notes TEXT,
+      policy_decision_id TEXT NOT NULL,
+      error_code TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_approvals_task_id ON approvals(task_id, requested_at);
+    CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      audit_id TEXT PRIMARY KEY,
+      task_id TEXT,
+      tool_call_id TEXT,
+      approval_id TEXT,
+      actor TEXT NOT NULL,
+      action TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_task_id ON audit_logs(task_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS execution_checkpoints (
+      task_id TEXT PRIMARY KEY,
+      iteration INTEGER NOT NULL,
+      memory_context_json TEXT NOT NULL,
+      messages_json TEXT NOT NULL,
+      pending_tool_calls_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
+
+  addColumnIfMissing(database, "tasks", "agent_profile_id", "TEXT NOT NULL DEFAULT 'executor'");
+  addColumnIfMissing(database, "tasks", "requester_user_id", "TEXT NOT NULL DEFAULT 'local-user'");
+  addColumnIfMissing(
+    database,
+    "run_metadata",
+    "agent_profile_id",
+    "TEXT NOT NULL DEFAULT 'executor'"
+  );
+  addColumnIfMissing(
+    database,
+    "run_metadata",
+    "requester_user_id",
+    "TEXT NOT NULL DEFAULT 'local-user'"
+  );
+}
+
+function addColumnIfMissing(
+  database: DatabaseSync,
+  tableName: string,
+  columnName: string,
+  definition: string
+): void {
+  const rows = database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name: string }>;
+
+  if (rows.some((row) => row.name === columnName)) {
+    return;
+  }
+
+  database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }

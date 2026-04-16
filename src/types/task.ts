@@ -1,10 +1,12 @@
 import type { JsonObject, TokenBudget } from "./common";
 import type { RuntimeErrorCode } from "./error";
+import type { AgentProfileId } from "./profile";
 
 export const TASK_STATUSES = [
   "pending",
   "running",
   "waiting_tool",
+  "waiting_approval",
   "succeeded",
   "failed",
   "cancelled"
@@ -16,9 +18,10 @@ export const TASK_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   cancelled: [],
   failed: [],
   pending: ["running", "cancelled"],
-  running: ["waiting_tool", "succeeded", "failed", "cancelled"],
+  running: ["waiting_tool", "waiting_approval", "succeeded", "failed", "cancelled"],
   succeeded: [],
-  waiting_tool: ["running", "failed", "cancelled"]
+  waiting_approval: ["running", "failed", "cancelled"],
+  waiting_tool: ["running", "waiting_approval", "failed", "cancelled"]
 };
 
 export interface TaskRecord {
@@ -27,6 +30,8 @@ export interface TaskRecord {
   status: TaskStatus;
   cwd: string;
   providerName: string;
+  agentProfileId: AgentProfileId;
+  requesterUserId: string;
   currentIteration: number;
   maxIterations: number;
   createdAt: string;
@@ -45,6 +50,8 @@ export interface TaskDraft {
   input: string;
   cwd: string;
   providerName: string;
+  agentProfileId: AgentProfileId;
+  requesterUserId: string;
   maxIterations: number;
   tokenBudget: TokenBudget;
   metadata?: JsonObject;
@@ -56,6 +63,8 @@ export interface RunMetadataRecord {
   runtimeVersion: string;
   providerName: string;
   workspaceRoot: string;
+  agentProfileId: AgentProfileId;
+  requesterUserId: string;
   timeoutMs: number;
   createdAt: string;
   tokenBudget: TokenBudget;

@@ -2,19 +2,33 @@ import type { ZodTypeAny } from "zod";
 
 import type { JsonObject, JsonValue } from "./common";
 import type { RuntimeErrorCode } from "./error";
-
-export const TOOL_RISK_LEVELS = ["low", "medium", "high"] as const;
-
-export type ToolRiskLevel = (typeof TOOL_RISK_LEVELS)[number];
+import type { ToolCapability, ToolRiskLevel, PrivacyLevel, PathScope } from "./governance";
+import type { SandboxExecutionPlan } from "./sandbox";
+import type { AgentProfileId } from "./profile";
 
 export const TOOL_CALL_STATUSES = [
   "requested",
+  "awaiting_approval",
+  "approved",
   "started",
+  "denied",
+  "timed_out",
   "finished",
   "failed"
 ] as const;
 
 export type ToolCallStatus = (typeof TOOL_CALL_STATUSES)[number];
+
+export const TOOL_CALL_STATUS_TRANSITIONS: Record<ToolCallStatus, ToolCallStatus[]> = {
+  approved: ["started", "denied", "timed_out"],
+  awaiting_approval: ["approved", "denied", "timed_out"],
+  denied: [],
+  failed: [],
+  finished: [],
+  requested: ["awaiting_approval", "started", "failed"],
+  started: ["finished", "failed"],
+  timed_out: []
+};
 
 export interface ToolSchemaDescriptor extends JsonObject {
   type: string;
@@ -60,7 +74,20 @@ export interface ToolExecutionContext {
   iteration: number;
   workspaceRoot: string;
   cwd: string;
+  userId: string;
+  agentProfileId: AgentProfileId;
   signal: AbortSignal;
+}
+
+export interface ToolGovernanceDescriptor {
+  summary: string;
+  pathScope: PathScope;
+}
+
+export interface ToolPreparation<TPreparedInput = unknown> {
+  preparedInput: TPreparedInput;
+  governance: ToolGovernanceDescriptor;
+  sandbox: SandboxExecutionPlan;
 }
 
 export interface ToolExecutionSuccess {
@@ -88,14 +115,30 @@ export interface ToolCallRequest {
   reason: string;
 }
 
-export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny> {
+export interface ToolDefinition<
+  TSchema extends ZodTypeAny = ZodTypeAny,
+  TPreparedInput = unknown
+> {
   name: string;
   description: string;
+  capability: ToolCapability;
   riskLevel: ToolRiskLevel;
+  privacyLevel: PrivacyLevel;
   inputSchema: TSchema;
   inputSchemaDescriptor: ToolSchemaDescriptor;
-  execute(
+  prepare(
     input: unknown,
     context: ToolExecutionContext
+  ): Promise<ToolPreparation<TPreparedInput>> | ToolPreparation<TPreparedInput>;
+  execute(
+    preparedInput: TPreparedInput,
+    context: ToolExecutionContext
   ): Promise<ToolExecutionResult>;
+}
+
+export function canTransitionToolCallStatus(
+  currentStatus: ToolCallStatus,
+  nextStatus: ToolCallStatus
+): boolean {
+  return TOOL_CALL_STATUS_TRANSITIONS[currentStatus].includes(nextStatus);
 }

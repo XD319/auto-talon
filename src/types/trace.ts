@@ -1,12 +1,18 @@
 import type { JsonObject } from "./common";
 import type { RuntimeErrorCode } from "./error";
-import type { ToolRiskLevel } from "./tool";
+import type { PathScope, PrivacyLevel, ToolCapability, ToolRiskLevel } from "./governance";
+import type { PolicyEffect } from "./policy";
+import type { ApprovalStatus } from "./approval";
 
 export const TRACE_EVENT_TYPES = [
   "task_created",
   "task_started",
   "model_request",
   "model_response",
+  "policy_decision",
+  "approval_requested",
+  "approval_resolved",
+  "sandbox_enforced",
   "tool_call_requested",
   "tool_call_started",
   "tool_call_finished",
@@ -22,6 +28,7 @@ export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];
 export const TRACE_STAGES = [
   "lifecycle",
   "planning",
+  "governance",
   "tooling",
   "control",
   "completion"
@@ -48,6 +55,8 @@ export interface TaskCreatedPayload extends JsonObject {
   cwd: string;
   input: string;
   providerName: string;
+  agentProfileId: string;
+  requesterUserId: string;
 }
 
 export interface TaskStartedPayload extends JsonObject {
@@ -59,6 +68,7 @@ export interface ModelRequestPayload extends JsonObject {
   iteration: number;
   inputMessageCount: number;
   availableTools: string[];
+  agentProfileId: string;
   tokenBudget: JsonObject;
 }
 
@@ -67,6 +77,41 @@ export interface ModelResponsePayload extends JsonObject {
   kind: "final" | "retry" | "tool_calls";
   message: string;
   toolNames: string[];
+}
+
+export interface PolicyDecisionPayload extends JsonObject {
+  decisionId: string;
+  effect: PolicyEffect;
+  matchedRuleId: string | null;
+  toolCallId: string;
+  toolName: string;
+  capability: ToolCapability;
+  pathScope: PathScope;
+  privacyLevel: PrivacyLevel;
+  riskLevel: ToolRiskLevel;
+}
+
+export interface ApprovalRequestedPayload extends JsonObject {
+  approvalId: string;
+  expiresAt: string;
+  toolCallId: string;
+  toolName: string;
+}
+
+export interface ApprovalResolvedPayload extends JsonObject {
+  approvalId: string;
+  reviewerId: string | null;
+  status: ApprovalStatus;
+  toolCallId: string;
+  toolName: string;
+}
+
+export interface SandboxEnforcedPayload extends JsonObject {
+  toolCallId: string;
+  toolName: string;
+  sandboxKind: "file" | "network" | "shell";
+  status: "allowed" | "denied";
+  target: string;
 }
 
 export interface ToolCallRequestedPayload extends JsonObject {
@@ -128,6 +173,10 @@ export type TraceEvent =
   | TraceEventBase<"task_started", TaskStartedPayload>
   | TraceEventBase<"model_request", ModelRequestPayload>
   | TraceEventBase<"model_response", ModelResponsePayload>
+  | TraceEventBase<"policy_decision", PolicyDecisionPayload>
+  | TraceEventBase<"approval_requested", ApprovalRequestedPayload>
+  | TraceEventBase<"approval_resolved", ApprovalResolvedPayload>
+  | TraceEventBase<"sandbox_enforced", SandboxEnforcedPayload>
   | TraceEventBase<"tool_call_requested", ToolCallRequestedPayload>
   | TraceEventBase<"tool_call_started", ToolCallStartedPayload>
   | TraceEventBase<"tool_call_finished", ToolCallFinishedPayload>

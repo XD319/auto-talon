@@ -3,9 +3,15 @@ import { basename } from "node:path";
 
 import { z } from "zod";
 
-import type { PathPolicy } from "../policy/path-policy";
+import type { SandboxService } from "../sandbox/sandbox-service";
 import { AppError } from "../runtime/app-error";
-import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type {
+  SandboxFileAccessPlan,
+  ToolDefinition,
+  ToolExecutionContext,
+  ToolExecutionResult,
+  ToolPreparation
+} from "../types";
 
 const fileReadSchema = z
   .object({
@@ -31,13 +37,30 @@ const fileReadSchema = z
     }
   });
 
-type FileReadInput = z.infer<typeof fileReadSchema>;
+type PreparedFileReadInput =
+  | {
+      action: "read_file";
+      plan: SandboxFileAccessPlan;
+    }
+  | {
+      action: "list_dir";
+      plan: SandboxFileAccessPlan;
+    }
+  | {
+      action: "search_text";
+      keyword: string;
+      maxResults: number;
+      plan: SandboxFileAccessPlan;
+      recursive: boolean;
+    };
 
-export class FileReadTool implements ToolDefinition<typeof fileReadSchema> {
+export class FileReadTool implements ToolDefinition<typeof fileReadSchema, PreparedFileReadInput> {
   public readonly name = "file_read";
   public readonly description =
     "Read a file, list a directory, or search text inside the workspace.";
+  public readonly capability = "filesystem.read" as const;
   public readonly riskLevel = "low" as const;
+  public readonly privacyLevel = "internal" as const;
   public readonly inputSchema = fileReadSchema;
   public readonly inputSchemaDescriptor = {
     properties: {
@@ -62,30 +85,78 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema> {
     type: "object"
   };
 
-  public constructor(private readonly pathPolicy: PathPolicy) {}
+  public constructor(private readonly sandboxService: SandboxService) {}
 
-  public async execute(
+  public prepare(
     input: unknown,
     context: ToolExecutionContext
-  ): Promise<ToolExecutionResult> {
+  ): ToolPreparation<PreparedFileReadInput> {
     const parsedInput = this.inputSchema.parse(input);
+    const plan = this.sandboxService.prepareFileRead(parsedInput.path ?? ".", context.cwd);
 
     if (parsedInput.action === "read_file") {
-      return this.readFile(parsedInput, context);
+      return {
+        governance: {
+          pathScope: plan.pathScope,
+          summary: `Read file ${plan.resolvedPath}`
+        },
+        preparedInput: {
+          action: parsedInput.action,
+          plan
+        },
+        sandbox: plan
+      };
     }
 
     if (parsedInput.action === "list_dir") {
-      return this.listDirectory(parsedInput, context);
+      return {
+        governance: {
+          pathScope: plan.pathScope,
+          summary: `List directory ${plan.resolvedPath}`
+        },
+        preparedInput: {
+          action: parsedInput.action,
+          plan
+        },
+        sandbox: plan
+      };
     }
 
-    return this.searchText(parsedInput, context);
+    return {
+      governance: {
+        pathScope: plan.pathScope,
+        summary: `Search text in ${plan.resolvedPath}`
+      },
+      preparedInput: {
+        action: parsedInput.action,
+        keyword: parsedInput.keyword ?? "",
+        maxResults: parsedInput.maxResults,
+        plan,
+        recursive: parsedInput.recursive
+      },
+      sandbox: plan
+    };
+  }
+
+  public async execute(
+    input: PreparedFileReadInput,
+    context: ToolExecutionContext
+  ): Promise<ToolExecutionResult> {
+    if (input.action === "read_file") {
+      return this.readFile(input);
+    }
+
+    if (input.action === "list_dir") {
+      return this.listDirectory(input);
+    }
+
+    return this.searchText(input, context);
   }
 
   private async readFile(
-    input: FileReadInput,
-    context: ToolExecutionContext
+    input: Extract<PreparedFileReadInput, { action: "read_file" }>
   ): Promise<ToolExecutionResult> {
-    const targetPath = this.pathPolicy.resolveReadPath(input.path ?? ".", context.cwd);
+    const targetPath = input.plan.resolvedPath;
     const content = await fs.readFile(targetPath, "utf8");
 
     return {
@@ -99,10 +170,9 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema> {
   }
 
   private async listDirectory(
-    input: FileReadInput,
-    context: ToolExecutionContext
+    input: Extract<PreparedFileReadInput, { action: "list_dir" }>
   ): Promise<ToolExecutionResult> {
-    const targetPath = this.pathPolicy.resolveReadPath(input.path ?? ".", context.cwd);
+    const targetPath = input.plan.resolvedPath;
     const entries = await fs.readdir(targetPath, { withFileTypes: true });
 
     return {
@@ -119,29 +189,29 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema> {
   }
 
   private async searchText(
-    input: FileReadInput,
+    input: Extract<PreparedFileReadInput, { action: "search_text" }>,
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
-    const searchRoot = this.pathPolicy.resolveReadPath(input.path ?? ".", context.cwd);
+    const searchRoot = input.plan.resolvedPath;
     const matches: Array<{ line: string; lineNumber: number; path: string }> = [];
 
-    await this.walkAndSearch(searchRoot, input.keyword ?? "", input, matches, context.signal);
+    await this.walkAndSearch(searchRoot, input.keyword, input, matches, context.signal);
 
     return {
       output: {
-        keyword: input.keyword ?? "",
+        keyword: input.keyword,
         matches,
         path: searchRoot
       },
       success: true,
-      summary: `Found ${matches.length} matches for "${input.keyword ?? ""}"`
+      summary: `Found ${matches.length} matches for "${input.keyword}"`
     };
   }
 
   private async walkAndSearch(
     directoryPath: string,
     keyword: string,
-    input: FileReadInput,
+    input: Extract<PreparedFileReadInput, { action: "search_text" }>,
     matches: Array<{ line: string; lineNumber: number; path: string }>,
     signal: AbortSignal
   ): Promise<void> {

@@ -1,4 +1,6 @@
 import type { JsonObject, TokenBudget } from "./common";
+import type { ToolCapability, PrivacyLevel } from "./governance";
+import type { AgentProfileId } from "./profile";
 import type { TaskRecord } from "./task";
 import type { ToolSchemaDescriptor } from "./tool";
 
@@ -15,6 +17,8 @@ export interface ProviderToolDescriptor {
   name: string;
   description: string;
   riskLevel: "low" | "medium" | "high";
+  capability: ToolCapability;
+  privacyLevel: PrivacyLevel;
   inputSchema: ToolSchemaDescriptor;
 }
 
@@ -35,6 +39,7 @@ export interface ProviderInput {
   iteration: number;
   messages: ConversationMessage[];
   availableTools: ProviderToolDescriptor[];
+  agentProfileId: AgentProfileId;
   memoryContext: string[];
   tokenBudget: TokenBudget;
   signal: AbortSignal;
@@ -74,6 +79,8 @@ export interface Provider {
 export interface RuntimeRunOptions {
   taskInput: string;
   cwd: string;
+  userId: string;
+  agentProfileId: AgentProfileId;
   maxIterations: number;
   timeoutMs: number;
   tokenBudget: TokenBudget;

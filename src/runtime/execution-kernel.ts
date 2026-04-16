@@ -4,19 +4,26 @@ import { createManagedAbortController, throwIfAborted } from "./abort-controller
 import { AppError, toAppError } from "./app-error";
 import { ExecutionContextAssembler } from "./context-assembler";
 import { tokenBudgetToJson } from "./serialization";
+import type { AgentProfileRegistry } from "../profiles/agent-profile-registry";
 import type {
   ConversationMessage,
+  ExecutionCheckpointRepository,
   Provider,
+  ProviderToolCall,
   RunMetadataRepository,
   RuntimeRunOptions,
   RuntimeRunResult,
-  TaskRepository
+  TaskRecord,
+  TaskRepository,
+  TokenBudget
 } from "../types";
 import type { MemoryPlane } from "../memory/memory-plane";
 import type { ToolOrchestrator } from "../tools";
 import type { TraceService } from "../tracing/trace-service";
 
 export interface ExecutionKernelDependencies {
+  agentProfileRegistry: AgentProfileRegistry;
+  executionCheckpointRepository: ExecutionCheckpointRepository;
   memoryPlane: MemoryPlane;
   provider: Provider;
   runMetadataRepository: RunMetadataRepository;
@@ -27,6 +34,17 @@ export interface ExecutionKernelDependencies {
   workspaceRoot: string;
 }
 
+interface ExecutionLoopState {
+  cwd: string;
+  managedAbortController: ReturnType<typeof createManagedAbortController>;
+  maxIterations: number;
+  memoryContext: string[];
+  messages: ConversationMessage[];
+  pendingToolCalls: ProviderToolCall[];
+  task: TaskRecord;
+  tokenBudget: TokenBudget;
+}
+
 export class ExecutionKernel {
   private readonly contextAssembler = new ExecutionContextAssembler();
 
@@ -35,11 +53,13 @@ export class ExecutionKernel {
   public async run(options: RuntimeRunOptions): Promise<RuntimeRunResult> {
     const taskId = randomUUID();
     let task = this.dependencies.taskRepository.create({
+      agentProfileId: options.agentProfileId,
       cwd: options.cwd,
       input: options.taskInput,
       maxIterations: options.maxIterations,
       metadata: options.metadata ?? {},
       providerName: this.dependencies.provider.name,
+      requesterUserId: options.userId,
       taskId,
       tokenBudget: options.tokenBudget
     });
@@ -48,9 +68,11 @@ export class ExecutionKernel {
       actor: "runtime.kernel",
       eventType: "task_created",
       payload: {
+        agentProfileId: options.agentProfileId,
         cwd: options.cwd,
         input: options.taskInput,
-        providerName: this.dependencies.provider.name
+        providerName: this.dependencies.provider.name,
+        requesterUserId: options.userId
       },
       stage: "lifecycle",
       summary: "Task persisted",
@@ -58,9 +80,11 @@ export class ExecutionKernel {
     });
 
     this.dependencies.runMetadataRepository.create({
+      agentProfileId: options.agentProfileId,
       createdAt: new Date().toISOString(),
       metadata: options.metadata ?? {},
       providerName: this.dependencies.provider.name,
+      requesterUserId: options.userId,
       runMetadataId: randomUUID(),
       runtimeVersion: this.dependencies.runtimeVersion,
       taskId,
@@ -92,39 +116,167 @@ export class ExecutionKernel {
         taskId
       });
 
+      const profile = this.dependencies.agentProfileRegistry.get(options.agentProfileId);
       const memoryContext = await this.dependencies.memoryPlane.buildContext(task);
-      const availableTools = this.dependencies.toolOrchestrator.listTools();
-      const messages = this.contextAssembler.buildInitialMessages(task, availableTools);
+      const availableTools = this.dependencies.toolOrchestrator.listTools(profile.allowedToolNames);
+      const messages = this.contextAssembler.buildInitialMessages(task, availableTools, profile);
 
-      for (let iteration = 1; iteration <= options.maxIterations; iteration += 1) {
-        throwIfAborted(managedAbortController.abortController.signal, managedAbortController.getReason());
+      return await this.executeLoop({
+        cwd: options.cwd,
+        managedAbortController,
+        maxIterations: options.maxIterations,
+        memoryContext,
+        messages,
+        pendingToolCalls: [],
+        task,
+        tokenBudget: options.tokenBudget
+      });
+    } catch (error) {
+      throw this.finalizeTaskFailure(task, toAppError(error));
+    } finally {
+      managedAbortController.dispose();
+    }
+  }
 
-        task = this.dependencies.taskRepository.update(taskId, {
-          currentIteration: iteration
-        });
+  public async resumeTask(taskId: string, signal?: AbortSignal): Promise<RuntimeRunResult> {
+    const task = this.dependencies.taskRepository.findById(taskId);
+    if (task === null) {
+      throw new AppError({
+        code: "task_not_found",
+        message: `Task ${taskId} was not found.`
+      });
+    }
 
+    if (task.status !== "waiting_approval") {
+      throw new AppError({
+        code: "task_not_resumable",
+        message: `Task ${taskId} is not waiting for approval.`
+      });
+    }
+
+    const checkpoint = this.dependencies.executionCheckpointRepository.findByTaskId(taskId);
+    if (checkpoint === null) {
+      throw new AppError({
+        code: "task_not_resumable",
+        message: `Task ${taskId} has no execution checkpoint to resume.`
+      });
+    }
+
+    const runMetadata = this.dependencies.runMetadataRepository.findByTaskId(taskId);
+    if (runMetadata === null) {
+      throw new AppError({
+        code: "task_not_resumable",
+        message: `Task ${taskId} has no run metadata to resume from.`
+      });
+    }
+
+    const managedAbortController = createManagedAbortController(runMetadata.timeoutMs, signal);
+    let resumedTask = this.dependencies.taskRepository.update(taskId, {
+      status: "running"
+    });
+
+    try {
+      return await this.executeLoop({
+        cwd: resumedTask.cwd,
+        managedAbortController,
+        maxIterations: resumedTask.maxIterations,
+        memoryContext: checkpoint.memoryContext,
+        messages: checkpoint.messages,
+        pendingToolCalls: checkpoint.pendingToolCalls,
+        task: resumedTask,
+        tokenBudget: resumedTask.tokenBudget
+      });
+    } catch (error) {
+      resumedTask = this.dependencies.taskRepository.findById(taskId) ?? resumedTask;
+      throw this.finalizeTaskFailure(resumedTask, toAppError(error));
+    } finally {
+      managedAbortController.dispose();
+    }
+  }
+
+  public failWaitingApprovalTask(taskId: string, error: AppError): TaskRecord {
+    const task = this.dependencies.taskRepository.findById(taskId);
+    if (task === null) {
+      throw new AppError({
+        code: "task_not_found",
+        message: `Task ${taskId} was not found.`
+      });
+    }
+
+    if (task.status !== "waiting_approval") {
+      return task;
+    }
+
+    this.dependencies.executionCheckpointRepository.delete(taskId);
+    const failedTask = this.dependencies.taskRepository.update(taskId, {
+      errorCode: error.code,
+      errorMessage: error.message,
+      finishedAt: new Date().toISOString(),
+      status: "failed"
+    });
+
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "final_outcome",
+      payload: {
+        errorCode: error.code,
+        errorMessage: error.message,
+        output: null,
+        status: "failed"
+      },
+      stage: "completion",
+      summary: "Task finished with an approval failure",
+      taskId
+    });
+
+    return failedTask;
+  }
+
+  private async executeLoop(state: ExecutionLoopState): Promise<RuntimeRunResult> {
+    const profile = this.dependencies.agentProfileRegistry.get(state.task.agentProfileId);
+    const availableTools = this.dependencies.toolOrchestrator.listTools(profile.allowedToolNames);
+    let task = state.task;
+    const messages = [...state.messages];
+    let pendingToolCalls = [...state.pendingToolCalls];
+
+    for (
+      let iteration = pendingToolCalls.length > 0 ? task.currentIteration : task.currentIteration + 1;
+      iteration <= state.maxIterations;
+      iteration += 1
+    ) {
+      throwIfAborted(
+        state.managedAbortController.abortController.signal,
+        state.managedAbortController.getReason()
+      );
+
+      task = this.dependencies.taskRepository.update(task.taskId, {
+        currentIteration: iteration
+      });
+
+      if (pendingToolCalls.length === 0) {
         const providerInput = this.contextAssembler.assemble({
           availableTools,
           iteration,
-          memoryContext,
+          memoryContext: state.memoryContext,
           messages,
-          signal: managedAbortController.abortController.signal,
+          signal: state.managedAbortController.abortController.signal,
           task,
-          tokenBudget: options.tokenBudget
+          tokenBudget: state.tokenBudget
         });
 
         this.dependencies.traceService.record({
           actor: `provider.${this.dependencies.provider.name}`,
           eventType: "model_request",
           payload: {
+            agentProfileId: task.agentProfileId,
             availableTools: availableTools.map((tool) => tool.name),
             inputMessageCount: messages.length,
             iteration,
-            tokenBudget: tokenBudgetToJson(options.tokenBudget)
+            tokenBudget: tokenBudgetToJson(state.tokenBudget)
           },
           stage: "planning",
           summary: "Provider request assembled",
-          taskId
+          taskId: task.taskId
         });
 
         const providerResponse = await this.dependencies.provider.generate(providerInput);
@@ -147,7 +299,7 @@ export class ExecutionKernel {
           },
           stage: "planning",
           summary: `Provider responded with ${providerResponse.kind}`,
-          taskId
+          taskId: task.taskId
         });
 
         if (providerResponse.kind === "retry") {
@@ -161,12 +313,12 @@ export class ExecutionKernel {
             },
             stage: "control",
             summary: "Retry requested by provider",
-            taskId
+            taskId: task.taskId
           });
 
           await sleepWithAbort(
             providerResponse.delayMs,
-            managedAbortController.abortController.signal
+            state.managedAbortController.abortController.signal
           );
 
           this.dependencies.traceService.record({
@@ -178,13 +330,14 @@ export class ExecutionKernel {
             },
             stage: "control",
             summary: "Loop iteration completed after retry",
-            taskId
+            taskId: task.taskId
           });
           continue;
         }
 
         if (providerResponse.kind === "final") {
-          task = this.dependencies.taskRepository.update(taskId, {
+          this.dependencies.executionCheckpointRepository.delete(task.taskId);
+          task = this.dependencies.taskRepository.update(task.taskId, {
             finalOutput: providerResponse.message,
             finishedAt: new Date().toISOString(),
             status: "succeeded"
@@ -201,7 +354,7 @@ export class ExecutionKernel {
             },
             stage: "completion",
             summary: "Task completed successfully",
-            taskId
+            taskId: task.taskId
           });
 
           return {
@@ -210,111 +363,137 @@ export class ExecutionKernel {
           };
         }
 
-        task = this.dependencies.taskRepository.update(taskId, {
+        task = this.dependencies.taskRepository.update(task.taskId, {
           status: "waiting_tool"
         });
+        pendingToolCalls = providerResponse.toolCalls;
+      }
 
-        let toolCallCount = 0;
-        for (const toolCall of providerResponse.toolCalls) {
-          throwIfAborted(
-            managedAbortController.abortController.signal,
-            managedAbortController.getReason()
-          );
+      let toolCallCount = 0;
+      for (const [toolIndex, toolCall] of pendingToolCalls.entries()) {
+        throwIfAborted(
+          state.managedAbortController.abortController.signal,
+          state.managedAbortController.getReason()
+        );
 
-          const outcome = await this.dependencies.toolOrchestrator.execute(
-            {
-              input: toolCall.input,
-              iteration,
-              reason: toolCall.reason,
-              taskId,
-              toolCallId: toolCall.toolCallId,
-              toolName: toolCall.toolName
-            },
-            {
-              cwd: options.cwd,
-              iteration,
-              signal: managedAbortController.abortController.signal,
-              taskId,
-              workspaceRoot: this.dependencies.workspaceRoot
-            }
-          );
+        const outcome = await this.dependencies.toolOrchestrator.execute(
+          {
+            input: toolCall.input,
+            iteration,
+            reason: toolCall.reason,
+            taskId: task.taskId,
+            toolCallId: toolCall.toolCallId,
+            toolName: toolCall.toolName
+          },
+          {
+            agentProfileId: task.agentProfileId,
+            cwd: state.cwd,
+            iteration,
+            signal: state.managedAbortController.abortController.signal,
+            taskId: task.taskId,
+            userId: task.requesterUserId,
+            workspaceRoot: this.dependencies.workspaceRoot
+          }
+        );
 
-          toolCallCount += 1;
-          messages.push(createToolFeedbackMessage(outcome.result.output, toolCall));
+        if (outcome.kind === "approval_required") {
+          task = this.dependencies.taskRepository.update(task.taskId, {
+            status: "waiting_approval"
+          });
+
+          this.dependencies.executionCheckpointRepository.save({
+            iteration,
+            memoryContext: state.memoryContext,
+            messages,
+            pendingToolCalls: pendingToolCalls.slice(toolIndex),
+            taskId: task.taskId,
+            updatedAt: new Date().toISOString()
+          });
+
+          return {
+            output: null,
+            task
+          };
         }
 
-        task = this.dependencies.taskRepository.update(taskId, {
-          status: "running"
-        });
-
-        this.dependencies.traceService.record({
-          actor: "runtime.kernel",
-          eventType: "loop_iteration_completed",
-          payload: {
-            iteration,
-            toolCallCount
-          },
-          stage: "control",
-          summary: "Loop iteration completed after tool execution",
-          taskId
-        });
+        toolCallCount += 1;
+        messages.push(createToolFeedbackMessage(outcome.result.output, toolCall));
       }
 
-      throw new AppError({
-        code: "max_rounds_exceeded",
-        message: `Task exceeded ${options.maxIterations} iterations.`
-      });
-    } catch (error) {
-      const appError = toAppError(error);
-      const isCancelled = appError.code === "interrupt";
+      pendingToolCalls = [];
+      this.dependencies.executionCheckpointRepository.delete(task.taskId);
 
-      if (appError.code === "interrupt" || appError.code === "timeout") {
-        this.dependencies.traceService.record({
-          actor: "runtime.kernel",
-          eventType: "interrupt",
-          payload: {
-            iteration: task.currentIteration,
-            reason: appError.message
-          },
-          stage: "control",
-          summary: `Task interrupted with ${appError.code}`,
-          taskId
-        });
-      }
-
-      task = this.dependencies.taskRepository.update(taskId, {
-        errorCode: appError.code,
-        errorMessage: appError.message,
-        finishedAt: new Date().toISOString(),
-        status: isCancelled ? "cancelled" : "failed"
+      task = this.dependencies.taskRepository.update(task.taskId, {
+        status: "running"
       });
 
       this.dependencies.traceService.record({
         actor: "runtime.kernel",
-        eventType: "final_outcome",
+        eventType: "loop_iteration_completed",
         payload: {
-          errorCode: appError.code,
-          errorMessage: appError.message,
-          output: null,
-          status: isCancelled ? "cancelled" : "failed"
+          iteration,
+          toolCallCount
         },
-        stage: "completion",
-        summary: "Task finished with an error",
-        taskId
+        stage: "control",
+        summary: "Loop iteration completed after tool execution",
+        taskId: task.taskId
       });
-
-      throw new AppError({
-        cause: appError,
-        code: appError.code,
-        details: {
-          ...(appError.details ?? {}),
-          taskId
-        },
-        message: appError.message
-      });
-    } finally {
-      managedAbortController.dispose();
     }
+
+    throw new AppError({
+      code: "max_rounds_exceeded",
+      message: `Task exceeded ${state.maxIterations} iterations.`
+    });
+  }
+
+  private finalizeTaskFailure(task: TaskRecord, error: AppError): AppError {
+    const isCancelled = error.code === "interrupt";
+
+    if (error.code === "interrupt" || error.code === "timeout") {
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "interrupt",
+        payload: {
+          iteration: task.currentIteration,
+          reason: error.message
+        },
+        stage: "control",
+        summary: `Task interrupted with ${error.code}`,
+        taskId: task.taskId
+      });
+    }
+
+    this.dependencies.executionCheckpointRepository.delete(task.taskId);
+    this.dependencies.taskRepository.update(task.taskId, {
+      errorCode: error.code,
+      errorMessage: error.message,
+      finishedAt: new Date().toISOString(),
+      status: isCancelled ? "cancelled" : "failed"
+    });
+
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "final_outcome",
+      payload: {
+        errorCode: error.code,
+        errorMessage: error.message,
+        output: null,
+        status: isCancelled ? "cancelled" : "failed"
+      },
+      stage: "completion",
+      summary: "Task finished with an error",
+      taskId: task.taskId
+    });
+
+    return new AppError({
+      cause: error,
+      code: error.code,
+      details: {
+        ...(error.details ?? {}),
+        taskId: task.taskId
+      },
+      message: error.message
+    });
   }
 }
 

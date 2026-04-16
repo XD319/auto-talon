@@ -3,9 +3,15 @@ import { dirname } from "node:path";
 
 import { z } from "zod";
 
-import type { PathPolicy } from "../policy/path-policy";
 import { AppError } from "../runtime/app-error";
-import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { SandboxService } from "../sandbox/sandbox-service";
+import type {
+  SandboxFileAccessPlan,
+  ToolDefinition,
+  ToolExecutionContext,
+  ToolExecutionResult,
+  ToolPreparation
+} from "../types";
 
 const patchSchema = z.object({
   find: z.string().min(1),
@@ -49,13 +55,37 @@ const fileWriteSchema = z
     }
   });
 
-type FileWriteInput = z.infer<typeof fileWriteSchema>;
+type PreparedFileWriteInput =
+  | {
+      action: "write_file";
+      content: string;
+      overwrite: boolean;
+      plan: SandboxFileAccessPlan;
+    }
+  | {
+      action: "update_file";
+      newText: string;
+      plan: SandboxFileAccessPlan;
+      replaceAll: boolean;
+      targetText: string;
+    }
+  | {
+      action: "apply_patch";
+      patches: Array<{
+        find: string;
+        replace: string;
+        replaceAll: boolean;
+      }>;
+      plan: SandboxFileAccessPlan;
+    };
 
-export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
+export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, PreparedFileWriteInput> {
   public readonly name = "file_write";
   public readonly description =
     "Create files, update file content, or apply simplified text patches inside the workspace.";
+  public readonly capability = "filesystem.write" as const;
   public readonly riskLevel = "medium" as const;
+  public readonly privacyLevel = "internal" as const;
   public readonly inputSchema = fileWriteSchema;
   public readonly inputSchemaDescriptor = {
     properties: {
@@ -89,30 +119,86 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
     type: "object"
   };
 
-  public constructor(private readonly pathPolicy: PathPolicy) {}
+  public constructor(private readonly sandboxService: SandboxService) {}
 
-  public async execute(
+  public prepare(
     input: unknown,
     context: ToolExecutionContext
-  ): Promise<ToolExecutionResult> {
+  ): ToolPreparation<PreparedFileWriteInput> {
     const parsedInput = this.inputSchema.parse(input);
+    const plan = this.sandboxService.prepareFileWrite(parsedInput.path, context.cwd);
 
     if (parsedInput.action === "write_file") {
-      return this.writeFile(parsedInput, context);
+      return {
+        governance: {
+          pathScope: plan.pathScope,
+          summary: `Write file ${plan.resolvedPath}`
+        },
+        preparedInput: {
+          action: parsedInput.action,
+          content: parsedInput.content ?? "",
+          overwrite: parsedInput.overwrite,
+          plan
+        },
+        sandbox: plan
+      };
     }
 
     if (parsedInput.action === "update_file") {
-      return this.updateFile(parsedInput, context);
+      return {
+        governance: {
+          pathScope: plan.pathScope,
+          summary: `Update file ${plan.resolvedPath}`
+        },
+        preparedInput: {
+          action: parsedInput.action,
+          newText: parsedInput.newText ?? "",
+          plan,
+          replaceAll: parsedInput.replaceAll,
+          targetText: parsedInput.targetText ?? ""
+        },
+        sandbox: plan
+      };
     }
 
-    return this.applyPatch(parsedInput, context);
+    return {
+      governance: {
+        pathScope: plan.pathScope,
+        summary: `Apply patch to ${plan.resolvedPath}`
+      },
+      preparedInput: {
+        action: parsedInput.action,
+        patches:
+          parsedInput.patches?.map((patch) => ({
+            find: patch.find,
+            replace: patch.replace,
+            replaceAll: patch.replaceAll
+          })) ?? [],
+        plan
+      },
+      sandbox: plan
+    };
+  }
+
+  public async execute(
+    input: PreparedFileWriteInput,
+    context: ToolExecutionContext
+  ): Promise<ToolExecutionResult> {
+    if (input.action === "write_file") {
+      return this.writeFile(input);
+    }
+
+    if (input.action === "update_file") {
+      return this.updateFile(input);
+    }
+
+    return this.applyPatch(input, context);
   }
 
   private async writeFile(
-    input: FileWriteInput,
-    context: ToolExecutionContext
+    input: Extract<PreparedFileWriteInput, { action: "write_file" }>
   ): Promise<ToolExecutionResult> {
-    const targetPath = this.pathPolicy.resolveWritePath(input.path, context.cwd);
+    const targetPath = input.plan.resolvedPath;
 
     await fs.mkdir(dirname(targetPath), { recursive: true });
 
@@ -130,7 +216,7 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
       }
     }
 
-    await fs.writeFile(targetPath, input.content ?? "", "utf8");
+    await fs.writeFile(targetPath, input.content, "utf8");
 
     return {
       artifacts: [
@@ -145,7 +231,7 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
       ],
       output: {
         path: targetPath,
-        size: Buffer.byteLength(input.content ?? "", "utf8")
+        size: Buffer.byteLength(input.content, "utf8")
       },
       success: true,
       summary: `Wrote ${targetPath}`
@@ -153,14 +239,12 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
   }
 
   private async updateFile(
-    input: FileWriteInput,
-    context: ToolExecutionContext
+    input: Extract<PreparedFileWriteInput, { action: "update_file" }>
   ): Promise<ToolExecutionResult> {
-    const targetPath = this.pathPolicy.resolveWritePath(input.path, context.cwd);
+    const targetPath = input.plan.resolvedPath;
     const originalContent = await fs.readFile(targetPath, "utf8");
-    const targetText = input.targetText ?? "";
 
-    if (!originalContent.includes(targetText)) {
+    if (!originalContent.includes(input.targetText)) {
       throw new AppError({
         code: "tool_execution_error",
         message: `Target text was not found in ${targetPath}.`
@@ -168,8 +252,8 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
     }
 
     const updatedContent = input.replaceAll
-      ? originalContent.split(targetText).join(input.newText ?? "")
-      : originalContent.replace(targetText, input.newText ?? "");
+      ? originalContent.split(input.targetText).join(input.newText)
+      : originalContent.replace(input.targetText, input.newText);
 
     await fs.writeFile(targetPath, updatedContent, "utf8");
 
@@ -194,14 +278,14 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
   }
 
   private async applyPatch(
-    input: FileWriteInput,
+    input: Extract<PreparedFileWriteInput, { action: "apply_patch" }>,
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
-    const targetPath = this.pathPolicy.resolveWritePath(input.path, context.cwd);
+    const targetPath = input.plan.resolvedPath;
     let workingContent = await fs.readFile(targetPath, "utf8");
     let appliedPatchCount = 0;
 
-    for (const patch of input.patches ?? []) {
+    for (const patch of input.patches) {
       if (!workingContent.includes(patch.find)) {
         throw new AppError({
           code: "tool_execution_error",
@@ -213,6 +297,13 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema> {
         ? workingContent.split(patch.find).join(patch.replace)
         : workingContent.replace(patch.find, patch.replace);
       appliedPatchCount += 1;
+    }
+
+    if (context.signal.aborted) {
+      throw new AppError({
+        code: "interrupt",
+        message: "File patch interrupted."
+      });
     }
 
     await fs.writeFile(targetPath, workingContent, "utf8");

@@ -3,7 +3,10 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { runMigrations } from "./migrations";
+import { SqliteApprovalRepository } from "./repositories/approval-repository";
 import { SqliteArtifactRepository } from "./repositories/artifact-repository";
+import { SqliteAuditLogRepository } from "./repositories/audit-log-repository";
+import { SqliteExecutionCheckpointRepository } from "./repositories/execution-checkpoint-repository";
 import { SqliteRunMetadataRepository } from "./repositories/run-metadata-repository";
 import { SqliteTaskRepository } from "./repositories/task-repository";
 import { SqliteToolCallRepository } from "./repositories/tool-call-repository";
@@ -20,6 +23,9 @@ export class StorageManager {
   public readonly toolCalls: SqliteToolCallRepository;
   public readonly artifacts: SqliteArtifactRepository;
   public readonly runMetadata: SqliteRunMetadataRepository;
+  public readonly approvals: SqliteApprovalRepository;
+  public readonly auditLogs: SqliteAuditLogRepository;
+  public readonly checkpoints: SqliteExecutionCheckpointRepository;
 
   public constructor(config: StorageConfig) {
     if (config.databasePath !== ":memory:") {
@@ -34,6 +40,9 @@ export class StorageManager {
     this.toolCalls = new SqliteToolCallRepository(this.database);
     this.artifacts = new SqliteArtifactRepository(this.database);
     this.runMetadata = new SqliteRunMetadataRepository(this.database);
+    this.approvals = new SqliteApprovalRepository(this.database);
+    this.auditLogs = new SqliteAuditLogRepository(this.database);
+    this.checkpoints = new SqliteExecutionCheckpointRepository(this.database);
   }
 
   public close(): void {

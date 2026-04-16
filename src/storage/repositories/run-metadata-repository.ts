@@ -14,6 +14,8 @@ interface RunMetadataRow {
   timeout_ms: number;
   token_budget_json: string;
   workspace_root: string;
+  agent_profile_id: RunMetadataRecord["agentProfileId"];
+  requester_user_id: RunMetadataRecord["requesterUserId"];
 }
 
 export class SqliteRunMetadataRepository implements RunMetadataRepository {
@@ -29,11 +31,13 @@ export class SqliteRunMetadataRepository implements RunMetadataRepository {
             runtime_version,
             provider_name,
             workspace_root,
+            agent_profile_id,
+            requester_user_id,
             timeout_ms,
             created_at,
             token_budget_json,
             metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -42,6 +46,8 @@ export class SqliteRunMetadataRepository implements RunMetadataRepository {
         record.runtimeVersion,
         record.providerName,
         record.workspaceRoot,
+        record.agentProfileId,
+        record.requesterUserId,
         record.timeoutMs,
         record.createdAt,
         serializeJsonValue(record.tokenBudget),
@@ -74,7 +80,9 @@ export class SqliteRunMetadataRepository implements RunMetadataRepository {
       taskId: row.task_id,
       timeoutMs: row.timeout_ms,
       tokenBudget: parseJsonValue<TokenBudget>(row.token_budget_json),
-      workspaceRoot: row.workspace_root
+      workspaceRoot: row.workspace_root,
+      agentProfileId: row.agent_profile_id,
+      requesterUserId: row.requester_user_id
     };
   }
 }

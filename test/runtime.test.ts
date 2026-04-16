@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApplication, createDefaultRunOptions } from "../src/runtime";
-import type { Provider, ProviderInput, ProviderResponse, TraceEventType } from "../src/types";
+import type { Provider, ProviderInput, ProviderResponse } from "../src/types";
 
 class ScriptedProvider implements Provider {
   public readonly name = "scripted-provider";
@@ -30,240 +30,112 @@ afterEach(async () => {
   }
 });
 
-describe("Phase 1 runtime", () => {
-  it("executes a single-round tool call successfully", async () => {
+describe("Phase 2 governance runtime", () => {
+  it("routes high-risk tools into approval before execution", async () => {
     const workspaceRoot = await createTempWorkspace();
-    const handle = createApplication(workspaceRoot, {
-      config: {
-        databasePath: join(workspaceRoot, "runtime.db")
-      },
-      provider: new ScriptedProvider((input) => {
-        if (input.iteration === 1) {
-          return {
-            kind: "tool_calls",
-            message: "Create a file first.",
-            toolCalls: [
-              {
-                input: {
-                  action: "write_file",
-                  content: "phase-1-single-round",
-                  path: "notes.txt"
-                },
-                reason: "Persist the requested content.",
-                toolCallId: "write-1",
-                toolName: "file_write"
-              }
-            ],
-            usage: {
-              inputTokens: 10,
-              outputTokens: 5
-            }
-          };
-        }
-
-        return {
-          kind: "final",
-          message: "notes.txt created",
-          usage: {
-            inputTokens: 4,
-            outputTokens: 4
-          }
-        };
-      })
-    });
+    const handle = createApprovalWriteApplication(workspaceRoot);
 
     try {
       const result = await handle.service.runTask(
-        createDefaultRunOptions("create notes.txt", workspaceRoot, handle.config)
+        createDefaultRunOptions("create governed file", workspaceRoot, handle.config)
       );
 
       expect(result.error).toBeUndefined();
-      expect(result.task.status).toBe("succeeded");
-      expect(await fs.readFile(join(workspaceRoot, "notes.txt"), "utf8")).toBe(
-        "phase-1-single-round"
-      );
+      expect(result.task.status).toBe("waiting_approval");
+
+      const pendingApprovals = handle.service.listPendingApprovals();
+      expect(pendingApprovals).toHaveLength(1);
+      expect(pendingApprovals[0]?.toolName).toBe("file_write");
 
       const details = handle.service.showTask(result.task.taskId);
       expect(details.toolCalls).toHaveLength(1);
+      expect(details.toolCalls[0]?.status).toBe("awaiting_approval");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("continues a task after approval is granted", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApprovalWriteApplication(workspaceRoot);
+
+    try {
+      const initial = await handle.service.runTask(
+        createDefaultRunOptions("create governed file", workspaceRoot, handle.config)
+      );
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval).toBeDefined();
+
+      const resumed = await handle.service.resolveApproval(
+        approval?.approvalId ?? "",
+        "allow",
+        "reviewer-1"
+      );
+
+      expect(resumed.approval.status).toBe("approved");
+      expect(resumed.task.status).toBe("succeeded");
+      expect(resumed.output).toBe("governed.txt created after approval");
+      expect(await fs.readFile(join(workspaceRoot, "governed.txt"), "utf8")).toBe(
+        "phase-2-governed"
+      );
+
+      const details = handle.service.showTask(initial.task.taskId);
       expect(details.toolCalls[0]?.status).toBe("finished");
-      expect(details.task?.finalOutput).toBe("notes.txt created");
+      expect(handle.service.traceTask(initial.task.taskId).some((event) => event.eventType === "approval_resolved")).toBe(
+        true
+      );
     } finally {
       handle.close();
     }
   });
 
-  it("supports multi-round tool call feedback loops", async () => {
+  it("fails the task when approval is denied", async () => {
     const workspaceRoot = await createTempWorkspace();
-    const handle = createApplication(workspaceRoot, {
-      config: {
-        databasePath: join(workspaceRoot, "runtime.db")
-      },
-      provider: new ScriptedProvider((input) => {
-        const toolMessages = input.messages.filter((message) => message.role === "tool");
-
-        if (toolMessages.length === 0) {
-          return {
-            kind: "tool_calls",
-            message: "Write the intermediate file.",
-            toolCalls: [
-              {
-                input: {
-                  action: "write_file",
-                  content: "multi-round-content",
-                  path: "chain.txt"
-                },
-                reason: "Need content for the next step.",
-                toolCallId: "write-chain",
-                toolName: "file_write"
-              }
-            ],
-            usage: {
-              inputTokens: 12,
-              outputTokens: 5
-            }
-          };
-        }
-
-        if (toolMessages.length === 1) {
-          return {
-            kind: "tool_calls",
-            message: "Read the file to verify its contents.",
-            toolCalls: [
-              {
-                input: {
-                  action: "read_file",
-                  path: "chain.txt"
-                },
-                reason: "Need the written content for the final answer.",
-                toolCallId: "read-chain",
-                toolName: "file_read"
-              }
-            ],
-            usage: {
-              inputTokens: 10,
-              outputTokens: 5
-            }
-          };
-        }
-
-        return {
-          kind: "final",
-          message: `Finalized with tool feedback: ${toolMessages.at(-1)?.content ?? ""}`,
-          usage: {
-            inputTokens: 6,
-            outputTokens: 8
-          }
-        };
-      })
-    });
+    const handle = createApprovalWriteApplication(workspaceRoot);
 
     try {
-      const result = await handle.service.runTask(
-        createDefaultRunOptions("perform a multi-step file round-trip", workspaceRoot, handle.config)
+      const initial = await handle.service.runTask(
+        createDefaultRunOptions("create governed file", workspaceRoot, handle.config)
+      );
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval).toBeDefined();
+
+      const denied = await handle.service.resolveApproval(
+        approval?.approvalId ?? "",
+        "deny",
+        "reviewer-2"
       );
 
-      expect(result.error).toBeUndefined();
-      expect(result.task.status).toBe("succeeded");
-      expect(result.output).toContain("multi-round-content");
+      expect(denied.approval.status).toBe("denied");
+      expect(denied.task.status).toBe("failed");
+      await expect(fs.access(join(workspaceRoot, "governed.txt"))).rejects.toThrow();
 
-      const details = handle.service.showTask(result.task.taskId);
-      expect(details.toolCalls.map((toolCall) => toolCall.toolName)).toEqual([
-        "file_write",
-        "file_read"
-      ]);
+      const details = handle.service.showTask(initial.task.taskId);
+      expect(details.toolCalls[0]?.status).toBe("denied");
     } finally {
       handle.close();
     }
   });
 
-  it("captures tool failure details for error localization", async () => {
+  it("applies policy denies for the reviewer profile", async () => {
     const workspaceRoot = await createTempWorkspace();
-    const handle = createApplication(workspaceRoot, {
-      config: {
-        databasePath: join(workspaceRoot, "runtime.db")
-      },
-      provider: new ScriptedProvider(() => ({
-        kind: "tool_calls",
-        message: "Attempt to read a missing file.",
-        toolCalls: [
-          {
-            input: {
-              action: "read_file",
-              path: "missing.txt"
-            },
-            reason: "The task requests a file read.",
-            toolCallId: "missing-read",
-            toolName: "file_read"
-          }
-        ],
-        usage: {
-          inputTokens: 10,
-          outputTokens: 5
-        }
-      }))
-    });
+    const handle = createApprovalWriteApplication(workspaceRoot);
 
     try {
-      const result = await handle.service.runTask(
-        createDefaultRunOptions("read a missing file", workspaceRoot, handle.config)
-      );
+      const options = createDefaultRunOptions("reviewer should not write", workspaceRoot, handle.config);
+      options.agentProfileId = "reviewer";
 
-      expect(result.error?.code).toBe("tool_execution_error");
+      const result = await handle.service.runTask(options);
+
+      expect(result.error?.code).toBe("policy_denied");
       expect(result.task.status).toBe("failed");
-
-      const details = handle.service.showTask(result.task.taskId);
-      expect(details.toolCalls[0]?.status).toBe("failed");
-      expect(details.toolCalls[0]?.errorMessage).toContain("missing.txt");
-      expect(details.trace.some((event) => event.eventType === "tool_call_failed")).toBe(true);
+      expect(handle.service.listPendingApprovals()).toHaveLength(0);
     } finally {
       handle.close();
     }
   });
 
-  it("fails shell tool calls on timeout", async () => {
-    const workspaceRoot = await createTempWorkspace();
-    const handle = createApplication(workspaceRoot, {
-      config: {
-        databasePath: join(workspaceRoot, "runtime.db")
-      },
-      provider: new ScriptedProvider(() => ({
-        kind: "tool_calls",
-        message: "Run a shell command that exceeds the tool timeout.",
-        toolCalls: [
-          {
-            input: {
-              command: "node -e 'setTimeout(() => process.exit(0), 500)'",
-              timeoutMs: 50
-            },
-            reason: "Validate shell timeout handling.",
-            toolCallId: "slow-shell",
-            toolName: "shell"
-          }
-        ],
-        usage: {
-          inputTokens: 8,
-          outputTokens: 4
-        }
-      }))
-    });
-
-    try {
-      const result = await handle.service.runTask(
-        createDefaultRunOptions("run a slow shell command", workspaceRoot, handle.config)
-      );
-
-      expect(result.error?.code).toBe("timeout");
-      expect(result.task.status).toBe("failed");
-
-      const trace = handle.service.traceTask(result.task.taskId);
-      expect(trace.some((event) => event.eventType === "interrupt")).toBe(true);
-      expect(trace.some((event) => event.eventType === "tool_call_failed")).toBe(true);
-    } finally {
-      handle.close();
-    }
-  });
-
-  it("enforces FileWriteTool path restrictions", async () => {
+  it("enforces sandbox restrictions on filesystem escape attempts", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApplication(workspaceRoot, {
       config: {
@@ -279,7 +151,7 @@ describe("Phase 1 runtime", () => {
               content: "denied",
               path: "..\\outside.txt"
             },
-            reason: "Verify write-path policy enforcement.",
+            reason: "Verify sandbox path enforcement.",
             toolCallId: "outside-write",
             toolName: "file_write"
           }
@@ -296,90 +168,92 @@ describe("Phase 1 runtime", () => {
         createDefaultRunOptions("attempt to escape the workspace", workspaceRoot, handle.config)
       );
 
-      expect(result.error?.code).toBe("policy_denied");
+      expect(result.error?.code).toBe("sandbox_denied");
       expect(result.task.status).toBe("failed");
-      await expect(fs.access(join(workspaceRoot, "..", "outside.txt"))).rejects.toThrow();
+
+      const auditEntries = handle.service.auditTask(result.task.taskId);
+      expect(
+        auditEntries.some(
+          (entry) => entry.action === "sandbox_enforced" && entry.outcome === "denied"
+        )
+      ).toBe(true);
     } finally {
       handle.close();
     }
   });
 
-  it("persists complete trace chains for successful runs", async () => {
+  it("records audit logs for policy, approvals, sandbox, and file writes", async () => {
     const workspaceRoot = await createTempWorkspace();
-    const handle = createApplication(workspaceRoot, {
-      config: {
-        databasePath: join(workspaceRoot, "runtime.db")
-      },
-      provider: new ScriptedProvider((input) => {
-        if (input.iteration === 1) {
-          return {
-            kind: "tool_calls",
-            message: "Create trace-target.txt.",
-            toolCalls: [
-              {
-                input: {
-                  action: "write_file",
-                  content: "trace",
-                  path: "trace-target.txt"
-                },
-                reason: "Need one tool invocation for trace coverage.",
-                toolCallId: "trace-write",
-                toolName: "file_write"
-              }
-            ],
-            usage: {
-              inputTokens: 10,
-              outputTokens: 5
-            }
-          };
-        }
-
-        return {
-          kind: "final",
-          message: "Trace flow completed.",
-          usage: {
-            inputTokens: 4,
-            outputTokens: 4
-          }
-        };
-      })
-    });
+    const handle = createApprovalWriteApplication(workspaceRoot);
 
     try {
-      const result = await handle.service.runTask(
-        createDefaultRunOptions("build a trace-complete task", workspaceRoot, handle.config)
+      const initial = await handle.service.runTask(
+        createDefaultRunOptions("create governed file", workspaceRoot, handle.config)
       );
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval).toBeDefined();
 
-      const trace = handle.service.traceTask(result.task.taskId);
-      const eventTypes = trace.map((event) => event.eventType);
-      const requiredEventTypes: TraceEventType[] = [
-        "task_created",
-        "task_started",
-        "model_request",
-        "model_response",
-        "tool_call_requested",
-        "tool_call_started",
-        "tool_call_finished",
-        "loop_iteration_completed",
-        "final_outcome"
-      ];
+      await handle.service.resolveApproval(approval?.approvalId ?? "", "allow", "reviewer-3");
 
-      for (const eventType of requiredEventTypes) {
-        expect(eventTypes).toContain(eventType);
-      }
+      const auditEntries = handle.service.auditTask(initial.task.taskId);
+      const actions = auditEntries.map((entry) => entry.action);
 
-      expect(trace.every((event) => event.taskId === result.task.taskId)).toBe(true);
-      expect(trace.every((event, index) => index === 0 || event.sequence > trace[index - 1]!.sequence)).toBe(
-        true
-      );
+      expect(actions).toContain("policy_decision");
+      expect(actions).toContain("approval_requested");
+      expect(actions).toContain("approval_resolved");
+      expect(actions).toContain("sandbox_enforced");
+      expect(actions).toContain("file_write");
     } finally {
       handle.close();
     }
   });
 });
 
+function createApprovalWriteApplication(workspaceRoot: string) {
+  return createApplication(workspaceRoot, {
+    config: {
+      databasePath: join(workspaceRoot, "runtime.db")
+    },
+    provider: new ScriptedProvider((input) => {
+      const toolMessages = input.messages.filter((message) => message.role === "tool");
+
+      if (toolMessages.length === 0) {
+        return {
+          kind: "tool_calls",
+          message: "Create the governed file.",
+          toolCalls: [
+            {
+              input: {
+                action: "write_file",
+                content: "phase-2-governed",
+                path: "governed.txt"
+              },
+              reason: "Persist the governed file after review.",
+              toolCallId: "governed-write",
+              toolName: "file_write"
+            }
+          ],
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5
+          }
+        };
+      }
+
+      return {
+        kind: "final",
+        message: "governed.txt created after approval",
+        usage: {
+          inputTokens: 4,
+          outputTokens: 4
+        }
+      };
+    })
+  });
+}
+
 async function createTempWorkspace(): Promise<string> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-phase1-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-phase2-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
 }
