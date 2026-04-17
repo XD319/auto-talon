@@ -8,9 +8,12 @@ import { startTui } from "../tui";
 import {
   formatApprovalList,
   formatAuditLog,
+  formatCurrentProvider,
   formatDoctorReport,
   formatMemoryList,
   formatMemoryScope,
+  formatProviderCatalog,
+  formatProviderHealth,
   formatSnapshot,
   formatTask,
   formatTaskList,
@@ -150,10 +153,49 @@ async function main(): Promise<void> {
       }
     });
 
-  program.command("config").description("Configuration and environment checks").command("doctor").action(() => {
+  program
+    .command("config")
+    .description("Configuration and environment checks")
+    .command("doctor")
+    .action(async () => {
+      const handle = createApplication(process.cwd());
+      try {
+        console.log(formatDoctorReport(await handle.service.configDoctor()));
+      } finally {
+        handle.close();
+      }
+    });
+
+  const providerCommand = program.command("provider").description("Inspect and test providers");
+
+  providerCommand.command("list").action(() => {
     const handle = createApplication(process.cwd());
     try {
-      console.log(formatDoctorReport(handle.service.configDoctor()));
+      console.log(
+        formatProviderCatalog(handle.service.currentProvider().name, handle.service.listProviders())
+      );
+    } finally {
+      handle.close();
+    }
+  });
+
+  providerCommand.command("current").action(() => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatCurrentProvider(handle.service.currentProvider()));
+    } finally {
+      handle.close();
+    }
+  });
+
+  providerCommand.command("test").action(async () => {
+    const handle = createApplication(process.cwd());
+    try {
+      const report = await handle.service.testCurrentProvider();
+      console.log(formatProviderHealth(report));
+      if (!report.ok) {
+        process.exitCode = 1;
+      }
     } finally {
       handle.close();
     }

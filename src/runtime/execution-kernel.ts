@@ -4,6 +4,7 @@ import { createManagedAbortController, throwIfAborted } from "./abort-controller
 import { AppError, toAppError } from "./app-error";
 import { ExecutionContextAssembler } from "./context-assembler";
 import { tokenBudgetToJson } from "./serialization";
+import { ProviderError } from "../providers";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry";
 import type {
   ConversationMessage,
@@ -268,6 +269,20 @@ export class ExecutionKernel {
 
         this.dependencies.traceService.record({
           actor: `provider.${this.dependencies.provider.name}`,
+          eventType: "provider_request_started",
+          payload: {
+            inputMessageCount: messages.length,
+            iteration,
+            modelName: this.dependencies.provider.model ?? this.dependencies.provider.describe?.().model ?? null,
+            providerName: this.dependencies.provider.name
+          },
+          stage: "planning",
+          summary: "Provider request started",
+          taskId: task.taskId
+        });
+
+        this.dependencies.traceService.record({
+          actor: `provider.${this.dependencies.provider.name}`,
           eventType: "model_request",
           payload: {
             agentProfileId: task.agentProfileId,
@@ -281,10 +296,61 @@ export class ExecutionKernel {
           taskId: task.taskId
         });
 
-        const providerResponse = await this.dependencies.provider.generate(providerInput);
+        const startedAt = Date.now();
+        let providerResponse;
+        try {
+          providerResponse = await this.dependencies.provider.generate(providerInput);
+        } catch (error) {
+          const providerError = normalizeProviderFailure(error, this.dependencies.provider);
+          this.dependencies.traceService.record({
+            actor: `provider.${this.dependencies.provider.name}`,
+            eventType: "provider_request_failed",
+            payload: {
+              errorCategory: providerError.category,
+              iteration,
+              latencyMs: Date.now() - startedAt,
+              modelName: providerError.modelName ?? this.dependencies.provider.model ?? null,
+              providerName: this.dependencies.provider.name,
+              retryCount: 0
+            },
+            stage: "planning",
+            summary: `Provider request failed with ${providerError.category}`,
+            taskId: task.taskId
+          });
+          throw providerError;
+        }
+
         messages.push({
           content: providerResponse.message,
-          role: "assistant"
+          role: "assistant",
+          ...(providerResponse.metadata?.raw !== undefined
+            ? { metadata: providerResponse.metadata.raw }
+            : {}),
+          ...(providerResponse.kind === "tool_calls"
+            ? { toolCalls: providerResponse.toolCalls }
+            : {})
+        });
+
+        this.dependencies.traceService.record({
+          actor: `provider.${this.dependencies.provider.name}`,
+          eventType: "provider_request_succeeded",
+          payload: {
+            iteration,
+            kind: providerResponse.kind,
+            latencyMs: Date.now() - startedAt,
+            modelName:
+              providerResponse.metadata?.modelName ??
+              this.dependencies.provider.model ??
+              this.dependencies.provider.describe?.().model ??
+              null,
+            providerName:
+              providerResponse.metadata?.providerName ?? this.dependencies.provider.name,
+            retryCount: providerResponse.metadata?.retryCount ?? 0,
+            usage: providerUsageToJson(providerResponse.usage)
+          },
+          stage: "planning",
+          summary: `Provider request completed with ${providerResponse.kind}`,
+          taskId: task.taskId
         });
 
         this.dependencies.traceService.record({
@@ -527,6 +593,28 @@ export class ExecutionKernel {
   }
 }
 
+function providerUsageToJson(usage: {
+  cachedInputTokens?: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens?: number;
+}): Record<string, number> {
+  const payload: Record<string, number> = {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens
+  };
+
+  if (usage.totalTokens !== undefined) {
+    payload.totalTokens = usage.totalTokens;
+  }
+
+  if (usage.cachedInputTokens !== undefined) {
+    payload.cachedInputTokens = usage.cachedInputTokens;
+  }
+
+  return payload;
+}
+
 function createToolFeedbackMessage(
   output: unknown,
   toolCall: { toolCallId: string; toolName: string }
@@ -537,6 +625,33 @@ function createToolFeedbackMessage(
     toolCallId: toolCall.toolCallId,
     toolName: toolCall.toolName
   };
+}
+
+function normalizeProviderFailure(
+  error: unknown,
+  provider: Provider
+): ProviderError {
+  if (error instanceof ProviderError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return new ProviderError({
+      category: "unknown",
+      cause: error,
+      message: error.message,
+      modelName: provider.model ?? provider.describe?.().model ?? undefined,
+      providerName: provider.name
+    });
+  }
+
+  return new ProviderError({
+    category: "unknown",
+    cause: error,
+    message: "Unknown provider failure.",
+    modelName: provider.model ?? provider.describe?.().model ?? undefined,
+    providerName: provider.name
+  });
 }
 
 async function sleepWithAbort(delayMs: number, signal: AbortSignal): Promise<void> {

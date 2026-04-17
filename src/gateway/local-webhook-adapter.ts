@@ -4,8 +4,6 @@ import { URL } from "node:url";
 import type {
   AdapterDescriptor,
   GatewayRuntimeApi,
-  GatewayTaskEvent,
-  GatewayTaskLaunchResult,
   GatewayTaskRequest,
   InboundMessageAdapter,
   OutboundResponseAdapter
@@ -57,8 +55,8 @@ export class LocalWebhookAdapter implements InboundMessageAdapter, OutboundRespo
 
   public async start(context: { runtimeApi: GatewayRuntimeApi }): Promise<void> {
     this.runtimeApi = context.runtimeApi;
-    this.server = createServer(async (request, response) => {
-      await this.handleRequest(request, response);
+    this.server = createServer((request, response) => {
+      void this.handleRequest(request, response);
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -90,12 +88,12 @@ export class LocalWebhookAdapter implements InboundMessageAdapter, OutboundRespo
     this.runtimeApi = null;
   }
 
-  public async sendEvent(_event: GatewayTaskEvent): Promise<void> {
-    return;
+  public sendEvent(): Promise<void> {
+    return Promise.resolve();
   }
 
-  public async sendResult(_result: GatewayTaskLaunchResult): Promise<void> {
-    return;
+  public sendResult(): Promise<void> {
+    return Promise.resolve();
   }
 
   private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -188,7 +186,17 @@ async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
 
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    if (Buffer.isBuffer(chunk)) {
+      chunks.push(chunk);
+      continue;
+    }
+
+    if (chunk instanceof Uint8Array) {
+      chunks.push(Buffer.from(chunk));
+      continue;
+    }
+
+    chunks.push(Buffer.from(String(chunk)));
   }
 
   const raw = Buffer.concat(chunks).toString("utf8");

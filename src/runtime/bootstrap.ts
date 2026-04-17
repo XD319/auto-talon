@@ -1,6 +1,5 @@
 import { join, resolve } from "node:path";
 
-import { MockProvider } from "../agents/mock-provider";
 import { ApprovalService } from "../approvals/approval-service";
 import { AuditService } from "../audit/audit-service";
 import { MemoryPlane } from "../memory/memory-plane";
@@ -8,6 +7,13 @@ import { ContextPolicy } from "../policy/context-policy";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config";
 import { PolicyEngine } from "../policy/policy-engine";
 import { AgentProfileRegistry } from "../profiles/agent-profile-registry";
+import {
+  createProvider,
+  PROVIDER_CATALOG,
+  resolveProviderConfig,
+  type ProviderCatalogEntry,
+  type ResolvedProviderConfig
+} from "../providers";
 import { SandboxService } from "../sandbox/sandbox-service";
 import { StorageManager } from "../storage/database";
 import { TraceService } from "../tracing/trace-service";
@@ -25,6 +31,7 @@ export interface AppConfig {
   defaultMaxIterations: number;
   defaultProfileId: "executor" | "planner" | "reviewer";
   defaultTimeoutMs: number;
+  provider: ResolvedProviderConfig;
   runtimeVersion: string;
   tokenBudget: TokenBudget;
   workspaceRoot: string;
@@ -32,6 +39,7 @@ export interface AppConfig {
 
 export function resolveAppConfig(cwd = process.cwd()): AppConfig {
   const workspaceRoot = resolve(process.env.AGENT_WORKSPACE_ROOT ?? cwd);
+  const provider = resolveProviderConfig(workspaceRoot);
 
   return {
     approvalTtlMs: 5 * 60_000,
@@ -42,6 +50,7 @@ export function resolveAppConfig(cwd = process.cwd()): AppConfig {
     defaultMaxIterations: 8,
     defaultProfileId: "executor",
     defaultTimeoutMs: 30_000,
+    provider,
     runtimeVersion: "phase5",
     tokenBudget: {
       inputLimit: 8_000,
@@ -71,6 +80,7 @@ export interface CreateApplicationOptions {
   config?: Partial<AppConfig>;
   policyConfig?: LocalPolicyConfig;
   provider?: Provider;
+  providerCatalog?: ProviderCatalogEntry[];
 }
 
 export function createApplication(
@@ -81,6 +91,7 @@ export function createApplication(
     ...resolveAppConfig(cwd),
     ...options.config
   };
+  const provider = options.provider ?? createProvider(config.provider);
 
   const storage = new StorageManager({
     databasePath: config.databasePath
@@ -93,7 +104,6 @@ export function createApplication(
   const contextPolicy = new ContextPolicy();
   const policyEngine = new PolicyEngine(options.policyConfig ?? DEFAULT_LOCAL_POLICY_CONFIG);
   const agentProfileRegistry = new AgentProfileRegistry();
-  const provider = options.provider ?? new MockProvider();
   const sandboxService = new SandboxService({
     allowedEnvKeys: ["CI", "FORCE_COLOR", "NODE_ENV", "NO_COLOR"],
     allowedFetchHosts: config.allowedFetchHosts,
@@ -152,6 +162,8 @@ export function createApplication(
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
     provider,
+    providerCatalog: options.providerCatalog ?? PROVIDER_CATALOG,
+    providerConfig: config.provider,
     runtimeVersion: config.runtimeVersion,
     traceService,
     auditService,

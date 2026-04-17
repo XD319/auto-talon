@@ -10,7 +10,7 @@ Tentaclaw is an Agent Runtime MVP focused on a CLI-first, governance-friendly ex
 - Local webhook adapter as the first non-CLI/TUI external entrypoint.
 - Adapter-aware trace and audit source attribution.
 - Capability downgrade notices instead of silent platform mismatch failures.
-- Single-agent execution kernel with provider abstraction and a built-in `MockProvider`.
+- Single-agent execution kernel with provider abstraction, a built-in `MockProvider`, and a real `GLM` provider integration.
 - Shared runtime skeleton for `planner`, `executor`, and `reviewer` profiles.
 - Memory plane with typed `session`, `project`, and `agent` scopes.
 - Selective recall with source explanation and context policy filtering.
@@ -71,6 +71,9 @@ corepack pnpm dev gateway serve-webhook --port 7070
 corepack pnpm dev approve pending
 corepack pnpm dev approve allow <approval_id>
 corepack pnpm dev approve deny <approval_id>
+corepack pnpm dev provider list
+corepack pnpm dev provider current
+corepack pnpm dev provider test
 corepack pnpm dev config doctor
 corepack pnpm dev memory list
 corepack pnpm dev memory show project --cwd .
@@ -195,6 +198,86 @@ They only enter the system through a unified gateway runtime API.
    - records trace and audit events.
 6. If approval is needed, the task moves to `waiting_approval`, a checkpoint is stored, and the CLI can later resume the task through `agent approve allow <approval_id>`.
 7. Tool outputs are fed back into the provider loop until the task succeeds, fails, times out, or is rejected.
+
+## Provider Configuration
+
+Current real provider support:
+
+- `glm`
+  - integrated through the runtime's unified `Provider` interface
+  - uses an OpenAI-compatible HTTP contract behind the provider boundary
+- `mock`
+  - remains available for local development and deterministic tests
+
+The runtime core does not import any vendor SDK directly. Provider selection is resolved in a separate configuration layer and injected during bootstrap.
+
+Configuration sources:
+
+- environment variables
+- `.tentaclaw/provider.config.json`
+
+Environment variables:
+
+- `AGENT_PROVIDER`
+- `AGENT_PROVIDER_MODEL`
+- `AGENT_PROVIDER_BASE_URL`
+- `AGENT_PROVIDER_API_KEY`
+- `AGENT_PROVIDER_TIMEOUT_MS`
+- `AGENT_PROVIDER_MAX_RETRIES`
+
+Example config file:
+
+```json
+{
+  "currentProvider": "glm",
+  "providers": {
+    "glm": {
+      "apiKey": "your-api-key",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-4.5-air",
+      "timeoutMs": 30000,
+      "maxRetries": 2
+    },
+    "mock": {
+      "model": "mock-default"
+    }
+  }
+}
+```
+
+Switching providers:
+
+- use `AGENT_PROVIDER=mock` for the mock provider
+- use `AGENT_PROVIDER=glm` for the real GLM provider
+- confirm the active selection with `agent provider current`
+- verify connectivity with `agent provider test`
+- run `agent config doctor` for a broader environment and provider check
+
+Doctor and provider test currently check:
+
+- whether an API key is configured
+- whether the endpoint is reachable
+- whether a model is configured
+- whether the configured model appears in `/models` when available
+
+## Provider Trace Fields
+
+Provider calls now emit structured trace events:
+
+- `provider_request_started`
+- `provider_request_succeeded`
+- `provider_request_failed`
+
+Each event includes:
+
+- provider name
+- model name
+- latency in milliseconds
+- retry count
+- usage metadata when available
+- error category on failures
+
+Secrets are not written into trace or audit payloads. API keys stay inside the provider configuration layer.
 
 ## Memory Plane
 
@@ -335,6 +418,8 @@ This keeps reviewer behavior controlled without introducing multi-agent swarm lo
 - The runtime still uses Node's experimental `node:sqlite` module to keep SQL inside repository boundaries.
 - `web_fetch` is sandboxed behind an allowlist and defaults to `example.com` in the bootstrap config for the MVP.
 - Approval TTL defaults to 5 minutes and is configurable through bootstrap config.
+- GLM integration currently targets the OpenAI-compatible chat completions flow and reserves a streaming interface, but end-to-end streaming delivery is not yet wired through the runtime loop.
+- Provider health checks rely on the provider `/models` endpoint when available; if an endpoint omits model listing, reachability can still pass while model availability remains unknown.
 - The current TUI is intentionally lightweight: it is a read-heavy dashboard with approval actions, not a full task authoring environment.
 - The local webhook adapter is intentionally small and is not a Slack/Telegram/Discord replacement.
 - Phase 5 focuses on extension boundaries first; full chat-platform and MCP integrations are deferred until the adapter contract is proven.

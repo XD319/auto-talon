@@ -12,6 +12,8 @@ export interface ConversationMessage {
   content: string;
   toolCallId?: string;
   toolName?: string;
+  toolCalls?: ProviderToolCall[];
+  metadata?: JsonObject;
 }
 
 export interface ProviderToolDescriptor {
@@ -26,6 +28,8 @@ export interface ProviderToolDescriptor {
 export interface ProviderUsage {
   inputTokens: number;
   outputTokens: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
 }
 
 export interface ProviderToolCall {
@@ -33,9 +37,10 @@ export interface ProviderToolCall {
   toolName: string;
   input: JsonObject;
   reason: string;
+  raw?: JsonObject;
 }
 
-export interface ProviderInput {
+export interface ProviderRequest {
   task: TaskRecord;
   iteration: number;
   messages: ConversationMessage[];
@@ -46,25 +51,38 @@ export interface ProviderInput {
   signal: AbortSignal;
 }
 
-export interface ProviderFinalResponse {
-  kind: "final";
-  message: string;
-  usage: ProviderUsage;
+export type ProviderInput = ProviderRequest;
+
+export interface ProviderResponseMetadata {
+  providerName?: string;
+  modelName?: string;
+  finishReason?: string | null;
+  requestId?: string | null;
+  retryCount?: number;
+  raw?: JsonObject;
 }
 
-export interface ProviderRetryResponse {
+export interface ProviderResponseBase {
+  usage: ProviderUsage;
+  metadata?: ProviderResponseMetadata;
+}
+
+export interface ProviderFinalResponse extends ProviderResponseBase {
+  kind: "final";
+  message: string;
+}
+
+export interface ProviderRetryResponse extends ProviderResponseBase {
   kind: "retry";
   message: string;
   reason: string;
   delayMs: number;
-  usage: ProviderUsage;
 }
 
-export interface ProviderToolCallResponse {
+export interface ProviderToolCallResponse extends ProviderResponseBase {
   kind: "tool_calls";
   message: string;
   toolCalls: ProviderToolCall[];
-  usage: ProviderUsage;
 }
 
 export type ProviderResponse =
@@ -72,9 +90,77 @@ export type ProviderResponse =
   | ProviderRetryResponse
   | ProviderToolCallResponse;
 
+export type ProviderErrorCategory =
+  | "authentication"
+  | "invalid_request"
+  | "network"
+  | "rate_limit"
+  | "timeout"
+  | "unavailable"
+  | "unknown";
+
+export interface ProviderErrorShape {
+  category: ProviderErrorCategory;
+  message: string;
+  providerName: string;
+  modelName?: string | undefined;
+  statusCode?: number | undefined;
+  retriable?: boolean | undefined;
+  details?: JsonObject | undefined;
+  cause?: unknown;
+}
+
+export interface ProviderCapabilities {
+  streaming: boolean;
+  textGeneration: boolean;
+  toolCalls: boolean;
+}
+
+export interface ProviderDescriptor {
+  baseUrl: string | null;
+  capabilities: ProviderCapabilities;
+  displayName: string;
+  model: string | null;
+  name: string;
+}
+
+export interface ProviderStreamEvent {
+  done?: boolean;
+  textDelta?: string;
+  toolCall?: ProviderToolCall;
+  usage?: ProviderUsage;
+}
+
+export interface ProviderHealthCheck {
+  apiKeyConfigured: boolean;
+  endpointReachable: boolean | null;
+  errorCategory?: ProviderErrorCategory;
+  latencyMs?: number;
+  message: string;
+  modelAvailable: boolean | null;
+  modelConfigured: boolean;
+  modelName: string | null;
+  ok: boolean;
+  providerName: string;
+}
+
+export interface ProviderConfig {
+  apiKey: string | null;
+  baseUrl: string | null;
+  maxRetries: number;
+  model: string | null;
+  name: string;
+  timeoutMs: number;
+}
+
 export interface Provider {
   name: string;
-  generate(input: ProviderInput): Promise<ProviderResponse>;
+  model?: string;
+  capabilities?: ProviderCapabilities;
+  describe?(): ProviderDescriptor;
+  generate(input: ProviderRequest): Promise<ProviderResponse>;
+  streamGenerate?(input: ProviderRequest): AsyncIterable<ProviderStreamEvent>;
+  testConnection?(signal?: AbortSignal): Promise<ProviderHealthCheck>;
 }
 
 export interface RuntimeRunOptions {

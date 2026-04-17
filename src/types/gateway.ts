@@ -1,4 +1,3 @@
-import type { GatewaySessionBinding } from "./adapter";
 import type { JsonObject } from "./common";
 
 export interface GatewaySessionBindingDraft {

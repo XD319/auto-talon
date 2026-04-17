@@ -108,10 +108,84 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
   return [
     `Runtime Version: ${report.runtimeVersion}`,
     `Provider: ${report.providerName}`,
+    `Model: ${report.modelName ?? "-"}`,
+    `Config Source: ${report.configSource}`,
+    `Config Path: ${report.configPath}`,
+    `API Key Configured: ${report.apiKeyConfigured ? "yes" : "no"}`,
+    `Endpoint Reachable: ${formatTernary(report.endpointReachable)}`,
+    `Model Configured: ${report.modelConfigured ? "yes" : "no"}`,
+    `Model Available: ${formatTernary(report.modelAvailable)}`,
+    `Timeout (ms): ${report.timeoutMs}`,
+    `Max Retries: ${report.maxRetries}`,
+    `Provider Health: ${report.providerHealthMessage}`,
     `Node: ${report.nodeVersion}`,
     `Workspace Root: ${report.workspaceRoot}`,
     `Database Path: ${report.databasePath}`,
-    `Shell: ${report.shell ?? "-"}`
+    `Shell: ${report.shell ?? "-"}`,
+    `Issues: ${report.issues.length === 0 ? "none" : report.issues.join("; ")}`
+  ].join("\n");
+}
+
+export function formatProviderCatalog(
+  currentProviderName: string,
+  providers: Array<{
+    displayName: string;
+    name: string;
+    supportsStreaming: boolean;
+    supportsToolCalls: boolean;
+  }>
+): string {
+  return providers
+    .map(
+      (provider) =>
+        `${provider.name} | ${provider.displayName} | current=${provider.name === currentProviderName ? "yes" : "no"} | tools=${provider.supportsToolCalls ? "yes" : "no"} | streaming=${provider.supportsStreaming ? "yes" : "no"}`
+    )
+    .join("\n");
+}
+
+export function formatCurrentProvider(config: {
+  baseUrl: string | null;
+  configPath: string;
+  configSource: string;
+  maxRetries: number;
+  model: string | null;
+  name: string;
+  timeoutMs: number;
+}): string {
+  return [
+    `Provider: ${config.name}`,
+    `Model: ${config.model ?? "-"}`,
+    `Base URL: ${config.baseUrl ?? "-"}`,
+    `Config Source: ${config.configSource}`,
+    `Config Path: ${config.configPath}`,
+    `Timeout (ms): ${config.timeoutMs}`,
+    `Max Retries: ${config.maxRetries}`
+  ].join("\n");
+}
+
+export function formatProviderHealth(report: {
+  apiKeyConfigured: boolean;
+  endpointReachable: boolean | null;
+  errorCategory?: string;
+  latencyMs?: number;
+  message: string;
+  modelAvailable: boolean | null;
+  modelConfigured: boolean;
+  modelName: string | null;
+  ok: boolean;
+  providerName: string;
+}): string {
+  return [
+    `Provider: ${report.providerName}`,
+    `Model: ${report.modelName ?? "-"}`,
+    `Healthy: ${report.ok ? "yes" : "no"}`,
+    `API Key Configured: ${report.apiKeyConfigured ? "yes" : "no"}`,
+    `Endpoint Reachable: ${formatTernary(report.endpointReachable)}`,
+    `Model Configured: ${report.modelConfigured ? "yes" : "no"}`,
+    `Model Available: ${formatTernary(report.modelAvailable)}`,
+    `Latency (ms): ${report.latencyMs ?? "-"}`,
+    `Error Category: ${report.errorCategory ?? "-"}`,
+    `Message: ${report.message}`
   ].join("\n");
 }
 
@@ -176,4 +250,12 @@ function formatMemoryDetail(memory: MemoryRecord): string {
     `  conflicts=${conflicts} supersedes=${memory.supersedes ?? "-"}`,
     `  summary=${memory.summary}`
   ].join("\n");
+}
+
+function formatTernary(value: boolean | null): string {
+  if (value === null) {
+    return "unknown";
+  }
+
+  return value ? "yes" : "no";
 }

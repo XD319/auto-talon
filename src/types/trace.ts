@@ -4,6 +4,7 @@ import type { PathScope, PrivacyLevel, ToolCapability, ToolRiskLevel } from "./g
 import type { MemoryScope, MemoryStatus, MemorySourceType } from "./memory";
 import type { PolicyEffect } from "./policy";
 import type { ApprovalStatus } from "./approval";
+import type { ProviderErrorCategory } from "./runtime";
 
 export const TRACE_EVENT_TYPES = [
   "gateway_request_received",
@@ -12,6 +13,9 @@ export const TRACE_EVENT_TYPES = [
   "task_started",
   "model_request",
   "model_response",
+  "provider_request_started",
+  "provider_request_succeeded",
+  "provider_request_failed",
   "policy_decision",
   "approval_requested",
   "approval_resolved",
@@ -101,6 +105,32 @@ export interface ModelResponsePayload extends JsonObject {
   kind: "final" | "retry" | "tool_calls";
   message: string;
   toolNames: string[];
+}
+
+export interface ProviderRequestStartedPayload extends JsonObject {
+  iteration: number;
+  inputMessageCount: number;
+  modelName: string | null;
+  providerName: string;
+}
+
+export interface ProviderRequestSucceededPayload extends JsonObject {
+  iteration: number;
+  kind: "final" | "retry" | "tool_calls";
+  latencyMs: number;
+  modelName: string | null;
+  providerName: string;
+  retryCount: number;
+  usage: JsonObject | null;
+}
+
+export interface ProviderRequestFailedPayload extends JsonObject {
+  errorCategory: ProviderErrorCategory;
+  iteration: number;
+  latencyMs: number;
+  modelName: string | null;
+  providerName: string;
+  retryCount: number;
 }
 
 export interface PolicyDecisionPayload extends JsonObject {
@@ -227,6 +257,9 @@ export type TraceEvent =
   | TraceEventBase<"task_started", TaskStartedPayload>
   | TraceEventBase<"model_request", ModelRequestPayload>
   | TraceEventBase<"model_response", ModelResponsePayload>
+  | TraceEventBase<"provider_request_started", ProviderRequestStartedPayload>
+  | TraceEventBase<"provider_request_succeeded", ProviderRequestSucceededPayload>
+  | TraceEventBase<"provider_request_failed", ProviderRequestFailedPayload>
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>
   | TraceEventBase<"approval_requested", ApprovalRequestedPayload>
   | TraceEventBase<"approval_resolved", ApprovalResolvedPayload>

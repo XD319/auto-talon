@@ -1,14 +1,51 @@
 import type {
   ConversationMessage,
+  ProviderConfig,
+  ProviderDescriptor,
+  ProviderHealthCheck,
   Provider,
-  ProviderInput,
+  ProviderRequest,
   ProviderResponse
 } from "../types";
 
 export class MockProvider implements Provider {
-  public readonly name = "mock-provider";
+  public readonly capabilities = {
+    streaming: false,
+    textGeneration: true,
+    toolCalls: true
+  } as const;
 
-  public generate(input: ProviderInput): Promise<ProviderResponse> {
+  public readonly model: string;
+  public readonly name = "mock";
+
+  public constructor(config?: Partial<ProviderConfig>) {
+    this.model = config?.model ?? "mock-default";
+  }
+
+  public describe(): ProviderDescriptor {
+    return {
+      baseUrl: null,
+      capabilities: this.capabilities,
+      displayName: "Mock Provider",
+      model: this.model,
+      name: this.name
+    };
+  }
+
+  public testConnection(): Promise<ProviderHealthCheck> {
+    return Promise.resolve({
+      apiKeyConfigured: true,
+      endpointReachable: true,
+      message: "Mock provider is always available.",
+      modelAvailable: true,
+      modelConfigured: true,
+      modelName: this.model,
+      ok: true,
+      providerName: this.name
+    });
+  }
+
+  public generate(input: ProviderRequest): Promise<ProviderResponse> {
     const lastToolMessage = [...input.messages]
       .reverse()
       .find((message) => message.role === "tool");
@@ -17,6 +54,11 @@ export class MockProvider implements Provider {
       return Promise.resolve({
         kind: "final",
         message: `Task completed from tool feedback.\n${lastToolMessage.content}`,
+        metadata: {
+          modelName: this.model,
+          providerName: this.name,
+          retryCount: 0
+        },
         usage: {
           inputTokens: estimateTokens(input.messages),
           outputTokens: estimateTokens(lastToolMessage.content)
@@ -31,6 +73,11 @@ export class MockProvider implements Provider {
         kind: "final",
         message:
           "MockProvider did not infer any tool call. Provide tasks like `read <path>`, `list <path>`, `search <keyword> in <path>`, `write <path> :: <content>`, or `run shell: <command>`.",
+        metadata: {
+          modelName: this.model,
+          providerName: this.name,
+          retryCount: 0
+        },
         usage: {
           inputTokens: estimateTokens(task),
           outputTokens: 24
@@ -41,6 +88,11 @@ export class MockProvider implements Provider {
     return Promise.resolve({
       kind: "tool_calls",
       message: `Planning tool call ${inferredToolCall.toolName}`,
+      metadata: {
+        modelName: this.model,
+        providerName: this.name,
+        retryCount: 0
+      },
       toolCalls: [inferredToolCall],
       usage: {
         inputTokens: estimateTokens(input.messages),

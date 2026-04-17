@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ApprovalService } from "../approvals/approval-service";
 import type { AuditService } from "../audit/audit-service";
+import type { ProviderCatalogEntry, ResolvedProviderConfig } from "../providers";
 import type {
   ApprovalRecord,
   ArtifactRecord,
@@ -10,6 +11,7 @@ import type {
   MemoryScope,
   MemorySnapshotRecord,
   Provider,
+  ProviderHealthCheck,
   RuntimeRunOptions,
   TaskRecord,
   TraceEvent,
@@ -34,11 +36,22 @@ export interface ApprovalActionResult {
 }
 
 export interface AgentDoctorReport {
+  apiKeyConfigured: boolean;
+  configPath: string;
+  configSource: "defaults" | "env" | "file";
   databasePath: string;
+  endpointReachable: boolean | null;
+  issues: string[];
+  maxRetries: number;
+  modelAvailable: boolean | null;
+  modelConfigured: boolean;
+  modelName: string | null;
   nodeVersion: string;
+  providerHealthMessage: string;
   providerName: string;
   runtimeVersion: string;
   shell: string | undefined;
+  timeoutMs: number;
   workspaceRoot: string;
 }
 
@@ -64,6 +77,8 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   executionKernel: ExecutionKernel;
   memoryPlane: MemoryPlane;
   provider: Provider;
+  providerCatalog: ProviderCatalogEntry[];
+  providerConfig: ResolvedProviderConfig;
   runtimeVersion: string;
   traceService: TraceService;
   workspaceRoot: string;
@@ -265,6 +280,14 @@ export class AgentApplicationService {
     return this.dependencies.listArtifacts(taskId);
   }
 
+  public listProviders(): ProviderCatalogEntry[] {
+    return this.dependencies.providerCatalog;
+  }
+
+  public currentProvider(): ResolvedProviderConfig {
+    return this.dependencies.providerConfig;
+  }
+
   public traceTask(taskId: string): TraceEvent[] {
     return this.dependencies.listTrace(taskId);
   }
@@ -273,13 +296,44 @@ export class AgentApplicationService {
     return this.dependencies.listAuditLogs(taskId);
   }
 
-  public configDoctor(): AgentDoctorReport {
+  public async testCurrentProvider(signal?: AbortSignal): Promise<ProviderHealthCheck> {
+    if (this.dependencies.provider.testConnection === undefined) {
+      return {
+        apiKeyConfigured: this.dependencies.providerConfig.apiKey !== null,
+        endpointReachable: null,
+        message: "Current provider does not expose a connection test.",
+        modelAvailable: null,
+        modelConfigured: this.dependencies.providerConfig.model !== null,
+        modelName: this.dependencies.providerConfig.model,
+        ok: false,
+        providerName: this.dependencies.provider.name
+      };
+    }
+
+    return this.dependencies.provider.testConnection(signal);
+  }
+
+  public async configDoctor(signal?: AbortSignal): Promise<AgentDoctorReport> {
+    const providerHealth = await this.testCurrentProvider(signal);
+    const issues = collectDoctorIssues(this.dependencies.providerConfig, providerHealth);
+
     return {
+      apiKeyConfigured: providerHealth.apiKeyConfigured,
+      configPath: this.dependencies.providerConfig.configPath,
+      configSource: this.dependencies.providerConfig.configSource,
       databasePath: this.dependencies.databasePath,
+      endpointReachable: providerHealth.endpointReachable,
+      issues,
+      maxRetries: this.dependencies.providerConfig.maxRetries,
+      modelAvailable: providerHealth.modelAvailable,
+      modelConfigured: providerHealth.modelConfigured,
+      modelName: providerHealth.modelName,
       nodeVersion: process.version,
+      providerHealthMessage: providerHealth.message,
       providerName: this.dependencies.provider.name,
       runtimeVersion: this.dependencies.runtimeVersion,
       shell: process.env.ComSpec,
+      timeoutMs: this.dependencies.providerConfig.timeoutMs,
       workspaceRoot: this.dependencies.workspaceRoot
     };
   }
@@ -331,4 +385,29 @@ export class AgentApplicationService {
       );
     }
   }
+}
+
+function collectDoctorIssues(
+  providerConfig: ResolvedProviderConfig,
+  providerHealth: ProviderHealthCheck
+): string[] {
+  const issues: string[] = [];
+
+  if (!providerHealth.apiKeyConfigured && providerConfig.name !== "mock") {
+    issues.push("API key is missing.");
+  }
+
+  if (!providerHealth.modelConfigured) {
+    issues.push("Model is not configured.");
+  }
+
+  if (providerHealth.endpointReachable === false) {
+    issues.push("Provider endpoint is not reachable.");
+  }
+
+  if (providerHealth.modelAvailable === false) {
+    issues.push(`Model ${providerHealth.modelName ?? "-"} is not available on the provider endpoint.`);
+  }
+
+  return issues;
 }

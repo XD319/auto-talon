@@ -157,9 +157,9 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       .auditTask(taskId)
       .filter((entry) => entry.action === "gateway_capability_degraded")
       .map((entry) => ({
-        capability: String(entry.payload.capability) as AdapterCapabilityName,
-        fallbackBehavior: String(entry.payload.fallbackBehavior),
-        message: String(entry.payload.message),
+        capability: readString(entry.payload.capability) as AdapterCapabilityName,
+        fallbackBehavior: readString(entry.payload.fallbackBehavior),
+        message: readString(entry.payload.message),
         severity:
           entry.payload.severity === "warning" ? ("warning" as const) : ("info" as const)
       }));
@@ -217,6 +217,10 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       unsubscribeAudit();
     };
   }
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function toGatewayTaskResult(
