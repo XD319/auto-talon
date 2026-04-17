@@ -56,6 +56,17 @@ export interface AgentDoctorReport {
   workspaceRoot: string;
 }
 
+export interface ContextTraceDebugReport {
+  contextAssembly: Extract<TraceEvent, { eventType: "context_assembled" }>["payload"]["debugView"] | null;
+  memoryRecall:
+    | Extract<TraceEvent, { eventType: "memory_recalled" }>["payload"]
+    | null;
+  reviewerTrace:
+    | Extract<TraceEvent, { eventType: "reviewer_trace" }>["payload"]
+    | null;
+  task: TaskRecord | null;
+}
+
 export interface RuntimeReadModel {
   findMemory(memoryId: string): MemoryRecord | null;
   findTask(taskId: string): TaskRecord | null;
@@ -295,6 +306,36 @@ export class AgentApplicationService {
 
   public traceTask(taskId: string): TraceEvent[] {
     return this.dependencies.listTrace(taskId);
+  }
+
+  public traceTaskContext(taskId: string): ContextTraceDebugReport {
+    const task = this.dependencies.findTask(taskId);
+    const trace = task === null ? [] : this.dependencies.listTrace(taskId);
+    const contextAssembly = [...trace]
+      .reverse()
+      .find(
+        (event): event is Extract<TraceEvent, { eventType: "context_assembled" }> =>
+          event.eventType === "context_assembled"
+      )?.payload.debugView ?? null;
+    const memoryRecall = [...trace]
+      .reverse()
+      .find(
+        (event): event is Extract<TraceEvent, { eventType: "memory_recalled" }> =>
+          event.eventType === "memory_recalled"
+      )?.payload ?? null;
+    const reviewerTrace = [...trace]
+      .reverse()
+      .find(
+        (event): event is Extract<TraceEvent, { eventType: "reviewer_trace" }> =>
+          event.eventType === "reviewer_trace"
+      )?.payload ?? null;
+
+    return {
+      contextAssembly,
+      memoryRecall,
+      reviewerTrace,
+      task
+    };
   }
 
   public auditTask(taskId: string): AuditLogRecord[] {

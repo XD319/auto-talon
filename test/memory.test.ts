@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { formatTraceContextDebug } from "../src/cli/formatters";
 import { MemoryPlane } from "../src/memory/memory-plane";
 import { ContextPolicy } from "../src/policy/context-policy";
+import { ExecutionContextAssembler } from "../src/runtime/context-assembler";
 import { createApplication, createDefaultRunOptions } from "../src/runtime";
 import { StorageManager } from "../src/storage/database";
 import { TraceService } from "../src/tracing/trace-service";
@@ -308,6 +310,178 @@ describe("Phase 3 memory plane", () => {
       handle.close();
     }
   });
+
+  it("emits structured context and reviewer debug output for trace context views", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.writeFile(join(workspaceRoot, "README.md"), "runtime context debug file");
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider((input) => {
+        const hasToolFeedback = input.messages.some((message) => message.role === "tool");
+        if (!hasToolFeedback) {
+          return {
+            kind: "tool_calls",
+            message: "Read README first.",
+            toolCalls: [
+              {
+                input: {
+                  action: "read_file",
+                  path: "README.md"
+                },
+                reason: "Need workspace context",
+                toolCallId: "tool-readme",
+                toolName: "file_read"
+              }
+            ],
+            usage: {
+              inputTokens: 10,
+              outputTokens: 4
+            }
+          };
+        }
+
+        return {
+          kind: "final",
+          message: "Risk found after reading README. Stop and block execution.",
+          usage: {
+            inputTokens: 12,
+            outputTokens: 5
+          }
+        };
+      })
+    });
+
+    try {
+      const options = createDefaultRunOptions("inspect context assembly", workspaceRoot, handle.config);
+      options.agentProfileId = "reviewer";
+      const result = await handle.service.runTask(options);
+      const report = handle.service.traceTaskContext(result.task.taskId);
+      const formatted = formatTraceContextDebug(report);
+      const parsed = JSON.parse(formatted) as {
+        contextAssembly: {
+          originalTaskInput: { sourceType: string };
+          systemPromptFragments: unknown[];
+          toolResultFragments: unknown[];
+        };
+        reviewerTrace: {
+          continuationBlocked: boolean;
+          riskDetected: boolean;
+        };
+      };
+
+      expect(parsed.contextAssembly.originalTaskInput.sourceType).toBe("user_input");
+      expect(parsed.contextAssembly.systemPromptFragments.length).toBeGreaterThan(0);
+      expect(parsed.contextAssembly.toolResultFragments.length).toBeGreaterThan(0);
+      expect(parsed.reviewerTrace.riskDetected).toBe(true);
+      expect(parsed.reviewerTrace.continuationBlocked).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("includes recall explanations, confidence, status, and filter reasons", () => {
+    const { memoryPlane, storage, close } = createMemoryHarness();
+
+    try {
+      storage.memories.create({
+        confidence: 0.61,
+        content: "secret token=abc123",
+        expiresAt: null,
+        keywords: ["secret", "token"],
+        privacyLevel: "restricted",
+        retentionPolicy: {
+          kind: "project",
+          reason: "Sensitive project note",
+          ttlDays: 30
+        },
+        scope: "project",
+        scopeKey: "workspace-private",
+        source: {
+          label: "Restricted note",
+          sourceType: "tool_output",
+          taskId: "task-private",
+          toolCallId: "tool-private",
+          traceEventId: null
+        },
+        status: "stale",
+        summary: "secret token",
+        title: "Restricted data"
+      });
+
+      memoryPlane.buildContext(
+        createTask({
+          cwd: "workspace-private",
+          input: "find secret token",
+          taskId: "task-private"
+        })
+      );
+
+      const recallEvent = storage.traces
+        .listByTaskId("task-private")
+        .find((event) => event.eventType === "memory_recalled");
+
+      expect(recallEvent).toBeDefined();
+      expect(recallEvent?.payload.entries[0]?.explanation).toContain("privacy=restricted");
+      expect(recallEvent?.payload.entries[0]?.confidence).toBe(0.61);
+      expect(recallEvent?.payload.entries[0]?.status).toBe("stale");
+      expect(recallEvent?.payload.entries[0]?.downrankReasons).toContain("stale_memory");
+      expect(recallEvent?.payload.entries[0]?.filterReasonCode).toBe("filtered_by_privacy");
+    } finally {
+      close();
+    }
+  });
+
+  it("redacts restricted snippets in the debug context view", () => {
+    const assembler = new ExecutionContextAssembler();
+    const assembled = assembler.assemble({
+      availableTools: [],
+      iteration: 2,
+      memoryContext: [],
+      messages: [
+        {
+          content: "system prompt",
+          metadata: {
+            privacyLevel: "internal",
+            retentionKind: "session"
+          },
+          role: "system"
+        },
+        {
+          content: "investigate secret token=abc123",
+          role: "user"
+        },
+        {
+          content: "{\"stdout\":\"secret token=abc123\"}",
+          metadata: {
+            privacyLevel: "restricted",
+            retentionKind: "session"
+          },
+          role: "tool",
+          toolCallId: "tool-secret",
+          toolName: "shell"
+        }
+      ],
+      signal: new AbortController().signal,
+      task: createTask({
+        cwd: "workspace-redaction",
+        input: "investigate secret token=abc123",
+        taskId: "task-redaction"
+      }),
+      tokenBudget: {
+        inputLimit: 8_000,
+        outputLimit: 2_000,
+        reservedOutput: 500,
+        usedInput: 0,
+        usedOutput: 0
+      }
+    });
+
+    expect(assembled.debug.toolResultFragments[0]?.preview).toBe("[REDACTED: restricted content]");
+    expect(assembled.debug.originalTaskInput.preview).not.toContain("token=abc123");
+  });
+
 });
 
 function createMemoryHarness() {
@@ -324,7 +498,8 @@ function createMemoryHarness() {
 
   return {
     close: () => storage.close(),
-    memoryPlane
+    memoryPlane,
+    storage
   };
 }
 

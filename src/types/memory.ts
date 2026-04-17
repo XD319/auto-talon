@@ -26,7 +26,7 @@ export const RETENTION_POLICY_KINDS = ["ephemeral", "session", "project", "agent
 
 export type RetentionPolicyKind = (typeof RETENTION_POLICY_KINDS)[number];
 
-export interface RetentionPolicy {
+export interface RetentionPolicy extends JsonObject {
   kind: RetentionPolicyKind;
   ttlDays: number | null;
   reason: string;
@@ -119,6 +119,7 @@ export interface MemoryRecallCandidate {
   confidenceScore: number;
   finalScore: number;
   explanation: string;
+  downrankReasons: string[];
 }
 
 export interface ContextFragment {
@@ -138,6 +139,12 @@ export interface ContextFragment {
 export interface ContextFilterDecision {
   fragment: ContextFragment;
   allowed: boolean;
+  reasonCode:
+    | "allowed"
+    | "filtered_by_privacy"
+    | "filtered_by_retention"
+    | "filtered_by_scope"
+    | "filtered_by_policy";
   reason: string;
 }
 

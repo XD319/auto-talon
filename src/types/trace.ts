@@ -5,6 +5,7 @@ import type { MemoryScope, MemoryStatus, MemorySourceType } from "./memory";
 import type { PolicyEffect } from "./policy";
 import type { ApprovalStatus } from "./approval";
 import type { ProviderErrorCategory } from "./runtime";
+import type { ContextAssemblyDebugView } from "./context";
 
 export const TRACE_EVENT_TYPES = [
   "gateway_request_received",
@@ -28,10 +29,12 @@ export const TRACE_EVENT_TYPES = [
   "retry",
   "interrupt",
   "final_outcome",
+  "context_assembled",
   "memory_recalled",
   "memory_written",
   "session_compacted",
-  "memory_snapshot_created"
+  "memory_snapshot_created",
+  "reviewer_trace"
 ] as const;
 
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];
@@ -222,11 +225,31 @@ export interface FinalOutcomePayload extends JsonObject {
   errorMessage: string | null;
 }
 
+export interface ContextAssembledPayload extends JsonObject {
+  iteration: number;
+  debugView: ContextAssemblyDebugView;
+}
+
 export interface MemoryRecalledPayload extends JsonObject {
   query: string;
   selectedMemoryIds: string[];
   selectedScopes: MemoryScope[];
   blockedMemoryIds: string[];
+  entries: Array<{
+    memoryId: string;
+    title: string;
+    explanation: string;
+    confidence: number;
+    status: MemoryStatus;
+    selected: boolean;
+    blocked: boolean;
+    sourceType: MemorySourceType;
+    privacyLevel: PrivacyLevel;
+    retentionPolicyKind: string;
+    downrankReasons: string[];
+    filterReasonCode: string | null;
+    filterReason: string | null;
+  }>;
 }
 
 export interface MemoryWrittenPayload extends JsonObject {
@@ -248,6 +271,15 @@ export interface MemorySnapshotCreatedPayload extends JsonObject {
   scope: MemoryScope;
   scopeKey: string;
   memoryCount: number;
+}
+
+export interface ReviewerTracePayload extends JsonObject {
+  iteration: number;
+  reviewerSeenSummary: string;
+  reviewerJudgementSummary: string;
+  riskDetected: boolean;
+  continuationBlocked: boolean;
+  blockingReason: string | null;
 }
 
 export type TraceEvent =
@@ -272,10 +304,12 @@ export type TraceEvent =
   | TraceEventBase<"retry", RetryPayload>
   | TraceEventBase<"interrupt", InterruptPayload>
   | TraceEventBase<"final_outcome", FinalOutcomePayload>
+  | TraceEventBase<"context_assembled", ContextAssembledPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"memory_written", MemoryWrittenPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
-  | TraceEventBase<"memory_snapshot_created", MemorySnapshotCreatedPayload>;
+  | TraceEventBase<"memory_snapshot_created", MemorySnapshotCreatedPayload>
+  | TraceEventBase<"reviewer_trace", ReviewerTracePayload>;
 
 export type TraceEventDraft = Omit<TraceEvent, "eventId" | "sequence" | "timestamp"> &
   Partial<Pick<TraceEvent, "eventId" | "sequence" | "timestamp">>;

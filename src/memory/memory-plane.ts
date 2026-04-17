@@ -63,6 +63,28 @@ export class MemoryPlane {
         blockedMemoryIds: recall.decisions
           .filter((decision) => !decision.allowed)
           .map((decision) => decision.fragment.memoryId),
+        entries: recall.candidates.map((candidate) => {
+          const decision =
+            recall.decisions.find((item) => item.fragment.memoryId === candidate.memory.memoryId) ??
+            null;
+          return {
+            blocked: decision?.allowed === false,
+            confidence: candidate.memory.confidence,
+            downrankReasons: candidate.downrankReasons,
+            explanation: candidate.explanation,
+            filterReason: decision?.allowed === false ? decision.reason : null,
+            filterReasonCode: decision?.allowed === false ? decision.reasonCode : null,
+            memoryId: candidate.memory.memoryId,
+            privacyLevel: candidate.memory.privacyLevel,
+            retentionPolicyKind: candidate.memory.retentionPolicy.kind,
+            selected: recall.selectedFragments.some(
+              (fragment) => fragment.memoryId === candidate.memory.memoryId
+            ),
+            sourceType: candidate.memory.sourceType,
+            status: candidate.memory.status,
+            title: candidate.memory.title
+          };
+        }),
         query: recall.query,
         selectedMemoryIds: recall.selectedFragments.map((fragment) => fragment.memoryId),
         selectedScopes: recall.selectedFragments.map((fragment) => fragment.scope)
@@ -517,10 +539,25 @@ function scoreMemory(memory: MemoryRecord, queryTokens: string[]): MemoryRecallC
   const freshnessScore = memory.status === "stale" ? 0.2 : memory.status === "candidate" ? 0.7 : 1;
   const confidenceScore = memory.confidence;
   const finalScore = Number((keywordScore * 0.45 + freshnessScore * 0.2 + confidenceScore * 0.35).toFixed(4));
+  const downrankReasons: string[] = [];
+
+  if (memory.status === "stale") {
+    downrankReasons.push("stale_memory");
+  }
+  if (memory.status === "candidate") {
+    downrankReasons.push("candidate_unverified");
+  }
+  if (memory.privacyLevel === "restricted" && memory.scope !== "session") {
+    downrankReasons.push("privacy_restricted_cross_session");
+  }
+  if (memory.confidence < 0.75) {
+    downrankReasons.push("low_confidence");
+  }
 
   return {
     confidenceScore,
-    explanation: `scope=${memory.scope}; keyword=${keywordScore.toFixed(2)}; freshness=${freshnessScore.toFixed(2)}; confidence=${confidenceScore.toFixed(2)}; source=${memory.source.label}`,
+    downrankReasons,
+    explanation: `scope=${memory.scope}; keyword=${keywordScore.toFixed(2)}; freshness=${freshnessScore.toFixed(2)}; confidence=${confidenceScore.toFixed(2)}; status=${memory.status}; privacy=${memory.privacyLevel}; source=${memory.source.label}`,
     finalScore,
     freshnessScore,
     keywordScore,

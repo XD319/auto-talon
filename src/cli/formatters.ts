@@ -1,4 +1,4 @@
-import type { AgentDoctorReport } from "../runtime";
+import type { AgentDoctorReport, ContextTraceDebugReport } from "../runtime";
 import type {
   ApprovalRecord,
   AuditLogRecord,
@@ -77,6 +77,24 @@ export function formatTrace(traceEvents: TraceEvent[]): string {
   }
 
   return traceEvents.map((event) => formatTraceEvent(event)).join("\n\n");
+}
+
+export function formatTraceContextDebug(report: ContextTraceDebugReport): string {
+  if (report.task === null) {
+    return "Task not found.";
+  }
+
+  return JSON.stringify(
+    {
+      taskId: report.task.taskId,
+      profile: report.task.agentProfileId,
+      contextAssembly: report.contextAssembly,
+      memoryRecall: report.memoryRecall,
+      reviewerTrace: report.reviewerTrace
+    },
+    null,
+    2
+  );
 }
 
 export function formatApprovalList(approvals: ApprovalRecord[]): string {

@@ -401,6 +401,7 @@ Audit log is for governance inspection. It captures policy decisions, high-risk 
 Use:
 
 - `agent trace <task_id>` for execution reconstruction
+- `agent trace context <task_id>` for explainable context assembly, recall, filter, and reviewer trace debugging
 - `agent audit <task_id>` for governance/audit inspection
 
 ## Reviewer Profile

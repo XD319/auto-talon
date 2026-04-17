@@ -20,7 +20,8 @@ import {
   formatSnapshot,
   formatTask,
   formatTaskList,
-  formatTrace
+  formatTrace,
+  formatTraceContextDebug
 } from "./formatters";
 
 async function main(): Promise<void> {
@@ -89,10 +90,27 @@ async function main(): Promise<void> {
     }
   });
 
-  program.command("trace").argument("<task_id>", "Task identifier").action((taskId: string) => {
+  const traceCommand = program.command("trace").description("Inspect persisted trace data");
+
+  traceCommand.argument("[task_id]", "Task identifier").action((taskId?: string) => {
+    if (taskId === undefined) {
+      console.error("Task id is required.");
+      process.exitCode = 1;
+      return;
+    }
+
     const handle = createApplication(process.cwd());
     try {
       console.log(formatTrace(handle.service.traceTask(taskId)));
+    } finally {
+      handle.close();
+    }
+  });
+
+  traceCommand.command("context").argument("<task_id>", "Task identifier").action((taskId: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatTraceContextDebug(handle.service.traceTaskContext(taskId)));
     } finally {
       handle.close();
     }

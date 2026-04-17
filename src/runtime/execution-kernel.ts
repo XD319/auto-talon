@@ -2,14 +2,19 @@ import { randomUUID } from "node:crypto";
 
 import { createManagedAbortController, throwIfAborted } from "./abort-controller";
 import { AppError, toAppError } from "./app-error";
-import { ExecutionContextAssembler } from "./context-assembler";
+import {
+  buildFilteredContextDebugFragments,
+  ExecutionContextAssembler
+} from "./context-assembler";
 import { tokenBudgetToJson } from "./serialization";
 import { ProviderError } from "../providers";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry";
 import type {
   ConversationMessage,
+  ContextAssemblyDebugView,
   ContextFragment,
   ExecutionCheckpointRepository,
+  MemoryRecallResult,
   Provider,
   ProviderToolCall,
   RunMetadataRepository,
@@ -41,6 +46,7 @@ interface ExecutionLoopState {
   managedAbortController: ReturnType<typeof createManagedAbortController>;
   maxIterations: number;
   memoryContext: ContextFragment[];
+  memoryRecall: MemoryRecallResult | null;
   messages: ConversationMessage[];
   pendingToolCalls: ProviderToolCall[];
   task: TaskRecord;
@@ -129,6 +135,7 @@ export class ExecutionKernel {
         managedAbortController,
         maxIterations: options.maxIterations,
         memoryContext: memoryContext.fragments,
+        memoryRecall: memoryContext.recall,
         messages,
         pendingToolCalls: [],
         task,
@@ -184,6 +191,7 @@ export class ExecutionKernel {
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
+        memoryRecall: null,
         messages: checkpoint.messages,
         pendingToolCalls: checkpoint.pendingToolCalls,
         task: resumedTask,
@@ -257,7 +265,7 @@ export class ExecutionKernel {
       });
 
       if (pendingToolCalls.length === 0) {
-        const providerInput = this.contextAssembler.assemble({
+        const assembled = this.contextAssembler.assemble({
           availableTools,
           iteration,
           memoryContext: state.memoryContext,
@@ -265,6 +273,23 @@ export class ExecutionKernel {
           signal: state.managedAbortController.abortController.signal,
           task,
           tokenBudget: state.tokenBudget
+        });
+        assembled.debug.filteredOutFragments =
+          state.memoryRecall === null
+            ? []
+            : buildFilteredContextDebugFragments(state.memoryRecall.decisions);
+        const providerInput = assembled.providerInput;
+
+        this.dependencies.traceService.record({
+          actor: "runtime.context",
+          eventType: "context_assembled",
+          payload: {
+            debugView: assembled.debug,
+            iteration
+          },
+          stage: "planning",
+          summary: `Context assembled with ${assembled.debug.memoryRecallFragments.length} recall fragments`,
+          taskId: task.taskId
         });
 
         this.dependencies.traceService.record({
@@ -369,6 +394,17 @@ export class ExecutionKernel {
           summary: `Provider responded with ${providerResponse.kind}`,
           taskId: task.taskId
         });
+
+        if (task.agentProfileId === "reviewer") {
+          this.dependencies.traceService.record({
+            actor: "reviewer.trace",
+            eventType: "reviewer_trace",
+            payload: buildReviewerTracePayload(iteration, assembled.debug, providerResponse),
+            stage: "planning",
+            summary: "Reviewer decision trace captured",
+            taskId: task.taskId
+          });
+        }
 
         if (providerResponse.kind === "retry") {
           this.dependencies.traceService.record({
@@ -499,8 +535,12 @@ export class ExecutionKernel {
             toolCallId: toolCall.toolCallId,
             toolName: toolCall.toolName
           });
+          messages.push(
+            createToolFeedbackMessage(outcome.result.output, toolCall, toolDescriptor.privacyLevel)
+          );
+          continue;
         }
-        messages.push(createToolFeedbackMessage(outcome.result.output, toolCall));
+        messages.push(createToolFeedbackMessage(outcome.result.output, toolCall, "internal"));
       }
 
       pendingToolCalls = [];
@@ -533,6 +573,7 @@ export class ExecutionKernel {
         messages.push(...compacted.replacementMessages);
         const refreshedContext = this.dependencies.memoryPlane.buildContext(task);
         state.memoryContext = refreshedContext.fragments;
+        state.memoryRecall = refreshedContext.recall;
       }
     }
 
@@ -617,13 +658,62 @@ function providerUsageToJson(usage: {
 
 function createToolFeedbackMessage(
   output: unknown,
-  toolCall: { toolCallId: string; toolName: string }
+  toolCall: { toolCallId: string; toolName: string },
+  privacyLevel: "public" | "internal" | "restricted"
 ): ConversationMessage {
   return {
     content: JSON.stringify(output, null, 2),
+    metadata: {
+      privacyLevel,
+      retentionKind: "session",
+      sourceType: "tool_result"
+    },
     role: "tool",
     toolCallId: toolCall.toolCallId,
     toolName: toolCall.toolName
+  };
+}
+
+function buildReviewerTracePayload(
+  iteration: number,
+  debug: ContextAssemblyDebugView,
+  providerResponse: { kind: "final" | "retry" | "tool_calls"; message: string }
+): {
+  blockingReason: string | null;
+  continuationBlocked: boolean;
+  iteration: number;
+  reviewerJudgementSummary: string;
+  reviewerSeenSummary: string;
+  riskDetected: boolean;
+} {
+  const reviewerSeenSummary = summarizeText(
+    [
+      debug.originalTaskInput.preview,
+      ...debug.systemPromptFragments.map((fragment) => fragment.preview),
+      ...debug.memoryRecallFragments.map((fragment) => fragment.preview),
+      ...debug.toolResultFragments.map((fragment) => fragment.preview)
+    ]
+      .filter(Boolean)
+      .join(" | "),
+    260
+  );
+  const reviewerJudgementSummary = summarizeText(providerResponse.message, 220);
+  const lowered = providerResponse.message.toLowerCase();
+  const riskDetected =
+    lowered.includes("risk") ||
+    lowered.includes("block") ||
+    lowered.includes("unsafe") ||
+    lowered.includes("deny") ||
+    lowered.includes("stop");
+  const continuationBlocked = providerResponse.kind === "final" && riskDetected;
+
+  return {
+    blockingReason: continuationBlocked ? reviewerJudgementSummary : null,
+    continuationBlocked,
+    iteration,
+    reviewerJudgementSummary,
+    reviewerSeenSummary,
+    riskDetected
   };
 }
 
@@ -675,4 +765,9 @@ async function sleepWithAbort(delayMs: number, signal: AbortSignal): Promise<voi
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function summarizeText(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
 }

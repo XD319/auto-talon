@@ -1,3 +1,4 @@
+import type { JsonObject } from "./common";
 import type { PrivacyLevel } from "./governance";
 import type {
   ContextFilterDecision,
@@ -43,4 +44,38 @@ export interface LongTermMemoryWriteDecision {
 export interface MemoryDebugView {
   recalled: MemoryRecallResult | null;
   sessionMemories: MemoryRecord[];
+}
+
+export const CONTEXT_DEBUG_SOURCE_TYPES = [
+  "user_input",
+  "system_prompt",
+  "memory_recall",
+  "tool_result",
+  "filtered_out"
+] as const;
+
+export type ContextDebugSourceType = (typeof CONTEXT_DEBUG_SOURCE_TYPES)[number];
+
+export interface ContextDebugFragment extends JsonObject {
+  label: string;
+  preview: string;
+  sourceType: ContextDebugSourceType;
+  privacyLevel: PrivacyLevel;
+  retentionPolicy: RetentionPolicy;
+  metadata: JsonObject;
+}
+
+export interface ContextAssemblyDebugView extends JsonObject {
+  taskId: string;
+  iteration: number;
+  originalTaskInput: ContextDebugFragment;
+  systemPromptFragments: ContextDebugFragment[];
+  memoryRecallFragments: ContextDebugFragment[];
+  toolResultFragments: ContextDebugFragment[];
+  filteredOutFragments: Array<
+    ContextDebugFragment & {
+      filterReasonCode: ContextFilterDecision["reasonCode"];
+      filterReason: string;
+    }
+  >;
 }
