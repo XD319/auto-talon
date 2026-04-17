@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApplication, createDefaultRunOptions } from "../src/runtime";
-import { GlmProvider, ProviderError, resolveProviderConfig } from "../src/providers";
+import {
+  GlmProvider,
+  OpenAiCompatibleProvider,
+  ProviderError,
+  resolveProviderConfig
+} from "../src/providers";
 import type {
   Provider,
   ProviderConfig,
@@ -120,6 +125,72 @@ describe("Provider integration", () => {
     expect(resolved.configSource).toBe("file");
   });
 
+  it("loads OpenAI-compatible provider configuration from file aliases", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".tentaclaw"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".tentaclaw", "provider.config.json"),
+      JSON.stringify(
+        {
+          currentProvider: "openai-compatible",
+          providers: {
+            "openai-compatible": {
+              apiKey: "compat-test-key",
+              baseUrl: "https://compat.example.test/v1",
+              maxRetries: 3,
+              model: "kimi-k2",
+              timeoutMs: 15_000
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const resolved = resolveProviderConfig(workspaceRoot);
+
+    expect(resolved.name).toBe("openai-compatible");
+    expect(resolved.apiKey).toBe("compat-test-key");
+    expect(resolved.baseUrl).toBe("https://compat.example.test/v1");
+    expect(resolved.model).toBe("kimi-k2");
+    expect(resolved.timeoutMs).toBe(15_000);
+    expect(resolved.maxRetries).toBe(3);
+  });
+
+  it("resolves provider aliases and provider/model references from config", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".tentaclaw"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".tentaclaw", "provider.config.json"),
+      JSON.stringify(
+        {
+          currentProvider: "z.ai/glm-4.5-air",
+          providers: {
+            "zhipu": {
+              apiKey: "glm-test-key",
+              timeoutMs: 9_000
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const resolved = resolveProviderConfig(workspaceRoot);
+
+    expect(resolved.name).toBe("glm");
+    expect(resolved.model).toBe("glm-4.5-air");
+    expect(resolved.apiKey).toBe("glm-test-key");
+    expect(resolved.displayName).toBe("GLM");
+    expect(resolved.family).toBe("openai-compatible");
+    expect(resolved.transport).toBe("openai-compatible");
+    expect(resolved.timeoutMs).toBe(9_000);
+  });
+
   it("maps GLM tool calls into the unified provider response shape", async () => {
     const provider = new GlmProvider(createGlmConfig({
       apiKey: "glm-test-key",
@@ -191,6 +262,61 @@ describe("Provider integration", () => {
     expect(response.usage.totalTokens).toBe(33);
   });
 
+  it("maps OpenAI-compatible responses into the unified provider response shape", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "stop",
+                index: 0,
+                message: {
+                  content: "compatible text",
+                  role: "assistant"
+                }
+              }
+            ],
+            id: "resp-compat-1",
+            model: "kimi-k2",
+            usage: {
+              completion_tokens: 9,
+              prompt_tokens: 12,
+              total_tokens: 21
+            }
+          }),
+          {
+            status: 200
+          }
+        )
+      )
+    );
+
+    const response = await provider.generate(createProviderInput());
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("compatible text");
+    expect(response.metadata?.providerName).toBe("openai-compatible");
+    expect(response.metadata?.modelName).toBe("kimi-k2");
+  });
+
   it("maps provider failures into unified provider errors", async () => {
     const provider = new GlmProvider(createGlmConfig({
       apiKey: "glm-test-key",
@@ -250,10 +376,13 @@ describe("Provider integration", () => {
           baseUrl: `http://127.0.0.1:${address.port}/v4`,
           configPath: join(workspaceRoot, ".tentaclaw", "provider.config.json"),
           configSource: "env",
+          displayName: "GLM",
+          family: "openai-compatible",
           maxRetries: 1,
           model: "glm-4.5-air",
           name: "glm",
-          timeoutMs: 5_000
+          timeoutMs: 5_000,
+          transport: "openai-compatible"
         }
       }
     });

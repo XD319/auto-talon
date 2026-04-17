@@ -4,6 +4,7 @@ import {
   GlmProvider,
   ManagedProvider,
   MockProvider,
+  OpenAiCompatibleProvider,
   ProviderError,
   classifyProviderHttpError
 } from "../src/providers";
@@ -29,6 +30,7 @@ afterEach(() => {
 describe("Provider contract tests", () => {
   runProviderContractSuite("mock provider", createMockHarness());
   runProviderContractSuite("glm provider mapping", createGlmHarness());
+  runProviderContractSuite("openai-compatible provider mapping", createOpenAiCompatibleHarness());
 });
 
 describe("Provider runtime safeguards", () => {
@@ -338,6 +340,133 @@ function createGlmHarness(): ProviderContractHarness {
   };
 }
 
+function createOpenAiCompatibleHarness(): ProviderContractHarness {
+  return {
+    createAuthErrorProvider: () =>
+      managedOpenAiCompatible(jsonResponse({
+        error: {
+          message: "invalid api key",
+          type: "authentication_error"
+        }
+      }, 401)),
+    createEmptyProvider: () =>
+      managedOpenAiCompatible(jsonResponse({
+        choices: [
+          {
+            index: 0,
+            message: {
+              content: "",
+              role: "assistant"
+            }
+          }
+        ],
+        usage: {
+          completion_tokens: 0,
+          prompt_tokens: 1,
+          total_tokens: 1
+        }
+      })),
+    createMalformedResponseProvider: () =>
+      managedOpenAiCompatible(jsonResponse({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            index: 0,
+            message: {
+              content: "Need a tool.",
+              role: "assistant",
+              tool_calls: [
+                {
+                  function: {
+                    arguments: "{bad json",
+                    name: "file_read"
+                  },
+                  id: "call-1",
+                  type: "function"
+                }
+              ]
+            }
+          }
+        ],
+        usage: {
+          completion_tokens: 0,
+          prompt_tokens: 1,
+          total_tokens: 1
+        }
+      })),
+    createNetworkFailureProvider: (maxRetries = 0) =>
+      managedOpenAiCompatible(async () => {
+        throw new Error("socket hang up");
+      }, maxRetries),
+    createRateLimitProvider: (maxRetries = 0) =>
+      managedOpenAiCompatible(jsonResponse({
+        error: {
+          message: "too many requests",
+          type: "rate_limit_error"
+        }
+      }, 429), maxRetries),
+    createTextProvider: () =>
+      managedOpenAiCompatible(jsonResponse({
+        choices: [
+          {
+            finish_reason: "stop",
+            index: 0,
+            message: {
+              content: "compatible text",
+              role: "assistant"
+            }
+          }
+        ],
+        model: "kimi-k2",
+        usage: {
+          completion_tokens: 2,
+          prompt_tokens: 3,
+          total_tokens: 5
+        }
+      })),
+    createTimeoutProvider: (maxRetries = 0) =>
+      managedOpenAiCompatible(async () => {
+        throw new DOMException("timeout", "AbortError");
+      }, maxRetries),
+    createToolCallProvider: () =>
+      managedOpenAiCompatible(jsonResponse({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            index: 0,
+            message: {
+              content: "Need a tool.",
+              role: "assistant",
+              tool_calls: [
+                {
+                  function: {
+                    arguments: "{\"path\":\"README.md\",\"action\":\"read_file\"}",
+                    name: "file_read"
+                  },
+                  id: "call-1",
+                  type: "function"
+                }
+              ]
+            }
+          }
+        ],
+        model: "kimi-k2",
+        usage: {
+          completion_tokens: 2,
+          prompt_tokens: 3,
+          total_tokens: 5
+        }
+      })),
+    createUnavailableProvider: (maxRetries = 0) =>
+      managedOpenAiCompatible(jsonResponse({
+        error: {
+          message: "service unavailable",
+          type: "service_unavailable"
+        }
+      }, 503), maxRetries)
+  };
+}
+
 function managedMock(
   responder: (input: ProviderInput) => Promise<ProviderResponse> | ProviderResponse,
   maxRetries = 0
@@ -366,6 +495,34 @@ function managedGlm(
       name: "glm",
       timeoutMs: 5_000
     }),
+    { maxRetries } as Pick<ProviderConfig, "maxRetries">
+  );
+}
+
+function managedOpenAiCompatible(
+  fetchImpl: ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) | Response,
+  maxRetries = 0
+): Provider {
+  const implementation =
+    fetchImpl instanceof Response ? vi.fn(async () => fetchImpl.clone()) : vi.fn(fetchImpl);
+  vi.stubGlobal("fetch", implementation);
+
+  return new ManagedProvider(
+    new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    ),
     { maxRetries } as Pick<ProviderConfig, "maxRetries">
   );
 }

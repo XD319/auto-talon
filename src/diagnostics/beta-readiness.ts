@@ -24,7 +24,7 @@ export interface BetaReadinessReport {
 
 export interface BetaReadinessOptions {
   minimumSuccessRate?: number;
-  providerName?: "glm" | "mock" | "scripted-smoke";
+  providerName?: "glm" | "mock" | "openai-compatible" | "scripted-smoke";
 }
 
 export async function runBetaReadinessCheck(

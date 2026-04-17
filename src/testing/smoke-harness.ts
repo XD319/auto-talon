@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createApplication, createDefaultRunOptions, resolveAppConfig } from "../runtime";
+import { requireProviderManifest, type SupportedProviderName } from "../providers";
 import type {
   AgentProfileId,
   ApprovalRecord,
@@ -19,7 +20,7 @@ import { ScriptedSmokeProvider } from "./smoke-provider";
 export interface SmokeHarnessOptions {
   autoApprove?: boolean;
   fixturePath?: string;
-  providerName?: "glm" | "mock" | "scripted-smoke";
+  providerName?: SupportedProviderName | "scripted-smoke";
   taskIds?: string[];
 }
 
@@ -151,7 +152,7 @@ export async function runSmokeTask(
   taskFixture: SmokeTaskFixture,
   options: {
     autoApprove: boolean;
-    providerName: "glm" | "mock" | "scripted-smoke";
+    providerName: SupportedProviderName | "scripted-smoke";
   }
 ): Promise<SmokeTaskRunResult> {
   const workspaceRoot = await fs.mkdtemp(join(tmpdir(), `tentaclaw-smoke-${taskFixture.taskId}-`));
@@ -164,7 +165,9 @@ export async function runSmokeTask(
       databasePath: ":memory:",
       provider: {
         ...resolvedConfig.provider,
-        name: options.providerName === "scripted-smoke" ? "mock" : options.providerName
+        ...toResolvedProviderVariant(
+          options.providerName === "scripted-smoke" ? "mock" : options.providerName
+        )
       }
     }
   };
@@ -509,12 +512,26 @@ function selectFixtures(fixtures: SmokeTaskFixture[], taskIds: string[] | undefi
   return fixtures.filter((fixture) => requested.has(fixture.taskId));
 }
 
-function createHarnessProvider(providerName: "glm" | "mock" | "scripted-smoke"): Provider | undefined {
+function createHarnessProvider(
+  providerName: SupportedProviderName | "scripted-smoke"
+): Provider | undefined {
   if (providerName === "scripted-smoke") {
     return new ScriptedSmokeProvider();
   }
 
   return undefined;
+}
+
+function toResolvedProviderVariant(
+  providerName: SupportedProviderName
+): Pick<ReturnType<typeof resolveAppConfig>["provider"], "displayName" | "family" | "name" | "transport"> {
+  const manifest = requireProviderManifest(providerName);
+  return {
+    displayName: manifest.displayName,
+    family: manifest.family,
+    name: providerName,
+    transport: manifest.transport
+  };
 }
 
 function summarizeTrace(trace: TraceEvent[]): string[] {

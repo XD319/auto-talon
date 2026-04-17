@@ -269,13 +269,13 @@ async function main(): Promise<void> {
 
   evalCommand
     .command("run")
-    .option("--provider <provider>", "Provider to use: scripted-smoke | mock | glm", "scripted-smoke")
+    .option("--provider <provider>", "Provider to use: scripted-smoke | mock | glm | openai-compatible", "scripted-smoke")
     .option("--tasks <taskIds>", "Comma-separated task ids")
     .option("--fixture <path>", "Custom fixture file path")
     .action(
       async (commandOptions: {
         fixture?: string;
-        provider: "glm" | "mock" | "scripted-smoke";
+        provider: "glm" | "mock" | "openai-compatible" | "scripted-smoke";
         tasks?: string;
       }) => {
         const report = await runEvalReport({
@@ -295,12 +295,12 @@ async function main(): Promise<void> {
 
   evalCommand
     .command("beta")
-    .option("--provider <provider>", "Provider to use for sample eval: scripted-smoke | mock | glm", "scripted-smoke")
+    .option("--provider <provider>", "Provider to use for sample eval: scripted-smoke | mock | glm | openai-compatible", "scripted-smoke")
     .option("--min-success-rate <number>", "Minimum acceptable task success rate", "0.8")
     .action(
       async (commandOptions: {
         minSuccessRate: string;
-        provider: "glm" | "mock" | "scripted-smoke";
+        provider: "glm" | "mock" | "openai-compatible" | "scripted-smoke";
       }) => {
         const report = await runBetaReadinessCheck({
           minimumSuccessRate: Number(commandOptions.minSuccessRate),
@@ -315,7 +315,7 @@ async function main(): Promise<void> {
 
   smokeCommand
     .command("run")
-    .option("--provider <provider>", "Provider to use: scripted-smoke | mock | glm", "scripted-smoke")
+    .option("--provider <provider>", "Provider to use: scripted-smoke | mock | glm | openai-compatible", "scripted-smoke")
     .option("--tasks <taskIds>", "Comma-separated smoke task ids")
     .option("--fixture <path>", "Custom fixture file path")
     .option("--no-auto-approve", "Do not auto-resolve approvals during smoke runs")
@@ -323,7 +323,7 @@ async function main(): Promise<void> {
       async (commandOptions: {
         autoApprove: boolean;
         fixture?: string;
-        provider: "glm" | "mock" | "scripted-smoke";
+        provider: "glm" | "mock" | "openai-compatible" | "scripted-smoke";
         tasks?: string;
       }) => {
         const report = await runSmokeSuite({

@@ -29,7 +29,7 @@ export interface EvalReport {
 
 export interface EvalOptions {
   fixturePath?: string;
-  providerName?: "glm" | "mock" | "scripted-smoke";
+  providerName?: "glm" | "mock" | "openai-compatible" | "scripted-smoke";
   taskIds?: string[];
 }
 

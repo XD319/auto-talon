@@ -2,10 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import type { JsonObject, ProviderConfig } from "../types";
-
-export const SUPPORTED_PROVIDER_NAMES = ["mock", "glm"] as const;
-
-export type SupportedProviderName = (typeof SUPPORTED_PROVIDER_NAMES)[number];
+import {
+  type ProviderCatalogEntry,
+  type ProviderTransportKind,
+  type SupportedProviderName,
+  normalizeProviderName,
+  parseProviderSelection,
+  resolveDefaultProviderSettings,
+  requireProviderManifest,
+  resolveProviderModel
+} from "./provider-registry";
 
 interface ProviderFileEntry extends JsonObject {
   apiKey?: string | null;
@@ -20,60 +26,23 @@ interface ProviderConfigFile extends JsonObject {
   providers?: Record<string, ProviderFileEntry>;
 }
 
-export interface ProviderCatalogEntry {
-  displayName: string;
-  name: SupportedProviderName;
-  supportsConfiguration: boolean;
-  supportsStreaming: boolean;
-  supportsToolCalls: boolean;
-}
-
 export interface ResolvedProviderConfig extends ProviderConfig {
   configPath: string;
   configSource: "defaults" | "env" | "file";
+  displayName: string;
+  family: ProviderTransportKind;
+  transport: ProviderTransportKind;
 }
-
-const DEFAULT_PROVIDER_SETTINGS: Record<SupportedProviderName, Omit<ProviderConfig, "name">> = {
-  glm: {
-    apiKey: null,
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    maxRetries: 2,
-    model: "glm-4.5-air",
-    timeoutMs: 30_000
-  },
-  mock: {
-    apiKey: null,
-    baseUrl: null,
-    maxRetries: 0,
-    model: "mock-default",
-    timeoutMs: 5_000
-  }
-};
-
-export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
-  {
-    displayName: "Mock Provider",
-    name: "mock",
-    supportsConfiguration: true,
-    supportsStreaming: false,
-    supportsToolCalls: true
-  },
-  {
-    displayName: "GLM",
-    name: "glm",
-    supportsConfiguration: true,
-    supportsStreaming: true,
-    supportsToolCalls: true
-  }
-];
 
 export function resolveProviderConfig(cwd = process.cwd()): ResolvedProviderConfig {
   const configPath = join(resolve(cwd), ".tentaclaw", "provider.config.json");
   const fileConfig = loadProviderConfigFile(configPath);
-  const configuredName = normalizeProviderName(
-    process.env.AGENT_PROVIDER ?? fileConfig.currentProvider ?? "mock"
+  const providerEntries = normalizeProviderEntries(fileConfig.providers);
+  const providerSelection = parseProviderSelection(
+    process.env.AGENT_PROVIDER ?? fileConfig.currentProvider
   );
-  const fileEntry = fileConfig.providers?.[configuredName];
+  const configuredName = providerSelection.providerName ?? "mock";
+  const fileEntry = providerEntries[configuredName];
 
   let configSource: ResolvedProviderConfig["configSource"] = "defaults";
   if (fileConfig.currentProvider !== undefined || fileEntry !== undefined) {
@@ -91,7 +60,12 @@ export function resolveProviderConfig(cwd = process.cwd()): ResolvedProviderConf
     configSource = "env";
   }
 
-  const defaults = DEFAULT_PROVIDER_SETTINGS[configuredName];
+  const manifest = requireProviderManifest(configuredName);
+  const defaults = resolveDefaultProviderSettings(configuredName);
+  const model = resolveProviderModel(
+    configuredName,
+    process.env.AGENT_PROVIDER_MODEL ?? fileEntry?.model ?? providerSelection.modelName ?? defaults.model
+  );
 
   return {
     apiKey: normalizeNullableString(
@@ -106,14 +80,15 @@ export function resolveProviderConfig(cwd = process.cwd()): ResolvedProviderConf
       process.env.AGENT_PROVIDER_MAX_RETRIES ?? fileEntry?.maxRetries,
       defaults.maxRetries
     ),
-    model: normalizeNullableString(
-      process.env.AGENT_PROVIDER_MODEL ?? fileEntry?.model ?? defaults.model
-    ),
+    model,
     name: configuredName,
+    displayName: manifest.displayName,
+    family: manifest.family,
     timeoutMs: normalizePositiveNumber(
       process.env.AGENT_PROVIDER_TIMEOUT_MS ?? fileEntry?.timeoutMs,
       defaults.timeoutMs
-    )
+    ),
+    transport: manifest.transport
   };
 }
 
@@ -143,9 +118,28 @@ function loadProviderConfigFile(configPath: string): ProviderConfigFile {
   return parsed;
 }
 
-function normalizeProviderName(name: string): SupportedProviderName {
-  const normalized = name.trim().toLowerCase();
-  return normalized === "glm" ? "glm" : "mock";
+function normalizeProviderEntries(
+  providers: Record<string, ProviderFileEntry> | undefined
+): Partial<Record<SupportedProviderName, ProviderFileEntry>> {
+  if (providers === undefined) {
+    return {};
+  }
+
+  return Object.entries(providers).reduce<Partial<Record<SupportedProviderName, ProviderFileEntry>>>(
+    (entries, [key, value]) => {
+      const normalized = normalizeProviderName(key);
+      if (normalized === null) {
+        return entries;
+      }
+
+      entries[normalized] = {
+        ...(entries[normalized] ?? {}),
+        ...value
+      };
+      return entries;
+    },
+    {}
+  );
 }
 
 function normalizeNullableString(value: string | null | undefined): string | null {

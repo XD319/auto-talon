@@ -1,6 +1,7 @@
 import { ProviderError } from "../providers";
 import { MockProvider } from "../providers/mock-provider";
 import { createApplication, createDefaultRunOptions, resolveAppConfig } from "../runtime";
+import { requireProviderManifest } from "../providers";
 import type {
   ApprovalRecord,
   AuditLogRecord,
@@ -123,6 +124,7 @@ export async function replayTaskById(
       providerMode === "mock"
         ? createReplayMockProvider(reference)
         : undefined;
+    const mockManifest = requireProviderManifest("mock");
     const replayHandle =
       provider === undefined
         ? createApplication(reference.task.cwd)
@@ -130,8 +132,11 @@ export async function replayTaskById(
             config: {
               provider: {
                 ...appConfig.provider,
+                displayName: mockManifest.displayName,
+                family: mockManifest.family,
                 model: "replay-mock",
-                name: "mock"
+                name: "mock",
+                transport: mockManifest.transport
               }
             },
             provider

@@ -206,6 +206,9 @@ Current real provider support:
 - `glm`
   - integrated through the runtime's unified `Provider` interface
   - uses an OpenAI-compatible HTTP contract behind the provider boundary
+- `openai-compatible`
+  - generic OpenAI-compatible HTTP provider for vendors that expose `chat/completions` and `/models`
+  - intended for providers such as Kimi / MiniMax / DeepSeek style compatible gateways when their API surface matches
 - `mock`
   - remains available for local development and deterministic tests
 
@@ -238,6 +241,13 @@ Example config file:
       "timeoutMs": 30000,
       "maxRetries": 2
     },
+    "openai-compatible": {
+      "apiKey": "your-api-key",
+      "baseUrl": "https://your-compatible-provider.example/v1",
+      "model": "your-model-id",
+      "timeoutMs": 30000,
+      "maxRetries": 2
+    },
     "mock": {
       "model": "mock-default"
     }
@@ -249,6 +259,7 @@ Switching providers:
 
 - use `AGENT_PROVIDER=mock` for the mock provider
 - use `AGENT_PROVIDER=glm` for the real GLM provider
+- use `AGENT_PROVIDER=openai-compatible` for OpenAI-compatible vendors
 - confirm the active selection with `agent provider current`
 - verify connectivity with `agent provider test`
 - run `agent config doctor` for a broader environment and provider check
