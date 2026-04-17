@@ -31,13 +31,22 @@ export interface SmokeTraceCheckResult {
 
 export interface SmokeTaskRunResult {
   approvalsTriggered: number;
+  auditLogCount: number;
   durationMs: number;
   failureReason: string | null;
   keyTraceSummary: string[];
+  memoryLeakDetected: boolean;
+  modelName: string | null;
   output: string | null;
   success: boolean;
   taskFixture: SmokeTaskFixture;
   taskId: string;
+  tokenUsage: {
+    cachedInputTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
   totalRounds: number;
   traceChecks: SmokeTraceCheckResult[];
   traceEventCount: number;
@@ -50,6 +59,7 @@ export interface SmokeSuiteReport {
   averageRounds: number;
   failureReasons: Record<string, number>;
   failedCount: number;
+  modelName: string | null;
   providerName: string;
   results: SmokeTaskRunResult[];
   succeededCount: number;
@@ -98,6 +108,7 @@ export async function runSmokeSuite(options: SmokeHarnessOptions = {}): Promise<
     averageRounds: average(results.map((result) => result.totalRounds)),
     failedCount,
     failureReasons,
+    modelName: results.find((result) => result.modelName !== null)?.modelName ?? null,
     providerName,
     results,
     succeededCount,
@@ -109,6 +120,7 @@ export async function runSmokeSuite(options: SmokeHarnessOptions = {}): Promise<
 export function formatSmokeSuiteReport(report: SmokeSuiteReport): string {
   const lines = [
     `Provider: ${report.providerName}`,
+    `Model: ${report.modelName ?? "-"}`,
     `Total tasks: ${report.taskCount}`,
     `Succeeded: ${report.succeededCount}`,
     `Failed: ${report.failedCount}`,
@@ -181,13 +193,17 @@ export async function runSmokeTask(
 
     return {
       approvalsTriggered: snapshot.approvals.length,
+      auditLogCount: snapshot.auditLogs.length,
       durationMs: computeDuration(snapshot.task),
       failureReason: evaluation.failureReason,
       keyTraceSummary: summarizeTrace(snapshot.trace),
+      memoryLeakDetected: detectRestrictedMemoryLeak(snapshot.trace),
+      modelName: detectModelName(snapshot.trace),
       output: snapshot.output,
       success: evaluation.success,
       taskFixture,
       taskId: snapshot.task.taskId,
+      tokenUsage: computeTokenUsage(snapshot.trace),
       totalRounds: snapshot.task.currentIteration,
       traceChecks: evaluation.traceChecks,
       traceEventCount: snapshot.trace.length,
@@ -550,6 +566,59 @@ function computeToolCallSuccessRate(toolCalls: ToolCallRecord[]): number {
 
   const finishedCount = toolCalls.filter((toolCall) => toolCall.status === "finished").length;
   return finishedCount / toolCalls.length;
+}
+
+function computeTokenUsage(trace: TraceEvent[]): {
+  cachedInputTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+} {
+  return trace.reduce(
+    (accumulator, event) => {
+      if (event.eventType !== "provider_request_succeeded") {
+        return accumulator;
+      }
+
+      const usage = event.payload.usage;
+      const inputTokens = typeof usage?.inputTokens === "number" ? usage.inputTokens : 0;
+      const outputTokens = typeof usage?.outputTokens === "number" ? usage.outputTokens : 0;
+      const totalTokens =
+        typeof usage?.totalTokens === "number" ? usage.totalTokens : inputTokens + outputTokens;
+      const cachedInputTokens =
+        typeof usage?.cachedInputTokens === "number" ? usage.cachedInputTokens : 0;
+
+      return {
+        cachedInputTokens: accumulator.cachedInputTokens + cachedInputTokens,
+        inputTokens: accumulator.inputTokens + inputTokens,
+        outputTokens: accumulator.outputTokens + outputTokens,
+        totalTokens: accumulator.totalTokens + totalTokens
+      };
+    },
+    {
+      cachedInputTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0
+    }
+  );
+}
+
+function detectModelName(trace: TraceEvent[]): string | null {
+  const event = [...trace]
+    .reverse()
+    .find((item) => item.eventType === "provider_request_succeeded");
+  return event?.eventType === "provider_request_succeeded" ? event.payload.modelName : null;
+}
+
+function detectRestrictedMemoryLeak(trace: TraceEvent[]): boolean {
+  return trace.some(
+    (event) =>
+      event.eventType === "memory_recalled" &&
+      event.payload.entries.some(
+        (entry) => entry.privacyLevel === "restricted" && entry.selected
+      )
+  );
 }
 
 function classifyFailure(errorCode: RuntimeErrorCode | null): string {

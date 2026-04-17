@@ -1,4 +1,5 @@
 import type { AgentDoctorReport, ContextTraceDebugReport } from "../runtime";
+import type { BetaReadinessReport, EvalReport, ReplayRunResult } from "../diagnostics";
 import type {
   ApprovalRecord,
   AuditLogRecord,
@@ -314,4 +315,77 @@ function formatTernary(value: boolean | null): string {
   }
 
   return value ? "yes" : "no";
+}
+
+export function formatEvalReport(report: EvalReport): string {
+  const typicalFailures =
+    report.typicalFailures.length === 0
+      ? "none"
+      : report.typicalFailures
+          .map(
+            (failure) =>
+              `${failure.taskFixtureId}(${failure.taskId}):${failure.failureReason}`
+          )
+          .join(", ");
+
+  return [
+    `Provider: ${report.providerName}`,
+    `Model: ${report.modelName ?? "-"}`,
+    `Total tasks: ${report.taskCount}`,
+    `Success rate: ${(report.successRate * 100).toFixed(1)}%`,
+    `Average duration: ${report.averageDurationMs.toFixed(1)}ms`,
+    `Average rounds: ${report.averageRounds.toFixed(2)}`,
+    report.tokenUsage.available
+      ? `Token usage: total=${report.tokenUsage.totalTokens} input=${report.tokenUsage.totalInputTokens} output=${report.tokenUsage.totalOutputTokens} avgTotal=${report.tokenUsage.averageTotalTokens.toFixed(1)}`
+      : "Token usage: unavailable",
+    `Failure reasons: ${formatFailureReasons(report.failureReasonDistribution)}`,
+    `Typical failed tasks: ${typicalFailures}`
+  ].join("\n");
+}
+
+export function formatReplayReport(report: ReplayRunResult): string {
+  const iterationLines = report.reference.iterationSummaries.map(
+    (summary) =>
+      `- iter=${summary.iteration} kind=${summary.modelResponseKind} tools=${summary.toolNames.join(",") || "-"} providerError=${summary.providerErrorCategory ?? "-"} final=${summary.finalOutcomeStatus}`
+  );
+  const toolLines =
+    report.reference.toolCalls.length === 0
+      ? ["- none"]
+      : report.reference.toolCalls.map(
+          (toolCall) =>
+            `- iter=${toolCall.iteration} ${toolCall.toolName} ${toolCall.status} ${toolCall.summary ?? toolCall.errorMessage ?? ""}`.trim()
+        );
+
+  return [
+    `Original task: ${report.reference.task.taskId}`,
+    `Replay task: ${report.replayTask.taskId}`,
+    `Provider mode: ${report.providerMode}`,
+    `Original provider: ${report.reference.task.providerName}`,
+    `Replay status: ${report.replayTask.status}`,
+    `Replay from iteration: ${report.reference.fromIteration}`,
+    `Diagnosis: ${report.reference.diagnosis.category} | ${report.reference.diagnosis.rationale}`,
+    `Historical tool references:`,
+    ...toolLines,
+    `Historical iteration chain:`,
+    ...iterationLines
+  ].join("\n");
+}
+
+export function formatBetaReadinessReport(report: BetaReadinessReport): string {
+  return [
+    `Generated at: ${report.generatedAt}`,
+    `Overall: ${report.allPassed ? "pass" : "needs work"}`,
+    ...report.checklist.map(
+      (item) => `- ${item.ok ? "PASS" : "FAIL"} ${item.id} | ${item.title} | ${item.details}`
+    )
+  ].join("\n");
+}
+
+function formatFailureReasons(failureReasons: Record<string, number>): string {
+  const entries = Object.entries(failureReasons);
+  if (entries.length === 0) {
+    return "none";
+  }
+
+  return entries.map(([reason, count]) => `${reason}:${count}`).join(", ");
 }

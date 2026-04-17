@@ -2,6 +2,7 @@
 import { Command } from "commander";
 
 import { startLocalWebhookGateway } from "../gateway";
+import { replayTaskById, runBetaReadinessCheck, runEvalReport } from "../diagnostics";
 import { createApplication, createDefaultRunOptions } from "../runtime";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing";
 import { startTui } from "../tui";
@@ -9,13 +10,16 @@ import { startTui } from "../tui";
 import {
   formatApprovalList,
   formatAuditLog,
+  formatBetaReadinessReport,
   formatCurrentProvider,
   formatDoctorReport,
+  formatEvalReport,
   formatMemoryList,
   formatMemoryScope,
   formatProviderCatalog,
   formatProviderHealth,
   formatProviderStats,
+  formatReplayReport,
   formatRunError,
   formatSnapshot,
   formatTask,
@@ -233,6 +237,81 @@ async function main(): Promise<void> {
   });
 
   const smokeCommand = program.command("smoke").description("Run fixed runtime smoke tasks");
+
+  program
+    .command("replay")
+    .argument("<task_id>", "Task identifier")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .option("--from-iteration <number>", "Replay starting from this iteration", "1")
+    .option("--provider <mode>", "Replay provider mode: current | mock", "current")
+    .action(
+      async (
+        taskId: string,
+        commandOptions: {
+          cwd: string;
+          fromIteration: string;
+          provider: "current" | "mock";
+        }
+      ) => {
+        const report = await replayTaskById(taskId, {
+          cwd: commandOptions.cwd,
+          fromIteration: Number(commandOptions.fromIteration),
+          providerMode: commandOptions.provider
+        });
+        console.log(formatReplayReport(report));
+        if (report.replayTask.status === "failed" || report.replayTask.status === "cancelled") {
+          process.exitCode = 1;
+        }
+      }
+    );
+
+  const evalCommand = program.command("eval").description("Run minimal eval and beta readiness checks");
+
+  evalCommand
+    .command("run")
+    .option("--provider <provider>", "Provider to use: scripted-smoke | mock | glm", "scripted-smoke")
+    .option("--tasks <taskIds>", "Comma-separated task ids")
+    .option("--fixture <path>", "Custom fixture file path")
+    .action(
+      async (commandOptions: {
+        fixture?: string;
+        provider: "glm" | "mock" | "scripted-smoke";
+        tasks?: string;
+      }) => {
+        const report = await runEvalReport({
+          ...(commandOptions.fixture !== undefined
+            ? { fixturePath: commandOptions.fixture }
+            : {}),
+          providerName: commandOptions.provider,
+          taskIds:
+            commandOptions.tasks?.split(",").map((value) => value.trim()).filter(Boolean) ?? []
+        });
+        console.log(formatEvalReport(report));
+        if (report.successRate < 1) {
+          process.exitCode = 1;
+        }
+      }
+    );
+
+  evalCommand
+    .command("beta")
+    .option("--provider <provider>", "Provider to use for sample eval: scripted-smoke | mock | glm", "scripted-smoke")
+    .option("--min-success-rate <number>", "Minimum acceptable task success rate", "0.8")
+    .action(
+      async (commandOptions: {
+        minSuccessRate: string;
+        provider: "glm" | "mock" | "scripted-smoke";
+      }) => {
+        const report = await runBetaReadinessCheck({
+          minimumSuccessRate: Number(commandOptions.minSuccessRate),
+          providerName: commandOptions.provider
+        });
+        console.log(formatBetaReadinessReport(report));
+        if (!report.allPassed) {
+          process.exitCode = 1;
+        }
+      }
+    );
 
   smokeCommand
     .command("run")
