@@ -3,6 +3,7 @@ import { Command } from "commander";
 
 import { startLocalWebhookGateway } from "../gateway";
 import { createApplication, createDefaultRunOptions } from "../runtime";
+import { formatSmokeSuiteReport, runSmokeSuite } from "../testing";
 import { startTui } from "../tui";
 
 import {
@@ -212,6 +213,37 @@ async function main(): Promise<void> {
       handle.close();
     }
   });
+
+  const smokeCommand = program.command("smoke").description("Run fixed runtime smoke tasks");
+
+  smokeCommand
+    .command("run")
+    .option("--provider <provider>", "Provider to use: scripted-smoke | mock | glm", "scripted-smoke")
+    .option("--tasks <taskIds>", "Comma-separated smoke task ids")
+    .option("--fixture <path>", "Custom fixture file path")
+    .option("--no-auto-approve", "Do not auto-resolve approvals during smoke runs")
+    .action(
+      async (commandOptions: {
+        autoApprove: boolean;
+        fixture?: string;
+        provider: "glm" | "mock" | "scripted-smoke";
+        tasks?: string;
+      }) => {
+        const report = await runSmokeSuite({
+          autoApprove: commandOptions.autoApprove,
+          ...(commandOptions.fixture !== undefined
+            ? { fixturePath: commandOptions.fixture }
+            : {}),
+          providerName: commandOptions.provider,
+          taskIds:
+            commandOptions.tasks?.split(",").map((value) => value.trim()).filter(Boolean) ?? []
+        });
+        console.log(formatSmokeSuiteReport(report));
+        if (report.failedCount > 0) {
+          process.exitCode = 1;
+        }
+      }
+    );
 
   const memoryCommand = program.command("memory").description("Inspect governed memories");
 

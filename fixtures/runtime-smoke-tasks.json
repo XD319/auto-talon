@@ -1,0 +1,280 @@
+[
+  {
+    "taskId": "single_read_project_summary",
+    "scriptId": "single_read_project_summary",
+    "title": "读取项目文件并总结",
+    "category": "single_step_productivity",
+    "input": "读取 README.md 和 package.json，给出一段简洁的项目总结。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "读取 README.md 和 package.json",
+      "输出项目用途、运行方式或主要脚本的总结"
+    ],
+    "acceptableResult": [
+      "输出非空",
+      "提到 README 或 package.json 中至少一个关键事实",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": false,
+      "expectApproval": false,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "single_generate_file",
+    "scriptId": "single_generate_file",
+    "title": "生成一个新文件",
+    "category": "single_step_productivity",
+    "input": "生成 docs/generated/release-note.md，内容是一段简短的发布说明。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "创建一个新文件",
+      "在审批通过后完成写入",
+      "输出说明文件已创建"
+    ],
+    "acceptableResult": [
+      "docs/generated/release-note.md 存在",
+      "文件内容包含 release note",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": false,
+      "expectApproval": true,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "single_update_config",
+    "scriptId": "single_update_config",
+    "title": "修改一个简单配置文件",
+    "category": "single_step_productivity",
+    "input": "把 config/app.json 里的 featureFlag 从 false 改成 true。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "读取或直接修改配置文件",
+      "通过审批后完成配置更新",
+      "输出修改后的结果说明"
+    ],
+    "acceptableResult": [
+      "config/app.json 中包含 \"featureFlag\": true",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": false,
+      "expectApproval": true,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "single_run_shell",
+    "scriptId": "single_run_shell",
+    "title": "执行一个受限 shell 命令并解释输出",
+    "category": "single_step_productivity",
+    "input": "执行 whoami，并解释这条输出代表什么。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "调用受限 shell 命令 whoami",
+      "在审批通过后执行命令",
+      "解释 stdout 的含义"
+    ],
+    "acceptableResult": [
+      "输出非空",
+      "提到当前用户或执行身份",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": false,
+      "expectApproval": true,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "multi_read_then_plan_write",
+    "scriptId": "multi_read_then_plan_write",
+    "title": "读取多个文件后决定修改方案",
+    "category": "multi_turn_execution",
+    "input": "先读取 README.md、package.json 和 config/app.json，再写一份 docs/runtime-overview.md 总结。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "先读取多个文件",
+      "根据读取内容决定写入概要文件",
+      "最后输出完成总结"
+    ],
+    "acceptableResult": [
+      "docs/runtime-overview.md 存在",
+      "任务轮数大于等于 2",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": true,
+      "expectApproval": true,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "multi_write_then_verify",
+    "scriptId": "multi_write_then_verify",
+    "title": "修改后运行验证",
+    "category": "multi_turn_execution",
+    "input": "创建 config/feature.flag.json，然后再读取它，确认内容已经落盘。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "先创建文件",
+      "再读取文件验证内容",
+      "最后输出验证通过"
+    ],
+    "acceptableResult": [
+      "config/feature.flag.json 存在",
+      "最终输出提到 verify 或确认",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": true,
+      "expectApproval": true,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "multi_fix_after_failed_verification",
+    "scriptId": "multi_fix_after_failed_verification",
+    "title": "验证失败后进行一次修正",
+    "category": "multi_turn_execution",
+    "input": "先写入一个 FAIL 状态文件，运行命令检查；如果失败就修正为 PASS，再复查并总结。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "先写入初始文件",
+      "运行命令检查失败状态",
+      "进行一次修正并再次检查",
+      "最后输出修复结果"
+    ],
+    "acceptableResult": [
+      "config/verification.txt 最终包含 PASS",
+      "任务轮数大于等于 4",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": true,
+      "expectApproval": true,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "multi_search_patch_verify",
+    "scriptId": "multi_search_patch_verify",
+    "title": "搜索、修改并验证",
+    "category": "multi_turn_execution",
+    "input": "在 src 中搜索 TODO，修掉 src/app.ts 的 TODO 标记，然后读取文件确认。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "先搜索 TODO",
+      "修改目标文件",
+      "再次读取确认修改已生效"
+    ],
+    "acceptableResult": [
+      "src/app.ts 中不再包含 TODO: clean up bootstrap",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": true,
+      "expectApproval": true,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "long_cross_file_review_with_compact",
+    "scriptId": "long_cross_file_review_with_compact",
+    "title": "跨多个文件分析并触发 session compact",
+    "category": "long_context_execution",
+    "input": "以 reviewer 视角连续读取多个文件，给出一份复核结论。",
+    "profile": "reviewer",
+    "expectedBehavior": [
+      "跨多个文件持续分析",
+      "在长对话中触发 session compact",
+      "最终给出复核结论"
+    ],
+    "acceptableResult": [
+      "任务轮数大于等于 5",
+      "trace 中出现 session_compacted",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": true,
+      "mustSummarizeToolResults": true,
+      "mustExplainContinuation": true,
+      "expectApproval": false,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": true,
+      "expectSessionCompact": true
+    }
+  },
+  {
+    "taskId": "long_memory_recall_followup",
+    "scriptId": "long_memory_recall_followup",
+    "title": "带 project memory recall 的延续任务",
+    "category": "long_context_execution",
+    "input": "继续这个项目，回忆之前保存的 smoke verification 建议并给出后续行动。",
+    "profile": "executor",
+    "expectedBehavior": [
+      "触发 project memory recall",
+      "基于 recall 内容给出延续建议",
+      "输出最终行动建议"
+    ],
+    "acceptableResult": [
+      "trace 中出现 memory_recalled 且至少选中一条 memory",
+      "最终输出提到 recall 到的建议",
+      "任务成功结束"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": false,
+      "mustSummarizeToolResults": false,
+      "mustExplainContinuation": false,
+      "expectApproval": false,
+      "expectMemoryRecall": true,
+      "expectPolicyTrace": false,
+      "expectSessionCompact": false
+    }
+  }
+]
