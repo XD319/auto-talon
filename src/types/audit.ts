@@ -1,6 +1,8 @@
 import type { JsonObject } from "./common";
 
 export const AUDIT_ACTIONS = [
+  "gateway_capability_degraded",
+  "gateway_request",
   "approval_requested",
   "approval_resolved",
   "file_write",

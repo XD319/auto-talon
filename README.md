@@ -1,11 +1,15 @@
-# Tentaclaw Phase 4
+# Tentaclaw Phase 5
 
-Tentaclaw is an Agent Runtime MVP focused on a CLI-first, governance-friendly execution kernel. Phase 4 keeps the same runtime core and adds an Ink-based terminal UI so tasks, approvals, diffs, trace, memory hits, and failure states can be observed and governed without introducing a web UI.
+Tentaclaw is an Agent Runtime MVP focused on a CLI-first, governance-friendly execution kernel. Phase 5 keeps the same runtime core, retains the Ink terminal UI, and adds a dedicated Gateway / Adapter layer so external entrypoints can be attached without leaking platform logic into runtime, memory, policy, tools, or repositories.
 
-## Phase 4 Capabilities
+## Phase 5 Capabilities
 
 - TypeScript strict-mode Node.js runtime with a thin CLI entry.
 - Ink-based TUI with panel navigation and timed refresh.
+- Gateway / Adapter abstraction with explicit lifecycle, capability declaration, session mapping, and identity mapping.
+- Local webhook adapter as the first non-CLI/TUI external entrypoint.
+- Adapter-aware trace and audit source attribution.
+- Capability downgrade notices instead of silent platform mismatch failures.
 - Single-agent execution kernel with provider abstraction and a built-in `MockProvider`.
 - Shared runtime skeleton for `planner`, `executor`, and `reviewer` profiles.
 - Memory plane with typed `session`, `project`, and `agent` scopes.
@@ -29,6 +33,7 @@ Tentaclaw is an Agent Runtime MVP focused on a CLI-first, governance-friendly ex
 
 ```text
 src/
+  gateway/
   approvals/
   audit/
   agents/
@@ -62,6 +67,7 @@ corepack pnpm dev task list
 corepack pnpm dev task show <task_id>
 corepack pnpm dev trace <task_id>
 corepack pnpm dev audit <task_id>
+corepack pnpm dev gateway serve-webhook --port 7070
 corepack pnpm dev approve pending
 corepack pnpm dev approve allow <approval_id>
 corepack pnpm dev approve deny <approval_id>
@@ -73,6 +79,30 @@ corepack pnpm dev memory review <memory_id> verified
 ```
 
 After building, the compiled CLI entry is `dist/cli/index.js` and the binary name is `agent`.
+
+## Local Webhook Adapter
+
+Phase 5 adds a minimal external HTTP entrypoint for boundary validation.
+
+Start it with:
+
+```bash
+corepack pnpm dev gateway serve-webhook --port 7070
+```
+
+Then use:
+
+```bash
+curl -X POST http://127.0.0.1:7070/tasks ^
+  -H "Content-Type: application/json" ^
+  -d "{\"taskInput\":\"summarize runtime status\",\"requester\":{\"externalSessionId\":\"local-session\",\"externalUserId\":\"local-user\",\"externalUserLabel\":\"Local User\"}}"
+```
+
+Available endpoints:
+
+- `POST /tasks`
+- `GET /tasks/:taskId`
+- `GET /tasks/:taskId/events`
 
 ## TUI Usage
 
@@ -129,6 +159,26 @@ TUI remains the observation and governance surface for:
 - reviewing trace, diff, memory-hit, and error summaries in one place
 
 The runtime core, storage, policy, memory, and tool orchestration logic still live outside the TUI. Ink components only render view models and invoke application-service actions.
+
+## Gateway And Adapter Responsibilities
+
+Gateway exists outside Runtime Core and is responsible for:
+
+- protocol adaptation
+- adapter capability declaration
+- capability downgrade handling
+- external identity to runtime identity mapping
+- external session to task mapping
+- trace and audit source stamping
+
+Adapters do not:
+
+- read or write memory directly
+- evaluate policy
+- invoke tools directly
+- access repositories directly
+
+They only enter the system through a unified gateway runtime API.
 
 ## Runtime Flow
 
@@ -263,7 +313,7 @@ CLI control surface:
 
 Trace is for replaying task execution. It captures the ordered decision chain of a run, including provider calls, policy decisions, approval events, sandbox outcomes, and tool execution milestones.
 
-Audit log is for governance inspection. It captures policy decisions, high-risk requests, approvals, sandbox enforcement, file writes, shell execution, web fetches, and rejection/failure events in a compliance-oriented view.
+Audit log is for governance inspection. It captures policy decisions, high-risk requests, approvals, sandbox enforcement, file writes, shell execution, web fetches, gateway source events, and rejection/failure events in a compliance-oriented view.
 
 Use:
 
@@ -286,10 +336,13 @@ This keeps reviewer behavior controlled without introducing multi-agent swarm lo
 - `web_fetch` is sandboxed behind an allowlist and defaults to `example.com` in the bootstrap config for the MVP.
 - Approval TTL defaults to 5 minutes and is configurable through bootstrap config.
 - The current TUI is intentionally lightweight: it is a read-heavy dashboard with approval actions, not a full task authoring environment.
+- The local webhook adapter is intentionally small and is not a Slack/Telegram/Discord replacement.
+- Phase 5 focuses on extension boundaries first; full chat-platform and MCP integrations are deferred until the adapter contract is proven.
 - Diff inspection is summary-first. It highlights risky change shapes but does not yet implement a full unified diff viewer.
 - TUI state refresh is polling-based for the MVP; there is no event-stream transport yet.
 - See [docs/phase2-governance.md](/D:/Backup/Career/Projects/AgentProject/tentaclaw/docs/phase2-governance.md) for the Phase 2 governance notes.
 - See [docs/phase3-memory.md](/D:/Backup/Career/Projects/AgentProject/tentaclaw/docs/phase3-memory.md) for the Phase 3 memory design.
+- See [docs/phase5-gateway.md](/D:/Backup/Career/Projects/AgentProject/tentaclaw/docs/phase5-gateway.md) for the Phase 5 gateway and adapter design.
 
 ## Development Commands
 

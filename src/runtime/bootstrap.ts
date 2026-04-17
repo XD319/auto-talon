@@ -42,7 +42,7 @@ export function resolveAppConfig(cwd = process.cwd()): AppConfig {
     defaultMaxIterations: 8,
     defaultProfileId: "executor",
     defaultTimeoutMs: 30_000,
-    runtimeVersion: "phase3",
+    runtimeVersion: "phase5",
     tokenBudget: {
       inputLimit: 8_000,
       outputLimit: 2_000,
@@ -57,6 +57,13 @@ export function resolveAppConfig(cwd = process.cwd()): AppConfig {
 export interface AppRuntimeHandle {
   close: () => void;
   config: AppConfig;
+  infrastructure: {
+    approvalService: ApprovalService;
+    auditService: AuditService;
+    createRunOptions: (taskInput: string, cwd: string) => RuntimeRunOptions;
+    traceService: TraceService;
+    storage: StorageManager;
+  };
   service: AgentApplicationService;
 }
 
@@ -128,32 +135,42 @@ export function createApplication(
     workspaceRoot: config.workspaceRoot
   });
 
+  const service = new AgentApplicationService({
+    databasePath: config.databasePath,
+    executionKernel,
+    findMemory: (memoryId) => storage.memories.findById(memoryId),
+    listApprovals: (taskId) => storage.approvals.listByTaskId(taskId),
+    listArtifacts: (taskId) => storage.artifacts.listByTaskId(taskId),
+    listAuditLogs: (taskId) => storage.auditLogs.listByTaskId(taskId),
+    listMemories: () => storage.memories.list({ includeExpired: true, includeRejected: true }),
+    listMemorySnapshots: (scope, scopeKey) => storage.memorySnapshots.listByScope(scope, scopeKey),
+    listPendingApprovals: () => approvalService.listPending(),
+    approvalService,
+    findTask: (taskId) => storage.tasks.findById(taskId),
+    listTasks: () => storage.tasks.list(),
+    listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
+    listTrace: (taskId) => storage.traces.listByTaskId(taskId),
+    updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
+    provider,
+    runtimeVersion: config.runtimeVersion,
+    traceService,
+    auditService,
+    memoryPlane,
+    workspaceRoot: config.workspaceRoot
+  });
+
   return {
     close: () => storage.close(),
     config,
-    service: new AgentApplicationService({
-      databasePath: config.databasePath,
-      executionKernel,
-      findMemory: (memoryId) => storage.memories.findById(memoryId),
-      listApprovals: (taskId) => storage.approvals.listByTaskId(taskId),
-      listArtifacts: (taskId) => storage.artifacts.listByTaskId(taskId),
-      listAuditLogs: (taskId) => storage.auditLogs.listByTaskId(taskId),
-      listMemories: () => storage.memories.list({ includeExpired: true, includeRejected: true }),
-      listMemorySnapshots: (scope, scopeKey) => storage.memorySnapshots.listByScope(scope, scopeKey),
-      listPendingApprovals: () => approvalService.listPending(),
+    infrastructure: {
       approvalService,
-      findTask: (taskId) => storage.tasks.findById(taskId),
-      listTasks: () => storage.tasks.list(),
-      listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
-      listTrace: (taskId) => storage.traces.listByTaskId(taskId),
-      updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
-      provider,
-      runtimeVersion: config.runtimeVersion,
-      traceService,
       auditService,
-      memoryPlane,
-      workspaceRoot: config.workspaceRoot
-    })
+      createRunOptions: (taskInput: string, cwdForRun: string) =>
+        createDefaultRunOptions(taskInput, cwdForRun, config),
+      storage,
+      traceService
+    },
+    service
   };
 }
 

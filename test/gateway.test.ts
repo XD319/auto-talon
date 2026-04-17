@@ -1,0 +1,354 @@
+import { once } from "node:events";
+import { promises as fs } from "node:fs";
+import { createServer } from "node:http";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { createGatewayRuntime, startLocalWebhookGateway } from "../src/gateway";
+import { createApplication } from "../src/runtime";
+import type { Provider, ProviderInput, ProviderResponse } from "../src/types";
+
+class ScriptedProvider implements Provider {
+  public readonly name = "gateway-scripted-provider";
+
+  public constructor(
+    private readonly responder: (input: ProviderInput) => Promise<ProviderResponse> | ProviderResponse
+  ) {}
+
+  public async generate(input: ProviderInput): Promise<ProviderResponse> {
+    return this.responder(input);
+  }
+}
+
+const tempPaths: string[] = [];
+
+afterEach(async () => {
+  while (tempPaths.length > 0) {
+    const tempPath = tempPaths.pop();
+    if (tempPath !== undefined) {
+      await fs.rm(tempPath, { force: true, recursive: true });
+    }
+  }
+});
+
+describe("Phase 5 gateway adapters", () => {
+  it("lets the local webhook adapter create a task and return the linked task id", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "gateway run completed",
+        usage: {
+          inputTokens: 10,
+          outputTokens: 3
+        }
+      }))
+    });
+
+    const port = await getFreePort();
+    const gatewayHandle = await startLocalWebhookGateway(handle, {
+      host: "127.0.0.1",
+      port
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/tasks`, {
+        body: JSON.stringify({
+          interactionRequirements: {
+            streamingCapability: "preferred"
+          },
+          requester: {
+            externalSessionId: "session-1",
+            externalUserId: "user-1",
+            externalUserLabel: "Local User"
+          },
+          taskInput: "say hi from gateway"
+        }),
+        headers: {
+          "Content-Type": "application/json"
+        },
+        method: "POST"
+      });
+
+      expect(response.ok).toBe(true);
+      const payload = (await response.json()) as {
+        result: { output: string | null; status: string; taskId: string };
+        sessionBinding: { adapterId: string; externalSessionId: string; runtimeUserId: string };
+      };
+
+      expect(payload.result.status).toBe("succeeded");
+      expect(payload.result.output).toBe("gateway run completed");
+      expect(payload.result.taskId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      );
+      expect(payload.sessionBinding.adapterId).toBe("local-webhook");
+      expect(payload.sessionBinding.externalSessionId).toBe("session-1");
+      expect(payload.sessionBinding.runtimeUserId).toBe("local-webhook:user-1");
+    } finally {
+      await gatewayHandle.manager.stopAll();
+      handle.close();
+    }
+  });
+
+  it("records adapter source in trace and audit", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "trace source check",
+        usage: {
+          inputTokens: 5,
+          outputTokens: 2
+        }
+      }))
+    });
+
+    try {
+      const gateway = createGatewayRuntime(handle);
+      const result = await gateway.submitTask(
+        {
+          adapterId: "sdk-local",
+          capabilities: {
+            approvalInteraction: { supported: false },
+            fileCapability: { supported: false },
+            streamingCapability: { supported: false },
+            structuredCardCapability: { supported: false },
+            textInteraction: { supported: true }
+          },
+          description: "Local SDK adapter",
+          displayName: "SDK Adapter",
+          kind: "sdk",
+          lifecycleState: "running"
+        },
+        {
+          requester: {
+            externalSessionId: "sdk-session",
+            externalUserId: "sdk-user",
+            externalUserLabel: null
+          },
+          taskInput: "check source propagation"
+        }
+      );
+
+      const trace = handle.service.traceTask(result.result.taskId);
+      const audit = handle.service.auditTask(result.result.taskId);
+
+      expect(
+        trace.some(
+          (event) =>
+            event.eventType === "gateway_request_received" &&
+            event.payload.adapterId === "sdk-local"
+        )
+      ).toBe(true);
+
+      expect(
+        audit.some(
+          (entry) =>
+            entry.action === "gateway_request" &&
+            entry.payload.adapterId === "sdk-local" &&
+            entry.payload.externalSessionId === "sdk-session"
+        )
+      ).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("surfaces capability degradation instead of silently failing", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createWaitingApprovalApplication(workspaceRoot);
+
+    try {
+      const gateway = createGatewayRuntime(handle);
+      const result = await gateway.submitTask(
+        {
+          adapterId: "sdk-no-approval",
+          capabilities: {
+            approvalInteraction: { supported: false, detail: "No inline approval flow." },
+            fileCapability: { supported: false },
+            streamingCapability: { supported: false, detail: "No SSE support." },
+            structuredCardCapability: { supported: false },
+            textInteraction: { supported: true }
+          },
+          description: "SDK adapter without advanced capabilities",
+          displayName: "SDK No Approval",
+          kind: "sdk",
+          lifecycleState: "running"
+        },
+        {
+          interactionRequirements: {
+            approvalInteraction: "required",
+            streamingCapability: "preferred",
+            structuredCardCapability: "preferred"
+          },
+          requester: {
+            externalSessionId: "sdk-session",
+            externalUserId: "sdk-user",
+            externalUserLabel: null
+          },
+          taskInput: "create governed file"
+        }
+      );
+
+      expect(result.result.status).toBe("waiting_approval");
+      expect(result.notices.map((notice) => notice.capability)).toContain("approvalInteraction");
+      expect(result.notices.map((notice) => notice.capability)).toContain("streamingCapability");
+
+      const snapshot = gateway.getTaskSnapshot(result.result.taskId);
+      expect(snapshot?.notices.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("keeps runtime free of adapter imports", async () => {
+    const runtimeSources = [
+      "../src/runtime/application-service.ts",
+      "../src/runtime/bootstrap.ts",
+      "../src/runtime/context-assembler.ts",
+      "../src/runtime/execution-kernel.ts",
+      "../src/runtime/index.ts",
+      "../src/runtime/serialization.ts"
+    ];
+
+    for (const runtimeSource of runtimeSources) {
+      const content = await fs.readFile(new URL(runtimeSource, import.meta.url), "utf8");
+      expect(content.includes("../gateway")).toBe(false);
+      expect(content.includes("./gateway")).toBe(false);
+      expect(content.includes("adapter")).toBe(false);
+    }
+  });
+
+  it("streams task history through the webhook event endpoint", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "history ready",
+        usage: {
+          inputTokens: 5,
+          outputTokens: 2
+        }
+      }))
+    });
+    const port = await getFreePort();
+    const gatewayHandle = await startLocalWebhookGateway(handle, {
+      host: "127.0.0.1",
+      port
+    });
+
+    try {
+      const createResponse = await fetch(`http://127.0.0.1:${port}/tasks`, {
+        body: JSON.stringify({
+          requester: {
+            externalSessionId: "stream-session",
+            externalUserId: "stream-user",
+            externalUserLabel: null
+          },
+          taskInput: "stream event history"
+        }),
+        headers: {
+          "Content-Type": "application/json"
+        },
+        method: "POST"
+      });
+      const created = (await createResponse.json()) as { result: { taskId: string } };
+
+      const eventsResponse = await fetch(
+        `http://127.0.0.1:${port}/tasks/${created.result.taskId}/events`
+      );
+      const body = await eventsResponse.text();
+
+      expect(eventsResponse.ok).toBe(true);
+      expect(body).toContain("\"kind\":\"trace\"");
+      expect(body).toContain("\"kind\":\"audit\"");
+    } finally {
+      await gatewayHandle.manager.stopAll();
+      handle.close();
+    }
+  });
+});
+
+function createWaitingApprovalApplication(workspaceRoot: string) {
+  return createApplication(workspaceRoot, {
+    config: {
+      databasePath: join(workspaceRoot, "runtime.db")
+    },
+    provider: new ScriptedProvider((input) => {
+      const toolMessages = input.messages.filter((message) => message.role === "tool");
+
+      if (toolMessages.length === 0) {
+        return {
+          kind: "tool_calls",
+          message: "Create the governed file.",
+          toolCalls: [
+            {
+              input: {
+                action: "write_file",
+                content: "phase-5-governed",
+                path: "governed.txt"
+              },
+              reason: "Persist the governed file after review.",
+              toolCallId: "governed-write",
+              toolName: "file_write"
+            }
+          ],
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5
+          }
+        };
+      }
+
+      return {
+        kind: "final",
+        message: "governed.txt created after approval",
+        usage: {
+          inputTokens: 4,
+          outputTokens: 4
+        }
+      };
+    })
+  });
+}
+
+async function createTempWorkspace(): Promise<string> {
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-phase5-"));
+  tempPaths.push(workspaceRoot);
+  return workspaceRoot;
+}
+
+async function getFreePort(): Promise<number> {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    server.close();
+    throw new Error("Failed to allocate an ephemeral port.");
+  }
+
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error !== undefined && error !== null) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+  return port;
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 
+import { startLocalWebhookGateway } from "../gateway";
 import { createApplication, createDefaultRunOptions } from "../runtime";
 import { startTui } from "../tui";
 
@@ -289,6 +290,39 @@ async function main(): Promise<void> {
     .option("--cwd <path>", "Workspace path", process.cwd())
     .action(async (commandOptions: { cwd: string }) => {
       await startTui(commandOptions.cwd);
+    });
+
+  program
+    .command("gateway")
+    .description("Run minimal external gateway adapters")
+    .command("serve-webhook")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .option("--host <host>", "Host to bind", "127.0.0.1")
+    .option("--port <port>", "Port to bind", "7070")
+    .action(async (commandOptions: { cwd: string; host: string; port: string }) => {
+      const handle = createApplication(commandOptions.cwd);
+      const gatewayHandle = await startLocalWebhookGateway(handle, {
+        host: commandOptions.host,
+        port: Number(commandOptions.port)
+      });
+
+      console.log(
+        `Local webhook adapter ${gatewayHandle.adapter.descriptor.adapterId} listening on http://${commandOptions.host}:${commandOptions.port}`
+      );
+      console.log("POST /tasks to submit work, GET /tasks/:taskId to inspect, GET /tasks/:taskId/events for SSE.");
+
+      const shutdown = async (): Promise<void> => {
+        await gatewayHandle.manager.stopAll();
+        handle.close();
+        process.exit(0);
+      };
+
+      process.once("SIGINT", () => {
+        void shutdown();
+      });
+      process.once("SIGTERM", () => {
+        void shutdown();
+      });
     });
 
   await program.parseAsync(process.argv);

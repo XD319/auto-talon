@@ -6,6 +6,8 @@ import type { PolicyEffect } from "./policy";
 import type { ApprovalStatus } from "./approval";
 
 export const TRACE_EVENT_TYPES = [
+  "gateway_request_received",
+  "gateway_capability_degraded",
   "task_created",
   "task_started",
   "model_request",
@@ -31,6 +33,7 @@ export const TRACE_EVENT_TYPES = [
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];
 
 export const TRACE_STAGES = [
+  "gateway",
   "lifecycle",
   "planning",
   "governance",
@@ -63,6 +66,21 @@ export interface TaskCreatedPayload extends JsonObject {
   providerName: string;
   agentProfileId: string;
   requesterUserId: string;
+}
+
+export interface GatewayRequestReceivedPayload extends JsonObject {
+  adapterId: string;
+  adapterKind: string;
+  externalSessionId: string;
+  externalUserId: string | null;
+  runtimeUserId: string;
+}
+
+export interface GatewayCapabilityDegradedPayload extends JsonObject {
+  adapterId: string;
+  capability: string;
+  fallbackBehavior: string;
+  message: string;
 }
 
 export interface TaskStartedPayload extends JsonObject {
@@ -203,6 +221,8 @@ export interface MemorySnapshotCreatedPayload extends JsonObject {
 }
 
 export type TraceEvent =
+  | TraceEventBase<"gateway_request_received", GatewayRequestReceivedPayload>
+  | TraceEventBase<"gateway_capability_degraded", GatewayCapabilityDegradedPayload>
   | TraceEventBase<"task_created", TaskCreatedPayload>
   | TraceEventBase<"task_started", TaskStartedPayload>
   | TraceEventBase<"model_request", ModelRequestPayload>

@@ -1,3 +1,5 @@
+import type { GatewaySessionBinding } from "./adapter";
+import type { GatewaySessionBindingDraft } from "./gateway";
 import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./approval";
 import type { AuditLogDraft, AuditLogRecord } from "./audit";
 import type { ExecutionCheckpointRecord } from "./checkpoint";
@@ -88,4 +90,9 @@ export interface MemorySnapshotRepository {
   create(record: MemorySnapshotDraft): MemorySnapshotRecord;
   findById(snapshotId: string): MemorySnapshotRecord | null;
   listByScope(scope: MemorySnapshotRecord["scope"], scopeKey: string): MemorySnapshotRecord[];
+}
+
+export interface GatewaySessionRepository {
+  create(record: GatewaySessionBindingDraft): GatewaySessionBinding;
+  findByTaskId(taskId: string): GatewaySessionBinding | null;
 }

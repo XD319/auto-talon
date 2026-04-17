@@ -169,6 +169,21 @@ export function runMigrations(database: DatabaseSync): void {
 
     CREATE INDEX IF NOT EXISTS idx_memory_snapshots_scope
       ON memory_snapshots(scope, scope_key, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS gateway_session_bindings (
+      session_binding_id TEXT PRIMARY KEY,
+      adapter_id TEXT NOT NULL,
+      external_session_id TEXT NOT NULL,
+      external_user_id TEXT,
+      runtime_user_id TEXT NOT NULL,
+      task_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_gateway_session_bindings_adapter_session
+      ON gateway_session_bindings(adapter_id, external_session_id, created_at DESC);
   `);
 
   addColumnIfMissing(database, "tasks", "agent_profile_id", "TEXT NOT NULL DEFAULT 'executor'");
