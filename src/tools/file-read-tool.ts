@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 
 import { z } from "zod";
 
@@ -228,7 +228,7 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
         return;
       }
 
-      const nextPath = `${directoryPath}\\${entry.name}`;
+      const nextPath = join(directoryPath, entry.name);
       if (entry.isDirectory()) {
         if (input.recursive) {
           await this.walkAndSearch(nextPath, keyword, input, matches, signal);

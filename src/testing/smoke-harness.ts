@@ -2,8 +2,13 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { createApplication, createDefaultRunOptions, resolveAppConfig } from "../runtime";
-import { requireProviderManifest, type SupportedProviderName } from "../providers";
+import { createApplication, createDefaultRunOptions } from "../runtime";
+import {
+  requireProviderManifest,
+  resolveDefaultProviderSettings,
+  type ResolvedProviderConfig,
+  type SupportedProviderName
+} from "../providers";
 import type {
   AgentProfileId,
   ApprovalRecord,
@@ -159,16 +164,12 @@ export async function runSmokeTask(
   await seedWorkspace(workspaceRoot);
 
   const provider = createHarnessProvider(options.providerName);
-  const resolvedConfig = resolveAppConfig(workspaceRoot);
+  const runtimeProviderName = options.providerName === "scripted-smoke" ? "mock" : options.providerName;
   const createOptions = {
     config: {
       databasePath: ":memory:",
-      provider: {
-        ...resolvedConfig.provider,
-        ...toResolvedProviderVariant(
-          options.providerName === "scripted-smoke" ? "mock" : options.providerName
-        )
-      }
+      provider: createSmokeProviderConfig(runtimeProviderName),
+      workspaceRoot
     }
   };
   const handle =
@@ -234,6 +235,7 @@ async function executeTask(
   runOptions.metadata = {
     smokeTaskId: input.smokeTaskId
   };
+  runOptions.userId = "smoke-harness";
 
   let result = await service.runTask(runOptions);
   while (result.task.status === "waiting_approval" && input.autoApprove) {
@@ -452,6 +454,7 @@ async function seedProjectMemory(
   runOptions.metadata = {
     smokeTaskId: "memory_seed_project"
   };
+  runOptions.userId = "smoke-harness";
   const seed = await service.runTask(runOptions);
   if (seed.task.status !== "succeeded") {
     throw new Error("Failed to seed project memory for smoke recall.");
@@ -522,14 +525,29 @@ function createHarnessProvider(
   return undefined;
 }
 
-function toResolvedProviderVariant(
-  providerName: SupportedProviderName
-): Pick<ReturnType<typeof resolveAppConfig>["provider"], "displayName" | "family" | "name" | "transport"> {
+function createSmokeProviderConfig(providerName: SupportedProviderName): ResolvedProviderConfig {
   const manifest = requireProviderManifest(providerName);
+  const defaults = resolveDefaultProviderSettings(providerName);
+
+  const providerLabel =
+    manifest.transport === "anthropic-compatible"
+      ? manifest.anthropicCompatible?.providerLabel ?? null
+      : manifest.openAiCompatible?.providerLabel ?? null;
+  const anthropicVersion =
+    manifest.transport === "anthropic-compatible"
+      ? manifest.anthropicCompatible?.anthropicVersion ?? null
+      : null;
+
   return {
+    ...defaults,
+    anthropicVersion,
+    builtinProviderName: providerName,
+    configPath: "<smoke-harness>",
+    configSource: "defaults",
     displayName: manifest.displayName,
     family: manifest.family,
     name: providerName,
+    providerLabel,
     transport: manifest.transport
   };
 }
