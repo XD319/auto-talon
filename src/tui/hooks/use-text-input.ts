@@ -4,6 +4,7 @@ import { useInput } from "ink";
 export interface UseTextInputOptions {
   onHistoryNext: () => string | null;
   onHistoryPrevious: () => string | null;
+  onInterruptRequest: () => void;
   onToggleActivityCollapse: () => void;
   onScrollEnd: () => void;
   onScrollStart: () => void;
@@ -27,6 +28,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
   const [cursorIndex, setCursorIndex] = React.useState(0);
   const preferredColumnRef = React.useRef<number | null>(null);
   const metaPressedRef = React.useRef(false);
+  const interruptRequestedAtRef = React.useRef<number | null>(null);
 
   useInput((input, key) => {
     if (input === "q" && value.length === 0) {
@@ -36,6 +38,24 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
 
     if (key.escape) {
       metaPressedRef.current = true;
+      return;
+    }
+
+    if (key.ctrl && input === "c") {
+      const now = Date.now();
+      if (!options.busy) {
+        options.onExit();
+        return;
+      }
+
+      const lastRequestedAt = interruptRequestedAtRef.current;
+      if (lastRequestedAt !== null && now - lastRequestedAt <= 2_000) {
+        options.onExit();
+        return;
+      }
+
+      interruptRequestedAtRef.current = now;
+      options.onInterruptRequest();
       return;
     }
 

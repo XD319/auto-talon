@@ -16,7 +16,10 @@ export async function startTui(cwd = process.cwd()): Promise<void> {
         cwd,
         reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer",
         service: handle.service
-      })
+      }),
+      {
+        exitOnCtrlC: false
+      }
     );
     await app.waitUntilExit();
     app.unmount();

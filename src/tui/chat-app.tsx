@@ -92,6 +92,11 @@ export function ChatTuiApp({ config, cwd, reviewerId, service }: ChatTuiAppProps
     hasPendingApproval: controller.hasPendingApproval,
     onHistoryNext: navigateHistoryNext,
     onHistoryPrevious: navigateHistoryPrevious,
+    onInterruptRequest: () => {
+      controller.addSystemMessage(
+        "Interrupt requested. Press Ctrl+C again within 2s to force exit. Runtime cancellation is not wired yet."
+      );
+    },
     onApprovalAction: (action) => {
       void controller.resolvePendingApproval(action);
     },
