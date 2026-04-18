@@ -11,6 +11,8 @@ import type {
   OutboundResponseAdapter
 } from "../types";
 
+const MAX_REQUEST_BODY_BYTES = 256_000;
+
 export interface LocalWebhookAdapterOptions {
   adapterId?: string;
   host?: string;
@@ -204,20 +206,61 @@ function isTerminalStatus(status: string): boolean {
 }
 
 async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
+  const declaredLength = request.headers["content-length"];
+  if (declaredLength !== undefined) {
+    const parsedLength = Number(declaredLength);
+    if (!Number.isFinite(parsedLength) || parsedLength < 0) {
+      throw new RequestValidationError("invalid_request", "Content-Length header is invalid.");
+    }
+    if (parsedLength > MAX_REQUEST_BODY_BYTES) {
+      throw new RequestValidationError(
+        "payload_too_large",
+        `Request body exceeds the ${MAX_REQUEST_BODY_BYTES} byte limit.`,
+        413
+      );
+    }
+  }
+
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
 
   for await (const chunk of request) {
     if (Buffer.isBuffer(chunk)) {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+        throw new RequestValidationError(
+          "payload_too_large",
+          `Request body exceeds the ${MAX_REQUEST_BODY_BYTES} byte limit.`,
+          413
+        );
+      }
       chunks.push(chunk);
       continue;
     }
 
     if (chunk instanceof Uint8Array) {
+      totalBytes += chunk.byteLength;
+      if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+        throw new RequestValidationError(
+          "payload_too_large",
+          `Request body exceeds the ${MAX_REQUEST_BODY_BYTES} byte limit.`,
+          413
+        );
+      }
       chunks.push(Buffer.from(chunk));
       continue;
     }
 
-    chunks.push(Buffer.from(String(chunk)));
+    const asBuffer = Buffer.from(String(chunk));
+    totalBytes += asBuffer.length;
+    if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+      throw new RequestValidationError(
+        "payload_too_large",
+        `Request body exceeds the ${MAX_REQUEST_BODY_BYTES} byte limit.`,
+        413
+      );
+    }
+    chunks.push(asBuffer);
   }
 
   const raw = Buffer.concat(chunks).toString("utf8");
@@ -278,7 +321,7 @@ function parseGatewayTaskRequest(input: unknown): GatewayTaskRequest {
 
 class RequestValidationError extends Error {
   public constructor(
-    public readonly code: "invalid_json" | "invalid_request",
+    public readonly code: "invalid_json" | "invalid_request" | "payload_too_large",
     message: string,
     public readonly statusCode = 400
   ) {

@@ -324,6 +324,47 @@ describe("Phase 5 gateway adapters", () => {
       handle.close();
     }
   });
+
+  it("returns 413 when request body exceeds the configured limit", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "unused",
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1
+        }
+      }))
+    });
+    const port = await getFreePort();
+    const gatewayHandle = await startLocalWebhookGateway(handle, {
+      host: "127.0.0.1",
+      port
+    });
+
+    try {
+      const largeBody = "x".repeat(300_000);
+      const response = await fetch(`http://127.0.0.1:${port}/tasks`, {
+        body: largeBody,
+        headers: {
+          "Content-Type": "application/json"
+        },
+        method: "POST"
+      });
+
+      expect(response.status).toBe(413);
+      const payload = (await response.json()) as { error: string; message: string };
+      expect(payload.error).toBe("payload_too_large");
+      expect(payload.message).toContain("byte limit");
+    } finally {
+      await gatewayHandle.manager.stopAll();
+      handle.close();
+    }
+  });
 });
 
 function createWaitingApprovalApplication(workspaceRoot: string) {
