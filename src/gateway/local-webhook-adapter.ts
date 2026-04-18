@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { URL } from "node:url";
+import { z } from "zod";
 
 import type {
+  AdapterCapabilityName,
   AdapterDescriptor,
   GatewayRuntimeApi,
   GatewayTaskRequest,
@@ -102,9 +104,13 @@ export class LocalWebhookAdapter implements InboundMessageAdapter, OutboundRespo
   ): Promise<void> {
     try {
       await this.handleRequest(request, response);
-    } catch {
+    } catch (error) {
       if (response.headersSent) {
         response.end();
+        return;
+      }
+      if (error instanceof RequestValidationError) {
+        this.respondJson(response, error.statusCode, { error: error.code, message: error.message });
         return;
       }
       this.respondJson(response, 500, { error: "internal_error" });
@@ -122,7 +128,7 @@ export class LocalWebhookAdapter implements InboundMessageAdapter, OutboundRespo
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
 
     if (request.method === "POST" && url.pathname === "/tasks") {
-      const payload = await readJsonBody<GatewayTaskRequest>(request);
+      const payload = parseGatewayTaskRequest(await readJsonBody<unknown>(request));
       const result = await this.runtimeApi.submitTask(this.descriptor, payload);
       this.respondJson(response, 200, result);
       return;
@@ -219,5 +225,64 @@ async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
     return {} as T;
   }
 
-  return JSON.parse(raw) as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new RequestValidationError("invalid_json", "Request body must contain valid JSON.");
+  }
+}
+
+const adapterCapabilityRequirementSchema = z.enum(["preferred", "required"]);
+
+const adapterCapabilityNames = new Set<AdapterCapabilityName>([
+  "approvalInteraction",
+  "fileCapability",
+  "streamingCapability",
+  "structuredCardCapability",
+  "textInteraction"
+]);
+
+const gatewayTaskRequestSchema = z.object({
+  agentProfileId: z.enum(["executor", "planner", "reviewer"]).optional(),
+  cwd: z.string().min(1).optional(),
+  interactionRequirements: z
+    .record(z.string(), adapterCapabilityRequirementSchema)
+    .optional()
+    .refine(
+      (requirements) =>
+        requirements === undefined ||
+        Object.keys(requirements).every((capability) => adapterCapabilityNames.has(capability)),
+      "interactionRequirements includes unsupported capability keys"
+    ),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  requester: z.object({
+    externalSessionId: z.string().min(1),
+    externalUserId: z.string().min(1).nullable(),
+    externalUserLabel: z.string().min(1).nullable()
+  }),
+  taskInput: z.string().min(1),
+  timeoutMs: z.number().positive().optional()
+}) satisfies z.ZodType<GatewayTaskRequest>;
+
+function parseGatewayTaskRequest(input: unknown): GatewayTaskRequest {
+  const parsed = gatewayTaskRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new RequestValidationError(
+      "invalid_request",
+      `Invalid gateway task request: ${parsed.error.issues[0]?.message ?? "unknown schema error"}`
+    );
+  }
+
+  return parsed.data;
+}
+
+class RequestValidationError extends Error {
+  public constructor(
+    public readonly code: "invalid_json" | "invalid_request",
+    message: string,
+    public readonly statusCode = 400
+  ) {
+    super(message);
+    this.name = "RequestValidationError";
+  }
 }

@@ -278,6 +278,52 @@ describe("Phase 5 gateway adapters", () => {
       handle.close();
     }
   });
+
+  it("returns 400 for invalid gateway task payloads", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "unused",
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1
+        }
+      }))
+    });
+    const port = await getFreePort();
+    const gatewayHandle = await startLocalWebhookGateway(handle, {
+      host: "127.0.0.1",
+      port
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/tasks`, {
+        body: JSON.stringify({
+          requester: {
+            externalSessionId: "session-1",
+            externalUserId: "user-1",
+            externalUserLabel: "Local User"
+          }
+        }),
+        headers: {
+          "Content-Type": "application/json"
+        },
+        method: "POST"
+      });
+
+      expect(response.status).toBe(400);
+      const payload = (await response.json()) as { error: string; message: string };
+      expect(payload.error).toBe("invalid_request");
+      expect(payload.message).toContain("Invalid input");
+    } finally {
+      await gatewayHandle.manager.stopAll();
+      handle.close();
+    }
+  });
 });
 
 function createWaitingApprovalApplication(workspaceRoot: string) {
