@@ -36,16 +36,16 @@ export function assertProviderResponse(
     candidate.kind !== "retry" &&
     candidate.kind !== "tool_calls"
   ) {
-    throw malformed(providerName, modelName, "Provider response kind is missing or invalid.");
+    malformed(providerName, modelName, "Provider response kind is missing or invalid.");
   }
 
   if (typeof candidate.message !== "string") {
-    throw malformed(providerName, modelName, "Provider response message must be a string.");
+    malformed(providerName, modelName, "Provider response message must be a string.");
   }
 
   const usage = candidate.usage;
   if (typeof usage !== "object" || usage === null) {
-    throw malformed(providerName, modelName, "Provider usage payload is missing.");
+    malformed(providerName, modelName, "Provider usage payload is missing.");
   }
 
   const usageRecord = usage as unknown as Record<string, unknown>;
@@ -53,7 +53,7 @@ export function assertProviderResponse(
     typeof usageRecord.inputTokens !== "number" ||
     typeof usageRecord.outputTokens !== "number"
   ) {
-    throw malformed(providerName, modelName, "Provider usage tokens must be numeric.");
+    malformed(providerName, modelName, "Provider usage tokens must be numeric.");
   }
 
   if (candidate.metadata !== undefined) {
@@ -66,13 +66,13 @@ export function assertProviderResponse(
       reason?: unknown;
     };
     if (typeof retryCandidate.reason !== "string" || typeof retryCandidate.delayMs !== "number") {
-      throw malformed(providerName, modelName, "Provider retry response is incomplete.");
+      malformed(providerName, modelName, "Provider retry response is incomplete.");
     }
   }
 
   if (candidate.kind === "tool_calls") {
     if (!Array.isArray(candidate.toolCalls)) {
-      throw malformed(providerName, modelName, "Provider tool call response is missing toolCalls.");
+      malformed(providerName, modelName, "Provider tool call response is missing toolCalls.");
     }
 
     for (const toolCall of candidate.toolCalls) {
@@ -104,7 +104,7 @@ function assertMetadata(
   modelName?: string
 ): asserts metadata is ProviderResponseMetadata {
   if (typeof metadata !== "object" || metadata === null) {
-    throw malformed(providerName, modelName, "Provider metadata must be an object.");
+    malformed(providerName, modelName, "Provider metadata must be an object.");
   }
 
   const metadataRecord = metadata as Record<string, unknown>;
@@ -112,7 +112,7 @@ function assertMetadata(
     metadataRecord.retryCount !== undefined &&
     typeof metadataRecord.retryCount !== "number"
   ) {
-    throw malformed(providerName, modelName, "Provider metadata retryCount must be numeric.");
+    malformed(providerName, modelName, "Provider metadata retryCount must be numeric.");
   }
 }
 
@@ -122,7 +122,7 @@ function assertToolCall(
   modelName?: string
 ): asserts toolCall is ProviderToolCall {
   if (typeof toolCall !== "object" || toolCall === null) {
-    throw malformed(providerName, modelName, "Provider tool call must be an object.");
+    malformed(providerName, modelName, "Provider tool call must be an object.");
   }
 
   const candidate = toolCall as Partial<ProviderToolCall> & {
@@ -134,11 +134,11 @@ function assertToolCall(
     typeof candidate.toolName !== "string" ||
     typeof candidate.reason !== "string"
   ) {
-    throw malformed(providerName, modelName, "Provider tool call is missing required fields.");
+    malformed(providerName, modelName, "Provider tool call is missing required fields.");
   }
 
   if (!isJsonObject(candidate.input)) {
-    throw malformed(providerName, modelName, "Provider tool call input must be an object.");
+    malformed(providerName, modelName, "Provider tool call input must be an object.");
   }
 }
 

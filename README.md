@@ -500,7 +500,18 @@ This keeps reviewer behavior controlled without introducing multi-agent swarm lo
 
 ```bash
 corepack pnpm install
-./node_modules/.bin/tsc.cmd -p tsconfig.json
-./node_modules/.bin/vitest.cmd run
-./node_modules/.bin/eslint.cmd .
+corepack pnpm check
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm build
+```
+
+## Continuous Integration
+
+The repository now includes a GitHub Actions workflow at `.github/workflows/ci.yml`.
+
+Every `push` and `pull_request` runs the same shared verification entrypoint used locally:
+
+```bash
+corepack pnpm check
 ```

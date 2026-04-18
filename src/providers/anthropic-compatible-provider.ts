@@ -12,7 +12,7 @@ import type {
   ProviderUsage
 } from "../types";
 
-import { ProviderError } from "./provider-error";
+import type { ProviderError } from "./provider-error";
 import {
   classifyProviderHttpError,
   createProviderError,

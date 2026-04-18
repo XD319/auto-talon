@@ -271,9 +271,7 @@ function createGlmHarness(): ProviderContractHarness {
         }
       })),
     createNetworkFailureProvider: (maxRetries = 0) =>
-      managedGlm(async () => {
-        throw new Error("socket hang up");
-      }, maxRetries),
+      managedGlm(() => Promise.reject(new Error("socket hang up")), maxRetries),
     createRateLimitProvider: (maxRetries = 0) =>
       managedGlm(jsonResponse({
         error: {
@@ -301,9 +299,7 @@ function createGlmHarness(): ProviderContractHarness {
         }
       })),
     createTimeoutProvider: (maxRetries = 0) =>
-      managedGlm(async () => {
-        throw new DOMException("timeout", "AbortError");
-      }, maxRetries),
+      managedGlm(() => Promise.reject(new DOMException("timeout", "AbortError")), maxRetries),
     createToolCallProvider: () =>
       managedGlm(jsonResponse({
         choices: [
@@ -398,9 +394,7 @@ function createOpenAiCompatibleHarness(): ProviderContractHarness {
         }
       })),
     createNetworkFailureProvider: (maxRetries = 0) =>
-      managedOpenAiCompatible(async () => {
-        throw new Error("socket hang up");
-      }, maxRetries),
+      managedOpenAiCompatible(() => Promise.reject(new Error("socket hang up")), maxRetries),
     createRateLimitProvider: (maxRetries = 0) =>
       managedOpenAiCompatible(jsonResponse({
         error: {
@@ -428,9 +422,7 @@ function createOpenAiCompatibleHarness(): ProviderContractHarness {
         }
       })),
     createTimeoutProvider: (maxRetries = 0) =>
-      managedOpenAiCompatible(async () => {
-        throw new DOMException("timeout", "AbortError");
-      }, maxRetries),
+      managedOpenAiCompatible(() => Promise.reject(new DOMException("timeout", "AbortError")), maxRetries),
     createToolCallProvider: () =>
       managedOpenAiCompatible(jsonResponse({
         choices: [
@@ -521,9 +513,7 @@ function createAnthropicHarness(): ProviderContractHarness {
         name: "anthropic"
       }),
     createNetworkFailureProvider: (maxRetries = 0) =>
-      managedAnthropicCompatible(async () => {
-        throw new Error("socket hang up");
-      }, {
+      managedAnthropicCompatible(() => Promise.reject(new Error("socket hang up")), {
         model: "claude-sonnet-4-20250514",
         name: "anthropic"
       }, maxRetries),
@@ -559,9 +549,7 @@ function createAnthropicHarness(): ProviderContractHarness {
         name: "anthropic"
       }),
     createTimeoutProvider: (maxRetries = 0) =>
-      managedAnthropicCompatible(async () => {
-        throw new DOMException("timeout", "AbortError");
-      }, {
+      managedAnthropicCompatible(() => Promise.reject(new DOMException("timeout", "AbortError")), {
         model: "claude-sonnet-4-20250514",
         name: "anthropic"
       }, maxRetries),
@@ -662,9 +650,7 @@ function createMiniMaxHarness(): ProviderContractHarness {
         name: "minimax"
       }),
     createNetworkFailureProvider: (maxRetries = 0) =>
-      managedAnthropicCompatible(async () => {
-        throw new Error("socket hang up");
-      }, {
+      managedAnthropicCompatible(() => Promise.reject(new Error("socket hang up")), {
         baseUrl: "https://api.minimax.io/anthropic",
         model: "MiniMax-M2.7",
         name: "minimax"
@@ -703,9 +689,7 @@ function createMiniMaxHarness(): ProviderContractHarness {
         name: "minimax"
       }),
     createTimeoutProvider: (maxRetries = 0) =>
-      managedAnthropicCompatible(async () => {
-        throw new DOMException("timeout", "AbortError");
-      }, {
+      managedAnthropicCompatible(() => Promise.reject(new DOMException("timeout", "AbortError")), {
         baseUrl: "https://api.minimax.io/anthropic",
         model: "MiniMax-M2.7",
         name: "minimax"
@@ -771,7 +755,7 @@ function managedGlm(
   maxRetries = 0
 ): Provider {
   const implementation =
-    fetchImpl instanceof Response ? vi.fn(async () => fetchImpl.clone()) : vi.fn(fetchImpl);
+    fetchImpl instanceof Response ? vi.fn(() => Promise.resolve(fetchImpl.clone())) : vi.fn(fetchImpl);
   vi.stubGlobal("fetch", implementation);
 
   return new ManagedProvider(
@@ -792,7 +776,7 @@ function managedOpenAiCompatible(
   maxRetries = 0
 ): Provider {
   const implementation =
-    fetchImpl instanceof Response ? vi.fn(async () => fetchImpl.clone()) : vi.fn(fetchImpl);
+    fetchImpl instanceof Response ? vi.fn(() => Promise.resolve(fetchImpl.clone())) : vi.fn(fetchImpl);
   vi.stubGlobal("fetch", implementation);
 
   return new ManagedProvider(
@@ -821,7 +805,7 @@ function managedAnthropicCompatible(
   maxRetries = 0
 ): Provider {
   const implementation =
-    fetchImpl instanceof Response ? vi.fn(async () => fetchImpl.clone()) : vi.fn(fetchImpl);
+    fetchImpl instanceof Response ? vi.fn(() => Promise.resolve(fetchImpl.clone())) : vi.fn(fetchImpl);
   vi.stubGlobal("fetch", implementation);
 
   return new ManagedProvider(

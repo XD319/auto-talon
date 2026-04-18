@@ -12,7 +12,7 @@ export class ScriptedSmokeProvider implements Provider {
     this.model = config.model ?? "scripted-smoke-v1";
   }
 
-  public async generate(input: ProviderInput): Promise<ProviderResponse> {
+  public generate(input: ProviderInput): Promise<ProviderResponse> {
     const smokeTaskId =
       typeof input.task.metadata.smokeTaskId === "string" ? input.task.metadata.smokeTaskId : "";
     const iteration = input.task.currentIteration === 0 ? 1 : input.task.currentIteration;
@@ -21,33 +21,33 @@ export class ScriptedSmokeProvider implements Provider {
     switch (smokeTaskId) {
       case "single_read_project_summary":
         if (iteration === 1) {
-          return toolCallResponse("Read project summary sources.", [
+          return Promise.resolve(toolCallResponse("Read project summary sources.", [
             readFile(`single-readme-${iteration}`, "README.md", "Read the project overview."),
             readFile(`single-package-${iteration}`, "package.json", "Read project scripts and metadata.")
-          ]);
+          ]));
         }
 
-        return finalResponse(
+        return Promise.resolve(finalResponse(
           "Project summary complete. README and package.json show a local agent runtime with build and test scripts."
-        );
+        ));
 
       case "single_generate_file":
         if (iteration === 1) {
-          return toolCallResponse("Write the requested release note.", [
+          return Promise.resolve(toolCallResponse("Write the requested release note.", [
             writeFile(
               `single-generate-write-${iteration}`,
               "docs/generated/release-note.md",
               "# Release Note\n\nThis release adds runtime smoke task coverage.\n",
               "Create the requested release note file."
             )
-          ]);
+          ]));
         }
 
-        return finalResponse("release-note.md created with a short release note.");
+        return Promise.resolve(finalResponse("release-note.md created with a short release note."));
 
       case "single_update_config":
         if (iteration === 1) {
-          return toolCallResponse("Enable the feature flag.", [
+          return Promise.resolve(toolCallResponse("Enable the feature flag.", [
             updateFile(
               `single-update-config-${iteration}`,
               "config/app.json",
@@ -55,90 +55,90 @@ export class ScriptedSmokeProvider implements Provider {
               "\"featureFlag\": true",
               "Update the featureFlag setting to true."
             )
-          ]);
+          ]));
         }
 
-        return finalResponse("config/app.json updated and featureFlag is now true.");
+        return Promise.resolve(finalResponse("config/app.json updated and featureFlag is now true."));
 
       case "single_run_shell":
         if (iteration === 1) {
-          return toolCallResponse("Run the requested shell command.", [
+          return Promise.resolve(toolCallResponse("Run the requested shell command.", [
             shell(`single-run-shell-${iteration}`, "whoami", "Identify the current execution user.")
-          ]);
+          ]));
         }
 
-        return finalResponse(`Shell command completed. whoami returned: ${extractStdout(toolMessages.at(-1)?.content)}`);
+        return Promise.resolve(finalResponse(`Shell command completed. whoami returned: ${extractStdout(toolMessages.at(-1)?.content)}`));
 
       case "multi_read_then_plan_write":
         if (iteration === 1) {
-          return toolCallResponse("Read the source files before planning the write.", [
+          return Promise.resolve(toolCallResponse("Read the source files before planning the write.", [
             readFile(`multi-readme-${iteration}`, "README.md", "Read the overview before drafting the summary."),
             readFile(`multi-package-${iteration}`, "package.json", "Read package scripts before drafting the summary."),
             readFile(`multi-config-${iteration}`, "config/app.json", "Read config defaults before drafting the summary.")
-          ]);
+          ]));
         }
 
         if (iteration === 2) {
-          return toolCallResponse("Write the runtime overview after collecting context.", [
+          return Promise.resolve(toolCallResponse("Write the runtime overview after collecting context.", [
             writeFile(
               `multi-overview-write-${iteration}`,
               "docs/runtime-overview.md",
               "# Runtime Overview\n\nThis workspace contains a local agent runtime, sample config, and smoke-test fixtures.\n",
               "Write the synthesized runtime overview."
             )
-          ]);
+          ]));
         }
 
-        return finalResponse("runtime-overview.md created after reading README, package.json, and config/app.json.");
+        return Promise.resolve(finalResponse("runtime-overview.md created after reading README, package.json, and config/app.json."));
 
       case "multi_write_then_verify":
         if (iteration === 1) {
-          return toolCallResponse("Create the feature flag file first.", [
+          return Promise.resolve(toolCallResponse("Create the feature flag file first.", [
             writeFile(
               `multi-write-verify-write-${iteration}`,
               "config/feature.flag.json",
               "{\n  \"enabled\": true,\n  \"source\": \"smoke\"\n}\n",
               "Write the feature flag file before verification."
             )
-          ]);
+          ]));
         }
 
         if (iteration === 2) {
-          return toolCallResponse("Verify the file content after writing.", [
+          return Promise.resolve(toolCallResponse("Verify the file content after writing.", [
             readFile(
               `multi-write-verify-read-${iteration}`,
               "config/feature.flag.json",
               "Read back the file to verify the write succeeded."
             )
-          ]);
+          ]));
         }
 
-        return finalResponse("Verification succeeded. config/feature.flag.json exists and contains the expected JSON.");
+        return Promise.resolve(finalResponse("Verification succeeded. config/feature.flag.json exists and contains the expected JSON."));
 
       case "multi_fix_after_failed_verification":
         if (iteration === 1) {
-          return toolCallResponse("Write the initial failing verification state.", [
+          return Promise.resolve(toolCallResponse("Write the initial failing verification state.", [
             writeFile(
               `multi-fix-write-${iteration}`,
               "config/verification.txt",
               "FAIL\n",
               "Create the initial failing verification marker."
             )
-          ]);
+          ]));
         }
 
         if (iteration === 2) {
-          return toolCallResponse("Run a shell check to inspect the verification state.", [
+          return Promise.resolve(toolCallResponse("Run a shell check to inspect the verification state.", [
             shell(
               `multi-fix-check-1-${iteration}`,
               "Get-Content config\\verification.txt",
               "Inspect whether verification currently reports FAIL or PASS."
             )
-          ]);
+          ]));
         }
 
         if (iteration === 3) {
-          return toolCallResponse("Repair the failing verification state.", [
+          return Promise.resolve(toolCallResponse("Repair the failing verification state.", [
             updateFile(
               `multi-fix-update-${iteration}`,
               "config/verification.txt",
@@ -146,35 +146,35 @@ export class ScriptedSmokeProvider implements Provider {
               "PASS",
               "Replace FAIL with PASS before re-checking."
             )
-          ]);
+          ]));
         }
 
         if (iteration === 4) {
-          return toolCallResponse("Re-run the verification check after the fix.", [
+          return Promise.resolve(toolCallResponse("Re-run the verification check after the fix.", [
             shell(
               `multi-fix-check-2-${iteration}`,
               "Get-Content config\\verification.txt",
               "Confirm the verification marker changed to PASS."
             )
-          ]);
+          ]));
         }
 
-        return finalResponse("Verification recovered successfully. The status moved from FAIL to PASS after one repair.");
+        return Promise.resolve(finalResponse("Verification recovered successfully. The status moved from FAIL to PASS after one repair."));
 
       case "multi_search_patch_verify":
         if (iteration === 1) {
-          return toolCallResponse("Search for TODO markers first.", [
+          return Promise.resolve(toolCallResponse("Search for TODO markers first.", [
             searchText(
               `multi-search-${iteration}`,
               "TODO",
               "src",
               "Find TODO markers before applying the patch."
             )
-          ]);
+          ]));
         }
 
         if (iteration === 2) {
-          return toolCallResponse("Patch the TODO in src/app.ts.", [
+          return Promise.resolve(toolCallResponse("Patch the TODO in src/app.ts.", [
             applyPatch(
               `multi-patch-${iteration}`,
               "src/app.ts",
@@ -182,67 +182,67 @@ export class ScriptedSmokeProvider implements Provider {
               "bootstrap is ready for smoke testing",
               "Patch the TODO marker in src/app.ts."
             )
-          ]);
+          ]));
         }
 
         if (iteration === 3) {
-          return toolCallResponse("Read the file again to verify the patch.", [
+          return Promise.resolve(toolCallResponse("Read the file again to verify the patch.", [
             readFile(`multi-patch-verify-${iteration}`, "src/app.ts", "Verify the patched file content.")
-          ]);
+          ]));
         }
 
-        return finalResponse("TODO cleanup complete. src/app.ts was patched and verified.");
+        return Promise.resolve(finalResponse("TODO cleanup complete. src/app.ts was patched and verified."));
 
       case "long_cross_file_review_with_compact":
         if (iteration === 1) {
-          return toolCallResponse("Start the long reviewer pass with README.", [
+          return Promise.resolve(toolCallResponse("Start the long reviewer pass with README.", [
             readFile(`long-review-readme-${iteration}`, "README.md", "Review the project overview first.")
-          ]);
+          ]));
         }
 
         if (iteration === 2) {
-          return toolCallResponse("Continue reviewer pass with package.json.", [
+          return Promise.resolve(toolCallResponse("Continue reviewer pass with package.json.", [
             readFile(`long-review-package-${iteration}`, "package.json", "Review scripts and metadata next.")
-          ]);
+          ]));
         }
 
         if (iteration === 3) {
-          return toolCallResponse("Continue reviewer pass with src/app.ts.", [
+          return Promise.resolve(toolCallResponse("Continue reviewer pass with src/app.ts.", [
             readFile(`long-review-app-${iteration}`, "src/app.ts", "Review the entry module implementation.")
-          ]);
+          ]));
         }
 
         if (iteration === 4) {
-          return toolCallResponse("Continue reviewer pass with src/runtime.ts.", [
+          return Promise.resolve(toolCallResponse("Continue reviewer pass with src/runtime.ts.", [
             readFile(`long-review-runtime-${iteration}`, "src/runtime.ts", "Review runtime helper implementation.")
-          ]);
+          ]));
         }
 
         if (iteration === 5) {
-          return toolCallResponse("Finish reviewer pass with config/app.json.", [
+          return Promise.resolve(toolCallResponse("Finish reviewer pass with config/app.json.", [
             readFile(`long-review-config-${iteration}`, "config/app.json", "Review the default runtime config.")
-          ]);
+          ]));
         }
 
-        return finalResponse(
+        return Promise.resolve(finalResponse(
           "Reviewer pass complete. The workspace has coherent docs, scripts, code entry points, and runtime config."
-        );
+        ));
 
       case "long_memory_recall_followup": {
         const recalled =
           input.memoryContext.find((fragment) => fragment.scope === "project")?.text ??
           input.memoryContext[0]?.text ??
           "No prior memory recalled.";
-        return finalResponse(`Follow-up guidance: reuse the earlier smoke verification advice. ${recalled}`);
+        return Promise.resolve(finalResponse(`Follow-up guidance: reuse the earlier smoke verification advice. ${recalled}`));
       }
 
       case "memory_seed_project":
-        return finalResponse(
+        return Promise.resolve(finalResponse(
           "Use pnpm and vitest for smoke verification, and keep trace summaries readable for regression review."
-        );
+        ));
 
       default:
-        return finalResponse(`No scripted smoke scenario matched ${smokeTaskId}.`);
+        return Promise.resolve(finalResponse(`No scripted smoke scenario matched ${smokeTaskId}.`));
     }
   }
 }

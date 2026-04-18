@@ -6,7 +6,6 @@ import type {
   ApprovalRecord,
   AuditLogRecord,
   Provider,
-  ProviderResponse,
   RunMetadataRecord,
   TaskRecord,
   TraceEvent,
@@ -189,7 +188,7 @@ function buildReplayPrompt(
     `Replay task ${reference.task.taskId} from original iteration ${reference.fromIteration}.`,
     `Provider mode: ${providerMode}.`,
     `Original task: ${reference.task.input}`,
-    `Original provider: ${reference.task.providerName}; original model: ${reference.runMetadata?.metadata.modelName ?? reference.runMetadata?.providerName ?? "-"}.`,
+    `Original provider: ${reference.task.providerName}; original model: ${readRunMetadataModel(reference.runMetadata) ?? reference.runMetadata?.providerName ?? "-"}.`,
     `Current diagnosis: ${reference.diagnosis.category} because ${reference.diagnosis.rationale}`,
     `Iteration chain: ${iterationLines.join(" | ")}`,
     `Historical tool results: ${toolLines.join(" | ") || "none"}`,
@@ -336,7 +335,7 @@ function createReplayMockProvider(reference: ReplayReference): Provider {
     {
       model: "replay-mock"
     },
-    async (): Promise<ProviderResponse> => {
+    () => {
       const step = steps[cursor];
       cursor += 1;
 
@@ -438,6 +437,11 @@ function createReplayMockProvider(reference: ReplayReference): Provider {
       };
     }
   );
+}
+
+function readRunMetadataModel(runMetadata: RunMetadataRecord | null): string | null {
+  const modelName = runMetadata?.metadata.modelName;
+  return typeof modelName === "string" ? modelName : null;
 }
 
 function extractIteration(event: TraceEvent): number | null {
