@@ -152,9 +152,9 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       return null;
     }
 
+    const auditEntries = this.dependencies.applicationService.auditTask(taskId);
     const sessionBinding = this.dependencies.sessionMapper.findByTaskId(taskId);
-    const notices = this.dependencies.applicationService
-      .auditTask(taskId)
+    const notices = auditEntries
       .filter((entry) => entry.action === "gateway_capability_degraded")
       .map((entry) => ({
         capability: readString(entry.payload.capability) as AdapterCapabilityName,
@@ -174,7 +174,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
               externalUserId: sessionBinding.externalUserId,
               runtimeUserId: sessionBinding.runtimeUserId
             },
-      audit: details.task === null ? [] : this.dependencies.applicationService.auditTask(taskId),
+      audit: auditEntries,
       notices,
       task: {
         errorCode: details.task.errorCode,
