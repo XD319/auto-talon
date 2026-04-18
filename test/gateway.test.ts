@@ -324,7 +324,7 @@ function createWaitingApprovalApplication(workspaceRoot: string) {
 }
 
 async function createTempWorkspace(): Promise<string> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-phase5-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-phase5-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
 }

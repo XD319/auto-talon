@@ -535,7 +535,7 @@ function createTask(overrides: Partial<TaskRecord> & Pick<TaskRecord, "taskId" |
 }
 
 async function createTempWorkspace(): Promise<string> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-phase3-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-phase3-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
 }

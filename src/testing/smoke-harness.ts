@@ -155,7 +155,7 @@ export async function runSmokeTask(
     providerName: SupportedProviderName | "scripted-smoke";
   }
 ): Promise<SmokeTaskRunResult> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), `tentaclaw-smoke-${taskFixture.taskId}-`));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), `auto-talon-smoke-${taskFixture.taskId}-`));
   await seedWorkspace(workspaceRoot);
 
   const provider = createHarnessProvider(options.providerName);

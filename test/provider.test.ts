@@ -11,6 +11,7 @@ import {
   GlmProvider,
   OpenAiCompatibleProvider,
   ProviderError,
+  resolveProviderCatalog,
   resolveProviderConfig
 } from "../src/providers";
 import type {
@@ -93,9 +94,9 @@ describe("Provider integration", () => {
 
   it("loads GLM provider configuration from file", async () => {
     const workspaceRoot = await createTempWorkspace();
-    await fs.mkdir(join(workspaceRoot, ".tentaclaw"), { recursive: true });
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
     await fs.writeFile(
-      join(workspaceRoot, ".tentaclaw", "provider.config.json"),
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
       JSON.stringify(
         {
           currentProvider: "glm",
@@ -128,9 +129,9 @@ describe("Provider integration", () => {
 
   it("loads OpenAI-compatible provider configuration from file aliases", async () => {
     const workspaceRoot = await createTempWorkspace();
-    await fs.mkdir(join(workspaceRoot, ".tentaclaw"), { recursive: true });
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
     await fs.writeFile(
-      join(workspaceRoot, ".tentaclaw", "provider.config.json"),
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
       JSON.stringify(
         {
           currentProvider: "openai-compatible",
@@ -160,11 +161,84 @@ describe("Provider integration", () => {
     expect(resolved.maxRetries).toBe(3);
   });
 
+  it("loads iFLYTEK Coding Plan provider configuration from file", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify(
+        {
+          currentProvider: "xfyun-coding",
+          providers: {
+            "xfyun-coding": {
+              apiKey: "xfyun-test-key",
+              maxRetries: 5,
+              timeoutMs: 18_000
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const resolved = resolveProviderConfig(workspaceRoot);
+
+    expect(resolved.name).toBe("xfyun-coding");
+    expect(resolved.apiKey).toBe("xfyun-test-key");
+    expect(resolved.baseUrl).toBe("https://maas-coding-api.cn-huabei-1.xf-yun.com/v2");
+    expect(resolved.model).toBe("astron-code-latest");
+    expect(resolved.displayName).toBe("iFLYTEK Coding Plan");
+    expect(resolved.family).toBe("openai-compatible");
+    expect(resolved.transport).toBe("openai-compatible");
+    expect(resolved.timeoutMs).toBe(18_000);
+    expect(resolved.maxRetries).toBe(5);
+  });
+
+  it("loads custom OpenAI-compatible providers from config without code changes", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify(
+        {
+          currentProvider: "vendor-coding",
+          customProviders: {
+            "vendor-coding": {
+              apiKey: "vendor-test-key",
+              baseUrl: "https://vendor.example.test/v1",
+              displayName: "Vendor Coding",
+              model: "vendor-code-latest",
+              providerLabel: "Vendor Coding",
+              timeoutMs: 16_000,
+              transport: "openai-compatible"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const resolved = resolveProviderConfig(workspaceRoot);
+
+    expect(resolved.name).toBe("vendor-coding");
+    expect(resolved.builtinProviderName).toBeNull();
+    expect(resolved.apiKey).toBe("vendor-test-key");
+    expect(resolved.baseUrl).toBe("https://vendor.example.test/v1");
+    expect(resolved.model).toBe("vendor-code-latest");
+    expect(resolved.displayName).toBe("Vendor Coding");
+    expect(resolved.transport).toBe("openai-compatible");
+    expect(resolved.timeoutMs).toBe(16_000);
+  });
+
   it("loads Anthropic provider configuration from provider/model selectors", async () => {
     const workspaceRoot = await createTempWorkspace();
-    await fs.mkdir(join(workspaceRoot, ".tentaclaw"), { recursive: true });
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
     await fs.writeFile(
-      join(workspaceRoot, ".tentaclaw", "provider.config.json"),
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
       JSON.stringify(
         {
           currentProvider: "claude/claude-sonnet-4-20250514",
@@ -195,9 +269,9 @@ describe("Provider integration", () => {
 
   it("resolves provider aliases and provider/model references from config", async () => {
     const workspaceRoot = await createTempWorkspace();
-    await fs.mkdir(join(workspaceRoot, ".tentaclaw"), { recursive: true });
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
     await fs.writeFile(
-      join(workspaceRoot, ".tentaclaw", "provider.config.json"),
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
       JSON.stringify(
         {
           currentProvider: "z.ai/glm-4.5-air",
@@ -239,6 +313,7 @@ describe("Provider integration", () => {
         expect.arrayContaining([
           "openai",
           "anthropic",
+          "xfyun-coding",
           "gemini",
           "openrouter",
           "ollama",
@@ -252,6 +327,33 @@ describe("Provider integration", () => {
     } finally {
       handle.close();
     }
+  });
+
+  it("includes configured custom providers in the catalog", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify(
+        {
+          customProviders: {
+            "vendor-coding": {
+              baseUrl: "https://vendor.example.test/v1",
+              displayName: "Vendor Coding",
+              model: "vendor-code-latest",
+              transport: "openai-compatible"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const catalog = resolveProviderCatalog(workspaceRoot);
+
+    expect(catalog.some((provider) => provider.name === "vendor-coding")).toBe(true);
   });
 
   it("maps GLM tool calls into the unified provider response shape", async () => {
@@ -514,9 +616,10 @@ describe("Provider integration", () => {
       config: {
         databasePath: join(workspaceRoot, "runtime.db"),
         provider: {
+          builtinProviderName: "glm",
           apiKey: "glm-test-key",
           baseUrl: `http://127.0.0.1:${address.port}/v4`,
-          configPath: join(workspaceRoot, ".tentaclaw", "provider.config.json"),
+          configPath: join(workspaceRoot, ".auto-talon", "provider.config.json"),
           configSource: "env",
           displayName: "GLM",
           family: "openai-compatible",
@@ -718,7 +821,7 @@ function createGlmConfig(
 }
 
 async function createTempWorkspace(): Promise<string> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-provider-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-provider-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
 }

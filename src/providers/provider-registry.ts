@@ -2,6 +2,7 @@ import type { ProviderConfig } from "../types";
 
 export const SUPPORTED_PROVIDER_NAMES = [
   "mock",
+  "xfyun-coding",
   "openai-compatible",
   "openai",
   "anthropic",
@@ -23,7 +24,7 @@ export interface ProviderCatalogEntry {
   aliases: string[];
   displayName: string;
   family: ProviderTransportKind;
-  name: SupportedProviderName;
+  name: string;
   supportsConfiguration: boolean;
   supportsStreaming: boolean;
   supportsToolCalls: boolean;
@@ -69,6 +70,13 @@ const DEFAULT_PROVIDER_SETTINGS: Record<SupportedProviderName, Omit<ProviderConf
     baseUrl: "https://api.anthropic.com",
     maxRetries: 2,
     model: "claude-sonnet-4-20250514",
+    timeoutMs: 30_000
+  },
+  "xfyun-coding": {
+    apiKey: null,
+    baseUrl: "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+    maxRetries: 2,
+    model: "astron-code-latest",
     timeoutMs: 30_000
   },
   gemini: {
@@ -167,6 +175,22 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsStreaming: true,
     supportsToolCalls: true,
     transport: "anthropic-compatible"
+  },
+  "xfyun-coding": {
+    aliases: ["astron", "iflytek", "spark-coding", "xfyun"],
+    displayName: "iFLYTEK Coding Plan",
+    family: "openai-compatible",
+    name: "xfyun-coding",
+    openAiCompatible: {
+      defaultBaseUrl: "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+      defaultDisplayName: "iFLYTEK Coding Plan",
+      defaultModel: "astron-code-latest",
+      providerLabel: "iFLYTEK Coding Plan"
+    },
+    supportsConfiguration: true,
+    supportsStreaming: true,
+    supportsToolCalls: true,
+    transport: "openai-compatible"
   },
   gemini: {
     aliases: ["google"],

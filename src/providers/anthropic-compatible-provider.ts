@@ -20,26 +20,27 @@ import {
   toProviderError
 } from "./provider-runtime";
 
-interface AnthropicCompatibleMessage {
+type AnthropicCompatibleContentBlock =
+  | {
+      text: string;
+      type: "text";
+    }
+  | {
+      content: string;
+      tool_use_id: string;
+      type: "tool_result";
+    }
+  | {
+      id: string;
+      input: JsonObject;
+      name: string;
+      type: "tool_use";
+    };
+
+interface AnthropicCompatibleMessage extends JsonObject {
   content:
     | string
-    | Array<
-        | {
-            text: string;
-            type: "text";
-          }
-        | {
-            content: string;
-            tool_use_id: string;
-            type: "tool_result";
-          }
-        | {
-            id: string;
-            input: JsonObject;
-            name: string;
-            type: "tool_use";
-          }
-      >;
+    | AnthropicCompatibleContentBlock[];
   role: "assistant" | "user";
 }
 
@@ -282,12 +283,16 @@ export class AnthropicCompatibleProvider implements Provider {
     }, this.config.timeoutMs);
 
     try {
+      const headers: Record<string, string> = {
+        "anthropic-version": this.options.anthropicVersion ?? "2023-06-01",
+        "Content-Type": "application/json"
+      };
+      if (this.config.apiKey !== null) {
+        headers["x-api-key"] = this.config.apiKey;
+      }
+
       const init: RequestInit = {
-        headers: {
-          "anthropic-version": this.options.anthropicVersion ?? "2023-06-01",
-          "Content-Type": "application/json",
-          "x-api-key": this.config.apiKey
-        },
+        headers,
         method,
         signal: composeAbortSignal(signal, controller.signal)
       };
@@ -351,7 +356,7 @@ function toAnthropicMessages(messages: ConversationMessage[]): AnthropicCompatib
       }
 
       if (message.role === "assistant" && message.toolCalls !== undefined && message.toolCalls.length > 0) {
-        const contentBlocks: AnthropicCompatibleMessage["content"] extends Array<infer T> ? T[] : never = [];
+        const contentBlocks: AnthropicCompatibleContentBlock[] = [];
         if (message.content.trim().length > 0) {
           contentBlocks.push({
             text: message.content,

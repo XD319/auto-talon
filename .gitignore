@@ -1,5 +1,5 @@
 dist/
 node_modules/
-.tentaclaw/
+.auto-talon/
 coverage/
 *.tsbuildinfo

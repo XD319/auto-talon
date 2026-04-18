@@ -117,7 +117,7 @@ export function AgentTuiApp({
   return (
     <Box flexDirection="column">
       <Box justifyContent="space-between">
-        <Text color="green">Tentaclaw Phase 4 TUI</Text>
+        <Text color="green">auto-talon TUI</Text>
         <Text color="gray">
           tasks={controller.snapshot.summary.taskCount} running={controller.snapshot.summary.runningTaskCount} approvals=
           {controller.snapshot.summary.pendingApprovalCount} failed=

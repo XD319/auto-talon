@@ -10,7 +10,7 @@ import { AgentProfileRegistry } from "../profiles/agent-profile-registry";
 import {
   createProvider,
   ManagedProvider,
-  PROVIDER_CATALOG,
+  resolveProviderCatalog,
   resolveProviderConfig,
   type ProviderCatalogEntry,
   type ResolvedProviderConfig
@@ -47,7 +47,7 @@ export function resolveAppConfig(cwd = process.cwd()): AppConfig {
     allowedFetchHosts: ["example.com"],
     databasePath:
       process.env.AGENT_RUNTIME_DB_PATH ??
-      join(workspaceRoot, ".tentaclaw", "agent-runtime.db"),
+      join(workspaceRoot, ".auto-talon", "agent-runtime.db"),
     defaultMaxIterations: 8,
     defaultProfileId: "executor",
     defaultTimeoutMs: 30_000,
@@ -166,7 +166,7 @@ export function createApplication(
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
     provider,
-    providerCatalog: options.providerCatalog ?? PROVIDER_CATALOG,
+    providerCatalog: options.providerCatalog ?? resolveProviderCatalog(config.workspaceRoot),
     providerConfig: config.provider,
     runtimeVersion: config.runtimeVersion,
     traceService,

@@ -105,7 +105,7 @@ async function verifyApprovalDenyPath(): Promise<{
   restrictedMemoryLeakDetected: boolean;
   status: string;
 }> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-beta-deny-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-beta-deny-"));
   const databasePath = join(workspaceRoot, "runtime.db");
   await fs.writeFile(join(workspaceRoot, "README.md"), "beta deny path", "utf8");
 
@@ -202,7 +202,7 @@ async function verifyProviderFailureDiagnostics(): Promise<{
   ok: boolean;
   traceVisible: boolean;
 }> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-beta-provider-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-beta-provider-"));
   const handle = createApplication(workspaceRoot, {
     config: {
       databasePath: join(workspaceRoot, "runtime.db")
@@ -248,7 +248,7 @@ async function verifyGatewayAdapterPath(): Promise<{
   output: string | null;
   status: string;
 }> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-beta-gateway-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-beta-gateway-"));
   const handle = createApplication(workspaceRoot, {
     config: {
       databasePath: join(workspaceRoot, "runtime.db")

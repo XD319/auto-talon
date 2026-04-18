@@ -1,6 +1,6 @@
-# Tentaclaw Phase 5
+# auto-talon Phase 5
 
-Tentaclaw is an Agent Runtime MVP focused on a CLI-first, governance-friendly execution kernel. Phase 5 keeps the same runtime core, retains the Ink terminal UI, and adds a dedicated Gateway / Adapter layer so external entrypoints can be attached without leaking platform logic into runtime, memory, policy, tools, or repositories.
+auto-talon is an Agent Runtime MVP focused on a CLI-first, governance-friendly execution kernel. Phase 5 keeps the same runtime core, retains the Ink terminal UI, and adds a dedicated Gateway / Adapter layer so external entrypoints can be attached without leaking platform logic into runtime, memory, policy, tools, or repositories.
 
 ## Phase 5 Capabilities
 
@@ -203,6 +203,12 @@ They only enter the system through a unified gateway runtime API.
 
 Current real provider support:
 
+- `xfyun-coding`
+  - lightweight preset built on the shared `openai-compatible` transport
+  - dedicated preset for the iFLYTEK Coding Plan OpenAI-compatible endpoint
+  - defaults to `https://maas-coding-api.cn-huabei-1.xf-yun.com/v2`
+  - defaults to the `astron-code-latest` model
+  - should not be pointed at the standard `maas-api` endpoint
 - `glm`
   - integrated through the runtime's unified `Provider` interface
   - uses an OpenAI-compatible HTTP contract behind the provider boundary
@@ -214,10 +220,16 @@ Current real provider support:
 
 The runtime core does not import any vendor SDK directly. Provider selection is resolved in a separate configuration layer and injected during bootstrap.
 
+When a new vendor already speaks an existing transport, prefer configuration over adding a new runtime class:
+
+- use built-in presets such as `xfyun-coding`, `glm`, or `moonshot` when available
+- use `openai-compatible` / `anthropic-compatible` style settings for vendors that match those APIs
+- use `customProviders` to register project-local presets without editing code
+
 Configuration sources:
 
 - environment variables
-- `.tentaclaw/provider.config.json`
+- `.auto-talon/provider.config.json`
 
 Environment variables:
 
@@ -232,8 +244,15 @@ Example config file:
 
 ```json
 {
-  "currentProvider": "glm",
+  "currentProvider": "xfyun-coding",
   "providers": {
+    "xfyun-coding": {
+      "apiKey": "your-api-key",
+      "baseUrl": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+      "model": "astron-code-latest",
+      "timeoutMs": 30000,
+      "maxRetries": 2
+    },
     "glm": {
       "apiKey": "your-api-key",
       "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
@@ -255,9 +274,45 @@ Example config file:
 }
 ```
 
+Example custom preset without changing runtime code:
+
+```json
+{
+  "currentProvider": "vendor-coding",
+  "customProviders": {
+    "vendor-coding": {
+      "transport": "openai-compatible",
+      "displayName": "Vendor Coding",
+      "baseUrl": "https://vendor.example.com/v1",
+      "model": "vendor-code-latest",
+      "timeoutMs": 30000,
+      "maxRetries": 2
+    }
+  },
+  "providers": {
+    "vendor-coding": {
+      "apiKey": "your-api-key"
+    }
+  }
+}
+```
+
+`customProviders` currently supports:
+
+- `transport`: `openai-compatible` or `anthropic-compatible`
+- `displayName`
+- `providerLabel`
+- `anthropicVersion` for Anthropic-compatible gateways
+- `baseUrl`
+- `model`
+- `timeoutMs`
+- `maxRetries`
+- `apiKey`
+
 Switching providers:
 
 - use `AGENT_PROVIDER=mock` for the mock provider
+- use `AGENT_PROVIDER=xfyun-coding` for the iFLYTEK Coding Plan preset
 - use `AGENT_PROVIDER=glm` for the real GLM provider
 - use `AGENT_PROVIDER=openai-compatible` for OpenAI-compatible vendors
 - confirm the active selection with `agent provider current`
@@ -437,9 +492,9 @@ This keeps reviewer behavior controlled without introducing multi-agent swarm lo
 - Phase 5 focuses on extension boundaries first; full chat-platform and MCP integrations are deferred until the adapter contract is proven.
 - Diff inspection is summary-first. It highlights risky change shapes but does not yet implement a full unified diff viewer.
 - TUI state refresh is polling-based for the MVP; there is no event-stream transport yet.
-- See [docs/phase2-governance.md](/D:/Backup/Career/Projects/AgentProject/tentaclaw/docs/phase2-governance.md) for the Phase 2 governance notes.
-- See [docs/phase3-memory.md](/D:/Backup/Career/Projects/AgentProject/tentaclaw/docs/phase3-memory.md) for the Phase 3 memory design.
-- See [docs/phase5-gateway.md](/D:/Backup/Career/Projects/AgentProject/tentaclaw/docs/phase5-gateway.md) for the Phase 5 gateway and adapter design.
+- See [docs/phase2-governance.md](/D:/Backup/Career/Projects/AgentProject/auto-talon/docs/phase2-governance.md) for the Phase 2 governance notes.
+- See [docs/phase3-memory.md](/D:/Backup/Career/Projects/AgentProject/auto-talon/docs/phase3-memory.md) for the Phase 3 memory design.
+- See [docs/phase5-gateway.md](/D:/Backup/Career/Projects/AgentProject/auto-talon/docs/phase5-gateway.md) for the Phase 5 gateway and adapter design.
 
 ## Development Commands
 

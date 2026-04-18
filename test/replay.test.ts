@@ -34,7 +34,7 @@ afterEach(async () => {
 
 describe("replay diagnostics", () => {
   it("replays a persisted task from its historical chain", async () => {
-    const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-replay-"));
+    const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-replay-"));
     tempPaths.push(workspaceRoot);
     await fs.writeFile(join(workspaceRoot, "README.md"), "replay fixture", "utf8");
 

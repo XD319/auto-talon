@@ -202,7 +202,7 @@ describe("Phase 4 Ink TUI query models", () => {
 });
 
 async function createTempWorkspace(): Promise<string> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "tentaclaw-phase4-"));
+  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-phase4-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
 }
