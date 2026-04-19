@@ -15,7 +15,7 @@ export function InputBox({ busy, cursorIndex, lines, value }: InputBoxProps): Re
         <Text color="gray">
           {busy
             ? "Agent is running..."
-            : "Type a message... (Meta+Enter send, Ctrl+A/E/W edit, Ctrl+P/N history, Ctrl+C exit, /help /stop)"}
+            : "Type a message... (Meta+Enter send, /help /status /title, Ctrl+P/N)"}
         </Text>
       ) : (
         lines.map((line, index) => <Text key={`line:${index}`}>{line}</Text>)

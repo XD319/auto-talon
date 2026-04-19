@@ -17,6 +17,7 @@ export interface UseChatControllerOptions {
 }
 
 export interface ChatController {
+  activeTaskId: string | null;
   addSystemMessage: (text: string) => void;
   busy: boolean;
   clearConversation: () => void;
@@ -52,6 +53,14 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     tasks: 0
   });
   const [pendingApproval, setPendingApproval] = React.useState<ApprovalRecord | null>(null);
+  const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
+
+  const startedAtRef = React.useRef(Date.now());
+  const activeAbortControllerRef = React.useRef<AbortController | null>(null);
+  const activeTaskIdRef = React.useRef<string | null>(null);
+  const lastSequenceByTaskRef = React.useRef<Record<string, number>>({});
+  const seenApprovalMessageIdsRef = React.useRef<Set<string>>(new Set());
+
   const addSystemMessage = React.useCallback((text: string) => {
     setMessages((current) => [
       ...current,
@@ -74,13 +83,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       }
     ]);
     setStatusLine("conversation cleared");
+    setActiveTaskId(null);
+    activeTaskIdRef.current = null;
   }, []);
-
-  const startedAtRef = React.useRef(Date.now());
-  const activeAbortControllerRef = React.useRef<AbortController | null>(null);
-  const activeTaskIdRef = React.useRef<string | null>(null);
-  const lastSequenceByTaskRef = React.useRef<Record<string, number>>({});
-  const seenApprovalMessageIdsRef = React.useRef<Set<string>>(new Set());
 
   const refresh = React.useCallback(() => {
     try {
@@ -146,6 +151,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         runOptions.signal = abortController.signal;
         const result = await input.service.runTask(runOptions);
         activeTaskIdRef.current = result.task.taskId;
+        setActiveTaskId(result.task.taskId);
         appendNewTraceEvents(result.task.taskId);
 
         const runError = result.error;
@@ -221,6 +227,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         const result = await input.service.resolveApproval(pendingApproval.approvalId, action, input.reviewerId);
         appendNewTraceEvents(result.task.taskId);
         activeTaskIdRef.current = result.task.taskId;
+        setActiveTaskId(result.task.taskId);
         setMessages((current) =>
           current.map((message) => {
             if (message.kind === "approval" && message.approval.approvalId === pendingApproval.approvalId) {
@@ -272,6 +279,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   }, []);
 
   return {
+    activeTaskId,
     addSystemMessage,
     busy,
     clearConversation,

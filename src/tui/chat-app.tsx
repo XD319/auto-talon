@@ -21,6 +21,7 @@ export interface ChatTuiAppProps {
 export function ChatTuiApp({ config, cwd, reviewerId, service }: ChatTuiAppProps): React.ReactElement {
   const { exit } = useApp();
   const [collapseActivities, setCollapseActivities] = React.useState(false);
+  const [sessionTitle, setSessionTitle] = React.useState("chat");
   const historyRef = React.useRef<string[]>([]);
   const historyIndexRef = React.useRef<number | null>(null);
   const controller = useChatController({
@@ -65,7 +66,7 @@ export function ChatTuiApp({ config, cwd, reviewerId, service }: ChatTuiAppProps
 
       if (text === "/help") {
         controller.addSystemMessage(
-          "Commands: /help, /clear, /new, /stop. Shortcuts: Ctrl+P/N history, Ctrl+T toggle activity, Ctrl+G/J top/bottom."
+          "Commands: /help /clear /new /stop /title <name> /history /status. Shortcuts: Ctrl+P/N prompt history, Ctrl+T activity, Ctrl+G/J scroll, Meta+Enter send."
         );
         return true;
       }
@@ -77,6 +78,7 @@ export function ChatTuiApp({ config, cwd, reviewerId, service }: ChatTuiAppProps
 
       if (text === "/new") {
         controller.clearConversation();
+        setSessionTitle("chat");
         controller.addSystemMessage("Started a new chat session.");
         return true;
       }
@@ -91,10 +93,54 @@ export function ChatTuiApp({ config, cwd, reviewerId, service }: ChatTuiAppProps
         return true;
       }
 
+      if (text === "/history") {
+        const items = historyRef.current.slice(-20);
+        if (items.length === 0) {
+          controller.addSystemMessage("No prompt history yet.");
+          return true;
+        }
+        const lines = items
+          .map((line, index) => `${String(index + 1).padStart(2, " ")}. ${line.replace(/\n/gu, " ")}`)
+          .join("\n");
+        controller.addSystemMessage(`Recent prompts (last ${items.length}):\n${lines}`);
+        return true;
+      }
+
+      if (text === "/status") {
+        const lines = [
+          `session: ${sessionTitle}`,
+          `cwd: ${cwd}`,
+          `model: ${config.provider.model ?? config.provider.name}`,
+          `provider: ${config.provider.name}`,
+          `reviewer: ${reviewerId}`,
+          `busy: ${controller.busy}`,
+          `active_task: ${controller.activeTaskId ?? "(none)"}`,
+          `tasks: ${controller.summary.tasks} running: ${controller.summary.runningTasks} approvals: ${controller.summary.pendingApprovals}`,
+          `status_line: ${controller.statusLine}`,
+          `elapsed: ${controller.runDurationLabel}`,
+          `ui_scroll: ${scrollback.atBottom ? "follow" : "paused"}`,
+          `activity_feed: ${collapseActivities ? "collapsed" : "expanded"}`,
+          `message_rows: ${controller.messages.length}`
+        ];
+        controller.addSystemMessage(lines.join("\n"));
+        return true;
+      }
+
+      if (text.startsWith("/title ")) {
+        const nextTitle = text.slice("/title ".length).trim();
+        if (nextTitle.length === 0) {
+          controller.addSystemMessage("Usage: /title <name>");
+          return true;
+        }
+        setSessionTitle(nextTitle);
+        controller.addSystemMessage(`Session title set to: ${nextTitle}`);
+        return true;
+      }
+
       controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
       return true;
     },
-    [controller]
+    [config.provider.model, config.provider.name, controller, cwd, reviewerId, scrollback.atBottom, collapseActivities, sessionTitle]
   );
 
   const textInput = useTextInput({
@@ -140,7 +186,7 @@ export function ChatTuiApp({ config, cwd, reviewerId, service }: ChatTuiAppProps
 
   return (
     <Box flexDirection="column">
-      <Banner cwd={cwd} modelLabel={config.provider.model ?? config.provider.name} />
+      <Banner cwd={cwd} modelLabel={config.provider.model ?? config.provider.name} sessionTitle={sessionTitle} />
       <Box marginTop={1} flexDirection="column">
         <MessageStream collapseActivities={collapseActivities} messages={visibleMessages} />
       </Box>
