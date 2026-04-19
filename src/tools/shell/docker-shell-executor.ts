@@ -159,14 +159,15 @@ export class DockerShellExecutor implements ShellCommandExecutor {
 function assertDockerAvailable(): void {
   const result = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
     encoding: "utf8",
-    timeout: 5_000,
+    timeout: 15_000,
     windowsHide: true
   });
 
   if (result.status !== 0) {
+    const detail = result.error?.message ?? result.stderr.trim();
     throw new AppError({
       code: "sandbox_denied",
-      message: "Docker sandbox mode was requested, but Docker is not available or not running."
+      message: `Docker sandbox mode was requested, but Docker is not available or not running.${detail.length > 0 ? ` ${detail}` : ""}`
     });
   }
 }
