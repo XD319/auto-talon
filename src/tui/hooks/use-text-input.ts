@@ -16,6 +16,7 @@ export interface UseTextInputOptions {
   onScrollPageDown: () => void;
   onScrollPageUp: () => void;
   onSubmit: (text: string) => void;
+  onSubmitBlockedBusy?: () => void;
   /** Return replacement value, or null to leave input unchanged. */
   onTabComplete?: (value: string) => string | null;
 }
@@ -30,27 +31,11 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
   const [value, setValue] = React.useState("");
   const [cursorIndex, setCursorIndex] = React.useState(0);
   const preferredColumnRef = React.useRef<number | null>(null);
-  const metaPressedRef = React.useRef(false);
   const interruptRequestedAtRef = React.useRef<number | null>(null);
 
   useInput((input, key) => {
-    if (input === "q" && value.length === 0) {
-      options.onExit();
-      return;
-    }
-
-    if (key.escape) {
-      metaPressedRef.current = true;
-      return;
-    }
-
     if (key.ctrl && input === "c") {
       const now = Date.now();
-      if (!options.busy) {
-        options.onExit();
-        return;
-      }
-
       const lastRequestedAt = interruptRequestedAtRef.current;
       if (lastRequestedAt !== null && now - lastRequestedAt <= 2_000) {
         options.onExit();
@@ -87,7 +72,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
     if (key.ctrl && key.shift && input === "v") {
       void import("clipboardy")
         .then(async (m) => {
-          const clip = await m.default.read();
+          const clip = normalizeNewlines(await m.default.read());
           setValue((current) => insertAt(current, cursorIndex, clip));
           setCursorIndex((current) => current + clip.length);
           preferredColumnRef.current = null;
@@ -190,24 +175,23 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
     }
 
     if (key.return) {
-      if (metaPressedRef.current || key.meta) {
+      if (key.meta) {
         setValue((current) => insertAt(current, cursorIndex, "\n"));
         setCursorIndex((current) => current + 1);
         preferredColumnRef.current = null;
       } else {
-        const trimmed = value.trim();
-        if (trimmed.length > 0 && !options.busy) {
-          options.onSubmit(trimmed);
+        const hasInput = value.trim().length > 0;
+        if (hasInput && !options.busy) {
+          options.onSubmit(value);
           setValue("");
           setCursorIndex(0);
           preferredColumnRef.current = null;
+        } else if (hasInput && options.busy) {
+          options.onSubmitBlockedBusy?.();
         }
       }
-      metaPressedRef.current = false;
       return;
     }
-
-    metaPressedRef.current = false;
 
     if (key.ctrl && input === "u") {
       setValue("");
@@ -256,7 +240,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       return;
     }
 
-    if (key.ctrl || key.meta) {
+    if (key.ctrl || (key.meta && input.length === 0)) {
       return;
     }
 
@@ -305,8 +289,13 @@ export function deleteCharacterAfter(
 }
 
 function buildLinesWithCursor(value: string, cursorIndex: number): string[] {
-  const withCursor = `${value.slice(0, cursorIndex)}|${value.slice(cursorIndex)}`;
+  const cursorGlyph = "\u200b▌\u200b";
+  const withCursor = `${value.slice(0, cursorIndex)}${cursorGlyph}${value.slice(cursorIndex)}`;
   return withCursor.split("\n");
+}
+
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n");
 }
 
 export function moveCursorVertical(

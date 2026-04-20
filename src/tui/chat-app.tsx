@@ -35,7 +35,7 @@ export function ChatTuiApp({
 }: ChatTuiAppProps): React.ReactElement {
   useMouseScrollUnsupportedNotice();
   const { exit } = useApp();
-  const [collapseActivities, setCollapseActivities] = React.useState(false);
+  const [collapseActivities, setCollapseActivities] = React.useState(true);
   const [sessionTitle, setSessionTitle] = React.useState("chat");
   const [sessionId, setSessionId] = React.useState(initialSessionId);
   const historyRef = React.useRef<string[]>([]);
@@ -313,17 +313,19 @@ export function ChatTuiApp({
       setCollapseActivities((current) => !current);
     },
     onSubmit: (value) => {
+      if (handleSlashCommand(value)) {
+        return;
+      }
       historyRef.current.push(value);
       if (historyRef.current.length > 200) {
         historyRef.current = historyRef.current.slice(-200);
       }
       historyIndexRef.current = null;
-
-      if (handleSlashCommand(value)) {
-        return;
-      }
       void controller.submitPrompt(value);
       scrollback.scrollToBottom();
+    },
+    onSubmitBlockedBusy: () => {
+      controller.addSystemMessage("Agent is still running. Wait for completion or use /stop to interrupt.");
     }
   });
 
@@ -346,6 +348,16 @@ export function ChatTuiApp({
         ].filter((command) => command.startsWith(textInput.value))
       : [];
 
+  React.useEffect(() => {
+    const latest = controller.messages.at(-1);
+    if (latest === undefined) {
+      return;
+    }
+    if (latest.kind === "agent" || latest.kind === "error" || latest.kind === "system") {
+      scrollback.scrollToBottom();
+    }
+  }, [controller.messages, scrollback.scrollToBottom]);
+
   return (
     <Box flexDirection="column">
       <Banner
@@ -366,11 +378,7 @@ export function ChatTuiApp({
         estimatedCostUsd={controller.tokenHud.estimatedCostUsd}
         inputTokens={controller.tokenHud.inputTokens}
         outputTokens={controller.tokenHud.outputTokens}
-        pendingApprovals={controller.summary.pendingApprovals}
-        runDurationLabel={controller.runDurationLabel}
-        runningTasks={controller.summary.runningTasks}
         statusLine={controller.statusLine}
-        taskCount={controller.summary.tasks}
       />
       {slashHints.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
