@@ -28,6 +28,7 @@ export function AgentTuiApp({
   reviewerId
 }: AgentTuiAppProps): React.ReactElement {
   const { exit } = useApp();
+  const ctrlCRequestedAtRef = React.useRef<number | null>(null);
   const controller = useDashboardController({
     queryService,
     refreshIntervalMs,
@@ -35,6 +36,17 @@ export function AgentTuiApp({
   });
 
   useInput((input, key) => {
+    if (key.ctrl && input === "c") {
+      const now = Date.now();
+      const lastRequestedAt = ctrlCRequestedAtRef.current;
+      if (lastRequestedAt !== null && now - lastRequestedAt <= 2_000) {
+        exit();
+        return;
+      }
+      ctrlCRequestedAtRef.current = now;
+      return;
+    }
+
     if (input === "q" || key.escape) {
       exit();
       return;
@@ -50,8 +62,9 @@ export function AgentTuiApp({
       return;
     }
 
-    if (input >= "1" && input <= String(PANEL_ORDER.length)) {
-      const nextPanelId = PANEL_ORDER[Number(input) - 1];
+    const panelNumber = Number.parseInt(input, 10);
+    if (Number.isInteger(panelNumber) && panelNumber >= 1 && panelNumber <= PANEL_ORDER.length) {
+      const nextPanelId = PANEL_ORDER[panelNumber - 1];
       if (nextPanelId !== undefined) {
         controller.setSelectedPanel(nextPanelId);
       }
@@ -176,7 +189,7 @@ function PanelTabs({ selectedPanel }: { selectedPanel: TuiPanelId }): React.Reac
     <Text>
       {PANEL_ORDER.map((panel, index) => (
         <Text key={panel} color={panel === selectedPanel ? "green" : "gray"}>
-          {index + 1}.{panel}{" "}
+          {`${index + 1}.${panel} `}
         </Text>
       ))}
     </Text>

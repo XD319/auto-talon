@@ -70,7 +70,10 @@ export async function startDashboardTui(
       React.createElement(AgentTuiApp, {
         queryService: new RuntimeDashboardQueryService(handle.service),
         reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer"
-      })
+      }),
+      {
+        exitOnCtrlC: false
+      }
     );
     await app.waitUntilExit();
     app.unmount();
