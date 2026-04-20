@@ -18,7 +18,7 @@ export interface SandboxShellPlan extends JsonObject {
   envKeys: string[];
   timeoutMs: number;
   pathScope: PathScope;
-  networkAccess: "disabled";
+  networkAccess: "disabled" | "unrestricted";
 }
 
 export interface SandboxWebPlan extends JsonObject {

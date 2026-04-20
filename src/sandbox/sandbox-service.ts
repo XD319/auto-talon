@@ -19,6 +19,7 @@ export interface SandboxConfig {
   deniedShellPatterns?: RegExp[];
   maxShellTimeoutMs?: number;
   allowedFetchHosts?: string[];
+  shellNetworkAccess?: "disabled" | "unrestricted";
 }
 
 export interface ShellSandboxRequest {
@@ -46,6 +47,8 @@ export class SandboxService {
   private readonly deniedShellPatterns: RegExp[];
   private readonly maxShellTimeoutMs: number;
   private readonly allowedFetchHosts: Set<string>;
+  private readonly allowedFetchHostPatterns: RegExp[];
+  private readonly shellNetworkAccess: "disabled" | "unrestricted";
 
   public constructor(config: SandboxConfig) {
     this.workspaceRoot = resolve(config.workspaceRoot);
@@ -58,19 +61,32 @@ export class SandboxService {
     this.allowedShellCommands = new Set(
       (config.allowedShellCommands ?? [
         "cat",
+        "cp",
         "dir",
         "echo",
+        "eslint",
         "findstr",
+        "git",
         "get-childitem",
         "get-content",
-        "git",
+        "jest",
+        "ls",
+        "mkdir",
+        "mv",
         "node",
         "npm",
         "pnpm",
+        "prettier",
+        "python",
+        "pytest",
+        "rimraf",
+        "ruff",
         "select-string",
+        "tsc",
         "type",
         "where",
-        "whoami"
+        "whoami",
+        "yarn"
       ]).map((entry) => entry.toLowerCase())
     );
     this.deniedShellPatterns =
@@ -94,6 +110,10 @@ export class SandboxService {
     this.allowedFetchHosts = new Set(
       (config.allowedFetchHosts ?? []).map((host) => host.toLowerCase())
     );
+    this.allowedFetchHostPatterns = [...this.allowedFetchHosts]
+      .filter((host) => host.includes("*"))
+      .map((pattern) => wildcardHostToRegExp(pattern));
+    this.shellNetworkAccess = config.shellNetworkAccess ?? "unrestricted";
   }
 
   public prepareFileRead(candidatePath: string, cwd: string): SandboxFileAccessPlan {
@@ -151,6 +171,7 @@ export class SandboxService {
   }
 
   public prepareShellExecution(request: ShellSandboxRequest): PreparedShellInput {
+    assertNoShellChaining(request.command);
     for (const pattern of this.deniedShellPatterns) {
       if (pattern.test(request.command)) {
         throw this.createSandboxError(
@@ -175,6 +196,7 @@ export class SandboxService {
         }
       );
     }
+    assertExecutableArgsPolicy(executable, request.command);
 
     const cwd = resolve(request.cwd);
     const pathScope = this.classifyReadScope(cwd);
@@ -198,7 +220,7 @@ export class SandboxService {
       envKeys: Object.keys(env),
       executable,
       kind: "shell",
-      networkAccess: "disabled",
+      networkAccess: this.shellNetworkAccess,
       pathScope,
       timeoutMs
     };
@@ -240,7 +262,7 @@ export class SandboxService {
     }
 
     const host = parsedUrl.host.toLowerCase();
-    if (!this.allowedFetchHosts.has(host)) {
+    if (!this.isAllowedFetchHost(host)) {
       throw this.createSandboxError(
         "sandbox_denied",
         `Host ${host} is not in the allowed fetch list.`,
@@ -260,6 +282,14 @@ export class SandboxService {
       pathScope: "network",
       url: parsedUrl.toString()
     };
+  }
+
+  private isAllowedFetchHost(host: string): boolean {
+    if (this.allowedFetchHosts.has(host)) {
+      return true;
+    }
+
+    return this.allowedFetchHostPatterns.some((pattern) => pattern.test(host));
   }
 
   private sanitizeEnv(env: Record<string, string> | undefined): Record<string, string> {
@@ -400,6 +430,44 @@ export class SandboxService {
 
 function normalizeRoots(roots: string[]): string[] {
   return [...new Set(roots.map((root) => resolve(root)))];
+}
+
+function wildcardHostToRegExp(pattern: string): RegExp {
+  const escaped = pattern
+    .toLowerCase()
+    .replace(/[.+?^${}()|[\]\\]/gu, "\\$&")
+    .replace(/\*/gu, ".*");
+  return new RegExp(`^${escaped}$`, "i");
+}
+
+function assertNoShellChaining(command: string): void {
+  const forbiddenSyntaxPatterns = [/&&/u, /\|\|/u, /;/u, /\n|\r/u, /\$\(/u, /`/u];
+  if (forbiddenSyntaxPatterns.some((pattern) => pattern.test(command))) {
+    throw new AppError({
+      code: "sandbox_denied",
+      message: "Shell command contains chaining or eval syntax that is not allowed in sandbox mode."
+    });
+  }
+}
+
+function assertExecutableArgsPolicy(executable: string, command: string): void {
+  const lowered = command.toLowerCase();
+  const deniedByExecutable: Record<string, RegExp[]> = {
+    node: [/\s--eval\b/u, /\s-e\b/u, /\s--print\b/u, /\s-p\b/u],
+    powershell: [/\s-command\b/u, /\s-encodedcommand\b/u, /\s-enc\b/u],
+    pwsh: [/\s-command\b/u, /\s-encodedcommand\b/u, /\s-enc\b/u],
+    python: [/\s-c\b/u]
+  };
+
+  const deniedPatterns = deniedByExecutable[executable] ?? [];
+  for (const pattern of deniedPatterns) {
+    if (pattern.test(lowered)) {
+      throw new AppError({
+        code: "sandbox_denied",
+        message: `Shell arguments for ${executable} violate sandbox policy.`
+      });
+    }
+  }
 }
 
 function extractExecutable(command: string): string {

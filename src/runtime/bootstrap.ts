@@ -144,6 +144,7 @@ export function createApplication(
       ? { allowedShellCommands: config.sandbox.shellAllowlist }
       : {}),
     readRoots: config.sandbox.readRoots,
+    shellNetworkAccess: config.sandbox.network === "disabled" ? "disabled" : "unrestricted",
     maxShellTimeoutMs: 30_000,
     workspaceRoot: config.workspaceRoot,
     writeRoots: config.sandbox.writeRoots

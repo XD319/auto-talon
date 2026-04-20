@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parse } from "node-html-parser";
 
 import type { SandboxService } from "../sandbox/sandbox-service";
 import type {
@@ -15,11 +16,13 @@ export interface WebFetchClient {
 
 interface PreparedWebFetchInput {
   maxBytes: number;
+  maxRedirects: number;
   plan: SandboxWebPlan;
 }
 
 const webFetchSchema = z.object({
   maxBytes: z.number().int().positive().max(200_000).default(32_768),
+  maxRedirects: z.number().int().min(0).max(5).default(2),
   url: z.string().url()
 });
 
@@ -34,6 +37,9 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
   public readonly inputSchemaDescriptor = {
     properties: {
       maxBytes: {
+        type: "number"
+      },
+      maxRedirects: {
         type: "number"
       },
       url: {
@@ -66,6 +72,7 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
       },
       preparedInput: {
         maxBytes: parsedInput.maxBytes,
+        maxRedirects: parsedInput.maxRedirects,
         plan
       },
       sandbox: plan
@@ -76,19 +83,22 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
     input: PreparedWebFetchInput,
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
-    const response = await this.client.fetch(input.plan.url, {
-      method: input.plan.method,
-      redirect: "manual",
-      signal: context.signal
-    });
-
+    const requestTrace: Array<{ status: number; url: string }> = [];
+    const response = await this.followRedirects(
+      input.plan.url,
+      input.maxRedirects,
+      requestTrace,
+      context.signal
+    );
     const body = await response.text();
-    const truncatedBody = body.slice(0, input.maxBytes);
+    const normalized = normalizeWebBody(body, response.headers.get("content-type"));
+    const truncatedBody = normalized.content.slice(0, input.maxBytes);
     if (!response.ok) {
       return {
         details: {
+          redirectTrace: requestTrace,
           status: response.status,
-          url: input.plan.url
+          url: response.url || input.plan.url
         },
         errorCode: "tool_execution_error",
         errorMessage: `Web fetch failed with HTTP status ${response.status}.`,
@@ -102,24 +112,98 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
           artifactType: "web_response",
           content: {
             body: truncatedBody,
+            extractedTitle: normalized.title,
             headers: {
               contentType: response.headers.get("content-type")
             },
+            redirectTrace: requestTrace,
             status: response.status,
-            url: input.plan.url
+            url: response.url || input.plan.url
           },
-          uri: input.plan.url
+          uri: response.url || input.plan.url
         }
       ],
       output: {
         body: truncatedBody,
         contentType: response.headers.get("content-type"),
+        extractedTitle: normalized.title,
+        redirectTrace: requestTrace,
         status: response.status,
-        truncated: body.length > truncatedBody.length,
-        url: input.plan.url
+        truncated: normalized.content.length > truncatedBody.length,
+        url: response.url || input.plan.url
       },
       success: true,
-      summary: `Fetched ${input.plan.url}`
+      summary: `Fetched ${response.url || input.plan.url}`
     };
   }
+
+  private async followRedirects(
+    initialUrl: string,
+    maxRedirects: number,
+    requestTrace: Array<{ status: number; url: string }>,
+    signal: AbortSignal
+  ): Promise<Response> {
+    let currentUrl = initialUrl;
+    for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
+      const response = await this.client.fetch(currentUrl, {
+        method: "GET",
+        redirect: "manual",
+        signal
+      });
+      requestTrace.push({
+        status: response.status,
+        url: currentUrl
+      });
+
+      if (!isRedirectStatus(response.status)) {
+        return response;
+      }
+
+      const location = response.headers.get("location");
+      if (location === null || location.trim().length === 0) {
+        return response;
+      }
+      if (redirectCount >= maxRedirects) {
+        return response;
+      }
+
+      const nextUrl = new URL(location, currentUrl).toString();
+      this.sandboxService.prepareWebFetch(nextUrl);
+      currentUrl = nextUrl;
+    }
+
+    return this.client.fetch(currentUrl, {
+      method: "GET",
+      redirect: "manual",
+      signal
+    });
+  }
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+function normalizeWebBody(
+  body: string,
+  contentType: string | null
+): {
+  content: string;
+  title: string | null;
+} {
+  if (contentType?.toLowerCase().includes("text/html") !== true) {
+    return {
+      content: body,
+      title: null
+    };
+  }
+
+  const root = parse(body);
+  root.querySelectorAll("script,style,noscript,template").forEach((node) => node.remove());
+  const title = root.querySelector("title")?.text.trim() ?? null;
+  const text = root.text.replace(/\s+/gu, " ").trim();
+  return {
+    content: text,
+    title
+  };
 }
