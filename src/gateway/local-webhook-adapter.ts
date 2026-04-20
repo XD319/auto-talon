@@ -9,8 +9,7 @@ import type {
   GatewayTaskRequest,
   InboundMessageAdapter,
   JsonObject,
-  JsonValue,
-  OutboundResponseAdapter
+  JsonValue
 } from "../types";
 
 const MAX_REQUEST_BODY_BYTES = 256_000;
@@ -21,7 +20,7 @@ export interface LocalWebhookAdapterOptions {
   port: number;
 }
 
-export class LocalWebhookAdapter implements InboundMessageAdapter, OutboundResponseAdapter {
+export class LocalWebhookAdapter implements InboundMessageAdapter {
   public readonly descriptor: AdapterDescriptor;
 
   private server: Server | null = null;
@@ -92,14 +91,6 @@ export class LocalWebhookAdapter implements InboundMessageAdapter, OutboundRespo
 
     this.server = null;
     this.runtimeApi = null;
-  }
-
-  public sendEvent(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  public sendResult(): Promise<void> {
-    return Promise.resolve();
   }
 
   private async handleRequestSafely(

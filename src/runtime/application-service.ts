@@ -388,8 +388,12 @@ export class AgentApplicationService {
     const targetPath = artifact.content.path;
     const originalExists = artifact.content.originalExists;
     if (originalExists) {
+      const contentToRestore =
+        typeof artifact.content.snapshotPath === "string"
+          ? await fs.readFile(artifact.content.snapshotPath, "utf8")
+          : artifact.content.originalContent;
       await fs.mkdir(dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, artifact.content.originalContent, "utf8");
+      await fs.writeFile(targetPath, contentToRestore, "utf8");
     } else {
       await fs.rm(targetPath, { force: true });
     }
@@ -530,6 +534,7 @@ interface RollbackArtifactContent extends JsonObject {
   originalContent: string;
   originalExists: true;
   path: string;
+  snapshotPath?: string;
   sha256: string;
 }
 

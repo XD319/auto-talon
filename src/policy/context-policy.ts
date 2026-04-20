@@ -67,9 +67,34 @@ export class ContextPolicy {
       };
     }
 
+    const compact = request.content.replace(/\s+/gu, " ").trim();
+    if (compact.length < 20) {
+      return {
+        allowed: false,
+        reason: "Content is too short to justify long-term memory persistence.",
+        targetScope: request.scope
+      };
+    }
+    if (compact.length > 8_000) {
+      return {
+        allowed: false,
+        reason: "Content is too large for long-term memory and likely noisy.",
+        targetScope: request.scope
+      };
+    }
+
+    const source = request.sourceLabel.toLowerCase();
+    if (source.includes("session compact") || source.includes("tool output")) {
+      return {
+        allowed: false,
+        reason: "Session compaction and raw tool output are not auto-promoted to long-term memory.",
+        targetScope: request.scope
+      };
+    }
+
     return {
       allowed: true,
-      reason: "Content is eligible for long-term memory persistence.",
+      reason: "Content passed long-term memory quality gates.",
       targetScope: request.scope
     };
   }

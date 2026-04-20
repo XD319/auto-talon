@@ -17,6 +17,7 @@ import type {
   MemoryRecallResult,
   Provider,
   ProviderToolCall,
+  RuntimeTaskEvent,
   RunMetadataRepository,
   RuntimeRunOptions,
   RuntimeRunResult,
@@ -50,6 +51,7 @@ interface ExecutionLoopState {
   messages: ConversationMessage[];
   /** Present only when the CLI/TUI requests streamed assistant text. */
   onAssistantTextDelta?: (delta: string) => void;
+  onTaskEvent?: (event: RuntimeTaskEvent) => void;
   pendingToolCalls: ProviderToolCall[];
   task: TaskRecord;
   tokenBudget: TokenBudget;
@@ -113,6 +115,13 @@ export class ExecutionKernel {
         startedAt: new Date().toISOString(),
         status: "running"
       });
+      emitTaskEvent(options.onTaskEvent, {
+        iteration: task.currentIteration,
+        kind: "lifecycle",
+        message: "Task started",
+        status: task.status,
+        taskId
+      });
 
       this.dependencies.traceService.record({
         actor: "runtime.kernel",
@@ -142,12 +151,13 @@ export class ExecutionKernel {
         ...(options.onAssistantTextDelta !== undefined
           ? { onAssistantTextDelta: options.onAssistantTextDelta }
           : {}),
+        ...(options.onTaskEvent !== undefined ? { onTaskEvent: options.onTaskEvent } : {}),
         pendingToolCalls: [],
         task,
         tokenBudget: options.tokenBudget
       });
     } catch (error) {
-      throw this.finalizeTaskFailure(task, toAppError(error));
+      throw this.finalizeTaskFailure(task, toAppError(error), options.onTaskEvent);
     } finally {
       managedAbortController.dispose();
     }
@@ -472,6 +482,14 @@ export class ExecutionKernel {
             summary: "Task completed successfully",
             taskId: task.taskId
           });
+          emitTaskEvent(state.onTaskEvent, {
+            errorCode: null,
+            errorMessage: null,
+            kind: "result",
+            outputPreview: summarizeText(providerResponse.message, 200),
+            status: "succeeded",
+            taskId: task.taskId
+          });
 
           return {
             output: providerResponse.message,
@@ -491,6 +509,14 @@ export class ExecutionKernel {
           state.managedAbortController.abortController.signal,
           state.managedAbortController.getReason()
         );
+        emitTaskEvent(state.onTaskEvent, {
+          iteration,
+          kind: "tool",
+          status: "started",
+          taskId: task.taskId,
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName
+        });
 
         const outcome = await this.dependencies.toolOrchestrator.execute(
           {
@@ -517,6 +543,14 @@ export class ExecutionKernel {
             status: "waiting_approval"
           });
 
+          emitTaskEvent(state.onTaskEvent, {
+            iteration,
+            kind: "tool",
+            status: "approval_required",
+            taskId: task.taskId,
+            toolCallId: toolCall.toolCallId,
+            toolName: toolCall.toolName
+          });
           this.dependencies.executionCheckpointRepository.save({
             iteration,
             memoryContext: state.memoryContext,
@@ -534,6 +568,8 @@ export class ExecutionKernel {
 
         toolCallCount += 1;
         const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
+        const structuredOutputSummary = summarizeToolOutput(outcome.result.output);
+        const toolSummary = `${outcome.result.summary} | ${structuredOutputSummary}`;
         if (toolDescriptor !== null) {
           this.dependencies.memoryPlane.recordToolOutcome({
             output:
@@ -541,7 +577,7 @@ export class ExecutionKernel {
                 ? outcome.result.output
                 : JSON.stringify(outcome.result.output, null, 2),
             privacyLevel: toolDescriptor.privacyLevel,
-            summary: outcome.result.summary,
+            summary: toolSummary,
             task,
             toolCallId: toolCall.toolCallId,
             toolName: toolCall.toolName
@@ -549,9 +585,27 @@ export class ExecutionKernel {
           messages.push(
             createToolFeedbackMessage(outcome.result.output, toolCall, toolDescriptor.privacyLevel)
           );
+          emitTaskEvent(state.onTaskEvent, {
+            iteration,
+            kind: "tool",
+            status: "finished",
+            summary: toolSummary,
+            taskId: task.taskId,
+            toolCallId: toolCall.toolCallId,
+            toolName: toolCall.toolName
+          });
           continue;
         }
         messages.push(createToolFeedbackMessage(outcome.result.output, toolCall, "internal"));
+        emitTaskEvent(state.onTaskEvent, {
+          iteration,
+          kind: "tool",
+          status: "finished",
+          summary: toolSummary,
+          taskId: task.taskId,
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName
+        });
       }
 
       pendingToolCalls = [];
@@ -594,7 +648,11 @@ export class ExecutionKernel {
     });
   }
 
-  private finalizeTaskFailure(task: TaskRecord, error: AppError): AppError {
+  private finalizeTaskFailure(
+    task: TaskRecord,
+    error: AppError,
+    onTaskEvent?: (event: RuntimeTaskEvent) => void
+  ): AppError {
     const isCancelled = error.code === "interrupt";
 
     if (error.code === "interrupt" || error.code === "timeout") {
@@ -617,6 +675,14 @@ export class ExecutionKernel {
       errorMessage: error.message,
       finishedAt: new Date().toISOString(),
       status: isCancelled ? "cancelled" : "failed"
+    });
+    emitTaskEvent(onTaskEvent, {
+      errorCode: error.code,
+      errorMessage: error.message,
+      kind: "result",
+      outputPreview: null,
+      status: isCancelled ? "cancelled" : "failed",
+      taskId: task.taskId
     });
 
     this.dependencies.traceService.record({
@@ -781,4 +847,37 @@ async function sleepWithAbort(delayMs: number, signal: AbortSignal): Promise<voi
 function summarizeText(value: string, maxLength: number): string {
   const compact = value.replace(/\s+/gu, " ").trim();
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
+}
+
+function emitTaskEvent(
+  callback: ((event: RuntimeTaskEvent) => void) | undefined,
+  event: RuntimeTaskEvent
+): void {
+  if (callback === undefined) {
+    return;
+  }
+  callback(event);
+}
+
+function summarizeToolOutput(output: unknown): string {
+  if (typeof output === "string") {
+    return summarizeText(output, 140);
+  }
+  if (output === null || output === undefined) {
+    return "output=null";
+  }
+  if (Array.isArray(output)) {
+    return `output=array(${output.length})`;
+  }
+  if (typeof output === "object") {
+    const keys = Object.keys(output as Record<string, unknown>);
+    return `output=object{${keys.slice(0, 6).join(",")}${keys.length > 6 ? ",..." : ""}}`;
+  }
+  if (typeof output === "number" || typeof output === "boolean" || typeof output === "bigint") {
+    return `output=${output.toString()}`;
+  }
+  if (typeof output === "symbol") {
+    return `output=${output.description ?? "symbol"}`;
+  }
+  return "output=[unsupported]";
 }

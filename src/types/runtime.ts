@@ -200,9 +200,44 @@ export interface RuntimeRunOptions {
   metadata?: JsonObject;
   /** Forwarded to the provider as `onTextDelta` when supported (e.g. OpenAI-compatible streaming). */
   onAssistantTextDelta?: (delta: string) => void;
+  /** Unified task stream callback for lifecycle, stage, tool, and result events. */
+  onTaskEvent?: (event: RuntimeTaskEvent) => void;
 }
 
 export interface RuntimeRunResult {
   task: TaskRecord;
   output: string | null;
 }
+
+export type RuntimeTaskEvent =
+  | {
+      kind: "lifecycle";
+      taskId: string;
+      status: string;
+      iteration: number;
+      message: string;
+    }
+  | {
+      kind: "stage";
+      taskId: string;
+      stage: "planning" | "tooling" | "completion";
+      iteration: number;
+      message: string;
+    }
+  | {
+      kind: "tool";
+      taskId: string;
+      toolCallId: string;
+      toolName: string;
+      status: "started" | "approval_required" | "finished" | "failed";
+      iteration: number;
+      summary?: string;
+    }
+  | {
+      kind: "result";
+      taskId: string;
+      status: "succeeded" | "failed" | "cancelled";
+      outputPreview: string | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    };

@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 
 import { z } from "zod";
 
@@ -16,10 +16,15 @@ import type {
 const fileReadSchema = z
   .object({
     action: z.enum(["list_dir", "read_file", "search_text"]),
+    contextLines: z.number().int().min(0).max(5).default(1),
+    fileExtensions: z.array(z.string().min(1)).max(30).optional(),
     keyword: z.string().min(1).optional(),
     maxResults: z.number().int().positive().max(100).default(20),
+    maxSizeBytes: z.number().int().positive().max(10_000_000).default(1_000_000),
+    offset: z.number().int().min(0).default(0),
     path: z.string().min(1).optional(),
-    recursive: z.boolean().default(true)
+    recursive: z.boolean().default(true),
+    limit: z.number().int().positive().max(20_000).default(5_000)
   })
   .superRefine((value, context) => {
     if ((value.action === "list_dir" || value.action === "read_file") && value.path === undefined) {
@@ -40,6 +45,8 @@ const fileReadSchema = z
 type PreparedFileReadInput =
   | {
       action: "read_file";
+      limit: number;
+      offset: number;
       plan: SandboxFileAccessPlan;
     }
   | {
@@ -50,6 +57,9 @@ type PreparedFileReadInput =
       action: "search_text";
       keyword: string;
       maxResults: number;
+      maxSizeBytes: number;
+      contextLines: number;
+      fileExtensions: string[] | null;
       plan: SandboxFileAccessPlan;
       recursive: boolean;
     };
@@ -68,10 +78,25 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
         enum: ["list_dir", "read_file", "search_text"],
         type: "string"
       },
+      contextLines: {
+        type: "number"
+      },
+      fileExtensions: {
+        type: "array"
+      },
       keyword: {
         type: "string"
       },
+      limit: {
+        type: "number"
+      },
       maxResults: {
+        type: "number"
+      },
+      maxSizeBytes: {
+        type: "number"
+      },
+      offset: {
         type: "number"
       },
       path: {
@@ -102,6 +127,8 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
         },
         preparedInput: {
           action: parsedInput.action,
+          limit: parsedInput.limit,
+          offset: parsedInput.offset,
           plan
         },
         sandbox: plan
@@ -129,8 +156,14 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
       },
       preparedInput: {
         action: parsedInput.action,
+        contextLines: parsedInput.contextLines,
+        fileExtensions:
+          parsedInput.fileExtensions?.map((extension) =>
+            extension.startsWith(".") ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+          ) ?? null,
         keyword: parsedInput.keyword ?? "",
         maxResults: parsedInput.maxResults,
+        maxSizeBytes: parsedInput.maxSizeBytes,
         plan,
         recursive: parsedInput.recursive
       },
@@ -158,14 +191,21 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
   ): Promise<ToolExecutionResult> {
     const targetPath = input.plan.resolvedPath;
     const content = await fs.readFile(targetPath, "utf8");
+    const lines = content.split(/\r?\n/u);
+    const start = Math.min(input.offset, lines.length);
+    const end = Math.min(start + input.limit, lines.length);
+    const sliced = lines.slice(start, end).join("\n");
 
     return {
       output: {
-        content,
+        content: sliced,
+        endLine: end,
+        lineCount: lines.length,
+        offset: input.offset,
         path: targetPath
       },
       success: true,
-      summary: `Read ${basename(targetPath)}`
+      summary: `Read ${basename(targetPath)} lines ${start + 1}-${end}`
     };
   }
 
@@ -193,7 +233,13 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
     const searchRoot = input.plan.resolvedPath;
-    const matches: Array<{ line: string; lineNumber: number; path: string }> = [];
+    const matches: Array<{
+      afterContext: string[];
+      beforeContext: string[];
+      line: string;
+      lineNumber: number;
+      path: string;
+    }> = [];
 
     await this.walkAndSearch(searchRoot, input.keyword, input, matches, context.signal);
 
@@ -212,7 +258,13 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
     directoryPath: string,
     keyword: string,
     input: Extract<PreparedFileReadInput, { action: "search_text" }>,
-    matches: Array<{ line: string; lineNumber: number; path: string }>,
+    matches: Array<{
+      afterContext: string[];
+      beforeContext: string[];
+      line: string;
+      lineNumber: number;
+      path: string;
+    }>,
     signal: AbortSignal
   ): Promise<void> {
     if (signal.aborted) {
@@ -230,26 +282,41 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
 
       const nextPath = join(directoryPath, entry.name);
       if (entry.isDirectory()) {
+        if (IGNORED_SEARCH_DIRECTORIES.has(entry.name.toLowerCase())) {
+          continue;
+        }
         if (input.recursive) {
           await this.walkAndSearch(nextPath, keyword, input, matches, signal);
         }
         continue;
       }
 
+      if (input.fileExtensions !== null) {
+        const extension = extname(nextPath).toLowerCase();
+        if (!input.fileExtensions.includes(extension)) {
+          continue;
+        }
+      }
+
       const stat = await fs.stat(nextPath);
-      if (stat.size > 1_000_000) {
+      if (stat.size > input.maxSizeBytes) {
         continue;
       }
 
       try {
         const content = await fs.readFile(nextPath, "utf8");
         const lines = content.split(/\r?\n/u);
+        if (containsLikelyBinaryByte(content)) {
+          continue;
+        }
         for (const [index, line] of lines.entries()) {
           if (!line.includes(keyword)) {
             continue;
           }
 
           matches.push({
+            afterContext: lines.slice(index + 1, index + 1 + input.contextLines),
+            beforeContext: lines.slice(Math.max(0, index - input.contextLines), index),
             line,
             lineNumber: index + 1,
             path: nextPath
@@ -264,4 +331,23 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
       }
     }
   }
+}
+
+const IGNORED_SEARCH_DIRECTORIES = new Set([
+  ".git",
+  ".idea",
+  ".next",
+  ".turbo",
+  ".vscode",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "out",
+  "target",
+  "tmp"
+]);
+
+function containsLikelyBinaryByte(content: string): boolean {
+  return content.includes("\u0000");
 }

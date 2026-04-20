@@ -261,7 +261,7 @@ export class MemoryPlane {
       eventType: "session_compacted",
       payload: {
         reason: "message_count",
-        replacedMessageCount: input.messages.length - 2,
+        replacedMessageCount: input.messages.length - 3,
         summaryMemoryId: summaryMemory.memoryId
       },
       stage: "memory",
@@ -269,7 +269,7 @@ export class MemoryPlane {
       taskId: input.taskId
     });
 
-    const preserved = input.messages.slice(-2).map((message) => ({
+    const preserved = input.messages.slice(-3).map((message) => ({
       content: message.content,
       role: toConversationRole(message.role)
     }));
@@ -538,7 +538,19 @@ function scoreMemory(memory: MemoryRecord, queryTokens: string[]): MemoryRecallC
   const keywordScore = overlapRatio(memory.keywords, queryTokens);
   const freshnessScore = memory.status === "stale" ? 0.2 : memory.status === "candidate" ? 0.7 : 1;
   const confidenceScore = memory.confidence;
-  const finalScore = Number((keywordScore * 0.45 + freshnessScore * 0.2 + confidenceScore * 0.35).toFixed(4));
+  const recencyScore = computeRecencyScore(memory.createdAt);
+  const pathSignal = computePathSignal(memory, queryTokens);
+  const failureSignal = computeFailureSignal(memory, queryTokens);
+  const finalScore = Number(
+    (
+      keywordScore * 0.35 +
+      freshnessScore * 0.15 +
+      confidenceScore * 0.25 +
+      recencyScore * 0.15 +
+      pathSignal * 0.1 +
+      failureSignal
+    ).toFixed(4)
+  );
   const downrankReasons: string[] = [];
 
   if (memory.status === "stale") {
@@ -553,11 +565,17 @@ function scoreMemory(memory: MemoryRecord, queryTokens: string[]): MemoryRecallC
   if (memory.confidence < 0.75) {
     downrankReasons.push("low_confidence");
   }
+  if (pathSignal === 0 && queryTokens.some((token) => token.includes("/") || token.includes("\\"))) {
+    downrankReasons.push("path_mismatch");
+  }
+  if (failureSignal < 0) {
+    downrankReasons.push("failure_noise");
+  }
 
   return {
     confidenceScore,
     downrankReasons,
-    explanation: `scope=${memory.scope}; keyword=${keywordScore.toFixed(2)}; freshness=${freshnessScore.toFixed(2)}; confidence=${confidenceScore.toFixed(2)}; status=${memory.status}; privacy=${memory.privacyLevel}; source=${memory.source.label}`,
+    explanation: `scope=${memory.scope}; keyword=${keywordScore.toFixed(2)}; freshness=${freshnessScore.toFixed(2)}; confidence=${confidenceScore.toFixed(2)}; recency=${recencyScore.toFixed(2)}; pathSignal=${pathSignal.toFixed(2)}; failureSignal=${failureSignal.toFixed(2)}; status=${memory.status}; privacy=${memory.privacyLevel}; source=${memory.source.label}`,
     finalScore,
     freshnessScore,
     keywordScore,
@@ -610,11 +628,79 @@ function summarize(value: string, maxLength = 160): string {
 }
 
 function summarizeMessages(messages: SessionCompactInput["messages"]): string {
-  const important = messages
-    .filter((message) => message.role !== "system")
-    .map((message) => `${message.role}: ${summarize(message.content, 120)}`);
+  const userMessages = messages.filter((message) => message.role === "user");
+  const assistantMessages = messages.filter((message) => message.role === "assistant");
+  const toolMessages = messages.filter((message) => message.role === "tool");
 
-  return summarize(important.join(" | "), 600);
+  const objective = summarize(userMessages.at(0)?.content ?? "", 220);
+  const latestRequest = summarize(userMessages.at(-1)?.content ?? "", 220);
+  const completedWork = summarize(
+    assistantMessages
+      .slice(-3)
+      .map((message) => summarize(message.content, 100))
+      .join(" | "),
+    260
+  );
+  const keyToolSignals = summarize(
+    toolMessages
+      .slice(-3)
+      .map((message) => summarize(message.content, 100))
+      .join(" | "),
+    260
+  );
+  const pendingFollowup = summarize(assistantMessages.at(-1)?.content ?? "", 180);
+
+  const sections = [
+    `goal=${objective || "[n/a]"}`,
+    `latest_user_request=${latestRequest || "[n/a]"}`,
+    `completed_work=${completedWork || "[n/a]"}`,
+    `tool_signals=${keyToolSignals || "[n/a]"}`,
+    `pending_followup=${pendingFollowup || "[n/a]"}`
+  ];
+
+  return sections.join("\n");
+}
+
+function computeRecencyScore(createdAt: string): number {
+  const created = new Date(createdAt).getTime();
+  if (!Number.isFinite(created)) {
+    return 0.5;
+  }
+  const ageHours = Math.max(0, (Date.now() - created) / 3_600_000);
+  if (ageHours <= 6) {
+    return 1;
+  }
+  if (ageHours <= 24) {
+    return 0.8;
+  }
+  if (ageHours <= 72) {
+    return 0.5;
+  }
+  return 0.2;
+}
+
+function computePathSignal(memory: MemoryRecord, queryTokens: string[]): number {
+  const pathLikeTokens = queryTokens.filter((token) => token.includes("/") || token.includes("\\"));
+  if (pathLikeTokens.length === 0) {
+    return 0.6;
+  }
+  const memoryText = `${memory.title} ${memory.summary} ${memory.content}`.toLowerCase();
+  return pathLikeTokens.some((token) => memoryText.includes(token.toLowerCase())) ? 1 : 0;
+}
+
+function computeFailureSignal(memory: MemoryRecord, queryTokens: string[]): number {
+  const failureTokens = ["error", "failed", "exception", "traceback", "timeout"];
+  const queryWantsFailure = queryTokens.some((token) => failureTokens.includes(token));
+  const memoryText = `${memory.title} ${memory.summary}`.toLowerCase();
+  const memoryLooksFailure = failureTokens.some((token) => memoryText.includes(token));
+
+  if (queryWantsFailure && memoryLooksFailure) {
+    return 0.1;
+  }
+  if (!queryWantsFailure && memoryLooksFailure) {
+    return -0.1;
+  }
+  return 0;
 }
 
 function toConversationRole(role: string): "assistant" | "system" | "tool" | "user" {
