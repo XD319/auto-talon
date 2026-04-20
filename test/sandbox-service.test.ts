@@ -31,6 +31,20 @@ describe("SandboxService", () => {
     ).toThrow(/violate sandbox policy/i);
   });
 
+  it("allows pwd as a safe cwd inspection command by default", () => {
+    const sandboxService = new SandboxService({
+      workspaceRoot: process.cwd()
+    });
+
+    const plan = sandboxService.prepareShellExecution({
+      command: "pwd",
+      cwd: process.cwd()
+    });
+
+    expect(plan.executable).toBe("pwd");
+    expect(plan.cwd).toBe(process.cwd());
+  });
+
   it("supports wildcard fetch host rules", () => {
     const sandboxService = new SandboxService({
       allowedFetchHosts: ["*.example.com"],

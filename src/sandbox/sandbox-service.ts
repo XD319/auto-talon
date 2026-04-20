@@ -77,6 +77,7 @@ export class SandboxService {
         "npm",
         "pnpm",
         "prettier",
+        "pwd",
         "python",
         "pytest",
         "rimraf",
