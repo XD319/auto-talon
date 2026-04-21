@@ -166,6 +166,7 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
     `Node: ${report.nodeVersion}`,
     `Workspace Root: ${report.workspaceRoot}`,
     `Database Path: ${report.databasePath}`,
+    `Experience Records: total=${report.experienceStats.total} candidate=${report.experienceStats.candidate} accepted=${report.experienceStats.accepted} promoted=${report.experienceStats.promoted} rejected=${report.experienceStats.rejected} stale=${report.experienceStats.stale}`,
     `Shell: ${report.shell ?? "-"}`,
     `Issues: ${report.issues.length === 0 ? "none" : report.issues.join("; ")}`
   ].join("\n");

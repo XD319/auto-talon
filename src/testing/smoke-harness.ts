@@ -459,6 +459,27 @@ async function seedProjectMemory(
   if (seed.task.status !== "succeeded") {
     throw new Error("Failed to seed project memory for smoke recall.");
   }
+  const seedExperience = service
+    .listExperiences({
+      taskId: seed.task.taskId,
+      type: "task_outcome"
+    })
+    .find((experience) => experience.summary.includes("pnpm and vitest"));
+  if (seedExperience === undefined) {
+    throw new Error("Failed to capture seed project experience for smoke recall.");
+  }
+  const accepted = service.reviewExperience({
+    experienceId: seedExperience.experienceId,
+    note: "Seed smoke recall project memory.",
+    reviewerId: "smoke-harness",
+    status: "accepted"
+  });
+  service.promoteExperience({
+    experienceId: accepted.experienceId,
+    note: "Promote smoke recall guidance.",
+    reviewerId: "smoke-harness",
+    target: "project_memory"
+  });
 }
 
 async function seedWorkspace(workspaceRoot: string): Promise<void> {

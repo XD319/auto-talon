@@ -82,7 +82,10 @@ export class ExperiencePlane {
         ...tokenize(`${draft.title} ${draft.summary} ${draft.content}`)
       ])
     });
-    const experience = this.dependencies.experienceRepository.create(parsed);
+    const experience = this.dependencies.experienceRepository.create({
+      ...parsed,
+      promotionTarget: parsed.promotionTarget ?? null
+    });
 
     this.dependencies.traceService.record({
       actor: "experience.plane",
@@ -297,15 +300,19 @@ function normalizeIndexSignals(draft: ExperienceDraft): ExperienceDraft["indexSi
       `${draft.scope.scope}:${draft.scope.scopeKey}`,
       ...draft.indexSignals.scopes
     ]),
-    sourceTypes: uniqueStrings([draft.sourceType, ...draft.indexSignals.sourceTypes]),
-    statuses: uniqueStrings([draft.status, ...draft.indexSignals.statuses]),
+    sourceTypes: uniqueTyped([draft.sourceType, ...draft.indexSignals.sourceTypes]),
+    statuses: uniqueTyped([draft.status, ...draft.indexSignals.statuses]),
     taskStatuses: uniqueStrings(draft.indexSignals.taskStatuses),
     tokens: uniqueStrings([
       ...draft.indexSignals.tokens,
       ...draft.keywords,
       ...tokenize(`${draft.type} ${draft.sourceType} ${draft.status}`)
     ]),
-    types: uniqueStrings([draft.type, ...draft.indexSignals.types]),
+    types: uniqueTyped([draft.type, ...draft.indexSignals.types]),
     valueScore: draft.valueScore
   };
+}
+
+function uniqueTyped<T extends string>(values: T[]): T[] {
+  return [...new Set(values)];
 }

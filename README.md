@@ -81,6 +81,10 @@ corepack pnpm dev memory list
 corepack pnpm dev memory show project --cwd .
 corepack pnpm dev memory snapshot create project --cwd . --label phase3-baseline
 corepack pnpm dev memory review <memory_id> verified
+corepack pnpm dev experience list
+corepack pnpm dev experience search "sqlite migration"
+corepack pnpm dev experience review <experience_id> accepted
+corepack pnpm dev experience promote <experience_id> project_memory
 ```
 
 After building, the compiled CLI entry is `dist/cli/index.js` and the binary name is `agent`.
@@ -177,7 +181,7 @@ TUI remains the observation and governance surface for:
 - watching task state change over time
 - spotting failed or approval-blocked runs quickly
 - resolving approvals interactively
-- reviewing trace, diff, memory-hit, and error summaries in one place
+- reviewing trace, diff, memory-hit, experience, and error summaries in one place
 
 The runtime core, storage, policy, memory, and tool orchestration logic still live outside the TUI. Ink components only render view models and invoke application-service actions.
 
@@ -552,6 +556,7 @@ This keeps reviewer behavior controlled without introducing multi-agent swarm lo
 - TUI state refresh is polling-based for the MVP; there is no event-stream transport yet.
 - See [docs/phase2-governance.md](/D:/Backup/Career/Projects/AgentProject/auto-talon/docs/phase2-governance.md) for the Phase 2 governance notes.
 - See [docs/phase3-memory.md](/D:/Backup/Career/Projects/AgentProject/auto-talon/docs/phase3-memory.md) for the Phase 3 memory design.
+- See [docs/experience-plane.md](/D:/Backup/Career/Projects/AgentProject/auto-talon/docs/experience-plane.md) for the ExperiencePlane design.
 - See [docs/phase5-gateway.md](/D:/Backup/Career/Projects/AgentProject/auto-talon/docs/phase5-gateway.md) for the Phase 5 gateway and adapter design.
 
 ## Development Commands

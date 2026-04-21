@@ -34,7 +34,7 @@ import {
   formatTrace,
   formatTraceContextDebug
 } from "./formatters";
-import type { ExperienceQuery, ExperienceStatus } from "../types";
+import type { ExperienceQuery, ExperienceSourceType, ExperienceStatus, ExperienceType } from "../types";
 
 async function main(): Promise<void> {
   const program = new Command();
@@ -796,17 +796,35 @@ function resolveSandboxCliOptions(options: SandboxCommandOptions): ResolveAppCon
 }
 
 function toExperienceQuery(options: ExperienceFilterOptions): ExperienceQuery {
-  return {
-    ...(options.type !== undefined ? { type: options.type as ExperienceQuery["type"] } : {}),
-    ...(options.source !== undefined ? { sourceType: options.source as ExperienceQuery["sourceType"] } : {}),
-    ...(options.status !== undefined ? { status: options.status as ExperienceStatus } : {}),
-    ...(options.minValue !== undefined ? { minValueScore: Number(options.minValue) } : {}),
-    ...(options.taskId !== undefined ? { taskId: options.taskId } : {}),
-    ...(options.reviewer !== undefined ? { reviewerId: options.reviewer } : {}),
-    ...(options.scope !== undefined ? { scope: options.scope } : {}),
-    ...(options.scopeKey !== undefined ? { scopeKey: options.scopeKey } : {}),
-    ...(options.limit !== undefined ? { limit: Number(options.limit) } : {})
-  };
+  const query: ExperienceQuery = {};
+  if (options.type !== undefined) {
+    query.type = options.type as ExperienceType;
+  }
+  if (options.source !== undefined) {
+    query.sourceType = options.source as ExperienceSourceType;
+  }
+  if (options.status !== undefined) {
+    query.status = options.status as ExperienceStatus;
+  }
+  if (options.minValue !== undefined) {
+    query.minValueScore = Number(options.minValue);
+  }
+  if (options.taskId !== undefined) {
+    query.taskId = options.taskId;
+  }
+  if (options.reviewer !== undefined) {
+    query.reviewerId = options.reviewer;
+  }
+  if (options.scope !== undefined) {
+    query.scope = options.scope;
+  }
+  if (options.scopeKey !== undefined) {
+    query.scopeKey = options.scopeKey;
+  }
+  if (options.limit !== undefined) {
+    query.limit = Number(options.limit);
+  }
+  return query;
 }
 
 function resolveScopeKey(

@@ -54,6 +54,14 @@ export interface AgentDoctorReport {
   configSource: "defaults" | "env" | "file";
   databasePath: string;
   endpointReachable: boolean | null;
+  experienceStats: {
+    accepted: number;
+    candidate: number;
+    promoted: number;
+    rejected: number;
+    stale: number;
+    total: number;
+  };
   issues: string[];
   allowedFetchHosts: string[];
   maxRetries: number;
@@ -580,6 +588,7 @@ export class AgentApplicationService {
   public async configDoctor(signal?: AbortSignal): Promise<AgentDoctorReport> {
     const providerHealth = await this.testCurrentProvider(signal);
     const issues = collectDoctorIssues(this.dependencies.providerConfig, providerHealth);
+    const experiences = this.dependencies.listExperiences();
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
@@ -588,6 +597,14 @@ export class AgentApplicationService {
       configSource: this.dependencies.providerConfig.configSource,
       databasePath: this.dependencies.databasePath,
       endpointReachable: providerHealth.endpointReachable,
+      experienceStats: {
+        accepted: experiences.filter((experience) => experience.status === "accepted").length,
+        candidate: experiences.filter((experience) => experience.status === "candidate").length,
+        promoted: experiences.filter((experience) => experience.status === "promoted").length,
+        rejected: experiences.filter((experience) => experience.status === "rejected").length,
+        stale: experiences.filter((experience) => experience.status === "stale").length,
+        total: experiences.length
+      },
       issues,
       maxRetries: this.dependencies.providerConfig.maxRetries,
       modelAvailable: providerHealth.modelAvailable,

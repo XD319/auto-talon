@@ -2,6 +2,8 @@
 
 Phase 3 adds a governed memory plane to the CLI-first runtime. The goal is not unlimited recall, but typed, explainable, auditable memory that respects privacy and retention boundaries.
 
+Task outcomes, review feedback, and failure lessons now live first in `ExperiencePlane`; see `docs/experience-plane.md`. They enter `MemoryPlane` only after an accepted experience is explicitly promoted.
+
 ## Three Memory Scopes
 
 - `session`
@@ -123,6 +125,7 @@ Each snapshot stores:
 Boundary rules:
 
 - restricted content does not auto-write into `project` or `agent` memory
+- task outcomes and failure lessons do not auto-write into long-term memory
 - recalled fragments must pass the context policy filter
 - rejected memory never enters context
 - stale memory is downgraded during ranking
