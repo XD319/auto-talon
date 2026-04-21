@@ -1,4 +1,4 @@
-import type { AgentDoctorReport, ContextTraceDebugReport } from "../runtime";
+import type { AgentDoctorReport, ContextTraceDebugReport, TaskTimelineReport } from "../runtime";
 import type { BetaReadinessReport, EvalReport, ReplayRunResult } from "../diagnostics";
 import type {
   ApprovalRecord,
@@ -78,6 +78,25 @@ export function formatTrace(traceEvents: TraceEvent[]): string {
   }
 
   return traceEvents.map((event) => formatTraceEvent(event)).join("\n\n");
+}
+
+export function formatTaskTimeline(report: TaskTimelineReport): string {
+  if (report.task === null) {
+    return "Task not found.";
+  }
+
+  if (report.entries.length === 0) {
+    return `Timeline for ${report.task.taskId}: no timeline events found.`;
+  }
+
+  return [
+    `Timeline for ${report.task.taskId}`,
+    `Status: ${report.task.status}`,
+    ...report.entries.map(
+      (entry) =>
+        `#${entry.sequence} ${entry.iteration === null ? "iter=-" : `iter=${entry.iteration}`} [${entry.stage}] ${entry.eventType} ${entry.actor} | ${entry.detail}`
+    )
+  ].join("\n");
 }
 
 export function formatTraceContextDebug(report: ContextTraceDebugReport): string {
@@ -368,6 +387,8 @@ export function formatReplayReport(report: ReplayRunResult): string {
     `Replay status: ${report.replayTask.status}`,
     `Replay from iteration: ${report.reference.fromIteration}`,
     `Diagnosis: ${report.reference.diagnosis.category} | ${report.reference.diagnosis.rationale}`,
+    `Historical trace events: ${report.reference.selectedTrace.length}`,
+    `Replay trace events: ${report.trace.length}`,
     `Historical tool references:`,
     ...toolLines,
     `Historical iteration chain:`,

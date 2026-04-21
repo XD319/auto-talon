@@ -252,6 +252,7 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
             afterText: clipText(input.content),
             beforeText: null,
             diffSummary: summarizeFileChange("", input.content),
+            unifiedDiff: createUnifiedDiff("", input.content, targetPath),
             operation: "write_file",
             path: targetPath
           },
@@ -322,6 +323,7 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
             afterText: clipText(updatedContent),
             beforeText: clipText(originalContent),
             diffSummary: summarizeFileChange(originalContent, updatedContent),
+            unifiedDiff: createUnifiedDiff(originalContent, updatedContent, targetPath),
             operation: "update_file",
             path: targetPath
           },
@@ -428,6 +430,7 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
             afterText: clipText(workingContent),
             beforeText: clipText(originalContent),
             diffSummary: summarizeFileChange(originalContent, workingContent),
+            unifiedDiff: createUnifiedDiff(originalContent, workingContent, targetPath),
             operation: "apply_patch",
             path: targetPath
           },
@@ -597,4 +600,30 @@ function summarizeFileChange(beforeText: string, afterText: string): {
 
 function clipText(value: string, maxLength = 4_000): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength)}\n...[truncated]`;
+}
+
+function createUnifiedDiff(beforeText: string, afterText: string, path: string): string {
+  const beforeLines = beforeText.split(/\r?\n/u);
+  const afterLines = afterText.split(/\r?\n/u);
+  const maxLineCount = Math.max(beforeLines.length, afterLines.length);
+  const lines = [`--- a/${path}`, `+++ b/${path}`, "@@ -1 +1 @@"];
+
+  for (let index = 0; index < maxLineCount; index += 1) {
+    const beforeLine = beforeLines[index];
+    const afterLine = afterLines[index];
+    if (beforeLine === afterLine) {
+      if (beforeLine !== undefined) {
+        lines.push(` ${beforeLine}`);
+      }
+      continue;
+    }
+    if (beforeLine !== undefined) {
+      lines.push(`-${beforeLine}`);
+    }
+    if (afterLine !== undefined) {
+      lines.push(`+${afterLine}`);
+    }
+  }
+
+  return clipText(lines.join("\n"), 12_000);
 }

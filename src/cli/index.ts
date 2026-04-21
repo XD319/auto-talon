@@ -25,6 +25,7 @@ import {
   formatSnapshot,
   formatTask,
   formatTaskList,
+  formatTaskTimeline,
   formatTrace,
   formatTraceContextDebug
 } from "./formatters";
@@ -95,6 +96,15 @@ async function main(): Promise<void> {
       }
 
       console.log(formatTask(result.task, result.toolCalls, result.approvals));
+    } finally {
+      handle.close();
+    }
+  });
+
+  taskCommand.command("timeline").argument("<task_id>", "Task identifier").action((taskId: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatTaskTimeline(handle.service.taskTimeline(taskId)));
     } finally {
       handle.close();
     }

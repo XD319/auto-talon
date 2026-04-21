@@ -15,8 +15,9 @@ import type {
   MemoryScope,
   MemorySnapshotRecord,
   Provider,
-  ProviderHealthCheck,
   ProviderStatsSnapshot,
+  ProviderHealthCheck,
+  ProviderUsage,
   RuntimeRunOptions,
   TaskRecord,
   TraceEvent,
@@ -123,6 +124,21 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   };
   traceService: TraceService;
   workspaceRoot: string;
+}
+
+export interface TaskTimelineEntry {
+  actor: string;
+  detail: string;
+  eventType: TraceEvent["eventType"];
+  iteration: number | null;
+  sequence: number;
+  stage: TraceEvent["stage"];
+  timestamp: string;
+}
+
+export interface TaskTimelineReport {
+  entries: TaskTimelineEntry[];
+  task: TaskRecord | null;
 }
 
 const approvalActionSchema = z.object({
@@ -330,11 +346,56 @@ export class AgentApplicationService {
   }
 
   public providerStats(): ProviderStatsSnapshot | null {
-    return this.dependencies.provider.getStats?.() ?? null;
+    const liveStats = this.dependencies.provider.getStats?.() ?? null;
+    if (liveStats !== null && liveStats.totalRequests > 0) {
+      return liveStats;
+    }
+
+    const traceStats = buildProviderStatsFromTrace(
+      this.dependencies.provider.name,
+      this.dependencies.listTasks().flatMap((task) => this.dependencies.listTrace(task.taskId))
+    );
+    return traceStats.totalRequests > 0 ? traceStats : liveStats;
   }
 
   public traceTask(taskId: string): TraceEvent[] {
     return this.dependencies.listTrace(taskId);
+  }
+
+  public taskTimeline(taskId: string): TaskTimelineReport {
+    const task = this.dependencies.findTask(taskId);
+    const trace = task === null ? [] : this.dependencies.listTrace(taskId);
+
+    return {
+      entries: trace
+        .filter((event) =>
+          [
+            "task_started",
+            "repo_map_created",
+            "provider_request_started",
+            "provider_request_succeeded",
+            "provider_request_failed",
+            "tool_call_requested",
+            "tool_call_finished",
+            "tool_call_failed",
+            "approval_requested",
+            "approval_resolved",
+            "retry",
+            "loop_iteration_completed",
+            "final_outcome"
+          ].includes(event.eventType)
+        )
+        .map((event) => ({
+          actor: event.actor,
+          detail: event.summary,
+          eventType: event.eventType,
+          iteration: extractTimelineIteration(event),
+          sequence: event.sequence,
+          stage: event.stage,
+          timestamp: event.timestamp
+        })),
+      task
+    };
   }
 
   public subscribeToTaskTrace(taskId: string, listener: (event: TraceEvent) => void): () => void {
@@ -609,4 +670,79 @@ function collectDoctorIssues(
   }
 
   return issues;
+}
+
+function buildProviderStatsFromTrace(
+  providerName: string,
+  trace: TraceEvent[]
+): ProviderStatsSnapshot {
+  const providerEvents = trace.filter(
+    (event) =>
+      event.eventType === "provider_request_succeeded" ||
+      event.eventType === "provider_request_failed"
+  );
+  const successes = providerEvents.filter((event) => event.eventType === "provider_request_succeeded");
+  const failures = providerEvents.filter((event) => event.eventType === "provider_request_failed");
+  const totalLatency = providerEvents.reduce((sum, event) => {
+    if (event.eventType === "provider_request_succeeded" || event.eventType === "provider_request_failed") {
+      return sum + event.payload.latencyMs;
+    }
+    return sum;
+  }, 0);
+  const retryCount = providerEvents.reduce((sum, event) => {
+    if (event.eventType === "provider_request_succeeded" || event.eventType === "provider_request_failed") {
+      return sum + event.payload.retryCount;
+    }
+    return sum;
+  }, 0);
+  const tokenUsage = successes.reduce<ProviderUsage>(
+    (usage, event) => {
+      if (event.eventType !== "provider_request_succeeded") {
+        return usage;
+      }
+      const payload = event.payload.usage;
+      const inputTokens = readNumber(payload?.inputTokens);
+      const outputTokens = readNumber(payload?.outputTokens);
+      const totalTokens = readNumber(payload?.totalTokens);
+      const cachedInputTokens = readNumber(payload?.cachedInputTokens);
+      return {
+        cachedInputTokens: (usage.cachedInputTokens ?? 0) + (cachedInputTokens ?? 0),
+        inputTokens: usage.inputTokens + (inputTokens ?? 0),
+        outputTokens: usage.outputTokens + (outputTokens ?? 0),
+        totalTokens:
+          (usage.totalTokens ?? usage.inputTokens + usage.outputTokens) +
+          (totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0))
+      };
+    },
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0
+    }
+  );
+  const lastRequestAt = providerEvents.at(-1)?.timestamp ?? null;
+  const lastFailure = [...failures].reverse()[0];
+
+  return {
+    averageLatencyMs:
+      providerEvents.length === 0 ? 0 : Number((totalLatency / providerEvents.length).toFixed(2)),
+    failedRequests: failures.length,
+    lastErrorCategory:
+      lastFailure?.eventType === "provider_request_failed" ? lastFailure.payload.errorCategory : null,
+    lastRequestAt,
+    providerName,
+    retryCount,
+    successfulRequests: successes.length,
+    tokenUsage,
+    totalRequests: providerEvents.length
+  };
+}
+
+function extractTimelineIteration(event: TraceEvent): number | null {
+  const payload = event.payload as { iteration?: unknown };
+  return typeof payload.iteration === "number" ? payload.iteration : null;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
 }
