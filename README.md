@@ -75,6 +75,8 @@ corepack pnpm dev provider list
 corepack pnpm dev provider current
 corepack pnpm dev provider test
 corepack pnpm dev config doctor
+corepack pnpm dev repo map
+corepack pnpm dev task timeline <task_id>
 corepack pnpm dev memory list
 corepack pnpm dev memory show project --cwd .
 corepack pnpm dev memory snapshot create project --cwd . --label phase3-baseline
@@ -324,6 +326,46 @@ Example custom preset without changing runtime code:
 - `timeoutMs`
 - `maxRetries`
 - `apiKey`
+
+## Runtime Configuration
+
+Runtime behavior that is not provider- or sandbox-specific is configured through
+`.auto-talon/runtime.config.json`.
+
+```json
+{
+  "defaultMaxIterations": 12,
+  "defaultTimeoutMs": 120000,
+  "tokenBudget": {
+    "inputLimit": 64000,
+    "outputLimit": 8000,
+    "reservedOutput": 1000
+  },
+  "allowedFetchHosts": ["*"],
+  "workflow": {
+    "testCommands": ["npm test", "npm run build"],
+    "failureGuidedRetry": {
+      "enabled": true,
+      "maxRepairAttempts": 2
+    },
+    "repoMap": {
+      "enabled": true
+    }
+  }
+}
+```
+
+`allowedFetchHosts` defaults to `["*"]`, so `web_fetch` is open for HTTP/HTTPS
+hosts unless the workspace narrows it. Exact hosts and wildcard hosts such as
+`github.com` and `*.githubusercontent.com` are supported. `AGENT_ALLOWED_FETCH_HOSTS`
+can override the file with a comma-separated list.
+
+The repo map and configured test commands support the local coding workflow:
+
+- `agent repo map` prints the current workspace structure, scripts, and important files.
+- `test_run` only executes commands from `workflow.testCommands`.
+- failed `test_run` results are returned to the model as repair feedback until the configured repair limit is exceeded.
+- `agent task timeline <task_id>` prints the provider/tool/approval/retry chain for a task.
 
 Switching providers:
 

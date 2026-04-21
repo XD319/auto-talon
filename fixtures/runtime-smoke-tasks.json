@@ -2,18 +2,18 @@
   {
     "taskId": "single_read_project_summary",
     "scriptId": "single_read_project_summary",
-    "title": "读取项目文件并总结",
+    "title": "Read project files and summarize",
     "category": "single_step_productivity",
-    "input": "读取 README.md 和 package.json，给出一段简洁的项目总结。",
+    "input": "Read README.md and package.json, then provide a concise project summary.",
     "profile": "executor",
     "expectedBehavior": [
-      "读取 README.md 和 package.json",
-      "输出项目用途、运行方式或主要脚本的总结"
+      "Read README.md and package.json",
+      "Summarize the project purpose, runtime shape, or main scripts"
     ],
     "acceptableResult": [
-      "输出非空",
-      "提到 README 或 package.json 中至少一个关键事实",
-      "任务成功结束"
+      "Output is non-empty",
+      "Mentions at least one fact from README.md or package.json",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -29,19 +29,19 @@
   {
     "taskId": "single_generate_file",
     "scriptId": "single_generate_file",
-    "title": "生成一个新文件",
+    "title": "Generate a new file",
     "category": "single_step_productivity",
-    "input": "生成 docs/generated/release-note.md，内容是一段简短的发布说明。",
+    "input": "Create docs/generated/release-note.md with a short release note.",
     "profile": "executor",
     "expectedBehavior": [
-      "创建一个新文件",
-      "在审批通过后完成写入",
-      "输出说明文件已创建"
+      "Create the requested file",
+      "Write release-note content",
+      "Report that the file was created"
     ],
     "acceptableResult": [
-      "docs/generated/release-note.md 存在",
-      "文件内容包含 release note",
-      "任务成功结束"
+      "docs/generated/release-note.md exists",
+      "The file contains release note content",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -57,18 +57,18 @@
   {
     "taskId": "single_update_config",
     "scriptId": "single_update_config",
-    "title": "修改一个简单配置文件",
+    "title": "Update a simple config file",
     "category": "single_step_productivity",
-    "input": "把 config/app.json 里的 featureFlag 从 false 改成 true。",
+    "input": "Change featureFlag from false to true in config/app.json.",
     "profile": "executor",
     "expectedBehavior": [
-      "读取或直接修改配置文件",
-      "通过审批后完成配置更新",
-      "输出修改后的结果说明"
+      "Read or update config/app.json",
+      "Change featureFlag to true",
+      "Report the result"
     ],
     "acceptableResult": [
-      "config/app.json 中包含 \"featureFlag\": true",
-      "任务成功结束"
+      "config/app.json contains \"featureFlag\": true",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -84,19 +84,19 @@
   {
     "taskId": "single_run_shell",
     "scriptId": "single_run_shell",
-    "title": "执行一个受限 shell 命令并解释输出",
+    "title": "Run a restricted shell command",
     "category": "single_step_productivity",
-    "input": "执行 whoami，并解释这条输出代表什么。",
+    "input": "Run whoami and explain what the output means.",
     "profile": "executor",
     "expectedBehavior": [
-      "调用受限 shell 命令 whoami",
-      "在审批通过后执行命令",
-      "解释 stdout 的含义"
+      "Call the restricted shell tool with whoami",
+      "Run after approval",
+      "Explain stdout"
     ],
     "acceptableResult": [
-      "输出非空",
-      "提到当前用户或执行身份",
-      "任务成功结束"
+      "Output is non-empty",
+      "Mentions the current user or execution identity",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -112,19 +112,19 @@
   {
     "taskId": "multi_read_then_plan_write",
     "scriptId": "multi_read_then_plan_write",
-    "title": "读取多个文件后决定修改方案",
+    "title": "Read multiple files before writing a summary",
     "category": "multi_turn_execution",
-    "input": "先读取 README.md、package.json 和 config/app.json，再写一份 docs/runtime-overview.md 总结。",
+    "input": "Read README.md, package.json, and config/app.json, then write docs/runtime-overview.md.",
     "profile": "executor",
     "expectedBehavior": [
-      "先读取多个文件",
-      "根据读取内容决定写入概要文件",
-      "最后输出完成总结"
+      "Read several files first",
+      "Use the gathered context to write an overview",
+      "Report completion"
     ],
     "acceptableResult": [
-      "docs/runtime-overview.md 存在",
-      "任务轮数大于等于 2",
-      "任务成功结束"
+      "docs/runtime-overview.md exists",
+      "Task takes at least two rounds",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -140,19 +140,19 @@
   {
     "taskId": "multi_write_then_verify",
     "scriptId": "multi_write_then_verify",
-    "title": "修改后运行验证",
+    "title": "Write and verify a file",
     "category": "multi_turn_execution",
-    "input": "创建 config/feature.flag.json，然后再读取它，确认内容已经落盘。",
+    "input": "Create config/feature.flag.json, then read it back and confirm the content was persisted.",
     "profile": "executor",
     "expectedBehavior": [
-      "先创建文件",
-      "再读取文件验证内容",
-      "最后输出验证通过"
+      "Create the file",
+      "Read the file back",
+      "Report verification success"
     ],
     "acceptableResult": [
-      "config/feature.flag.json 存在",
-      "最终输出提到 verify 或确认",
-      "任务成功结束"
+      "config/feature.flag.json exists",
+      "Final output mentions verification or confirmation",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -168,20 +168,20 @@
   {
     "taskId": "multi_fix_after_failed_verification",
     "scriptId": "multi_fix_after_failed_verification",
-    "title": "验证失败后进行一次修正",
+    "title": "Fix after a failed verification",
     "category": "multi_turn_execution",
-    "input": "先写入一个 FAIL 状态文件，运行命令检查；如果失败就修正为 PASS，再复查并总结。",
+    "input": "Write a FAIL marker, run a command to check it, repair it to PASS if needed, then re-check and summarize.",
     "profile": "executor",
     "expectedBehavior": [
-      "先写入初始文件",
-      "运行命令检查失败状态",
-      "进行一次修正并再次检查",
-      "最后输出修复结果"
+      "Write an initial failing file",
+      "Run a command that observes the failure",
+      "Repair the file",
+      "Run the command again"
     ],
     "acceptableResult": [
-      "config/verification.txt 最终包含 PASS",
-      "任务轮数大于等于 4",
-      "任务成功结束"
+      "config/verification.txt ends with PASS",
+      "Task takes at least four rounds",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -197,18 +197,18 @@
   {
     "taskId": "multi_search_patch_verify",
     "scriptId": "multi_search_patch_verify",
-    "title": "搜索、修改并验证",
+    "title": "Search, patch, and verify",
     "category": "multi_turn_execution",
-    "input": "在 src 中搜索 TODO，修掉 src/app.ts 的 TODO 标记，然后读取文件确认。",
+    "input": "Search src for TODO, patch the TODO marker in src/app.ts, then read the file again to verify.",
     "profile": "executor",
     "expectedBehavior": [
-      "先搜索 TODO",
-      "修改目标文件",
-      "再次读取确认修改已生效"
+      "Search for TODO markers",
+      "Patch the target file",
+      "Read the file again to verify the patch"
     ],
     "acceptableResult": [
-      "src/app.ts 中不再包含 TODO: clean up bootstrap",
-      "任务成功结束"
+      "src/app.ts no longer contains TODO: clean up bootstrap",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -224,19 +224,19 @@
   {
     "taskId": "long_cross_file_review_with_compact",
     "scriptId": "long_cross_file_review_with_compact",
-    "title": "跨多个文件分析并触发 session compact",
+    "title": "Review several files and trigger session compaction",
     "category": "long_context_execution",
-    "input": "以 reviewer 视角连续读取多个文件，给出一份复核结论。",
+    "input": "From the reviewer perspective, read several project files and produce a review conclusion.",
     "profile": "reviewer",
     "expectedBehavior": [
-      "跨多个文件持续分析",
-      "在长对话中触发 session compact",
-      "最终给出复核结论"
+      "Read several files across the workspace",
+      "Trigger session compaction during the long exchange",
+      "Produce a final review conclusion"
     ],
     "acceptableResult": [
-      "任务轮数大于等于 5",
-      "trace 中出现 session_compacted",
-      "任务成功结束"
+      "Task takes at least five rounds",
+      "Trace contains session_compacted",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,
@@ -252,19 +252,19 @@
   {
     "taskId": "long_memory_recall_followup",
     "scriptId": "long_memory_recall_followup",
-    "title": "带 project memory recall 的延续任务",
+    "title": "Follow up with project memory recall",
     "category": "long_context_execution",
-    "input": "继续这个项目，回忆之前保存的 smoke verification 建议并给出后续行动。",
+    "input": "Continue this project, recall the earlier smoke verification advice, and provide next actions.",
     "profile": "executor",
     "expectedBehavior": [
-      "触发 project memory recall",
-      "基于 recall 内容给出延续建议",
-      "输出最终行动建议"
+      "Trigger project memory recall",
+      "Use recalled content in the response",
+      "Produce final next actions"
     ],
     "acceptableResult": [
-      "trace 中出现 memory_recalled 且至少选中一条 memory",
-      "最终输出提到 recall 到的建议",
-      "任务成功结束"
+      "Trace contains memory_recalled with at least one selected memory",
+      "Final output refers to recalled guidance",
+      "Task succeeds"
     ],
     "traceExpectations": {
       "mustExplainGoal": true,

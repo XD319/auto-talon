@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+
 import { Command } from "commander";
 
 import { startLocalWebhookGateway } from "../gateway";
@@ -353,9 +355,13 @@ async function main(): Promise<void> {
     .option("--provider <provider>", "Provider to use: scripted-smoke or any registered provider", "scripted-smoke")
     .option("--tasks <taskIds>", "Comma-separated task ids")
     .option("--fixture <path>", "Custom fixture file path")
+    .option("--json", "Print JSON instead of text")
+    .option("--output <path>", "Write the report to a file")
     .action(
       async (commandOptions: {
         fixture?: string;
+        json?: boolean;
+        output?: string;
         provider: SupportedProviderName | "scripted-smoke";
         tasks?: string;
       }) => {
@@ -367,7 +373,14 @@ async function main(): Promise<void> {
           taskIds:
             commandOptions.tasks?.split(",").map((value) => value.trim()).filter(Boolean) ?? []
         });
-        console.log(formatEvalReport(report));
+        const output = commandOptions.json === true
+          ? JSON.stringify(report, null, 2)
+          : formatEvalReport(report);
+        if (commandOptions.output !== undefined) {
+          writeFileSync(commandOptions.output, `${output}\n`, "utf8");
+        } else {
+          console.log(output);
+        }
         if (report.successRate < 1) {
           process.exitCode = 1;
         }

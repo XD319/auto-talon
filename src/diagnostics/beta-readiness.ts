@@ -128,17 +128,15 @@ async function verifyApprovalDenyPath(): Promise<{
 
       return {
         kind: "tool_calls",
-        message: "write governed file",
+        message: "run governed shell command",
         toolCalls: [
           {
             input: {
-              action: "write_file",
-              content: "beta content",
-              path: "governed.txt"
+              command: "whoami"
             },
-            reason: "write governed file",
-            toolCallId: "beta-governed-write",
-            toolName: "file_write"
+            reason: "run governed shell command",
+            toolCallId: "beta-governed-shell",
+            toolName: "shell"
           }
         ],
         usage: {
@@ -150,7 +148,7 @@ async function verifyApprovalDenyPath(): Promise<{
   });
 
   try {
-    const runOptions = createDefaultRunOptions("create governed file", workspaceRoot, handle.config);
+    const runOptions = createDefaultRunOptions("run governed shell command", workspaceRoot, handle.config);
     const initial = await handle.service.runTask(runOptions);
     const approval = handle.service.listPendingApprovals()[0];
     if (approval === undefined) {

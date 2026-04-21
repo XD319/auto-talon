@@ -5,6 +5,11 @@ import type { SupportedProviderName } from "../providers";
 export interface EvalReport {
   averageDurationMs: number;
   averageRounds: number;
+  categorySuccessRates: Record<string, {
+    succeeded: number;
+    successRate: number;
+    total: number;
+  }>;
   failureReasonDistribution: Record<string, number>;
   modelName: string | null;
   providerName: string;
@@ -66,10 +71,30 @@ export async function runEvalReport(options: EvalOptions = {}): Promise<EvalRepo
   );
   const tokenAvailable = report.results.some((result) => result.tokenUsage.totalTokens > 0);
   const taskCount = report.taskCount;
+  const categorySuccessRates = report.results.reduce<Record<string, {
+    succeeded: number;
+    successRate: number;
+    total: number;
+  }>>((categories, result) => {
+    const category = result.taskFixture.category;
+    const current = categories[category] ?? {
+      succeeded: 0,
+      successRate: 0,
+      total: 0
+    };
+    current.total += 1;
+    if (result.success) {
+      current.succeeded += 1;
+    }
+    current.successRate = current.total === 0 ? 0 : current.succeeded / current.total;
+    categories[category] = current;
+    return categories;
+  }, {});
 
   return {
     averageDurationMs: report.averageDurationMs,
     averageRounds: report.averageRounds,
+    categorySuccessRates,
     failureReasonDistribution: report.failureReasons,
     modelName: report.modelName,
     providerName: report.providerName,

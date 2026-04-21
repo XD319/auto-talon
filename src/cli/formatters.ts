@@ -350,6 +350,16 @@ export function formatEvalReport(report: EvalReport): string {
               `${failure.taskFixtureId}(${failure.taskId}):${failure.failureReason}`
           )
           .join(", ");
+  const categoryRates = Object.entries(report.categorySuccessRates);
+  const categoryRateSummary =
+    categoryRates.length === 0
+      ? "none"
+      : categoryRates
+          .map(
+            ([category, value]) =>
+              `${category}:${value.succeeded}/${value.total} (${(value.successRate * 100).toFixed(1)}%)`
+          )
+          .join(", ");
 
   return [
     `Provider: ${report.providerName}`,
@@ -361,6 +371,7 @@ export function formatEvalReport(report: EvalReport): string {
     report.tokenUsage.available
       ? `Token usage: total=${report.tokenUsage.totalTokens} input=${report.tokenUsage.totalInputTokens} output=${report.tokenUsage.totalOutputTokens} avgTotal=${report.tokenUsage.averageTotalTokens.toFixed(1)}`
       : "Token usage: unavailable",
+    `Category success: ${categoryRateSummary}`,
     `Failure reasons: ${formatFailureReasons(report.failureReasonDistribution)}`,
     `Typical failed tasks: ${typicalFailures}`
   ].join("\n");

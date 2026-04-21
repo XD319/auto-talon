@@ -27,6 +27,7 @@ This phase adds the smallest practical mechanism for deciding whether the runtim
   - model name when trace exposes it
   - task count
   - success rate
+  - category success rates
   - average duration
   - average rounds
   - token usage when available
@@ -47,7 +48,7 @@ Before entering the next stage, the runtime should satisfy all of the following:
 ## CLI Entrypoints
 
 - `agent replay <task_id> --from-iteration <n> --provider current|mock`
-- `agent eval run --provider scripted-smoke|mock|glm`
+- `agent eval run --provider scripted-smoke|mock|glm --json --output eval-report.json`
 - `agent eval beta --provider scripted-smoke|mock|glm --min-success-rate 0.8`
 
 ## Expected Use
