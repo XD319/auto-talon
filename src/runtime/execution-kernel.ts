@@ -28,6 +28,7 @@ import type {
   TokenBudget
 } from "../types";
 import type { MemoryPlane } from "../memory/memory-plane";
+import type { SkillContextService } from "../skills";
 import type { ToolOrchestrator } from "../tools";
 import type { TraceService } from "../tracing/trace-service";
 
@@ -38,6 +39,7 @@ export interface ExecutionKernelDependencies {
   provider: Provider;
   runMetadataRepository: RunMetadataRepository;
   runtimeVersion: string;
+  skillContextService: SkillContextService;
   taskRepository: TaskRepository;
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
@@ -142,6 +144,7 @@ export class ExecutionKernel {
       const profile = this.dependencies.agentProfileRegistry.get(options.agentProfileId);
       this.dependencies.memoryPlane.rememberTaskGoal(task);
       const memoryContext = this.dependencies.memoryPlane.buildContext(task);
+      const skillContext = this.dependencies.skillContextService.buildContext(task);
       const availableTools = this.dependencies.toolOrchestrator.listTools(profile.allowedToolNames);
       const repoMap = this.dependencies.workflow.repoMap.enabled
         ? buildRepoMap(this.dependencies.workspaceRoot)
@@ -172,7 +175,7 @@ export class ExecutionKernel {
         cwd: options.cwd,
         managedAbortController,
         maxIterations: options.maxIterations,
-        memoryContext: memoryContext.fragments,
+        memoryContext: [...memoryContext.fragments, ...skillContext],
         memoryRecall: memoryContext.recall,
         messages,
         ...(options.onAssistantTextDelta !== undefined

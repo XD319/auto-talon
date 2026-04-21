@@ -12,7 +12,7 @@ const agentProfileSchema = z.object({
 
 export const DEFAULT_AGENT_PROFILES: AgentProfile[] = [
   {
-    allowedToolNames: ["file_read", "web_fetch"],
+    allowedToolNames: ["file_read", "skill_view", "web_fetch"],
     description: "Read-oriented planning profile with no direct mutation tools.",
     displayName: "Planner",
     id: "planner",
@@ -20,7 +20,7 @@ export const DEFAULT_AGENT_PROFILES: AgentProfile[] = [
       "You are the planner profile. Break down the task, prefer read-only inspection, and avoid making changes unless explicitly delegated."
   },
   {
-    allowedToolNames: ["file_read", "file_write", "shell", "test_run", "web_fetch"],
+    allowedToolNames: ["file_read", "file_write", "shell", "skill_view", "test_run", "web_fetch"],
     description: "Execution profile for controlled implementation work.",
     displayName: "Executor",
     id: "executor",
@@ -28,7 +28,7 @@ export const DEFAULT_AGENT_PROFILES: AgentProfile[] = [
       "You are the executor profile. Complete the task end to end, use tools when justified, and keep outputs grounded in observable evidence."
   },
   {
-    allowedToolNames: ["file_read", "web_fetch"],
+    allowedToolNames: ["file_read", "skill_view", "web_fetch"],
     description: "Reviewer profile focused on checks, risk discovery, and output critique.",
     displayName: "Reviewer",
     id: "reviewer",

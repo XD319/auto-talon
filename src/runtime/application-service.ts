@@ -32,6 +32,8 @@ import type {
 } from "../types";
 import type { TraceService } from "../tracing/trace-service";
 import type { MemoryPlane } from "../memory/memory-plane";
+import type { SkillAttachmentKind } from "../types/skill";
+import type { SkillDraftManager, SkillRegistry } from "../skills";
 import type { ExecutionKernel } from "./execution-kernel";
 
 import { AppError } from "./app-error";
@@ -135,6 +137,8 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   runtimeVersion: string;
   runtimeConfigPath: string;
   runtimeConfigSource: "defaults" | "env" | "file";
+  skillDraftManager: SkillDraftManager;
+  skillRegistry: SkillRegistry;
   tokenBudget: {
     inputLimit: number;
     outputLimit: number;
@@ -227,6 +231,14 @@ export class AgentApplicationService {
 
   public searchExperiences(query: string, filters: ExperienceQuery = {}) {
     return this.dependencies.experiencePlane.search(query, filters);
+  }
+
+  public listSkills() {
+    return this.dependencies.skillRegistry.listSkills();
+  }
+
+  public viewSkill(skillId: string, attachmentKinds: SkillAttachmentKind[] = []) {
+    return this.dependencies.skillRegistry.viewSkill(skillId, attachmentKinds);
   }
 
   public showMemoryScope(scope: MemoryScope, scopeKey: string): {

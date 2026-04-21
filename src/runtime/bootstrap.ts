@@ -19,6 +19,7 @@ import {
   type ResolvedProviderConfig
 } from "../providers";
 import { SandboxService } from "../sandbox/sandbox-service";
+import { SkillContextService, SkillDraftManager, SkillRegistry } from "../skills";
 import { StorageManager } from "../storage/database";
 import { TraceService } from "../tracing/trace-service";
 import type {
@@ -29,7 +30,7 @@ import type {
   SandboxProfile,
   TokenBudget
 } from "../types";
-import { FileReadTool, FileWriteTool, ShellTool, TestRunTool, ToolOrchestrator, WebFetchTool } from "../tools";
+import { FileReadTool, FileWriteTool, ShellTool, SkillViewTool, TestRunTool, ToolOrchestrator, WebFetchTool } from "../tools";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor";
 import { ShellExecutor } from "../tools/shell/shell-executor";
 
@@ -162,6 +163,15 @@ export function createApplication(
           writeRoots: config.sandbox.writeRoots
         })
       : new ShellExecutor();
+  const skillRegistry = new SkillRegistry({
+    workspaceRoot: config.workspaceRoot
+  });
+  const skillDraftManager = new SkillDraftManager({
+    workspaceRoot: config.workspaceRoot
+  });
+  const skillContextService = new SkillContextService({
+    registry: skillRegistry
+  });
   const toolOrchestrator = new ToolOrchestrator({
     approvalService,
     artifactRepository: storage.artifacts,
@@ -172,6 +182,7 @@ export function createApplication(
     tools: [
       new FileReadTool(sandboxService),
       new FileWriteTool(sandboxService),
+      new SkillViewTool(skillRegistry),
       new ShellTool(shellExecutor, sandboxService),
       new TestRunTool(
         shellExecutor,
@@ -207,6 +218,7 @@ export function createApplication(
     provider,
     runMetadataRepository: storage.runMetadata,
     runtimeVersion: config.runtimeVersion,
+    skillContextService,
     taskRepository: storage.tasks,
     toolOrchestrator,
     traceService,
@@ -250,6 +262,8 @@ export function createApplication(
     auditService,
     memoryPlane,
     experiencePlane,
+    skillDraftManager,
+    skillRegistry,
     workspaceRoot: config.workspaceRoot
   });
 
