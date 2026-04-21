@@ -65,6 +65,8 @@ const welcomeMessage: ChatMessage = {
   text: "Welcome to auto-talon chat mode. Type a prompt and press Enter to send.",
   timestamp: new Date().toISOString()
 };
+const STREAM_FLUSH_INTERVAL_MS = 50;
+const STREAM_FLUSH_MAX_CHARS = 1_024;
 
 export function useChatController(input: UseChatControllerOptions): ChatController {
   const [messages, setMessages] = React.useState<ChatMessage[]>(() =>
@@ -95,6 +97,58 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const activeTraceUnsubscribeRef = React.useRef<(() => void) | null>(null);
   const streamingAgentIdRef = React.useRef<string | null>(null);
   const streamedAnyRef = React.useRef(false);
+  const pendingDeltaRef = React.useRef("");
+  const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPendingDelta = React.useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const pending = pendingDeltaRef.current;
+    if (pending.length === 0) {
+      return;
+    }
+    pendingDeltaRef.current = "";
+    const currentStreamId = streamingAgentIdRef.current;
+    if (currentStreamId === null) {
+      return;
+    }
+    setMessages((current) => {
+      const index = current.findIndex((message) => message.id === currentStreamId && message.kind === "agent");
+      if (index === -1) {
+        return [
+          ...current,
+          {
+            id: currentStreamId,
+            kind: "agent",
+            streaming: true,
+            text: pending,
+            timestamp: new Date().toISOString()
+          }
+        ];
+      }
+      const message = current[index];
+      if (message === undefined || message.kind !== "agent") {
+        return current;
+      }
+      const next = [...current];
+      next[index] = {
+        ...message,
+        streaming: true,
+        text: `${message.text}${pending}`
+      } satisfies Extract<ChatMessage, { kind: "agent" }>;
+      return next;
+    });
+  }, []);
+
+  const cancelPendingDelta = React.useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    pendingDeltaRef.current = "";
+  }, []);
 
   const stopTraceSubscription = React.useCallback(() => {
     activeTraceUnsubscribeRef.current?.();
@@ -148,7 +202,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setMessages([welcomeMessage]);
     setStatusLine("conversation cleared");
     setActiveTaskId(null);
+    setPendingApproval(null);
     activeTaskIdRef.current = null;
+    seenApprovalMessageIdsRef.current.clear();
     setFileEdits([]);
     stopTraceSubscription();
   }, [stopTraceSubscription]);
@@ -195,12 +251,17 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   React.useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 1_000);
+    const interval = setInterval(refresh, busy ? 2_000 : 1_000);
     return () => {
       clearInterval(interval);
       stopTraceSubscription();
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      pendingDeltaRef.current = "";
     };
-  }, [refresh, stopTraceSubscription]);
+  }, [busy, refresh, stopTraceSubscription]);
 
   const runDurationLabel = formatDuration(Date.now() - startedAtRef.current);
 
@@ -263,16 +324,33 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   );
 
   const finalizeStreamingAgentMessage = React.useCallback(
-    (id: string, taskId: string, text: string) => {
-      setMessages((current) => [
-        ...current.filter((message) => message.id !== id),
-        {
-          id: `agent:${taskId}:${Date.now()}`,
-          kind: "agent",
-          text,
-          timestamp: new Date().toISOString()
+    (id: string, text: string) => {
+      setMessages((current) => {
+        const index = current.findIndex((message) => message.id === id && message.kind === "agent");
+        if (index === -1) {
+          return [
+            ...current,
+            {
+              id,
+              kind: "agent",
+              streaming: false,
+              text,
+              timestamp: new Date().toISOString()
+            }
+          ];
         }
-      ]);
+        const message = current[index];
+        if (message === undefined || message.kind !== "agent") {
+          return current;
+        }
+        const next = [...current];
+        next[index] = {
+          ...message,
+          streaming: false,
+          text
+        } satisfies Extract<ChatMessage, { kind: "agent" }>;
+        return next;
+      });
     },
     []
   );
@@ -296,13 +374,6 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           kind: "user",
           text,
           timestamp: new Date().toISOString()
-        },
-        {
-          id: streamId,
-          kind: "agent",
-          streaming: true,
-          text: "",
-          timestamp: new Date().toISOString()
         }
       ]);
 
@@ -314,25 +385,21 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         runOptions.taskId = taskId;
         runOptions.onAssistantTextDelta = (delta: string) => {
           streamedAnyRef.current = true;
-          const currentStreamId = streamingAgentIdRef.current;
-          if (currentStreamId === null) {
+          if (streamingAgentIdRef.current === null) {
             return;
           }
-          setMessages((current) =>
-            current.map((message) => {
-              if (message.id !== currentStreamId || message.kind !== "agent") {
-                return message;
-              }
-              return {
-                ...message,
-                streaming: true,
-                text: `${message.text}${delta}`
-              } satisfies Extract<ChatMessage, { kind: "agent" }>;
-            })
-          );
+          pendingDeltaRef.current += delta;
+          if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
+            flushPendingDelta();
+            return;
+          }
+          if (flushTimerRef.current === null) {
+            flushTimerRef.current = setTimeout(flushPendingDelta, STREAM_FLUSH_INTERVAL_MS);
+          }
         };
 
         const result = await input.service.runTask(runOptions);
+        flushPendingDelta();
         activeTaskIdRef.current = result.task.taskId;
         setActiveTaskId(result.task.taskId);
         appendNewTraceEvents(result.task.taskId);
@@ -342,6 +409,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
         const runError = result.error;
         if (runError !== undefined) {
+          cancelPendingDelta();
           removeStreamingMessage(activeStreamId);
           setMessages((current) => [
             ...current,
@@ -363,7 +431,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             ? result.output
             : summarizeTaskResult(result.task);
         if (activeStreamId !== null) {
-          finalizeStreamingAgentMessage(activeStreamId, result.task.taskId, messageText);
+          finalizeStreamingAgentMessage(activeStreamId, messageText);
         } else {
           setMessages((current) => [
             ...current,
@@ -379,6 +447,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       } catch (error) {
         const activeStreamId = streamingAgentIdRef.current;
         streamingAgentIdRef.current = null;
+        cancelPendingDelta();
         removeStreamingMessage(activeStreamId);
 
         const aborted = activeAbortControllerRef.current?.signal.aborted === true;
@@ -405,6 +474,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         activeAbortControllerRef.current = null;
         streamingAgentIdRef.current = null;
         streamedAnyRef.current = false;
+        cancelPendingDelta();
         setBusy(false);
         stopTraceSubscription();
         setTimeout(refresh, 0);
@@ -413,7 +483,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     [
       addSystemMessage,
       appendNewTraceEvents,
+      cancelPendingDelta,
       finalizeStreamingAgentMessage,
+      flushPendingDelta,
       input.config,
       input.cwd,
       input.service,
@@ -560,17 +632,20 @@ function appendApprovalMessages(
   service: AgentApplicationService,
   seenIds: Set<string>
 ): ChatMessage[] {
-  const next = [...current];
+  let next: ChatMessage[] | null = null;
   for (const approval of approvals) {
     const messageId = `approval:${approval.approvalId}`;
     if (seenIds.has(messageId)) {
       continue;
     }
+    if (next === null) {
+      next = [...current];
+    }
     const toolCall = findToolCall(service, approval);
     next.push(toApprovalMessage(approval, toolCall));
     seenIds.add(messageId);
   }
-  return next;
+  return next ?? current;
 }
 
 function findToolCall(

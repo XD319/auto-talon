@@ -15,8 +15,8 @@ type MarkdownBlock =
       text: string;
     };
 
-export function MarkdownContent({ source }: { source: string }): React.ReactElement {
-  const blocks = parseMarkdownBlocks(source);
+function MarkdownContentBase({ source }: { source: string }): React.ReactElement {
+  const blocks = React.useMemo(() => parseMarkdownBlocks(source), [source]);
 
   return (
     <Box flexDirection="column">
@@ -34,6 +34,8 @@ export function MarkdownContent({ source }: { source: string }): React.ReactElem
     </Box>
   );
 }
+
+export const MarkdownContent = React.memo(MarkdownContentBase);
 
 function parseMarkdownBlocks(source: string): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = [];

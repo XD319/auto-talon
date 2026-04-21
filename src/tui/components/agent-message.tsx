@@ -4,21 +4,25 @@ import { Box, Text } from "ink";
 import { sanitizeTerminalText } from "../text-sanitize";
 import { MarkdownContent } from "./markdown-content";
 
-export function AgentMessage({
-  streaming,
-  text
-}: {
+export interface AgentMessageProps {
   streaming?: boolean;
   text: string;
-}): React.ReactElement {
-  const safeText = sanitizeTerminalText(text);
+}
+
+function AgentMessageBase({ streaming, text }: AgentMessageProps): React.ReactElement {
+  const safeText = React.useMemo(() => sanitizeTerminalText(text), [text]);
+  const isStreaming = streaming === true;
   return (
     <Box flexDirection="column">
       <Text bold color="cyan">
         Agent:
       </Text>
-      <MarkdownContent source={safeText} />
-      {streaming === true ? (
+      {isStreaming ? (
+        <Text wrap="wrap">{safeText}</Text>
+      ) : (
+        <MarkdownContent source={safeText} />
+      )}
+      {isStreaming ? (
         <Text color="gray" dimColor>
           ▌
         </Text>
@@ -26,3 +30,5 @@ export function AgentMessage({
     </Box>
   );
 }
+
+export const AgentMessage = React.memo(AgentMessageBase);

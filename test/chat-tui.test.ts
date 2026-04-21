@@ -5,7 +5,8 @@ import {
   deleteCharacterAfter,
   deleteCharacterBefore,
   deletePreviousWord,
-  moveCursorVertical
+  moveCursorVertical,
+  resolveApprovalShortcut
 } from "../src/tui/hooks/use-text-input";
 import {
   displayChatMessages,
@@ -123,6 +124,16 @@ describe("use-text-input helpers", () => {
     const result = deleteCharacterAfter("abc", 1);
     expect(result.value).toBe("ac");
     expect(result.cursorIndex).toBe(1);
+  });
+
+  it("resolves approval shortcuts when input box only has whitespace", () => {
+    expect(resolveApprovalShortcut("a", "   \n\t", true)).toBe("allow");
+    expect(resolveApprovalShortcut("D", "  ", true)).toBe("deny");
+  });
+
+  it("ignores approval shortcuts when prompt has non-whitespace text", () => {
+    expect(resolveApprovalShortcut("a", " draft", true)).toBeNull();
+    expect(resolveApprovalShortcut("d", "", false)).toBeNull();
   });
 });
 

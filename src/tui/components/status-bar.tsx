@@ -12,7 +12,7 @@ export interface StatusBarProps {
   statusLine: string;
 }
 
-export function StatusBar({
+function StatusBarBase({
   contextPercent,
   estimatedCostUsd,
   inputTokens,
@@ -40,3 +40,5 @@ export function StatusBar({
     </Box>
   );
 }
+
+export const StatusBar = React.memo(StatusBarBase);

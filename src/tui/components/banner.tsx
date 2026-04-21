@@ -8,7 +8,7 @@ export interface BannerProps {
   sessionTitle: string;
 }
 
-export function Banner({ cwd, modelLabel, sessionId, sessionTitle }: BannerProps): React.ReactElement {
+function BannerBase({ cwd, modelLabel, sessionId, sessionTitle }: BannerProps): React.ReactElement {
   const compactCwd = cwd.length > 36 ? `...${cwd.slice(-33)}` : cwd;
   const title = sessionTitle.length > 28 ? `${sessionTitle.slice(0, 25)}...` : sessionTitle;
   const sid = sessionId.length > 10 ? `${sessionId.slice(0, 8)}…` : sessionId;
@@ -23,3 +23,5 @@ export function Banner({ cwd, modelLabel, sessionId, sessionTitle }: BannerProps
     </Box>
   );
 }
+
+export const Banner = React.memo(BannerBase);

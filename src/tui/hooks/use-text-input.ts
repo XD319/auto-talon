@@ -22,11 +22,34 @@ export interface TextInputController {
   value: string;
 }
 
+export function resolveApprovalShortcut(
+  input: string,
+  value: string,
+  hasPendingApproval: boolean
+): "allow" | "deny" | null {
+  if (!hasPendingApproval || value.trim().length !== 0) {
+    return null;
+  }
+  const loweredInput = input.toLowerCase();
+  if (loweredInput === "a") {
+    return "allow";
+  }
+  if (loweredInput === "d") {
+    return "deny";
+  }
+  return null;
+}
+
 export function useTextInput(options: UseTextInputOptions): TextInputController {
   const [value, setValue] = React.useState("");
   const [cursorIndex, setCursorIndex] = React.useState(0);
   const preferredColumnRef = React.useRef<number | null>(null);
   const interruptRequestedAtRef = React.useRef<number | null>(null);
+  const cursorIndexRef = React.useRef(0);
+
+  React.useEffect(() => {
+    cursorIndexRef.current = cursorIndex;
+  }, [cursorIndex]);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -62,8 +85,9 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       void import("clipboardy")
         .then(async (m) => {
           const clip = normalizeNewlines(await m.default.read());
-          setValue((current) => insertAt(current, cursorIndex, clip));
-          setCursorIndex((current) => current + clip.length);
+          const insertionIndex = cursorIndexRef.current;
+          setValue((current) => insertAt(current, insertionIndex, clip));
+          setCursorIndex(insertionIndex + clip.length);
           preferredColumnRef.current = null;
         })
         .catch(() => {});
@@ -103,15 +127,10 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       return;
     }
 
-    if (options.hasPendingApproval && value.length === 0) {
-      if (input === "a") {
-        options.onApprovalAction("allow");
-        return;
-      }
-      if (input === "d") {
-        options.onApprovalAction("deny");
-        return;
-      }
+    const approvalAction = resolveApprovalShortcut(input, value, options.hasPendingApproval);
+    if (approvalAction !== null) {
+      options.onApprovalAction(approvalAction);
+      return;
     }
 
     if (key.leftArrow) {

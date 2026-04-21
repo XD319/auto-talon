@@ -52,25 +52,28 @@ function renderHtmlNode(node: DomNode, key: number): React.ReactNode {
   return node.childNodes.map((child, index) => renderHtmlNode(child, index));
 }
 
-export function HighlightCode({
+function HighlightCodeBase({
   code,
   language
 }: {
   code: string;
   language: string | undefined;
 }): React.ReactElement {
-  let html: string;
-  try {
-    const lang =
-      language !== undefined && hljs.getLanguage(language) !== undefined ? language : "plaintext";
-    html = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
-  } catch {
-    html = hljs.highlightAuto(code).value;
-  }
-
-  const wrapped = parse(`<div>${html}</div>`);
-  const root = wrapped.querySelector("div");
-  const body = root?.childNodes.map((child, index) => renderHtmlNode(child, index)) ?? [<Text key="f">{code}</Text>];
+  const body = React.useMemo(() => {
+    let html: string;
+    try {
+      const lang =
+        language !== undefined && hljs.getLanguage(language) !== undefined ? language : "plaintext";
+      html = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+    } catch {
+      html = hljs.highlightAuto(code).value;
+    }
+    const wrapped = parse(`<div>${html}</div>`);
+    const root = wrapped.querySelector("div");
+    return root?.childNodes.map((child, index) => renderHtmlNode(child, index)) ?? [
+      <Text key="f">{code}</Text>
+    ];
+  }, [code, language]);
 
   return (
     <Box borderColor={theme.border} borderStyle="round" flexDirection="column" paddingX={1}>
@@ -83,3 +86,5 @@ export function HighlightCode({
     </Box>
   );
 }
+
+export const HighlightCode = React.memo(HighlightCodeBase);

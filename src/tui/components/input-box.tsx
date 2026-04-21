@@ -7,7 +7,7 @@ export interface InputBoxProps {
   value: string;
 }
 
-export function InputBox({ busy, lines, value }: InputBoxProps): React.ReactElement {
+function InputBoxBase({ busy, lines, value }: InputBoxProps): React.ReactElement {
   return (
     <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
       {value.length === 0 ? (
@@ -22,3 +22,5 @@ export function InputBox({ busy, lines, value }: InputBoxProps): React.ReactElem
     </Box>
   );
 }
+
+export const InputBox = React.memo(InputBoxBase);
