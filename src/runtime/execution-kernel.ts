@@ -510,6 +510,29 @@ export class ExecutionKernel {
             summary: "Task completed successfully",
             taskId: task.taskId
           });
+          this.dependencies.traceService.record({
+            actor: "runtime.kernel",
+            eventType: "task_success",
+            payload: {
+              cwd: task.cwd,
+              outputSummary: summarizeText(providerResponse.message, 240),
+              status: "succeeded"
+            },
+            stage: "lifecycle",
+            summary: "Task success lifecycle hook published",
+            taskId: task.taskId
+          });
+          this.dependencies.traceService.record({
+            actor: "runtime.kernel",
+            eventType: "session_end",
+            payload: {
+              status: "succeeded",
+              summary: summarizeText(providerResponse.message, 240)
+            },
+            stage: "lifecycle",
+            summary: "Session end lifecycle hook published",
+            taskId: task.taskId
+          });
           emitTaskEvent(state.onTaskEvent, {
             errorCode: null,
             errorMessage: null,
@@ -654,7 +677,30 @@ export class ExecutionKernel {
         summary: "Loop iteration completed after tool execution",
         taskId: task.taskId
       });
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "turn_end",
+        payload: {
+          iteration,
+          taskStatus: task.status,
+          toolCallCount
+        },
+        stage: "lifecycle",
+        summary: "Turn end lifecycle hook published",
+        taskId: task.taskId
+      });
 
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "pre_compress",
+        payload: {
+          messageCount: messages.length,
+          reason: "message_count"
+        },
+        stage: "lifecycle",
+        summary: "Pre-compress lifecycle hook published",
+        taskId: task.taskId
+      });
       const compacted = this.dependencies.memoryPlane.compactSession({
         maxMessagesBeforeCompact: 8,
         messages,
@@ -735,6 +781,30 @@ export class ExecutionKernel {
       },
       stage: "completion",
       summary: "Task finished with an error",
+      taskId: task.taskId
+    });
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "task_failure",
+      payload: {
+        cwd: task.cwd,
+        errorCode: error.code,
+        errorMessage: error.message,
+        status: isCancelled ? "cancelled" : "failed"
+      },
+      stage: "lifecycle",
+      summary: "Task failure lifecycle hook published",
+      taskId: task.taskId
+    });
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "session_end",
+      payload: {
+        status: isCancelled ? "cancelled" : "failed",
+        summary: error.message
+      },
+      stage: "lifecycle",
+      summary: "Session end lifecycle hook published",
       taskId: task.taskId
     });
 

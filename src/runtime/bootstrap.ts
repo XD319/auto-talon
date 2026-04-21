@@ -3,6 +3,7 @@ import { delimiter, join, resolve } from "node:path";
 
 import { ApprovalService } from "../approvals/approval-service";
 import { AuditService } from "../audit/audit-service";
+import { ExperienceCollector } from "../experience/experience-collector";
 import { ExperiencePlane } from "../experience/experience-plane";
 import { MemoryPlane } from "../memory/memory-plane";
 import { ContextPolicy } from "../policy/context-policy";
@@ -193,6 +194,11 @@ export function createApplication(
     memoryPlane,
     traceService
   });
+  const experienceCollector = new ExperienceCollector({
+    experiencePlane,
+    traceService
+  });
+  experienceCollector.start();
 
   const executionKernel = new ExecutionKernel({
     agentProfileRegistry,
@@ -248,7 +254,10 @@ export function createApplication(
   });
 
   return {
-    close: () => storage.close(),
+    close: () => {
+      experienceCollector.stop();
+      storage.close();
+    },
     config,
     infrastructure: {
       approvalService,

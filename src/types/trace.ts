@@ -33,9 +33,16 @@ export const TRACE_EVENT_TYPES = [
   "tool_call_finished",
   "tool_call_failed",
   "loop_iteration_completed",
+  "turn_end",
   "retry",
   "interrupt",
   "final_outcome",
+  "task_success",
+  "task_failure",
+  "review_resolved",
+  "pre_compress",
+  "session_end",
+  "delegation_complete",
   "context_assembled",
   "repo_map_created",
   "memory_recalled",
@@ -219,6 +226,12 @@ export interface LoopIterationCompletedPayload extends JsonObject {
   toolCallCount: number;
 }
 
+export interface TurnEndPayload extends JsonObject {
+  iteration: number;
+  taskStatus: string;
+  toolCallCount: number;
+}
+
 export interface RetryPayload extends JsonObject {
   iteration: number;
   reason: string;
@@ -235,6 +248,43 @@ export interface FinalOutcomePayload extends JsonObject {
   output: string | null;
   errorCode: RuntimeErrorCode | null;
   errorMessage: string | null;
+}
+
+export interface TaskSuccessPayload extends JsonObject {
+  cwd: string;
+  outputSummary: string;
+  status: "succeeded";
+}
+
+export interface TaskFailurePayload extends JsonObject {
+  cwd: string;
+  errorCode: RuntimeErrorCode;
+  errorMessage: string;
+  status: "failed" | "cancelled";
+}
+
+export interface ReviewResolvedPayload extends JsonObject {
+  approvalId: string;
+  reviewerId: string | null;
+  status: ApprovalStatus;
+  toolCallId: string;
+  toolName: string;
+}
+
+export interface PreCompressPayload extends JsonObject {
+  messageCount: number;
+  reason: "message_count" | "context_budget";
+}
+
+export interface SessionEndPayload extends JsonObject {
+  status: "succeeded" | "failed" | "cancelled";
+  summary: string;
+}
+
+export interface DelegationCompletePayload extends JsonObject {
+  delegateId: string;
+  status: string;
+  summary: string;
 }
 
 export interface ContextAssembledPayload extends JsonObject {
@@ -365,9 +415,16 @@ export type TraceEvent =
   | TraceEventBase<"tool_call_finished", ToolCallFinishedPayload>
   | TraceEventBase<"tool_call_failed", ToolCallFailedPayload>
   | TraceEventBase<"loop_iteration_completed", LoopIterationCompletedPayload>
+  | TraceEventBase<"turn_end", TurnEndPayload>
   | TraceEventBase<"retry", RetryPayload>
   | TraceEventBase<"interrupt", InterruptPayload>
   | TraceEventBase<"final_outcome", FinalOutcomePayload>
+  | TraceEventBase<"task_success", TaskSuccessPayload>
+  | TraceEventBase<"task_failure", TaskFailurePayload>
+  | TraceEventBase<"review_resolved", ReviewResolvedPayload>
+  | TraceEventBase<"pre_compress", PreCompressPayload>
+  | TraceEventBase<"session_end", SessionEndPayload>
+  | TraceEventBase<"delegation_complete", DelegationCompletePayload>
   | TraceEventBase<"context_assembled", ContextAssembledPayload>
   | TraceEventBase<"repo_map_created", RepoMapCreatedPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>

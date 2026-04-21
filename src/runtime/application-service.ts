@@ -289,6 +289,20 @@ export class AgentApplicationService {
       summary: `Approval ${approval.status} for ${approval.toolName}`,
       taskId: approval.taskId
     });
+    this.dependencies.traceService.record({
+      actor: `reviewer.${reviewerId}`,
+      eventType: "review_resolved",
+      payload: {
+        approvalId: approval.approvalId,
+        reviewerId: approval.reviewerId,
+        status: approval.status,
+        toolCallId: approval.toolCallId,
+        toolName: approval.toolName
+      },
+      stage: "lifecycle",
+      summary: `Review resolved for ${approval.toolName}`,
+      taskId: approval.taskId
+    });
 
     this.dependencies.auditService.record({
       action: "approval_resolved",
