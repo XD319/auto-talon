@@ -1,6 +1,6 @@
 import type { ProviderUsage } from "../types";
 
-/** Rough placeholder pricing (USD per 1M tokens) for status estimates — override with env if needed. */
+/** Rough placeholder pricing (USD per 1M tokens) for status estimates; override with env if needed. */
 export function estimateSessionCostUsd(
   providerName: string,
   modelName: string | undefined,

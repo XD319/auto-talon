@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { mergeTraceMessages } from "../src/tui/hooks/use-chat-controller";
+import {
+  completeApprovalMessage,
+  mergeTraceMessages,
+  syncPendingApprovalMessages
+} from "../src/tui/hooks/use-chat-controller";
 import {
   deleteCharacterAfter,
   deleteCharacterBefore,
@@ -77,6 +81,29 @@ describe("use-chat-controller helpers", () => {
 
     expect(mergedOnce.length).toBe(2);
     expect(mergedTwice.length).toBe(2);
+  });
+
+  it("removes stale approval cards from the live transcript", () => {
+    const approval = createApprovalRecord();
+    const current = [toApprovalMessage(approval, createToolCallRecord())];
+    const synced = syncPendingApprovalMessages(
+      current,
+      [],
+      createApprovalLookupService(),
+      new Set(current.map((message) => message.id))
+    );
+
+    expect(synced.some((message) => message.kind === "approval")).toBe(false);
+  });
+
+  it("replaces a completed approval card with a compact result line", () => {
+    const approval = createApprovalRecord();
+    const current = [toApprovalMessage(approval, createToolCallRecord())];
+    const completed = completeApprovalMessage(current, approval, "allow", new Set([current[0]?.id ?? ""]));
+
+    expect(completed.some((message) => message.kind === "approval")).toBe(false);
+    expect(completed.at(-1)?.kind).toBe("approval_result");
+    expect(completed.at(-1)?.id).toBe("approval-result:approval-1:allow");
   });
 });
 
@@ -189,5 +216,17 @@ function createToolCallRecord(): ToolCallRecord {
     taskId: "task-001",
     toolCallId: "call-001",
     toolName: "file_write"
+  };
+}
+
+function createApprovalLookupService() {
+  return {
+    showTask: () => ({
+      approvals: [],
+      artifacts: [],
+      task: null,
+      toolCalls: [createToolCallRecord()],
+      trace: []
+    })
   };
 }

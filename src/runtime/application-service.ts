@@ -36,7 +36,7 @@ import type { SkillAttachmentKind } from "../types/skill";
 import type { SkillDraftManager, SkillRegistry } from "../skills";
 import type { ExecutionKernel } from "./execution-kernel";
 
-import { AppError } from "./app-error";
+import { AppError, toAppError } from "./app-error";
 
 export interface RunTaskResult {
   error?: AppError;
@@ -46,6 +46,7 @@ export interface RunTaskResult {
 
 export interface ApprovalActionResult {
   approval: ApprovalRecord;
+  error?: AppError;
   output: string | null;
   task: TaskRecord;
 }
@@ -370,12 +371,27 @@ export class AgentApplicationService {
     });
 
     if (approval.status === "approved") {
-      const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
-      return {
-        approval,
-        output: result.output,
-        task: result.task
-      };
+      try {
+        const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
+        return {
+          approval,
+          output: result.output,
+          task: result.task
+        };
+      } catch (error) {
+        const appError = toAppError(error);
+        const task = this.dependencies.findTask(approval.taskId);
+        if (task === null) {
+          throw appError;
+        }
+
+        return {
+          approval,
+          error: appError,
+          output: null,
+          task
+        };
+      }
     }
 
     this.dependencies.updateToolCall(approval.toolCallId, {

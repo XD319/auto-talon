@@ -21,6 +21,7 @@ function StatusBarBase({
 }: StatusBarProps): React.ReactElement {
   const ctxColor = contextUsageColor(contextPercent);
   const costLabel = estimatedCostUsd < 0.000_5 ? "~$0.00" : `~$${estimatedCostUsd.toFixed(4)}`;
+  const separator = " | ";
 
   return (
     <Box flexDirection="column">
@@ -28,13 +29,11 @@ function StatusBarBase({
         <Text color="gray">
           tok in {inputTokens} out {outputTokens}
         </Text>
-        <Text color={theme.muted}> │ </Text>
-        <Text color={ctxColor}>
-          ctx {contextPercent}%
-        </Text>
-        <Text color={theme.muted}> │ </Text>
+        <Text color={theme.muted}>{separator}</Text>
+        <Text color={ctxColor}>ctx {contextPercent}%</Text>
+        <Text color={theme.muted}>{separator}</Text>
         <Text color="yellow">{costLabel}</Text>
-        <Text color={theme.muted}> │ </Text>
+        <Text color={theme.muted}>{separator}</Text>
         <Text color="cyan">{statusLine}</Text>
       </Text>
     </Box>

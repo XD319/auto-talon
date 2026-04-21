@@ -127,7 +127,10 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       return;
     }
 
-    const approvalAction = resolveApprovalShortcut(input, value, options.hasPendingApproval);
+    const approvalAction =
+      key.ctrl || key.meta || keyAlt.alt === true
+        ? null
+        : resolveApprovalShortcut(input, value, options.hasPendingApproval);
     if (approvalAction !== null) {
       options.onApprovalAction(approvalAction);
       return;
@@ -287,7 +290,7 @@ export function deleteCharacterAfter(
 }
 
 function buildLinesWithCursor(value: string, cursorIndex: number): string[] {
-  const cursorGlyph = "\u200b▌\u200b";
+  const cursorGlyph = "|";
   const withCursor = `${value.slice(0, cursorIndex)}${cursorGlyph}${value.slice(cursorIndex)}`;
   return withCursor.split("\n");
 }

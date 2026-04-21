@@ -179,6 +179,9 @@ async function main(): Promise<void> {
         console.log(`Approval: ${result.approval.approvalId} ${result.approval.status}`);
         console.log(`Task ID: ${result.task.taskId}`);
         console.log(`Status: ${result.task.status}`);
+        if (result.error !== undefined) {
+          console.log(`Error: ${result.error.code} ${result.error.message}`);
+        }
         if (result.output !== null) {
           console.log(result.output);
         }

@@ -9,7 +9,7 @@ import {
   estimateSessionCostUsd
 } from "../token-pricing";
 import {
-  resolveApprovalMessage,
+  toApprovalResultMessage,
   toApprovalMessage,
   toTraceActivityMessage,
   type ChatMessage
@@ -72,7 +72,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const [messages, setMessages] = React.useState<ChatMessage[]>(() =>
     input.initialMessages !== undefined && input.initialMessages.length > 0 ? input.initialMessages : [welcomeMessage]
   );
-  const [busy, setBusy] = React.useState(false);
+  const [busyCount, setBusyCount] = React.useState(0);
   const [statusLine, setStatusLine] = React.useState("idle");
   const [summary, setSummary] = React.useState({
     pendingApprovals: 0,
@@ -93,12 +93,22 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const activeAbortControllerRef = React.useRef<AbortController | null>(null);
   const activeTaskIdRef = React.useRef<string | null>(null);
   const lastSequenceByTaskRef = React.useRef<Record<string, number>>({});
-  const seenApprovalMessageIdsRef = React.useRef<Set<string>>(new Set());
   const activeTraceUnsubscribeRef = React.useRef<(() => void) | null>(null);
   const streamingAgentIdRef = React.useRef<string | null>(null);
   const streamedAnyRef = React.useRef(false);
   const pendingDeltaRef = React.useRef("");
   const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const approvalInFlightRef = React.useRef(false);
+  const seenApprovalMessageIdsRef = React.useRef<Set<string>>(collectApprovalMessageIds(messages));
+  const busy = busyCount > 0;
+
+  const beginBusy = React.useCallback(() => {
+    setBusyCount((current) => current + 1);
+  }, []);
+
+  const endBusy = React.useCallback(() => {
+    setBusyCount((current) => Math.max(0, current - 1));
+  }, []);
 
   const flushPendingDelta = React.useCallback(() => {
     if (flushTimerRef.current !== null) {
@@ -222,7 +232,12 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       const activeApproval =
         approvals.find((item) => item.taskId === activeTaskIdRef.current) ?? approvals[0] ?? null;
       setPendingApproval(activeApproval);
-      setMessages((current) => appendApprovalMessages(current, approvals, input.service, seenApprovalMessageIdsRef.current));
+      if (activeApproval !== null) {
+        setStatusLine(`waiting approval: ${activeApproval.toolName}`);
+      }
+      setMessages((current) =>
+        syncPendingApprovalMessages(current, approvals, input.service, seenApprovalMessageIdsRef.current)
+      );
 
       const stats = input.service.providerStats();
       if (stats !== null) {
@@ -357,7 +372,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   const submitPrompt = React.useCallback(
     async (text: string) => {
-      setBusy(true);
+      beginBusy();
       setStatusLine("running");
       const taskId = randomUUID();
       const streamId = `agent:stream:${taskId}`;
@@ -475,7 +490,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         streamingAgentIdRef.current = null;
         streamedAnyRef.current = false;
         cancelPendingDelta();
-        setBusy(false);
+        endBusy();
         stopTraceSubscription();
         setTimeout(refresh, 0);
       }
@@ -483,7 +498,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     [
       addSystemMessage,
       appendNewTraceEvents,
+      beginBusy,
       cancelPendingDelta,
+      endBusy,
       finalizeStreamingAgentMessage,
       flushPendingDelta,
       input.config,
@@ -535,25 +552,38 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   const resolvePendingApproval = React.useCallback(
     async (action: "allow" | "deny") => {
-      if (pendingApproval === null || busy) {
+      if (pendingApproval === null || approvalInFlightRef.current) {
         return;
       }
 
-      setBusy(true);
-      startTraceSubscription(pendingApproval.taskId);
+      approvalInFlightRef.current = true;
+      beginBusy();
+      const approval = pendingApproval;
+      startTraceSubscription(approval.taskId);
       try {
-        const result = await input.service.resolveApproval(pendingApproval.approvalId, action, input.reviewerId);
+        const result = await input.service.resolveApproval(approval.approvalId, action, input.reviewerId);
         appendNewTraceEvents(result.task.taskId);
         activeTaskIdRef.current = result.task.taskId;
         setActiveTaskId(result.task.taskId);
         setMessages((current) =>
-          current.map((message) => {
-            if (message.kind === "approval" && message.approval.approvalId === pendingApproval.approvalId) {
-              return resolveApprovalMessage(message, action);
-            }
-            return message;
-          })
+          completeApprovalMessage(current, approval, action, seenApprovalMessageIdsRef.current)
         );
+        const resultError = result.error;
+        if (resultError !== undefined) {
+          setMessages((current) => [
+            ...current,
+            {
+              code: resultError.code,
+              id: `error:approval-resume:${result.task.taskId}:${Date.now()}`,
+              kind: "error",
+              message: resultError.message,
+              source: "runtime",
+              timestamp: new Date().toISOString()
+            }
+          ]);
+          setStatusLine(`failed after approval: ${resultError.code}`);
+          return;
+        }
         if (result.output !== null) {
           setMessages((current) => [
             ...current,
@@ -565,7 +595,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             }
           ]);
         }
-        setStatusLine(`${action === "allow" ? "approved" : "denied"} ${pendingApproval.toolName}`);
+        if (result.task.status === "waiting_approval") {
+          setStatusLine("waiting_approval");
+          return;
+        }
+        setStatusLine(`${action === "allow" ? "approved" : "denied"} ${approval.toolName}`);
       } catch (error) {
         setMessages((current) => [
           ...current,
@@ -580,14 +614,16 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         ]);
         setStatusLine("approval failed");
       } finally {
-        setBusy(false);
+        approvalInFlightRef.current = false;
+        endBusy();
         stopTraceSubscription();
         refresh();
       }
     },
     [
       appendNewTraceEvents,
-      busy,
+      beginBusy,
+      endBusy,
       input.reviewerId,
       input.service,
       pendingApproval,
@@ -626,30 +662,107 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   };
 }
 
-function appendApprovalMessages(
+export function syncPendingApprovalMessages(
   current: ChatMessage[],
   approvals: ApprovalRecord[],
-  service: AgentApplicationService,
+  service: Pick<AgentApplicationService, "showTask">,
   seenIds: Set<string>
 ): ChatMessage[] {
-  let next: ChatMessage[] | null = null;
-  for (const approval of approvals) {
-    const messageId = `approval:${approval.approvalId}`;
-    if (seenIds.has(messageId)) {
+  const approvalsByMessageId = new Map<string, ApprovalRecord>(
+    approvals.map((approval) => [`approval:${approval.approvalId}`, approval] as const)
+  );
+  const retainedApprovalIds = new Set<string>();
+  let changed = false;
+  const next: ChatMessage[] = [];
+
+  for (const message of current) {
+    if (message.kind !== "approval") {
+      next.push(message);
       continue;
     }
-    if (next === null) {
-      next = [...current];
+
+    const approval = approvalsByMessageId.get(message.id);
+    if (approval === undefined) {
+      seenIds.delete(message.id);
+      changed = true;
+      continue;
     }
+
+    if (retainedApprovalIds.has(message.id)) {
+      changed = true;
+      continue;
+    }
+
+    if (message.status === "pending") {
+      next.push(message);
+    } else {
+      const toolCall = findToolCall(service, approval);
+      next.push(toApprovalMessage(approval, toolCall));
+      changed = true;
+    }
+    retainedApprovalIds.add(message.id);
+    seenIds.add(message.id);
+  }
+
+  for (const approval of approvals) {
+    const messageId = `approval:${approval.approvalId}`;
+    if (retainedApprovalIds.has(messageId)) {
+      continue;
+    }
+
     const toolCall = findToolCall(service, approval);
     next.push(toApprovalMessage(approval, toolCall));
     seenIds.add(messageId);
+    changed = true;
   }
-  return next ?? current;
+
+  return changed ? next : current;
+}
+
+export function completeApprovalMessage(
+  current: ChatMessage[],
+  approval: ApprovalRecord,
+  action: "allow" | "deny",
+  seenIds: Set<string>
+): ChatMessage[] {
+  const approvalMessageId = `approval:${approval.approvalId}`;
+  const resultMessageId = `approval-result:${approval.approvalId}:${action}`;
+  let removedApproval = false;
+  let hasResult = false;
+  const next: ChatMessage[] = [];
+
+  for (const message of current) {
+    if (message.id === resultMessageId) {
+      hasResult = true;
+      next.push(message);
+      continue;
+    }
+    if (message.kind === "approval" && message.approval.approvalId === approval.approvalId) {
+      removedApproval = true;
+      continue;
+    }
+    next.push(message);
+  }
+
+  seenIds.delete(approvalMessageId);
+
+  if (!hasResult) {
+    next.push(toApprovalResultMessage(approval, action));
+  }
+
+  return removedApproval || !hasResult ? next : current;
+}
+
+function collectApprovalMessageIds(messages: ChatMessage[]): Set<string> {
+  return new Set(
+    messages
+      .filter((message): message is Extract<ChatMessage, { kind: "approval" }> => message.kind === "approval")
+      .map((message) => message.id)
+  );
 }
 
 function findToolCall(
-  service: AgentApplicationService,
+  service: Pick<AgentApplicationService, "showTask">,
   approval: ApprovalRecord
 ): ToolCallRecord | null {
   return service.showTask(approval.taskId).toolCalls.find((item) => item.toolCallId === approval.toolCallId) ?? null;

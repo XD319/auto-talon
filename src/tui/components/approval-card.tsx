@@ -9,14 +9,43 @@ export interface ApprovalCardProps {
 }
 
 export function ApprovalCard({ approval, toolCall }: ApprovalCardProps): React.ReactElement {
+  const target = summarizeToolTarget(toolCall);
+
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+    <Box
+      flexDirection="column"
+      borderStyle="classic"
+      borderColor="yellow"
+      paddingX={1}
+    >
       <Text color="yellow">Approval Required</Text>
       <Text>
         {approval.toolName} [{toolCall?.riskLevel ?? "unknown"}] task={approval.taskId.slice(0, 8)}
       </Text>
+      {target !== null ? <Text color="gray">target: {target}</Text> : null}
       <Text color="gray">reason: {approval.reason}</Text>
-      <Text color="gray">Press [a] allow or [d] deny.</Text>
+      <Text color="gray">Press a to allow or d to deny.</Text>
     </Box>
   );
+}
+
+function summarizeToolTarget(toolCall: ToolCallRecord | null): string | null {
+  if (toolCall === null) {
+    return null;
+  }
+
+  const input = toolCall.input;
+  const candidates = [
+    input["url"],
+    input["path"],
+    input["command"],
+    input["keyword"],
+    input["query"]
+  ];
+  const value = candidates.find((item): item is string => typeof item === "string" && item.length > 0);
+  if (value === undefined) {
+    return null;
+  }
+
+  return value.length <= 96 ? value : `${value.slice(0, 93)}...`;
 }

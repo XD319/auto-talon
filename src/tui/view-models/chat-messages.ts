@@ -31,6 +31,16 @@ export type ChatMessage =
       timestamp: string;
     }
   | {
+      kind: "approval_result";
+      id: string;
+      action: "allow" | "deny";
+      approvalId: string;
+      taskId: string;
+      text: string;
+      timestamp: string;
+      toolName: string;
+    }
+  | {
       kind: "error";
       id: string;
       code: string;
@@ -78,6 +88,23 @@ export function resolveApprovalMessage(
     resolution,
     status: "resolved",
     timestamp: new Date().toISOString()
+  };
+}
+
+export function toApprovalResultMessage(
+  approval: ApprovalRecord,
+  action: "allow" | "deny"
+): ChatMessage {
+  const label = action === "allow" ? "Approved" : "Denied";
+  return {
+    action,
+    approvalId: approval.approvalId,
+    id: `approval-result:${approval.approvalId}:${action}`,
+    kind: "approval_result",
+    taskId: approval.taskId,
+    text: `${label} ${approval.toolName} for task ${approval.taskId.slice(0, 8)}.`,
+    timestamp: new Date().toISOString(),
+    toolName: approval.toolName
   };
 }
 

@@ -24,7 +24,7 @@ function AgentMessageBase({ streaming, text }: AgentMessageProps): React.ReactEl
       )}
       {isStreaming ? (
         <Text color="gray" dimColor>
-          ▌
+          ...
         </Text>
       ) : null}
     </Box>

@@ -43,10 +43,30 @@ function MessageItem({ message }: { message: ChatMessage }): React.ReactElement 
     );
   }
   if (message.kind === "approval") {
+    if (message.status === "resolved") {
+      const action = message.resolution ?? "allow";
+      const label = action === "allow" ? "Approved" : "Denied";
+      return (
+        <Text color={action === "allow" ? "green" : "red"}>
+          [approval] {label} {message.approval.toolName} for task {message.approval.taskId.slice(0, 8)}.
+        </Text>
+      );
+    }
+
     return (
       <Box marginY={1}>
-        <ApprovalCard approval={message.approval} toolCall={message.toolCall} />
+        <ApprovalCard
+          approval={message.approval}
+          toolCall={message.toolCall}
+        />
       </Box>
+    );
+  }
+  if (message.kind === "approval_result") {
+    return (
+      <Text color={message.action === "allow" ? "green" : "red"}>
+        [approval] {message.text}
+      </Text>
     );
   }
   if (message.kind === "error") {

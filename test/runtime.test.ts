@@ -264,6 +264,36 @@ describe("Phase 2 governance runtime", () => {
     }
   });
 
+  it("returns an approved result when the resumed task fails after approval", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApprovalShellFailureApplication(workspaceRoot);
+
+    try {
+      const initial = await handle.service.runTask(
+        createDefaultRunOptions("run failing command after approval", workspaceRoot, handle.config)
+      );
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval).toBeDefined();
+
+      const resumed = await handle.service.resolveApproval(
+        approval?.approvalId ?? "",
+        "allow",
+        "reviewer-runtime-failure"
+      );
+
+      expect(resumed.approval.status).toBe("approved");
+      expect(resumed.error?.code).toBe("tool_execution_error");
+      expect(resumed.task.status).toBe("failed");
+      expect(resumed.output).toBeNull();
+
+      const details = handle.service.showTask(initial.task.taskId);
+      expect(details.approvals[0]?.status).toBe("approved");
+      expect(details.toolCalls[0]?.status).toBe("failed");
+    } finally {
+      handle.close();
+    }
+  });
+
   it("fails the task when approval is denied", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApprovalWriteApplication(workspaceRoot);
@@ -614,6 +644,47 @@ function createApprovalWriteApplication(workspaceRoot: string) {
       };
     }),
     policyConfig: APPROVAL_REQUIRED_POLICY_CONFIG
+  });
+}
+
+function createApprovalShellFailureApplication(workspaceRoot: string) {
+  return createApplication(workspaceRoot, {
+    config: {
+      databasePath: join(workspaceRoot, "runtime.db")
+    },
+    policyConfig: {
+      defaultEffect: "deny",
+      rules: [
+        {
+          description: "Shell commands require reviewer approval in this test.",
+          effect: "allow_with_approval",
+          id: "test-shell-needs-approval",
+          match: {
+            capabilities: ["shell.execute"]
+          },
+          priority: 80
+        }
+      ],
+      source: "local"
+    },
+    provider: new ScriptedProvider(() => ({
+      kind: "tool_calls",
+      message: "Run the failing command after approval.",
+      toolCalls: [
+        {
+          input: {
+            command: "node --definitely-not-a-node-flag"
+          },
+          reason: "Exercise resume failure handling after approval.",
+          toolCallId: "failing-shell",
+          toolName: "shell"
+        }
+      ],
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5
+      }
+    }))
   });
 }
 

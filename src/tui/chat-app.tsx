@@ -164,8 +164,9 @@ export function ChatTuiApp({
 
       if (text === "/cost") {
         const u = controller.tokenHud;
+        const estimate = u.estimatedCostUsd.toFixed(4);
         controller.addSystemMessage(
-          `Session token estimate (provider telemetry): in=${u.inputTokens} out=${u.outputTokens} · ~$${u.estimatedCostUsd.toFixed(4)}`
+          `Session token estimate (provider telemetry): in=${u.inputTokens} out=${u.outputTokens} | ~$${estimate}`
         );
         return true;
       }
@@ -383,7 +384,12 @@ export function ChatTuiApp({
         </Box>
       ) : null}
       <Box marginTop={1}>
-        <InputBox busy={controller.busy} lines={textInput.lines} value={textInput.value} />
+        <InputBox
+          busy={controller.busy}
+          hasPendingApproval={controller.hasPendingApproval}
+          lines={textInput.lines}
+          value={textInput.value}
+        />
       </Box>
     </Box>
   );
@@ -393,5 +399,13 @@ function isStaticTranscriptMessage(message: ChatMessage): boolean {
   if (message.kind === "agent") {
     return message.streaming !== true;
   }
-  return message.kind === "error" || message.kind === "system" || message.kind === "user";
+  if (message.kind === "approval") {
+    return message.status === "resolved";
+  }
+  return (
+    message.kind === "approval_result" ||
+    message.kind === "error" ||
+    message.kind === "system" ||
+    message.kind === "user"
+  );
 }

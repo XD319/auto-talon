@@ -113,7 +113,11 @@ export function useDashboardController(input: {
         Math.max(0, nextSnapshot.tasks.findIndex((task) => task.taskId === result.task.taskId))
       );
       setSelectedApprovalIndex(clampIndex(selectedApprovalIndex, nextSnapshot.pendingApprovals.length));
-      setStatusLine(`${action === "allow" ? "Approved" : "Denied"} ${selectedApproval.toolName} for ${result.task.taskId.slice(0, 8)}`);
+      setStatusLine(
+        result.error === undefined
+          ? `${action === "allow" ? "Approved" : "Denied"} ${selectedApproval.toolName} for ${result.task.taskId.slice(0, 8)}`
+          : `Approved ${selectedApproval.toolName}, then task failed: ${result.error.code}`
+      );
     } catch (error) {
       setStatusLine(
         error instanceof Error ? `Approval action failed: ${error.message}` : "Approval action failed."

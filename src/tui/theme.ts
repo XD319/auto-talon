@@ -15,7 +15,7 @@ export const theme = {
   user: "white"
 } as const;
 
-export function progressBar(filled: number, width: number, char = "█"): string {
+export function progressBar(filled: number, width: number, char = "#"): string {
   const n = Math.max(0, Math.min(width, Math.round((filled / 100) * width)));
-  return char.repeat(n) + "░".repeat(width - n);
+  return char.repeat(n) + "-".repeat(width - n);
 }
