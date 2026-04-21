@@ -13,6 +13,7 @@ export * from "./policy";
 export * from "./profile";
 export * from "./runtime";
 export * from "./sandbox";
+export * from "./skill";
 export * from "./storage";
 export * from "./task";
 export * from "./tool";
