@@ -93,6 +93,21 @@ export interface SkillListResult {
   skills: SkillMetadata[];
 }
 
+export interface SkillDraftRecord {
+  draftId: string;
+  draftPath: string;
+  rootPath: string;
+  sourceExperienceIds: string[];
+  targetSkillId: string;
+}
+
+export interface SkillCandidateGroup {
+  keyword: string;
+  reason: string;
+  sourceExperienceIds: string[];
+  title: string;
+}
+
 const jsonObjectSchema = z.record(z.string(), z.json()).transform((value) => value as JsonObject);
 
 export const skillPrerequisitesSchema = z.object({
