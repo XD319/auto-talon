@@ -286,6 +286,10 @@ export class SandboxService {
   }
 
   private isAllowedFetchHost(host: string): boolean {
+    if (this.allowedFetchHosts.has("*")) {
+      return true;
+    }
+
     if (this.allowedFetchHosts.has(host)) {
       return true;
     }

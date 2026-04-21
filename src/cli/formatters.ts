@@ -127,6 +127,10 @@ export function formatAuditLog(entries: AuditLogRecord[]): string {
 export function formatDoctorReport(report: AgentDoctorReport): string {
   return [
     `Runtime Version: ${report.runtimeVersion}`,
+    `Runtime Config Source: ${report.runtimeConfigSource}`,
+    `Runtime Config Path: ${report.runtimeConfigPath}`,
+    `Token Budget: input=${report.tokenBudget.inputLimit} output=${report.tokenBudget.outputLimit} reserved=${report.tokenBudget.reservedOutput}`,
+    `Allowed Fetch Hosts: ${report.allowedFetchHosts.join(", ")}`,
     `Provider: ${report.providerName}`,
     `Model: ${report.modelName ?? "-"}`,
     `Config Source: ${report.configSource}`,

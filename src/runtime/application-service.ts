@@ -47,6 +47,7 @@ export interface AgentDoctorReport {
   databasePath: string;
   endpointReachable: boolean | null;
   issues: string[];
+  allowedFetchHosts: string[];
   maxRetries: number;
   modelAvailable: boolean | null;
   modelConfigured: boolean;
@@ -54,8 +55,15 @@ export interface AgentDoctorReport {
   nodeVersion: string;
   providerHealthMessage: string;
   providerName: string;
+  runtimeConfigPath: string;
+  runtimeConfigSource: "defaults" | "env" | "file";
   runtimeVersion: string;
   shell: string | undefined;
+  tokenBudget: {
+    inputLimit: number;
+    outputLimit: number;
+    reservedOutput: number;
+  };
   timeoutMs: number;
   workspaceRoot: string;
 }
@@ -104,7 +112,15 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   provider: Provider;
   providerCatalog: ProviderCatalogEntry[];
   providerConfig: ResolvedProviderConfig;
+  allowedFetchHosts: string[];
   runtimeVersion: string;
+  runtimeConfigPath: string;
+  runtimeConfigSource: "defaults" | "env" | "file";
+  tokenBudget: {
+    inputLimit: number;
+    outputLimit: number;
+    reservedOutput: number;
+  };
   traceService: TraceService;
   workspaceRoot: string;
 }
@@ -460,6 +476,7 @@ export class AgentApplicationService {
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
+      allowedFetchHosts: this.dependencies.allowedFetchHosts,
       configPath: this.dependencies.providerConfig.configPath,
       configSource: this.dependencies.providerConfig.configSource,
       databasePath: this.dependencies.databasePath,
@@ -472,8 +489,11 @@ export class AgentApplicationService {
       nodeVersion: process.version,
       providerHealthMessage: providerHealth.message,
       providerName: this.dependencies.provider.name,
+      runtimeConfigPath: this.dependencies.runtimeConfigPath,
+      runtimeConfigSource: this.dependencies.runtimeConfigSource,
       runtimeVersion: this.dependencies.runtimeVersion,
       shell: process.env.ComSpec,
+      tokenBudget: this.dependencies.tokenBudget,
       timeoutMs: this.dependencies.providerConfig.timeoutMs,
       workspaceRoot: this.dependencies.workspaceRoot
     };

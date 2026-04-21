@@ -68,6 +68,14 @@ export interface ContextDebugFragment extends JsonObject {
 export interface ContextAssemblyDebugView extends JsonObject {
   taskId: string;
   iteration: number;
+  tokenBudget: {
+    estimatedInputTokens: number;
+    inputLimit: number;
+    outputLimit: number;
+    reservedOutput: number;
+    usedInput: number;
+    usedOutput: number;
+  };
   originalTaskInput: ContextDebugFragment;
   systemPromptFragments: ContextDebugFragment[];
   memoryRecallFragments: ContextDebugFragment[];

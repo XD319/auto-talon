@@ -106,6 +106,97 @@ describe("Provider runtime safeguards", () => {
       category: "malformed_response"
     });
   });
+
+  it("passes configured token output budget to OpenAI-compatible providers", async () => {
+    let requestBody: { max_tokens?: number } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as { max_tokens?: number };
+        return Promise.resolve(jsonResponse({
+          choices: [
+            {
+              index: 0,
+              message: {
+                content: "ok",
+                role: "assistant"
+              }
+            }
+          ],
+          usage: {
+            completion_tokens: 1,
+            prompt_tokens: 1,
+            total_tokens: 2
+          }
+        }));
+      })
+    );
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+    const input = createProviderInput("budgeted");
+    input.tokenBudget.outputLimit = 1_234;
+
+    await provider.generate(input);
+
+    expect(requestBody?.max_tokens).toBe(1_234);
+  });
+
+  it("passes configured token output budget to Anthropic-compatible providers", async () => {
+    let requestBody: { max_tokens?: number } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as { max_tokens?: number };
+        return Promise.resolve(jsonResponse({
+          content: [
+            {
+              text: "ok",
+              type: "text"
+            }
+          ],
+          model: "claude-sonnet-4-20250514",
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1
+          }
+        }));
+      })
+    );
+    const provider = new AnthropicCompatibleProvider(
+      {
+        apiKey: "anthropic-test-key",
+        baseUrl: "https://anthropic.example.test",
+        maxRetries: 0,
+        model: "claude-sonnet-4-20250514",
+        name: "anthropic",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: "https://api.anthropic.com",
+        defaultDisplayName: "Anthropic",
+        defaultModel: "claude-sonnet-4-20250514"
+      }
+    );
+    const input = createProviderInput("budgeted");
+    input.tokenBudget.outputLimit = 2_345;
+
+    await provider.generate(input);
+
+    expect(requestBody?.max_tokens).toBe(2_345);
+  });
 });
 
 function runProviderContractSuite(name: string, harness: ProviderContractHarness): void {

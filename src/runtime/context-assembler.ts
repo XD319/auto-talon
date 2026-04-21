@@ -104,6 +104,14 @@ function buildContextDebugView(input: ContextAssemblerInput): ContextAssemblyDeb
       },
       sourceType: "user_input"
     },
+    tokenBudget: {
+      estimatedInputTokens: estimateInputTokens(input.messages, input.memoryContext),
+      inputLimit: input.tokenBudget.inputLimit,
+      outputLimit: input.tokenBudget.outputLimit,
+      reservedOutput: input.tokenBudget.reservedOutput,
+      usedInput: input.tokenBudget.usedInput,
+      usedOutput: input.tokenBudget.usedOutput
+    },
     systemPromptFragments: input.messages
       .filter((message) => message.role === "system")
       .map((message, index) =>
@@ -120,6 +128,14 @@ function buildContextDebugView(input: ContextAssemblerInput): ContextAssemblyDeb
         )
       )
   };
+}
+
+function estimateInputTokens(messages: ConversationMessage[], memoryContext: ContextFragment[]): number {
+  const text = [
+    ...messages.map((message) => message.content),
+    ...memoryContext.map((fragment) => fragment.text)
+  ].join("\n");
+  return Math.ceil(text.length / 4);
 }
 
 export function buildFilteredContextDebugFragments(

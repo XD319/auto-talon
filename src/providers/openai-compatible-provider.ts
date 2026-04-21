@@ -121,6 +121,7 @@ export class OpenAiCompatibleProvider implements Provider {
     const response = await this.requestJson<OpenAiCompatibleResponse>(
       "chat/completions",
       {
+        max_tokens: Math.max(1, input.tokenBudget.outputLimit),
         messages: input.messages.map((message) => toProviderMessage(message)),
         model: this.model,
         stream: false,
@@ -187,6 +188,7 @@ export class OpenAiCompatibleProvider implements Provider {
     try {
       const init: RequestInit = {
         body: JSON.stringify({
+          max_tokens: Math.max(1, input.tokenBudget.outputLimit),
           messages: input.messages.map((message) => toProviderMessage(message)),
           model: this.model,
           stream: true,

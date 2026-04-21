@@ -33,6 +33,7 @@ import { ShellExecutor } from "../tools/shell/shell-executor";
 
 import { AgentApplicationService } from "./application-service";
 import { ExecutionKernel } from "./execution-kernel";
+import { resolveRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config";
 
 export interface AppConfig {
   approvalTtlMs: number;
@@ -43,8 +44,11 @@ export interface AppConfig {
   defaultTimeoutMs: number;
   provider: ResolvedProviderConfig;
   runtimeVersion: string;
+  runtimeConfigPath: string;
+  runtimeConfigSource: "defaults" | "env" | "file";
   sandbox: SandboxProfile;
   tokenBudget: TokenBudget;
+  workflow: WorkflowRuntimeConfig;
   workspaceRoot: string;
 }
 
@@ -58,26 +62,24 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
   const workspaceRoot = resolve(process.env.AGENT_WORKSPACE_ROOT ?? cwd);
   const provider = resolveProviderConfig(workspaceRoot);
   const sandbox = resolveSandboxProfile(workspaceRoot, options);
+  const runtimeConfig = resolveRuntimeConfig(workspaceRoot);
 
   return {
     approvalTtlMs: 5 * 60_000,
-    allowedFetchHosts: ["example.com"],
+    allowedFetchHosts: runtimeConfig.allowedFetchHosts,
     databasePath:
       process.env.AGENT_RUNTIME_DB_PATH ??
       join(workspaceRoot, ".auto-talon", "agent-runtime.db"),
-    defaultMaxIterations: 8,
+    defaultMaxIterations: runtimeConfig.defaultMaxIterations,
     defaultProfileId: "executor",
-    defaultTimeoutMs: 30_000,
+    defaultTimeoutMs: runtimeConfig.defaultTimeoutMs,
     provider,
     runtimeVersion: "phase5",
+    runtimeConfigPath: runtimeConfig.configPath,
+    runtimeConfigSource: runtimeConfig.configSource,
     sandbox,
-    tokenBudget: {
-      inputLimit: 8_000,
-      outputLimit: 2_000,
-      reservedOutput: 500,
-      usedInput: 0,
-      usedOutput: 0
-    },
+    tokenBudget: runtimeConfig.tokenBudget,
+    workflow: runtimeConfig.workflow,
     workspaceRoot
   };
 }
@@ -211,10 +213,18 @@ export function createApplication(
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
+    allowedFetchHosts: config.allowedFetchHosts,
     provider,
     providerCatalog: options.providerCatalog ?? resolveProviderCatalog(config.workspaceRoot),
     providerConfig: config.provider,
+    runtimeConfigPath: config.runtimeConfigPath,
+    runtimeConfigSource: config.runtimeConfigSource,
     runtimeVersion: config.runtimeVersion,
+    tokenBudget: {
+      inputLimit: config.tokenBudget.inputLimit,
+      outputLimit: config.tokenBudget.outputLimit,
+      reservedOutput: config.tokenBudget.reservedOutput
+    },
     traceService,
     auditService,
     memoryPlane,
