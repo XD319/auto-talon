@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import type { ContextPolicy } from "../policy/context-policy";
+import { RecallEngine, overlapRatio, tokenize, uniqueStrings } from "../recall/recall-engine";
 import type { TraceService } from "../tracing/trace-service";
 import type {
   ContextFragment,
@@ -42,6 +43,8 @@ export interface BuildContextResult {
 }
 
 export class MemoryPlane {
+  private readonly recallEngine = new RecallEngine();
+
   public constructor(private readonly dependencies: MemoryPlaneDependencies) {}
 
   public buildContext(task: TaskRecord): BuildContextResult {
@@ -397,7 +400,6 @@ export class MemoryPlane {
   }
 
   private recall(request: MemoryRecallRequest): MemoryRecallResult {
-    const queryTokens = tokenize(request.query);
     const candidates = [
       ...this.dependencies.memoryRepository.list({
         includeExpired: false,
@@ -417,19 +419,16 @@ export class MemoryPlane {
         scope: "agent",
         scopeKey: request.agentScopeKey
       })
-    ]
-      .map((memory) => scoreMemory(memory, queryTokens))
-      .filter((candidate) => candidate.finalScore > 0)
-      .sort((left, right) => right.finalScore - left.finalScore)
-      .slice(0, request.limit);
+    ];
+    const rankedCandidates = this.recallEngine.rankMemory(candidates, request.query, request.limit);
 
-    const fragments = candidates.map((candidate) => candidateToFragment(candidate));
+    const fragments = rankedCandidates.map((candidate) => candidateToFragment(candidate));
     const filtered = this.dependencies.contextPolicy.filterForModelContext({
       fragments
     });
 
     return {
-      candidates,
+      candidates: rankedCandidates,
       decisions: filtered.decisions,
       query: request.query,
       selectedFragments: filtered.allowedFragments
@@ -534,55 +533,6 @@ export function createAgentScopeKey(task: Pick<TaskRecord, "agentProfileId" | "r
   return `${task.requesterUserId}:${task.agentProfileId}`;
 }
 
-function scoreMemory(memory: MemoryRecord, queryTokens: string[]): MemoryRecallCandidate {
-  const keywordScore = overlapRatio(memory.keywords, queryTokens);
-  const freshnessScore = memory.status === "stale" ? 0.2 : memory.status === "candidate" ? 0.7 : 1;
-  const confidenceScore = memory.confidence;
-  const recencyScore = computeRecencyScore(memory.createdAt);
-  const pathSignal = computePathSignal(memory, queryTokens);
-  const failureSignal = computeFailureSignal(memory, queryTokens);
-  const finalScore = Number(
-    (
-      keywordScore * 0.35 +
-      freshnessScore * 0.15 +
-      confidenceScore * 0.25 +
-      recencyScore * 0.15 +
-      pathSignal * 0.1 +
-      failureSignal
-    ).toFixed(4)
-  );
-  const downrankReasons: string[] = [];
-
-  if (memory.status === "stale") {
-    downrankReasons.push("stale_memory");
-  }
-  if (memory.status === "candidate") {
-    downrankReasons.push("candidate_unverified");
-  }
-  if (memory.privacyLevel === "restricted" && memory.scope !== "session") {
-    downrankReasons.push("privacy_restricted_cross_session");
-  }
-  if (memory.confidence < 0.75) {
-    downrankReasons.push("low_confidence");
-  }
-  if (pathSignal === 0 && queryTokens.some((token) => token.includes("/") || token.includes("\\"))) {
-    downrankReasons.push("path_mismatch");
-  }
-  if (failureSignal < 0) {
-    downrankReasons.push("failure_noise");
-  }
-
-  return {
-    confidenceScore,
-    downrankReasons,
-    explanation: `scope=${memory.scope}; keyword=${keywordScore.toFixed(2)}; freshness=${freshnessScore.toFixed(2)}; confidence=${confidenceScore.toFixed(2)}; recency=${recencyScore.toFixed(2)}; pathSignal=${pathSignal.toFixed(2)}; failureSignal=${failureSignal.toFixed(2)}; status=${memory.status}; privacy=${memory.privacyLevel}; source=${memory.source.label}`,
-    finalScore,
-    freshnessScore,
-    keywordScore,
-    memory
-  };
-}
-
 function candidateToFragment(candidate: MemoryRecallCandidate): ContextFragment {
   return {
     confidence: candidate.memory.confidence,
@@ -597,29 +547,6 @@ function candidateToFragment(candidate: MemoryRecallCandidate): ContextFragment 
     text: `[${candidate.memory.scope}] ${candidate.memory.title}: ${candidate.memory.summary}`,
     title: candidate.memory.title
   };
-}
-
-function overlapRatio(left: string[], right: string[]): number {
-  if (left.length === 0 || right.length === 0) {
-    return 0;
-  }
-
-  const rightSet = new Set(right);
-  const overlap = uniqueStrings(left).filter((token) => rightSet.has(token)).length;
-  return overlap / Math.max(1, Math.min(uniqueStrings(left).length, rightSet.size));
-}
-
-function tokenize(value: string): string[] {
-  return uniqueStrings(
-    value
-      .toLowerCase()
-      .split(/[^a-z0-9_\u4e00-\u9fa5]+/u)
-      .filter((token) => token.length >= 2)
-  );
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values)];
 }
 
 function summarize(value: string, maxLength = 160): string {
@@ -659,48 +586,6 @@ function summarizeMessages(messages: SessionCompactInput["messages"]): string {
   ];
 
   return sections.join("\n");
-}
-
-function computeRecencyScore(createdAt: string): number {
-  const created = new Date(createdAt).getTime();
-  if (!Number.isFinite(created)) {
-    return 0.5;
-  }
-  const ageHours = Math.max(0, (Date.now() - created) / 3_600_000);
-  if (ageHours <= 6) {
-    return 1;
-  }
-  if (ageHours <= 24) {
-    return 0.8;
-  }
-  if (ageHours <= 72) {
-    return 0.5;
-  }
-  return 0.2;
-}
-
-function computePathSignal(memory: MemoryRecord, queryTokens: string[]): number {
-  const pathLikeTokens = queryTokens.filter((token) => token.includes("/") || token.includes("\\"));
-  if (pathLikeTokens.length === 0) {
-    return 0.6;
-  }
-  const memoryText = `${memory.title} ${memory.summary} ${memory.content}`.toLowerCase();
-  return pathLikeTokens.some((token) => memoryText.includes(token.toLowerCase())) ? 1 : 0;
-}
-
-function computeFailureSignal(memory: MemoryRecord, queryTokens: string[]): number {
-  const failureTokens = ["error", "failed", "exception", "traceback", "timeout"];
-  const queryWantsFailure = queryTokens.some((token) => failureTokens.includes(token));
-  const memoryText = `${memory.title} ${memory.summary}`.toLowerCase();
-  const memoryLooksFailure = failureTokens.some((token) => memoryText.includes(token));
-
-  if (queryWantsFailure && memoryLooksFailure) {
-    return 0.1;
-  }
-  if (!queryWantsFailure && memoryLooksFailure) {
-    return -0.1;
-  }
-  return 0;
 }
 
 function toConversationRole(role: string): "assistant" | "system" | "tool" | "user" {
