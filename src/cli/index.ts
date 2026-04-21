@@ -4,7 +4,7 @@ import { Command } from "commander";
 import { startLocalWebhookGateway } from "../gateway";
 import { replayTaskById, runBetaReadinessCheck, runEvalReport } from "../diagnostics";
 import type { SupportedProviderName } from "../providers";
-import { createApplication, createDefaultRunOptions, type ResolveAppConfigOptions } from "../runtime";
+import { buildRepoMap, createApplication, createDefaultRunOptions, type ResolveAppConfigOptions } from "../runtime";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing";
 import { startDashboardTui, startTui } from "../tui";
 
@@ -220,6 +220,27 @@ async function main(): Promise<void> {
       } finally {
         handle.close();
       }
+    });
+
+  program
+    .command("repo")
+    .description("Inspect repository coding context")
+    .command("map")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((commandOptions: { cwd: string }) => {
+      const repoMap = buildRepoMap(commandOptions.cwd);
+      console.log(repoMap.summary);
+      console.log(`Workspace: ${repoMap.workspaceRoot}`);
+      console.log(`Languages: ${repoMap.languages.join(", ") || "-"}`);
+      console.log(`Package Manager: ${repoMap.packageManager ?? "-"}`);
+      console.log(`Important Files: ${repoMap.importantFiles.join(", ") || "-"}`);
+      console.log(
+        `Scripts: ${
+          Object.keys(repoMap.scripts).length === 0
+            ? "-"
+            : Object.entries(repoMap.scripts).map(([name, command]) => `${name}=${command}`).join("; ")
+        }`
+      );
     });
 
   program

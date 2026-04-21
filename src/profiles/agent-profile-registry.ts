@@ -20,7 +20,7 @@ export const DEFAULT_AGENT_PROFILES: AgentProfile[] = [
       "You are the planner profile. Break down the task, prefer read-only inspection, and avoid making changes unless explicitly delegated."
   },
   {
-    allowedToolNames: ["file_read", "file_write", "shell", "web_fetch"],
+    allowedToolNames: ["file_read", "file_write", "shell", "test_run", "web_fetch"],
     description: "Execution profile for controlled implementation work.",
     displayName: "Executor",
     id: "executor",

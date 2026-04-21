@@ -47,7 +47,8 @@ export class ExecutionContextAssembler {
   public buildInitialMessages(
     task: TaskRecord,
     availableTools: ProviderToolDescriptor[],
-    profile: AgentProfile
+    profile: AgentProfile,
+    repoMapSummary?: string
   ): ConversationMessage[] {
     const systemMessage = [
       profile.systemPrompt,
@@ -55,7 +56,7 @@ export class ExecutionContextAssembler {
       `Available tools: ${availableTools.map((tool) => tool.name).join(", ")}.`
     ].join(" ");
 
-    return [
+    const messages: ConversationMessage[] = [
       {
         content: systemMessage,
         metadata: {
@@ -65,6 +66,19 @@ export class ExecutionContextAssembler {
         },
         role: "system"
       },
+    ];
+    if (repoMapSummary !== undefined) {
+      messages.push({
+        content: repoMapSummary,
+        metadata: {
+          privacyLevel: "internal",
+          retentionKind: "session",
+          sourceType: "system_prompt"
+        },
+        role: "system"
+      });
+    }
+    messages.push(
       {
         content: task.input,
         metadata: {
@@ -74,7 +88,8 @@ export class ExecutionContextAssembler {
         },
         role: "user"
       }
-    ];
+    );
+    return messages;
   }
 }
 

@@ -27,7 +27,7 @@ import type {
   SandboxProfile,
   TokenBudget
 } from "../types";
-import { FileReadTool, FileWriteTool, ShellTool, ToolOrchestrator, WebFetchTool } from "../tools";
+import { FileReadTool, FileWriteTool, ShellTool, TestRunTool, ToolOrchestrator, WebFetchTool } from "../tools";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor";
 import { ShellExecutor } from "../tools/shell/shell-executor";
 
@@ -171,6 +171,12 @@ export function createApplication(
       new FileReadTool(sandboxService),
       new FileWriteTool(sandboxService),
       new ShellTool(shellExecutor, sandboxService),
+      new TestRunTool(
+        shellExecutor,
+        sandboxService,
+        config.workflow.testCommands,
+        config.workflow.failureGuidedRetry.maxRepairAttempts
+      ),
       new WebFetchTool(sandboxService)
     ],
     traceService
@@ -192,6 +198,7 @@ export function createApplication(
     taskRepository: storage.tasks,
     toolOrchestrator,
     traceService,
+    workflow: config.workflow,
     workspaceRoot: config.workspaceRoot
   });
 

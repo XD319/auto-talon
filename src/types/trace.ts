@@ -31,6 +31,7 @@ export const TRACE_EVENT_TYPES = [
   "interrupt",
   "final_outcome",
   "context_assembled",
+  "repo_map_created",
   "memory_recalled",
   "memory_written",
   "session_compacted",
@@ -231,6 +232,13 @@ export interface ContextAssembledPayload extends JsonObject {
   debugView: ContextAssemblyDebugView;
 }
 
+export interface RepoMapCreatedPayload extends JsonObject {
+  importantFiles: string[];
+  languages: string[];
+  packageManager: string | null;
+  scripts: JsonObject;
+}
+
 export interface MemoryRecalledPayload extends JsonObject {
   query: string;
   selectedMemoryIds: string[];
@@ -315,6 +323,7 @@ export type TraceEvent =
   | TraceEventBase<"interrupt", InterruptPayload>
   | TraceEventBase<"final_outcome", FinalOutcomePayload>
   | TraceEventBase<"context_assembled", ContextAssembledPayload>
+  | TraceEventBase<"repo_map_created", RepoMapCreatedPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"memory_written", MemoryWrittenPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>

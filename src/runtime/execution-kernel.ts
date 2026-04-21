@@ -6,7 +6,9 @@ import {
   buildFilteredContextDebugFragments,
   ExecutionContextAssembler
 } from "./context-assembler";
+import { buildRepoMap } from "./repo-map";
 import { tokenBudgetToJson } from "./serialization";
+import type { WorkflowRuntimeConfig } from "./runtime-config";
 import { ProviderError } from "../providers";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry";
 import type {
@@ -39,6 +41,7 @@ export interface ExecutionKernelDependencies {
   taskRepository: TaskRepository;
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
+  workflow: WorkflowRuntimeConfig;
   workspaceRoot: string;
 }
 
@@ -53,6 +56,7 @@ interface ExecutionLoopState {
   onAssistantTextDelta?: (delta: string) => void;
   onTaskEvent?: (event: RuntimeTaskEvent) => void;
   pendingToolCalls: ProviderToolCall[];
+  repoMapSummary?: string;
   task: TaskRecord;
   tokenBudget: TokenBudget;
 }
@@ -139,7 +143,30 @@ export class ExecutionKernel {
       this.dependencies.memoryPlane.rememberTaskGoal(task);
       const memoryContext = this.dependencies.memoryPlane.buildContext(task);
       const availableTools = this.dependencies.toolOrchestrator.listTools(profile.allowedToolNames);
-      const messages = this.contextAssembler.buildInitialMessages(task, availableTools, profile);
+      const repoMap = this.dependencies.workflow.repoMap.enabled
+        ? buildRepoMap(this.dependencies.workspaceRoot)
+        : null;
+      const messages = this.contextAssembler.buildInitialMessages(
+        task,
+        availableTools,
+        profile,
+        repoMap?.summary
+      );
+      if (repoMap !== null) {
+        this.dependencies.traceService.record({
+          actor: "runtime.repo_map",
+          eventType: "repo_map_created",
+          payload: {
+            importantFiles: repoMap.importantFiles,
+            languages: repoMap.languages,
+            packageManager: repoMap.packageManager,
+            scripts: repoMap.scripts
+          },
+          stage: "planning",
+          summary: repoMap.summary,
+          taskId
+        });
+      }
 
       return await this.executeLoop({
         cwd: options.cwd,
@@ -153,6 +180,7 @@ export class ExecutionKernel {
           : {}),
         ...(options.onTaskEvent !== undefined ? { onTaskEvent: options.onTaskEvent } : {}),
         pendingToolCalls: [],
+        ...(repoMap?.summary !== undefined ? { repoMapSummary: repoMap.summary } : {}),
         task,
         tokenBudget: options.tokenBudget
       });
@@ -635,6 +663,17 @@ export class ExecutionKernel {
       });
       if (compacted.triggered) {
         messages.length = 0;
+        if (state.repoMapSummary !== undefined) {
+          messages.push({
+            content: state.repoMapSummary,
+            metadata: {
+              privacyLevel: "internal",
+              retentionKind: "session",
+              sourceType: "system_prompt"
+            },
+            role: "system"
+          });
+        }
         messages.push(...compacted.replacementMessages);
         const refreshedContext = this.dependencies.memoryPlane.buildContext(task);
         state.memoryContext = refreshedContext.fragments;
