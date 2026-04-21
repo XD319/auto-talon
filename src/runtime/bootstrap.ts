@@ -3,6 +3,7 @@ import { delimiter, join, resolve } from "node:path";
 
 import { ApprovalService } from "../approvals/approval-service";
 import { AuditService } from "../audit/audit-service";
+import { ExperiencePlane } from "../experience/experience-plane";
 import { MemoryPlane } from "../memory/memory-plane";
 import { ContextPolicy } from "../policy/context-policy";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config";
@@ -187,6 +188,11 @@ export function createApplication(
     memorySnapshotRepository: storage.memorySnapshots,
     traceService
   });
+  const experiencePlane = new ExperiencePlane({
+    experienceRepository: storage.experiences,
+    memoryPlane,
+    traceService
+  });
 
   const executionKernel = new ExecutionKernel({
     agentProfileRegistry,
@@ -208,10 +214,12 @@ export function createApplication(
     findArtifact: (artifactId) => storage.artifacts.findById(artifactId),
     findLatestArtifactByType: (artifactType) => storage.artifacts.findLatestByType(artifactType),
     findMemory: (memoryId) => storage.memories.findById(memoryId),
+    findExperience: (experienceId) => storage.experiences.findById(experienceId),
     listApprovals: (taskId) => storage.approvals.listByTaskId(taskId),
     listArtifacts: (taskId) => storage.artifacts.listByTaskId(taskId),
     listAuditLogs: (taskId) => storage.auditLogs.listByTaskId(taskId),
     listMemories: () => storage.memories.list({ includeExpired: true, includeRejected: true }),
+    listExperiences: () => storage.experiences.list(),
     listMemorySnapshots: (scope, scopeKey) => storage.memorySnapshots.listByScope(scope, scopeKey),
     listPendingApprovals: () => approvalService.listPending(),
     approvalService,
@@ -235,6 +243,7 @@ export function createApplication(
     traceService,
     auditService,
     memoryPlane,
+    experiencePlane,
     workspaceRoot: config.workspaceRoot
   });
 

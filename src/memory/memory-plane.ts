@@ -165,59 +165,9 @@ export class MemoryPlane {
   }
 
   public recordFinalOutcome(task: TaskRecord, output: string): MemoryRecord[] {
-    const baseDraft = {
-      confidence: 0.78,
-      content: output,
-      expiresAt: null,
-      keywords: tokenize(output),
-      privacyLevel: "internal" as const,
-      retentionPolicy: {
-        kind: "project" as const,
-        reason: "Successful task results can seed project and agent memory.",
-        ttlDays: 30
-      },
-      source: {
-        label: `Final outcome for ${task.taskId}`,
-        sourceType: "final_output" as const,
-        taskId: task.taskId,
-        toolCallId: null,
-        traceEventId: null
-      },
-      status: "candidate" as const,
-      summary: summarize(output),
-      title: "Task outcome"
-    };
-
-    const persisted: MemoryRecord[] = [];
-    const projectMemory = this.persistMemoryIfAllowed({
-      ...baseDraft,
-      retentionPolicy: {
-        kind: "project",
-        reason: "Project memory keeps reusable task outcomes for the current workspace.",
-        ttlDays: 30
-      },
-      scope: "project",
-      scopeKey: task.cwd
-    });
-    if (projectMemory !== null) {
-      persisted.push(projectMemory);
-    }
-
-    const agentMemory = this.persistMemoryIfAllowed({
-      ...baseDraft,
-      retentionPolicy: {
-        kind: "agent",
-        reason: "Agent memory keeps reusable behavior hints per user/profile.",
-        ttlDays: 30
-      },
-      scope: "agent",
-      scopeKey: createAgentScopeKey(task)
-    });
-    if (agentMemory !== null) {
-      persisted.push(agentMemory);
-    }
-
-    return persisted;
+    void task;
+    void output;
+    return [];
   }
 
   public compactSession(input: SessionCompactInput): SessionCompactResult {

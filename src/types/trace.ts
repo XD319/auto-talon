@@ -2,6 +2,12 @@ import type { JsonObject } from "./common";
 import type { RuntimeErrorCode } from "./error";
 import type { PathScope, PrivacyLevel, ToolCapability, ToolRiskLevel } from "./governance";
 import type { MemoryScope, MemoryStatus, MemorySourceType } from "./memory";
+import type {
+  ExperiencePromotionTarget,
+  ExperienceSourceType,
+  ExperienceStatus,
+  ExperienceType
+} from "./experience";
 import type { PolicyEffect } from "./policy";
 import type { ApprovalStatus } from "./approval";
 import type { ProviderErrorCategory } from "./runtime";
@@ -36,6 +42,10 @@ export const TRACE_EVENT_TYPES = [
   "memory_written",
   "session_compacted",
   "memory_snapshot_created",
+  "experience_captured",
+  "experience_reviewed",
+  "experience_promoted",
+  "experience_recall_ranked",
   "reviewer_trace"
 ] as const;
 
@@ -282,6 +292,42 @@ export interface MemorySnapshotCreatedPayload extends JsonObject {
   memoryCount: number;
 }
 
+export interface ExperienceCapturedPayload extends JsonObject {
+  experienceId: string;
+  type: ExperienceType;
+  sourceType: ExperienceSourceType;
+  status: ExperienceStatus;
+  valueScore: number;
+}
+
+export interface ExperienceReviewedPayload extends JsonObject {
+  experienceId: string;
+  reviewerId: string;
+  status: ExperienceStatus;
+  valueScore: number;
+}
+
+export interface ExperiencePromotedPayload extends JsonObject {
+  experienceId: string;
+  target: ExperiencePromotionTarget;
+  promotedMemoryId: string | null;
+}
+
+export interface ExperienceRecallRankedPayload extends JsonObject {
+  query: string;
+  selectedExperienceIds: string[];
+  entries: Array<{
+    experienceId: string;
+    title: string;
+    finalScore: number;
+    explanation: string;
+    downrankReasons: string[];
+    status: ExperienceStatus;
+    type: ExperienceType;
+    valueScore: number;
+  }>;
+}
+
 export interface ReviewerTracePayload extends JsonObject {
   iteration: number;
   reviewerSeenSummary: string;
@@ -328,6 +374,10 @@ export type TraceEvent =
   | TraceEventBase<"memory_written", MemoryWrittenPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
   | TraceEventBase<"memory_snapshot_created", MemorySnapshotCreatedPayload>
+  | TraceEventBase<"experience_captured", ExperienceCapturedPayload>
+  | TraceEventBase<"experience_reviewed", ExperienceReviewedPayload>
+  | TraceEventBase<"experience_promoted", ExperiencePromotedPayload>
+  | TraceEventBase<"experience_recall_ranked", ExperienceRecallRankedPayload>
   | TraceEventBase<"reviewer_trace", ReviewerTracePayload>;
 
 export type TraceEventDraft = Omit<TraceEvent, "eventId" | "sequence" | "timestamp"> &

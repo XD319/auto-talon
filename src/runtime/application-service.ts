@@ -5,11 +5,18 @@ import { z } from "zod";
 
 import type { ApprovalService } from "../approvals/approval-service";
 import type { AuditService } from "../audit/audit-service";
+import type {
+  ExperiencePlane,
+  ExperiencePromoteResult,
+  ExperienceReviewRequest
+} from "../experience/experience-plane";
 import type { ProviderCatalogEntry, ResolvedProviderConfig } from "../providers";
 import type {
   ApprovalRecord,
   ArtifactRecord,
   AuditLogRecord,
+  ExperienceQuery,
+  ExperienceRecord,
   JsonObject,
   MemoryRecord,
   MemoryScope,
@@ -88,6 +95,7 @@ export interface RollbackFileArtifactResult {
 }
 
 export interface RuntimeReadModel {
+  findExperience(experienceId: string): ExperienceRecord | null;
   findArtifact(artifactId: string): ArtifactRecord | null;
   findLatestArtifactByType(artifactType: string): ArtifactRecord | null;
   findMemory(memoryId: string): MemoryRecord | null;
@@ -95,6 +103,7 @@ export interface RuntimeReadModel {
   listApprovals(taskId: string): ApprovalRecord[];
   listArtifacts(taskId: string): ArtifactRecord[];
   listAuditLogs(taskId: string): AuditLogRecord[];
+  listExperiences(): ExperienceRecord[];
   listMemorySnapshots(scope: MemoryScope, scopeKey: string): MemorySnapshotRecord[];
   listPendingApprovals(): ApprovalRecord[];
   listMemories(): MemoryRecord[];
@@ -109,6 +118,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   auditService: AuditService;
   databasePath: string;
   executionKernel: ExecutionKernel;
+  experiencePlane: ExperiencePlane;
   memoryPlane: MemoryPlane;
   provider: Provider;
   providerCatalog: ProviderCatalogEntry[];
@@ -187,6 +197,28 @@ export class AgentApplicationService {
 
   public listMemories(): MemoryRecord[] {
     return this.dependencies.listMemories();
+  }
+
+  public listExperiences(query?: ExperienceQuery): ExperienceRecord[] {
+    return this.dependencies.experiencePlane.list(query);
+  }
+
+  public showExperience(experienceId: string): ExperienceRecord | null {
+    return this.dependencies.experiencePlane.show(experienceId);
+  }
+
+  public reviewExperience(request: ExperienceReviewRequest): ExperienceRecord {
+    return this.dependencies.experiencePlane.review(request);
+  }
+
+  public promoteExperience(
+    request: Parameters<ExperiencePlane["promote"]>[0]
+  ): ExperiencePromoteResult {
+    return this.dependencies.experiencePlane.promote(request);
+  }
+
+  public searchExperiences(query: string, filters: ExperienceQuery = {}) {
+    return this.dependencies.experiencePlane.search(query, filters);
   }
 
   public showMemoryScope(scope: MemoryScope, scopeKey: string): {

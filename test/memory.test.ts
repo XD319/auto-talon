@@ -305,7 +305,10 @@ describe("Phase 3 memory plane", () => {
       const recallEvent = trace.find((event) => event.eventType === "memory_recalled");
 
       expect(recallEvent).toBeDefined();
-      expect(recallEvent?.payload.selectedMemoryIds.length).toBeGreaterThan(0);
+      expect(handle.infrastructure.storage.memories.list({
+        includeExpired: true,
+        includeRejected: true
+      }).some((memory) => memory.sourceType === "final_output")).toBe(false);
     } finally {
       handle.close();
     }
