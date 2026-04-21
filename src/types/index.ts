@@ -5,6 +5,7 @@ export * from "./checkpoint";
 export * from "./common";
 export * from "./context";
 export * from "./error";
+export * from "./experience";
 export * from "./gateway";
 export * from "./governance";
 export * from "./memory";

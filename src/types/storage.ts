@@ -4,6 +4,12 @@ import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./appro
 import type { AuditLogDraft, AuditLogRecord } from "./audit";
 import type { ExecutionCheckpointRecord } from "./checkpoint";
 import type {
+  ExperienceDraft,
+  ExperienceQuery,
+  ExperienceRecord,
+  ExperienceUpdatePatch
+} from "./experience";
+import type {
   MemoryDraft,
   MemoryQuery,
   MemoryRecord,
@@ -86,6 +92,13 @@ export interface MemoryRepository {
   findById(memoryId: string): MemoryRecord | null;
   list(query?: MemoryQuery): MemoryRecord[];
   update(memoryId: string, patch: MemoryUpdatePatch): MemoryRecord;
+}
+
+export interface ExperienceRepository {
+  create(record: ExperienceDraft): ExperienceRecord;
+  findById(experienceId: string): ExperienceRecord | null;
+  list(query?: ExperienceQuery): ExperienceRecord[];
+  update(experienceId: string, patch: ExperienceUpdatePatch): ExperienceRecord;
 }
 
 export interface MemorySnapshotRepository {

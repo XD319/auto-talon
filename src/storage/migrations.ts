@@ -155,6 +155,45 @@ export function runMigrations(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, scope_key, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status, expires_at);
 
+    CREATE TABLE IF NOT EXISTS experiences (
+      experience_id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      content TEXT NOT NULL,
+      scope_json TEXT NOT NULL,
+      scope_name TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      value_score REAL NOT NULL,
+      promotion_target TEXT,
+      promoted_memory_id TEXT,
+      provenance_json TEXT NOT NULL,
+      task_id TEXT,
+      reviewer_id TEXT,
+      keywords_json TEXT NOT NULL,
+      keyword_phrases_json TEXT NOT NULL,
+      index_signals_json TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      reviewed_at TEXT,
+      promoted_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_experiences_status_value
+      ON experiences(status, value_score DESC, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_experiences_type_source
+      ON experiences(type, source_type, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_experiences_scope
+      ON experiences(scope_name, scope_key, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_experiences_task
+      ON experiences(task_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_experiences_reviewer
+      ON experiences(reviewer_id, updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS memory_snapshots (
       snapshot_id TEXT PRIMARY KEY,
       scope TEXT NOT NULL,

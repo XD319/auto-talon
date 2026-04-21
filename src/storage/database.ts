@@ -7,6 +7,7 @@ import { SqliteApprovalRepository } from "./repositories/approval-repository";
 import { SqliteArtifactRepository } from "./repositories/artifact-repository";
 import { SqliteAuditLogRepository } from "./repositories/audit-log-repository";
 import { SqliteExecutionCheckpointRepository } from "./repositories/execution-checkpoint-repository";
+import { SqliteExperienceRepository } from "./repositories/experience-repository";
 import { SqliteGatewaySessionRepository } from "./repositories/gateway-session-repository";
 import { SqliteMemoryRepository } from "./repositories/memory-repository";
 import { SqliteMemorySnapshotRepository } from "./repositories/memory-snapshot-repository";
@@ -29,6 +30,7 @@ export class StorageManager {
   public readonly approvals: SqliteApprovalRepository;
   public readonly auditLogs: SqliteAuditLogRepository;
   public readonly checkpoints: SqliteExecutionCheckpointRepository;
+  public readonly experiences: SqliteExperienceRepository;
   public readonly memories: SqliteMemoryRepository;
   public readonly memorySnapshots: SqliteMemorySnapshotRepository;
   public readonly gatewaySessions: SqliteGatewaySessionRepository;
@@ -49,6 +51,7 @@ export class StorageManager {
     this.approvals = new SqliteApprovalRepository(this.database);
     this.auditLogs = new SqliteAuditLogRepository(this.database);
     this.checkpoints = new SqliteExecutionCheckpointRepository(this.database);
+    this.experiences = new SqliteExperienceRepository(this.database);
     this.memories = new SqliteMemoryRepository(this.database);
     this.memorySnapshots = new SqliteMemorySnapshotRepository(this.database);
     this.gatewaySessions = new SqliteGatewaySessionRepository(this.database);
