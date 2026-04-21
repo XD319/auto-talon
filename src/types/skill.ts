@@ -68,7 +68,29 @@ export interface SkillAsset {
 }
 
 export interface SkillView extends SkillAsset {
-  loadedAttachments: SkillAttachment[];
+  loadedAttachments: LoadedSkillAttachment[];
+}
+
+export interface LoadedSkillAttachment extends SkillAttachment {
+  content: string;
+}
+
+export interface SkillRegistryIssue {
+  code:
+    | "credential_missing"
+    | "disabled"
+    | "duplicate_shadowed"
+    | "invalid_skill"
+    | "path_unsafe"
+    | "platform_incompatible";
+  detail: string;
+  path: string;
+  skillId: string | null;
+}
+
+export interface SkillListResult {
+  issues: SkillRegistryIssue[];
+  skills: SkillMetadata[];
 }
 
 const jsonObjectSchema = z.record(z.string(), z.json()).transform((value) => value as JsonObject);
