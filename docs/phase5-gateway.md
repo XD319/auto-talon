@@ -150,3 +150,13 @@ Planned extension directions now have explicit adapter slots:
 - teammate / multi-agent collaboration entry adapters
 
 These future adapters should reuse the same Gateway runtime facade and capability model rather than bypassing it.
+
+## Formal Entry Upgrade
+
+Phase 6 upgrades the gateway boundary from a minimal webhook-only MVP to a production-oriented entry boundary.
+
+- adapters explicitly declare `text`, `approval`, `file`, `streaming`, `structured-card`, and `attachment` capabilities
+- missing capabilities produce explicit downgrade notices; runtime never silently assumes parity
+- gateway guardrails (rate limit, denylist/allowlist, auth hook) stay at the gateway boundary
+- session lineage is mapped by `adapterId + externalSessionId`, so cross-turn continuation remains traceable
+- Feishu/Lark becomes the first formal external IM entry while webhook remains available for local API / SDK workflows

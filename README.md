@@ -68,6 +68,8 @@ corepack pnpm dev task show <task_id>
 corepack pnpm dev trace <task_id>
 corepack pnpm dev audit <task_id>
 corepack pnpm dev gateway serve-webhook --port 7070
+corepack pnpm dev gateway serve-feishu --cwd .
+corepack pnpm dev gateway list-adapters --cwd .
 corepack pnpm dev approve pending
 corepack pnpm dev approve allow <approval_id>
 corepack pnpm dev approve deny <approval_id>
@@ -112,6 +114,29 @@ Available endpoints:
 - `POST /tasks`
 - `GET /tasks/:taskId`
 - `GET /tasks/:taskId/events`
+
+## Feishu Adapter
+
+Phase 6 adds a formal Feishu/Lark adapter as the first production chat ingress.
+
+Start it with:
+
+```bash
+corepack pnpm dev gateway serve-feishu --cwd .
+```
+
+Optional dual-run mode for migration/debug:
+
+```bash
+corepack pnpm dev gateway serve-feishu --cwd . --local-webhook-port 7070
+```
+
+Config sources:
+
+- `.auto-talon/feishu.config.json`
+- `AGENT_FEISHU_APP_ID`
+- `AGENT_FEISHU_APP_SECRET`
+- `AGENT_FEISHU_DOMAIN` (`feishu` or `lark`)
 
 ## TUI Usage
 

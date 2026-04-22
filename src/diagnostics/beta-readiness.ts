@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { startLocalWebhookGateway } from "../gateway";
+import { resolveFeishuGatewayConfig } from "../gateway/feishu/feishu-config";
 import { ProviderError } from "../providers";
 import { createApplication, createDefaultRunOptions } from "../runtime";
 import type { SupportedProviderName } from "../providers";
@@ -38,6 +39,7 @@ export async function runBetaReadinessCheck(
   const denyPath = await verifyApprovalDenyPath();
   const providerDiagnostics = await verifyProviderFailureDiagnostics();
   const gatewayPath = await verifyGatewayAdapterPath();
+  const feishuConfig = verifyOptionalFeishuConfig();
 
   const checklist: BetaChecklistItem[] = [
     {
@@ -75,6 +77,12 @@ export async function runBetaReadinessCheck(
       id: "external-adapter-path",
       ok: gatewayPath.ok,
       title: "At least one external adapter path remains available"
+    },
+    {
+      details: feishuConfig.details,
+      id: "feishu-config-shape",
+      ok: feishuConfig.ok,
+      title: "Feishu config is valid when present"
     }
   ];
 
@@ -83,6 +91,21 @@ export async function runBetaReadinessCheck(
     checklist,
     generatedAt: new Date().toISOString()
   };
+}
+
+function verifyOptionalFeishuConfig(): { details: string; ok: boolean } {
+  try {
+    resolveFeishuGatewayConfig(process.cwd());
+    return {
+      details: "feishu config found and parsed",
+      ok: true
+    };
+  } catch {
+    return {
+      details: "feishu config missing or invalid; adapter remains optional",
+      ok: true
+    };
+  }
 }
 
 class ScriptedProvider implements Provider {
