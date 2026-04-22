@@ -6,7 +6,8 @@ export const TOOL_CAPABILITIES = [
   "filesystem.read",
   "filesystem.write",
   "network.fetch",
-  "shell.execute"
+  "shell.execute",
+  "mcp.invoke"
 ] as const;
 
 export type ToolCapability = (typeof TOOL_CAPABILITIES)[number];

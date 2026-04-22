@@ -793,6 +793,54 @@ async function main(): Promise<void> {
       await startDashboardTui(commandOptions.cwd, resolveSandboxCliOptions(commandOptions));
     });
 
+  const mcpCommand = program.command("mcp").description("Inspect configured MCP client servers");
+
+  mcpCommand
+    .command("list")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
+    .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
+    .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
+    .action(async (commandOptions: SandboxCommandOptions) => {
+      const handle = createApplication(commandOptions.cwd, {
+        sandbox: resolveSandboxCliOptions(commandOptions)
+      });
+      try {
+        const servers = await handle.infrastructure.mcpClientManager.listServers();
+        if (servers.length === 0) {
+          console.log("No MCP servers discovered. Configure .auto-talon/mcp.config.json first.");
+          return;
+        }
+        for (const server of servers) {
+          console.log(`${server.id}: ${server.toolCount} tools`);
+          for (const toolName of server.tools) {
+            console.log(`  - ${toolName}`);
+          }
+        }
+      } finally {
+        handle.close();
+      }
+    });
+
+  mcpCommand
+    .command("ping")
+    .argument("<server_id>", "Configured MCP server id")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
+    .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
+    .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
+    .action(async (serverId: string, commandOptions: SandboxCommandOptions) => {
+      const handle = createApplication(commandOptions.cwd, {
+        sandbox: resolveSandboxCliOptions(commandOptions)
+      });
+      try {
+        await handle.infrastructure.mcpClientManager.ping(serverId);
+        console.log(`MCP server ${serverId} is reachable.`);
+      } finally {
+        handle.close();
+      }
+    });
+
   const gatewayCommand = program
     .command("gateway")
     .description("Run minimal external gateway adapters");

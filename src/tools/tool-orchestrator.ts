@@ -626,14 +626,18 @@ function getSandboxTarget(sandboxPlan: SandboxExecutionPlan): string {
       return sandboxPlan.url;
     case "shell":
       return sandboxPlan.cwd;
+    case "mcp":
+      return sandboxPlan.target;
     default:
       return "unknown";
   }
 }
 
-function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "network" | "shell" {
+function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "network" | "shell" | "mcp" {
   const kind = sandboxDetails.kind;
-  return kind === "file" || kind === "network" || kind === "shell" ? kind : "shell";
+  return kind === "file" || kind === "network" || kind === "shell" || kind === "mcp"
+    ? kind
+    : "shell";
 }
 
 function extractSandboxTarget(sandboxDetails: Record<string, unknown>): string {
@@ -647,6 +651,10 @@ function extractSandboxTarget(sandboxDetails: Record<string, unknown>): string {
 
   if (typeof sandboxDetails.cwd === "string") {
     return sandboxDetails.cwd;
+  }
+
+  if (typeof sandboxDetails.target === "string") {
+    return sandboxDetails.target;
   }
 
   return "unknown";

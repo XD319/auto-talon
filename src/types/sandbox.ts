@@ -30,10 +30,19 @@ export interface SandboxWebPlan extends JsonObject {
   networkAccess: "controlled";
 }
 
+export interface SandboxMcpPlan extends JsonObject {
+  kind: "mcp";
+  serverId: string;
+  toolName: string;
+  pathScope: "network";
+  target: string;
+}
+
 export type SandboxExecutionPlan =
   | SandboxFileAccessPlan
   | SandboxShellPlan
-  | SandboxWebPlan;
+  | SandboxWebPlan
+  | SandboxMcpPlan;
 
 export type SandboxMode = "local" | "docker";
 

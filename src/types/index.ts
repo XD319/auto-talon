@@ -9,6 +9,7 @@ export * from "./experience";
 export * from "./gateway";
 export * from "./governance";
 export * from "./memory";
+export * from "./mcp";
 export * from "./policy";
 export * from "./profile";
 export * from "./runtime";

@@ -6,6 +6,7 @@ import { AuditService } from "../audit/audit-service";
 import { ExperienceCollector } from "../experience/experience-collector";
 import { ExperiencePlane } from "../experience/experience-plane";
 import { MemoryPlane } from "../memory/memory-plane";
+import { McpClientManager } from "../mcp";
 import { ContextPolicy } from "../policy/context-policy";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config";
 import { PolicyEngine } from "../policy/policy-engine";
@@ -91,6 +92,7 @@ export interface AppRuntimeHandle {
   close: () => void;
   config: AppConfig;
   infrastructure: {
+    mcpClientManager: McpClientManager;
     approvalService: ApprovalService;
     auditService: AuditService;
     createRunOptions: (taskInput: string, cwd: string) => RuntimeRunOptions;
@@ -166,6 +168,8 @@ export function createApplication(
   const skillRegistry = new SkillRegistry({
     workspaceRoot: config.workspaceRoot
   });
+  const mcpClientManager = new McpClientManager(config.workspaceRoot);
+  const mcpTools = mcpClientManager.discover();
   const skillDraftManager = new SkillDraftManager({
     workspaceRoot: config.workspaceRoot
   });
@@ -190,7 +194,8 @@ export function createApplication(
         config.workflow.testCommands,
         config.workflow.failureGuidedRetry.maxRepairAttempts
       ),
-      new WebFetchTool(sandboxService)
+      new WebFetchTool(sandboxService),
+      ...mcpTools
     ],
     traceService
   });
@@ -270,6 +275,7 @@ export function createApplication(
   return {
     close: () => {
       experienceCollector.stop();
+      void mcpClientManager.close();
       storage.close();
     },
     config,
@@ -278,6 +284,7 @@ export function createApplication(
       auditService,
       createRunOptions: (taskInput: string, cwdForRun: string) =>
         createDefaultRunOptions(taskInput, cwdForRun, config),
+      mcpClientManager,
       storage,
       traceService
     },

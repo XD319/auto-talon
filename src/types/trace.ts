@@ -205,7 +205,7 @@ export interface ApprovalResolvedPayload extends JsonObject {
 export interface SandboxEnforcedPayload extends JsonObject {
   toolCallId: string;
   toolName: string;
-  sandboxKind: "file" | "network" | "shell";
+  sandboxKind: "file" | "network" | "shell" | "mcp";
   status: "allowed" | "denied";
   target: string;
 }

@@ -18,9 +18,18 @@ export const DEFAULT_LOCAL_POLICY_CONFIG: LocalPolicyConfig = {
       id: "reviewer-read-only",
       match: {
         agentProfiles: ["reviewer"],
-        capabilities: ["filesystem.write", "shell.execute"]
+        capabilities: ["filesystem.write", "shell.execute", "mcp.invoke"]
       },
       priority: 90
+    },
+    {
+      description: "MCP invocation is approval-gated for non-reviewer profiles.",
+      effect: "allow_with_approval",
+      id: "mcp-invoke-needs-approval",
+      match: {
+        capabilities: ["mcp.invoke"]
+      },
+      priority: 85
     },
     {
       description: "Shell execution is always approval-gated.",
