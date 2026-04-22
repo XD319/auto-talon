@@ -116,6 +116,7 @@ export interface GatewayTaskResultView {
   errorCode: string | null;
   errorMessage: string | null;
   output: string | null;
+  pendingApprovalId: string | null;
   status: string;
   taskId: string;
 }

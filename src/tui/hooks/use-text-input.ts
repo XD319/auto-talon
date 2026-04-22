@@ -40,6 +40,14 @@ export function resolveApprovalShortcut(
   return null;
 }
 
+export function canSubmitTextInput(value: string, busy: boolean): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+  return !busy || trimmed === "/stop";
+}
+
 export function useTextInput(options: UseTextInputOptions): TextInputController {
   const [value, setValue] = React.useState("");
   const [cursorIndex, setCursorIndex] = React.useState(0);
@@ -182,7 +190,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         preferredColumnRef.current = null;
       } else {
         const hasInput = value.trim().length > 0;
-        if (hasInput && !options.busy) {
+        if (canSubmitTextInput(value, options.busy)) {
           options.onSubmit(value);
           setValue("");
           setCursorIndex(0);

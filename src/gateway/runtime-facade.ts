@@ -179,7 +179,13 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     const launchResult = {
       adapter,
       notices,
-      result: toGatewayTaskResult(run.task.taskId, run.task.status, run.output, run.error),
+      result: toGatewayTaskResult(
+        run.task.taskId,
+        run.task.status,
+        run.output,
+        run.error,
+        this.findPendingApprovalId(run.task.taskId)
+      ),
       sessionBinding
     };
     this.emitCompletion(run.task.taskId, {
@@ -282,7 +288,8 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
         approvalResult.task.taskId,
         approvalResult.task.status,
         approvalResult.output,
-        approvalResult.error
+        approvalResult.error,
+        this.findPendingApprovalId(approvalResult.task.taskId)
       ),
       sessionBinding
     };
@@ -328,6 +335,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
         errorCode: details.task.errorCode,
         errorMessage: details.task.errorMessage,
         output: details.task.finalOutput,
+        pendingApprovalId: this.findPendingApprovalId(details.task.taskId),
         status: details.task.status,
         taskId: details.task.taskId
       },
@@ -407,6 +415,14 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     }
   }
 
+  private findPendingApprovalId(taskId: string): string | null {
+    return (
+      this.dependencies.applicationService
+        .showTask(taskId)
+        .approvals.find((approval) => approval.status === "pending")?.approvalId ?? null
+    );
+  }
+
   private recordGuardDecision(
     adapterId: string,
     request: GatewayTaskRequest,
@@ -470,12 +486,14 @@ function toGatewayTaskResult(
         code: string;
         message: string;
       }
-    | undefined
+    | undefined,
+  pendingApprovalId: string | null
 ): GatewayTaskResultView {
   return {
     errorCode: error?.code ?? null,
     errorMessage: error?.message ?? null,
     output,
+    pendingApprovalId,
     status,
     taskId
   };

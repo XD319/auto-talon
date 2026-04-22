@@ -95,7 +95,10 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
         approvalInteraction: { supported: true },
         attachmentCapability: { supported: true },
         fileCapability: { supported: true },
-        streamingCapability: { supported: true },
+        streamingCapability: {
+          detail: "Feishu v1 sends final task results and approval cards; live token streaming is not wired.",
+          supported: false
+        },
         structuredCardCapability: { supported: true },
         textInteraction: { supported: true }
       },
@@ -201,13 +204,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
       taskInput: trimmed.replace(/^\/new\s+/, "")
     });
 
-    const sent = await this.client.im.message.create(
-      createTextMessagePayload(event.chatId, formatTaskResultText(result.result))
-    );
-    console.info("[feishu-adapter] sent task result text", {
-      messageId: sent.data?.message_id ?? null,
-      taskId: result.result.taskId
-    });
+    await this.sendTaskResultToChat(event.chatId, result);
   }
 
   public async handleCardActionEvent(event: {
@@ -220,7 +217,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     if (this.runtimeApi === null) {
       return;
     }
-    await this.runtimeApi.resolveApproval({
+    const result = await this.runtimeApi.resolveApproval({
       adapterId: this.descriptor.adapterId,
       approvalId: event.approvalId,
       decision: event.decision,
@@ -230,6 +227,12 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
           ? `${this.descriptor.adapterId}:session:${event.chatId}`
           : `${this.descriptor.adapterId}:${event.openId}`
     });
+    if (result !== null) {
+      await this.sendTaskResultToChat(
+        event.chatId.length > 0 ? event.chatId : result.sessionBinding.externalSessionId,
+        result
+      );
+    }
   }
 
   public async sendCapabilityNotice(taskId: string, notice: GatewayCapabilityNotice): Promise<void> {
@@ -280,11 +283,34 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     });
 
     if (result.result.status === "waiting_approval") {
-      const approvalId = result.result.errorCode ?? result.result.taskId;
-      await this.client.im.message.create(
-        createInteractiveMessagePayload(bound.chatId, renderApprovalCard(result.result.taskId, approvalId))
-      );
+      await this.sendApprovalCard(bound.chatId, result.result);
     }
+  }
+
+  private async sendTaskResultToChat(chatId: string, result: GatewayTaskLaunchResult): Promise<void> {
+    if (this.client === null) {
+      return;
+    }
+    const sent = await this.client.im.message.create(
+      createTextMessagePayload(chatId, formatTaskResultText(result.result))
+    );
+    const messageId = sent.data?.message_id ?? null;
+    console.info("[feishu-adapter] sent task result text", {
+      messageId,
+      taskId: result.result.taskId
+    });
+    if (result.result.status === "waiting_approval") {
+      await this.sendApprovalCard(chatId, result.result);
+    }
+  }
+
+  private async sendApprovalCard(chatId: string, result: GatewayTaskResultView): Promise<void> {
+    if (this.client === null || result.pendingApprovalId === null) {
+      return;
+    }
+    await this.client.im.message.create(
+      createInteractiveMessagePayload(chatId, renderApprovalCard(result.taskId, result.pendingApprovalId))
+    );
   }
 }
 

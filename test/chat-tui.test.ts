@@ -6,6 +6,7 @@ import {
   syncPendingApprovalMessages
 } from "../src/tui/hooks/use-chat-controller";
 import {
+  canSubmitTextInput,
   deleteCharacterAfter,
   deleteCharacterBefore,
   deletePreviousWord,
@@ -161,6 +162,14 @@ describe("use-text-input helpers", () => {
   it("ignores approval shortcuts when prompt has non-whitespace text", () => {
     expect(resolveApprovalShortcut("a", " draft", true)).toBeNull();
     expect(resolveApprovalShortcut("d", "", false)).toBeNull();
+  });
+
+  it("allows only /stop to submit while busy", () => {
+    expect(canSubmitTextInput("/stop", true)).toBe(true);
+    expect(canSubmitTextInput(" /stop ", true)).toBe(true);
+    expect(canSubmitTextInput("hello", true)).toBe(false);
+    expect(canSubmitTextInput("hello", false)).toBe(true);
+    expect(canSubmitTextInput("   ", false)).toBe(false);
   });
 });
 
