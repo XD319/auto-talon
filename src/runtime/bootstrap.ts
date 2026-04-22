@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 
 import { ApprovalService } from "../approvals/approval-service";
@@ -24,6 +24,7 @@ import {
 import { SandboxService } from "../sandbox/sandbox-service";
 import { SkillContextService, SkillDraftManager, SkillRegistry } from "../skills";
 import { StorageManager } from "../storage/database";
+import { migrateConfigFiles } from "../storage/config-migration";
 import { TraceService } from "../tracing/trace-service";
 import type {
   LocalPolicyConfig,
@@ -40,6 +41,7 @@ import { ShellExecutor } from "../tools/shell/shell-executor";
 import { AgentApplicationService } from "./application-service";
 import { ExecutionKernel } from "./execution-kernel";
 import { resolveRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config";
+import { initializeWorkspaceFiles, migrateWorkspaceConfigFiles } from "./workspace-setup";
 
 export interface AppConfig {
   approvalTtlMs: number;
@@ -72,6 +74,9 @@ export interface ResolveAppConfigOptions {
 
 export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigOptions = {}): AppConfig {
   const workspaceRoot = resolve(process.env.AGENT_WORKSPACE_ROOT ?? cwd);
+  initializeWorkspaceFiles(workspaceRoot);
+  migrateWorkspaceConfigFiles(workspaceRoot);
+  migrateConfigFiles(workspaceRoot);
   const provider = resolveProviderConfig(workspaceRoot);
   const sandbox = resolveSandboxProfile(workspaceRoot, options);
   const runtimeConfig = resolveRuntimeConfig(workspaceRoot);
@@ -87,7 +92,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     defaultTimeoutMs: runtimeConfig.defaultTimeoutMs,
     compact: runtimeConfig.compact,
     provider,
-    runtimeVersion: "phase5",
+    runtimeVersion: "0.1.0",
     runtimeConfigPath: runtimeConfig.configPath,
     runtimeConfigSource: runtimeConfig.configSource,
     sandbox,
@@ -126,6 +131,7 @@ export function createApplication(
   options: CreateApplicationOptions = {}
 ): AppRuntimeHandle {
   const resolvedConfig = resolveAppConfig(cwd, options.sandbox);
+  backupDatabaseIfPresent(resolvedConfig.workspaceRoot, resolvedConfig.databasePath);
   const configuredWorkspaceRoot = options.config?.workspaceRoot ?? resolvedConfig.workspaceRoot;
   const resolvedSandbox =
     configuredWorkspaceRoot === resolvedConfig.workspaceRoot
@@ -309,6 +315,18 @@ export function createApplication(
     },
     service
   };
+}
+
+function backupDatabaseIfPresent(workspaceRoot: string, databasePath: string): void {
+  if (!existsSync(databasePath) || databasePath === ":memory:") {
+    return;
+  }
+
+  const rollbacksDir = join(workspaceRoot, ".auto-talon", "rollbacks");
+  mkdirSync(rollbacksDir, { recursive: true });
+  const timestamp = new Date().toISOString().replaceAll(":", "-");
+  const backupPath = join(rollbacksDir, `db-backup-${timestamp}.sqlite`);
+  copyFileSync(databasePath, backupPath);
 }
 
 interface SandboxConfigFile {

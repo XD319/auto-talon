@@ -1,6 +1,30 @@
 import type { DatabaseSync } from "node:sqlite";
 
 export function runMigrations(database: DatabaseSync): void {
+  const currentVersion = readUserVersion(database);
+  const migrations: Array<{ description: string; up: (db: DatabaseSync) => void; version: number }> = [
+    {
+      description: "create base runtime tables",
+      up: migrateV1,
+      version: 1
+    },
+    {
+      description: "add profile and requester columns",
+      up: migrateV2,
+      version: 2
+    }
+  ];
+
+  for (const migration of migrations) {
+    if (migration.version <= currentVersion) {
+      continue;
+    }
+    migration.up(database);
+    database.exec(`PRAGMA user_version = ${migration.version}`);
+  }
+}
+
+function migrateV1(database: DatabaseSync): void {
   database.exec(`
     PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
@@ -224,7 +248,9 @@ export function runMigrations(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_gateway_session_bindings_adapter_session
       ON gateway_session_bindings(adapter_id, external_session_id, created_at DESC);
   `);
+}
 
+function migrateV2(database: DatabaseSync): void {
   addColumnIfMissing(database, "tasks", "agent_profile_id", "TEXT NOT NULL DEFAULT 'executor'");
   addColumnIfMissing(database, "tasks", "requester_user_id", "TEXT NOT NULL DEFAULT 'local-user'");
   addColumnIfMissing(
@@ -239,6 +265,11 @@ export function runMigrations(database: DatabaseSync): void {
     "requester_user_id",
     "TEXT NOT NULL DEFAULT 'local-user'"
   );
+}
+
+function readUserVersion(database: DatabaseSync): number {
+  const row = database.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+  return row?.user_version ?? 0;
 }
 
 function addColumnIfMissing(

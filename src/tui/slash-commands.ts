@@ -2,6 +2,7 @@ export const SLASH_COMMANDS = [
   "/clear",
   "/context",
   "/cost",
+  "/dashboard",
   "/diff",
   "/help",
   "/history",

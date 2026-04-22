@@ -276,5 +276,112 @@
       "expectPolicyTrace": false,
       "expectSessionCompact": false
     }
+  },
+  {
+    "taskId": "rc_gateway_roundtrip",
+    "scriptId": "rc_gateway_roundtrip",
+    "title": "Gateway roundtrip baseline",
+    "category": "multi_turn_execution",
+    "rcVersion": "0.1.0",
+    "input": "Validate webhook task intake and task status retrieval behavior.",
+    "profile": "executor",
+    "expectedBehavior": [
+      "Exercise gateway-facing task flow assumptions",
+      "Return a clear pass/fail summary"
+    ],
+    "acceptableResult": [
+      "Task succeeds",
+      "Output references gateway intake and task status"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": false,
+      "mustSummarizeToolResults": false,
+      "mustExplainContinuation": false,
+      "expectApproval": false,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": false,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "rc_memory_lifecycle",
+    "scriptId": "rc_memory_lifecycle",
+    "title": "Memory lifecycle regression",
+    "category": "long_context_execution",
+    "rcVersion": "0.1.0",
+    "input": "Review memory lifecycle states candidate verified stale rejected and summarize expected transitions.",
+    "profile": "reviewer",
+    "expectedBehavior": [
+      "Explain memory state transitions",
+      "Return concise lifecycle summary"
+    ],
+    "acceptableResult": [
+      "Task succeeds",
+      "Output references memory states"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": false,
+      "mustSummarizeToolResults": false,
+      "mustExplainContinuation": false,
+      "expectApproval": false,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": false,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "rc_mcp_tool_discovery",
+    "scriptId": "rc_mcp_tool_discovery",
+    "title": "MCP discovery regression",
+    "category": "multi_turn_execution",
+    "rcVersion": "0.1.0",
+    "input": "Describe MCP server discovery and tool bridge flow in this runtime.",
+    "profile": "reviewer",
+    "expectedBehavior": [
+      "Explain MCP discovery path",
+      "Reference tool bridge behavior"
+    ],
+    "acceptableResult": [
+      "Task succeeds",
+      "Output references MCP list or discover behavior"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": false,
+      "mustSummarizeToolResults": false,
+      "mustExplainContinuation": false,
+      "expectApproval": false,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": false,
+      "expectSessionCompact": false
+    }
+  },
+  {
+    "taskId": "rc_skill_injection",
+    "scriptId": "rc_skill_injection",
+    "title": "Skill context injection regression",
+    "category": "multi_turn_execution",
+    "rcVersion": "0.1.0",
+    "input": "Explain how skill context is selected and exposed to the model loop.",
+    "profile": "reviewer",
+    "expectedBehavior": [
+      "Summarize skill selection and context injection"
+    ],
+    "acceptableResult": [
+      "Task succeeds",
+      "Output mentions skill context service or skill view"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": false,
+      "mustSummarizeToolResults": false,
+      "mustExplainContinuation": false,
+      "expectApproval": false,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": false,
+      "expectSessionCompact": false
+    }
   }
 ]

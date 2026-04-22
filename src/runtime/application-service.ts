@@ -1,5 +1,7 @@
-import { promises as fs } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync, statSync, promises as fs } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { join, dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { z } from "zod";
 
@@ -72,11 +74,17 @@ export interface AgentDoctorReport {
   modelConfigured: boolean;
   modelName: string | null;
   nodeVersion: string;
+  pnpmVersion: string | null;
+  corepackAvailable: boolean;
   providerHealthMessage: string;
   providerName: string;
   runtimeConfigPath: string;
   runtimeConfigSource: "defaults" | "env" | "file";
   runtimeVersion: string;
+  configFiles: Array<{ exists: boolean; file: string; parseable: boolean }>;
+  databaseReachable: boolean;
+  distFresh: boolean | null;
+  schemaVersion: number | null;
   shell: string | undefined;
   skillStats: {
     enabled: number;
@@ -643,6 +651,12 @@ export class AgentApplicationService {
     const issues = collectDoctorIssues(this.dependencies.providerConfig, providerHealth);
     const experiences = this.dependencies.listExperiences();
     const skills = this.dependencies.skillRegistry.listSkills();
+    const configFiles = checkWorkspaceConfigFiles(this.dependencies.workspaceRoot);
+    const databaseReachable = canOpenDatabase(this.dependencies.databasePath);
+    const schemaVersion = readSchemaVersion(this.dependencies.databasePath);
+    const distFresh = checkDistFreshness(this.dependencies.workspaceRoot);
+    const corepackAvailable = isCommandAvailable("corepack");
+    const pnpmVersion = resolveCommandVersion("pnpm");
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
@@ -665,11 +679,17 @@ export class AgentApplicationService {
       modelConfigured: providerHealth.modelConfigured,
       modelName: providerHealth.modelName,
       nodeVersion: process.version,
+      pnpmVersion,
+      corepackAvailable,
       providerHealthMessage: providerHealth.message,
       providerName: this.dependencies.provider.name,
       runtimeConfigPath: this.dependencies.runtimeConfigPath,
       runtimeConfigSource: this.dependencies.runtimeConfigSource,
       runtimeVersion: this.dependencies.runtimeVersion,
+      configFiles,
+      databaseReachable,
+      distFresh,
+      schemaVersion,
       shell: process.env.ComSpec,
       skillStats: {
         enabled: skills.skills.length,
@@ -791,7 +811,97 @@ function collectDoctorIssues(
     issues.push(`Model ${providerHealth.modelName ?? "-"} is not available on the provider endpoint.`);
   }
 
+  if (!isCommandAvailable("corepack")) {
+    issues.push("corepack is not available.");
+  }
+
   return issues;
+}
+
+function checkWorkspaceConfigFiles(
+  workspaceRoot: string
+): Array<{ exists: boolean; file: string; parseable: boolean }> {
+  const files = [
+    "provider.config.json",
+    "runtime.config.json",
+    "sandbox.config.json",
+    "gateway.config.json",
+    "feishu.config.json",
+    "mcp.config.json",
+    "mcp-server.config.json"
+  ];
+
+  return files.map((file) => {
+    const path = join(workspaceRoot, ".auto-talon", file);
+    if (!existsSync(path)) {
+      return { exists: false, file, parseable: false };
+    }
+    try {
+      const content = readFileSync(path, "utf8").trim();
+      if (content.length > 0) {
+        JSON.parse(content);
+      }
+      return { exists: true, file, parseable: true };
+    } catch {
+      return { exists: true, file, parseable: false };
+    }
+  });
+}
+
+function canOpenDatabase(databasePath: string): boolean {
+  if (databasePath === ":memory:") {
+    return true;
+  }
+  try {
+    const db = new DatabaseSync(databasePath);
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readSchemaVersion(databasePath: string): number | null {
+  if (databasePath === ":memory:" || !existsSync(databasePath)) {
+    return null;
+  }
+  try {
+    const db = new DatabaseSync(databasePath);
+    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };
+    db.close();
+    return row.user_version ?? 0;
+  } catch {
+    return null;
+  }
+}
+
+function checkDistFreshness(workspaceRoot: string): boolean | null {
+  const cliSource = join(workspaceRoot, "src", "cli", "index.ts");
+  const cliDist = join(workspaceRoot, "dist", "cli", "index.js");
+  if (!existsSync(cliSource) || !existsSync(cliDist)) {
+    return null;
+  }
+  return statSync(cliDist).mtimeMs >= statSync(cliSource).mtimeMs;
+}
+
+function isCommandAvailable(command: string): boolean {
+  return (
+    spawnSync(command, ["--version"], {
+      encoding: "utf8",
+      shell: process.platform === "win32"
+    }).status === 0
+  );
+}
+
+function resolveCommandVersion(command: string): string | null {
+  const result = spawnSync(command, ["--version"], {
+    encoding: "utf8",
+    shell: process.platform === "win32"
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  return result.stdout.trim().split("\n")[0] ?? null;
 }
 
 function buildProviderStatsFromTrace(

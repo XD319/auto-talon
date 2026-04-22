@@ -16,6 +16,8 @@
     "dev": "node --disable-warning=ExperimentalWarning --import tsx src/cli/index.ts",
     "dev:tui": "node --disable-warning=ExperimentalWarning --import tsx src/cli/index.ts tui",
     "dev:dashboard": "node --disable-warning=ExperimentalWarning --import tsx src/cli/index.ts dashboard",
+    "release:check": "node --disable-warning=ExperimentalWarning --import tsx src/cli/index.ts release check",
+    "setup": "node --disable-warning=ExperimentalWarning --import tsx src/cli/index.ts init --yes",
     "lint": "eslint .",
     "test": "vitest run"
   },

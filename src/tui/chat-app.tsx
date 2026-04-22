@@ -116,6 +116,7 @@ export function ChatTuiApp({
         controller.addSystemMessage(
           [
             "Commands: /help /clear /new /stop /title <name> /history /status /sandbox /rollback <id|last> /cost /context /diff /sessions",
+            "Tip: use `agent tui --mode dashboard` or `agent dashboard` for the observability view.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Tab slash-complete | Ctrl+P/N history",
             "Session files: .auto-talon/sessions/<id>.json | resume: agent tui --resume <id>",
             "Token pricing estimate: AGENT_TOKEN_PRICE_IN_PER_M / AGENT_TOKEN_PRICE_OUT_PER_M (optional)",
@@ -193,6 +194,11 @@ export function ChatTuiApp({
             ids.length > 0 ? `Saved session ids (newest files under .auto-talon/sessions):\n${ids.join("\n")}` : "No saved sessions yet."
           );
         });
+        return true;
+      }
+
+      if (text === "/dashboard") {
+        controller.addSystemMessage("Open dashboard with: agent tui --mode dashboard (or agent dashboard).");
         return true;
       }
 
@@ -335,6 +341,7 @@ export function ChatTuiApp({
           "/context",
           "/cost",
           "/diff",
+          "/dashboard",
           "/help",
           "/history",
           "/new",
@@ -369,7 +376,7 @@ export function ChatTuiApp({
         estimatedCostUsd={controller.tokenHud.estimatedCostUsd}
         inputTokens={controller.tokenHud.inputTokens}
         outputTokens={controller.tokenHud.outputTokens}
-        statusLine={controller.statusLine}
+        statusLine={`v0.1.0 | provider=${config.provider.name} | tasks=${controller.summary.tasks} | db=${config.databasePath} | ${controller.statusLine}`}
       />
       {slashHints.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>

@@ -1,5 +1,5 @@
 import type { AgentDoctorReport, ContextTraceDebugReport, TaskTimelineReport } from "../runtime";
-import type { BetaReadinessReport, EvalReport, ReplayRunResult } from "../diagnostics";
+import type { BetaReadinessReport, EvalReport, ReplayRunResult, ReleaseChecklistReport } from "../diagnostics";
 import type {
   ApprovalRecord,
   AuditLogRecord,
@@ -148,6 +148,30 @@ export function formatAuditLog(entries: AuditLogRecord[]): string {
     .join("\n");
 }
 
+export function summarizeTrace(traceEvents: TraceEvent[]): string {
+  if (traceEvents.length === 0) {
+    return "No trace events were recorded for this task.";
+  }
+  const stageCounts = traceEvents.reduce<Record<string, number>>((acc, event) => {
+    acc[event.stage] = (acc[event.stage] ?? 0) + 1;
+    return acc;
+  }, {});
+  const first = traceEvents[0];
+  const last = traceEvents.at(-1);
+  return `Trace contains ${traceEvents.length} events across ${Object.keys(stageCounts).length} stages (${Object.entries(stageCounts).map(([key, value]) => `${key}=${value}`).join(", ")}). Flow starts with ${first?.eventType ?? "-"} and ends with ${last?.eventType ?? "-"}.`;
+}
+
+export function summarizeAudit(entries: AuditLogRecord[]): string {
+  if (entries.length === 0) {
+    return "No audit actions were captured.";
+  }
+  const actionCounts = entries.reduce<Record<string, number>>((acc, entry) => {
+    acc[entry.action] = (acc[entry.action] ?? 0) + 1;
+    return acc;
+  }, {});
+  return `Audit contains ${entries.length} entries with actions: ${Object.entries(actionCounts).map(([name, count]) => `${name}=${count}`).join(", ")}.`;
+}
+
 export function formatDoctorReport(report: AgentDoctorReport): string {
   return [
     `Runtime Version: ${report.runtimeVersion}`,
@@ -167,8 +191,14 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
     `Max Retries: ${report.maxRetries}`,
     `Provider Health: ${report.providerHealthMessage}`,
     `Node: ${report.nodeVersion}`,
+    `pnpm: ${report.pnpmVersion ?? "-"}`,
+    `Corepack: ${report.corepackAvailable ? "yes" : "no"}`,
     `Workspace Root: ${report.workspaceRoot}`,
     `Database Path: ${report.databasePath}`,
+    `Database Reachable: ${report.databaseReachable ? "yes" : "no"}`,
+    `Schema Version: ${report.schemaVersion ?? "-"}`,
+    `Build Fresh: ${formatTernary(report.distFresh)}`,
+    `Config Files: ${report.configFiles.map((entry) => `${entry.file}=${entry.exists ? (entry.parseable ? "ok" : "invalid") : "missing"}`).join(", ")}`,
     `Experience Records: total=${report.experienceStats.total} candidate=${report.experienceStats.candidate} accepted=${report.experienceStats.accepted} promoted=${report.experienceStats.promoted} rejected=${report.experienceStats.rejected} stale=${report.experienceStats.stale}`,
     `Skills: total=${report.skillStats.total} enabled=${report.skillStats.enabled} issues=${report.skillStats.issues}`,
     `Shell: ${report.shell ?? "-"}`,
@@ -530,6 +560,14 @@ export function formatBetaReadinessReport(report: BetaReadinessReport): string {
     ...report.checklist.map(
       (item) => `- ${item.ok ? "PASS" : "FAIL"} ${item.id} | ${item.title} | ${item.details}`
     )
+  ].join("\n");
+}
+
+export function formatReleaseChecklistReport(report: ReleaseChecklistReport): string {
+  return [
+    `Generated at: ${report.generatedAt}`,
+    `Overall: ${report.allPassed ? "pass" : "needs work"}`,
+    ...report.items.map((item) => `- ${item.ok ? "PASS" : "FAIL"} ${item.id} | ${item.title} | ${item.details}`)
   ].join("\n");
 }
 

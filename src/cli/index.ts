@@ -19,9 +19,15 @@ import {
   McpToolBridge,
   resolveMcpServerConfig
 } from "../mcp";
-import { replayTaskById, runBetaReadinessCheck, runEvalReport } from "../diagnostics";
+import { replayTaskById, runBetaReadinessCheck, runEvalReport, runReleaseChecklist } from "../diagnostics";
 import type { SupportedProviderName } from "../providers";
-import { buildRepoMap, createApplication, createDefaultRunOptions, type ResolveAppConfigOptions } from "../runtime";
+import {
+  buildRepoMap,
+  createApplication,
+  createDefaultRunOptions,
+  initializeWorkspaceFiles,
+  type ResolveAppConfigOptions
+} from "../runtime";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing";
 import { startDashboardTui, startTui } from "../tui";
 
@@ -32,6 +38,7 @@ import {
   formatCurrentProvider,
   formatDoctorReport,
   formatEvalReport,
+  formatReleaseChecklistReport,
   formatExperienceDetail,
   formatExperienceList,
   formatExperienceSearch,
@@ -50,7 +57,9 @@ import {
   formatTaskList,
   formatTaskTimeline,
   formatTrace,
-  formatTraceContextDebug
+  formatTraceContextDebug,
+  summarizeAudit,
+  summarizeTrace
 } from "./formatters";
 import type { ExperienceQuery, ExperienceSourceType, ExperienceStatus, ExperienceType } from "../types";
 import type { InboundMessageAdapter } from "../types";
@@ -59,6 +68,17 @@ import type { SkillAttachmentKind } from "../types/skill";
 async function main(): Promise<void> {
   const program = new Command();
   program.name("agent").description("Agent Runtime MVP CLI").version("0.1.0");
+
+  program.command("version").description("Show runtime and environment version").action(() => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(`auto-talon v${program.version()}`);
+      console.log(`runtimeVersion=${handle.config.runtimeVersion}`);
+      console.log(`node=${process.version}`);
+    } finally {
+      handle.close();
+    }
+  });
 
   program
     .command("run")
@@ -102,10 +122,11 @@ async function main(): Promise<void> {
 
   const taskCommand = program.command("task").description("Inspect persisted tasks");
 
-  taskCommand.command("list").action(() => {
+  taskCommand.command("list").option("--json", "Print JSON").action((commandOptions: { json?: boolean }) => {
     const handle = createApplication(process.cwd());
     try {
-      console.log(formatTaskList(handle.service.listTasks()));
+      const tasks = handle.service.listTasks();
+      console.log(commandOptions.json === true ? JSON.stringify(tasks, null, 2) : formatTaskList(tasks));
     } finally {
       handle.close();
     }
@@ -138,7 +159,10 @@ async function main(): Promise<void> {
 
   const traceCommand = program.command("trace").description("Inspect persisted trace data");
 
-  traceCommand.argument("[task_id]", "Task identifier").action((taskId?: string) => {
+  traceCommand
+    .argument("[task_id]", "Task identifier")
+    .option("--summary", "Print summary instead of full trace")
+    .action((taskId: string | undefined, commandOptions: { summary?: boolean }) => {
     if (taskId === undefined) {
       console.error("Task id is required.");
       process.exitCode = 1;
@@ -147,7 +171,8 @@ async function main(): Promise<void> {
 
     const handle = createApplication(process.cwd());
     try {
-      console.log(formatTrace(handle.service.traceTask(taskId)));
+      const trace = handle.service.traceTask(taskId);
+      console.log(commandOptions.summary ? summarizeTrace(trace) : formatTrace(trace));
     } finally {
       handle.close();
     }
@@ -162,14 +187,19 @@ async function main(): Promise<void> {
     }
   });
 
-  program.command("audit").argument("<task_id>", "Task identifier").action((taskId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
-      console.log(formatAuditLog(handle.service.auditTask(taskId)));
-    } finally {
-      handle.close();
-    }
-  });
+  program
+    .command("audit")
+    .argument("<task_id>", "Task identifier")
+    .option("--summary", "Print summary instead of raw entries")
+    .action((taskId: string, commandOptions: { summary?: boolean }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const audit = handle.service.auditTask(taskId);
+        console.log(commandOptions.summary ? summarizeAudit(audit) : formatAuditLog(audit));
+      } finally {
+        handle.close();
+      }
+    });
 
   const approveCommand = program.command("approve").description("Inspect and resolve approvals");
 
@@ -235,6 +265,33 @@ async function main(): Promise<void> {
       } finally {
         handle.close();
       }
+    });
+
+  program
+    .command("doctor")
+    .description("Run configuration and environment checks")
+    .action(async () => {
+      const handle = createApplication(process.cwd());
+      try {
+        console.log(formatDoctorReport(await handle.service.configDoctor()));
+      } finally {
+        handle.close();
+      }
+    });
+
+  program
+    .command("init")
+    .description("Initialize .auto-talon workspace files")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .option("--yes", "Create defaults non-interactively")
+    .action((commandOptions: { cwd: string }) => {
+      const result = initializeWorkspaceFiles(commandOptions.cwd);
+      console.log(`Initialized: ${result.workspaceConfigDir}`);
+      console.log(
+        result.createdFiles.length === 0
+          ? "No new files created."
+          : `Created files:\n${result.createdFiles.join("\n")}`
+      );
     });
 
   program
@@ -329,9 +386,9 @@ async function main(): Promise<void> {
     }
   });
 
-  program
-    .command("repo")
-    .description("Inspect repository coding context")
+  const workspaceCommand = program.command("workspace").description("Inspect workspace coding context");
+
+  workspaceCommand
     .command("map")
     .option("--cwd <path>", "Workspace path", process.cwd())
     .action((commandOptions: { cwd: string }) => {
@@ -351,6 +408,27 @@ async function main(): Promise<void> {
     });
 
   program
+    .command("repo")
+    .description("Deprecated alias for workspace")
+    .command("map")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((commandOptions: { cwd: string }) => {
+      const repoMap = buildRepoMap(commandOptions.cwd);
+      console.log(repoMap.summary);
+      console.log(`Workspace: ${repoMap.workspaceRoot}`);
+      console.log(`Languages: ${repoMap.languages.join(", ") || "-"}`);
+      console.log(`Package Manager: ${repoMap.packageManager ?? "-"}`);
+      console.log(`Important Files: ${repoMap.importantFiles.join(", ") || "-"}`);
+      console.log(
+        `Scripts: ${
+          Object.keys(repoMap.scripts).length === 0
+            ? "-"
+            : Object.entries(repoMap.scripts).map(([name, command]) => `${name}=${command}`).join("; ")
+        }`
+      );
+    });
+
+  workspaceCommand
     .command("rollback")
     .description("Rollback a file_write checkpoint")
     .argument("<artifact_id>", "Rollback artifact id or last")
@@ -372,12 +450,13 @@ async function main(): Promise<void> {
 
   const providerCommand = program.command("provider").description("Inspect and test providers");
 
-  providerCommand.command("list").action(() => {
+  providerCommand.command("list").option("--json", "Print JSON").action((commandOptions: { json?: boolean }) => {
     const handle = createApplication(process.cwd());
     try {
-      console.log(
-        formatProviderCatalog(handle.service.currentProvider().name, handle.service.listProviders())
-      );
+      const providers = handle.service.listProviders();
+      console.log(commandOptions.json === true
+        ? JSON.stringify(providers, null, 2)
+        : formatProviderCatalog(handle.service.currentProvider().name, providers));
     } finally {
       handle.close();
     }
@@ -422,15 +501,23 @@ async function main(): Promise<void> {
     .option("--cwd <path>", "Workspace path", process.cwd())
     .option("--from-iteration <number>", "Replay starting from this iteration", "1")
     .option("--provider <mode>", "Replay provider mode: current | mock", "current")
+    .option("--dry-run", "Show replay parameters without executing")
     .action(
       async (
         taskId: string,
         commandOptions: {
           cwd: string;
+          dryRun?: boolean;
           fromIteration: string;
           provider: "current" | "mock";
         }
       ) => {
+        if (commandOptions.dryRun === true) {
+          console.log(
+            `Replay dry-run: task=${taskId} cwd=${commandOptions.cwd} fromIteration=${commandOptions.fromIteration} provider=${commandOptions.provider}`
+          );
+          return;
+        }
         const report = await replayTaskById(taskId, {
           cwd: commandOptions.cwd,
           fromIteration: Number(commandOptions.fromIteration),
@@ -451,10 +538,12 @@ async function main(): Promise<void> {
     .option("--tasks <taskIds>", "Comma-separated task ids")
     .option("--fixture <path>", "Custom fixture file path")
     .option("--json", "Print JSON instead of text")
+    .option("--explain", "Append plain-language explanation")
     .option("--output <path>", "Write the report to a file")
     .action(
       async (commandOptions: {
         fixture?: string;
+        explain?: boolean;
         json?: boolean;
         output?: string;
         provider: SupportedProviderName | "scripted-smoke";
@@ -468,9 +557,12 @@ async function main(): Promise<void> {
           taskIds:
             commandOptions.tasks?.split(",").map((value) => value.trim()).filter(Boolean) ?? []
         });
-        const output = commandOptions.json === true
+        let output = commandOptions.json === true
           ? JSON.stringify(report, null, 2)
           : formatEvalReport(report);
+        if (commandOptions.explain === true && commandOptions.json !== true) {
+          output = `${output}\nExplanation: The suite validates repeatable core workflows and flags provider/policy regressions.`;
+        }
         if (commandOptions.output !== undefined) {
           writeFileSync(commandOptions.output, `${output}\n`, "utf8");
         } else {
@@ -481,6 +573,51 @@ async function main(): Promise<void> {
         }
       }
     );
+
+  evalCommand
+    .command("smoke")
+    .option("--provider <provider>", "Provider to use: scripted-smoke or any registered provider", "scripted-smoke")
+    .option("--tasks <taskIds>", "Comma-separated smoke task ids")
+    .option("--fixture <path>", "Custom fixture file path")
+    .option("--no-auto-approve", "Do not auto-resolve approvals during smoke runs")
+    .action(
+      async (commandOptions: {
+        autoApprove: boolean;
+        fixture?: string;
+        provider: SupportedProviderName | "scripted-smoke";
+        tasks?: string;
+      }) => {
+        const report = await runSmokeSuite({
+          autoApprove: commandOptions.autoApprove,
+          ...(commandOptions.fixture !== undefined
+            ? { fixturePath: commandOptions.fixture }
+            : {}),
+          providerName: commandOptions.provider,
+          taskIds:
+            commandOptions.tasks?.split(",").map((value) => value.trim()).filter(Boolean) ?? []
+        });
+        console.log(formatSmokeSuiteReport(report));
+        if (report.failedCount > 0) {
+          process.exitCode = 1;
+        }
+      }
+    );
+
+  const releaseCommand = program.command("release").description("Release readiness checks");
+  releaseCommand
+    .command("check")
+    .option("--provider <provider>", "Provider to use for eval checks", "scripted-smoke")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action(async (commandOptions: { cwd: string; provider: SupportedProviderName | "scripted-smoke" }) => {
+      const report = await runReleaseChecklist({
+        cwd: commandOptions.cwd,
+        provider: commandOptions.provider
+      });
+      console.log(formatReleaseChecklistReport(report));
+      if (!report.allPassed) {
+        process.exitCode = 1;
+      }
+    });
 
   evalCommand
     .command("beta")
@@ -780,8 +917,13 @@ async function main(): Promise<void> {
     .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
+    .option("--mode <mode>", "UI mode: chat | dashboard", "chat")
     .option("--resume <sessionId>", "Resume a saved session from .auto-talon/sessions")
-    .action(async (commandOptions: SandboxCommandOptions & { resume?: string }) => {
+    .action(async (commandOptions: SandboxCommandOptions & { mode?: string; resume?: string }) => {
+      if (commandOptions.mode === "dashboard") {
+        await startDashboardTui(commandOptions.cwd, resolveSandboxCliOptions(commandOptions));
+        return;
+      }
       await startTui({
         cwd: commandOptions.cwd,
         sandbox: resolveSandboxCliOptions(commandOptions),
