@@ -12,6 +12,13 @@ import {
   FeishuAdapter,
   resolveFeishuGatewayConfig
 } from "../gateway";
+import {
+  McpServer,
+  McpSkillBridge,
+  McpStdioHost,
+  McpToolBridge,
+  resolveMcpServerConfig
+} from "../mcp";
 import { replayTaskById, runBetaReadinessCheck, runEvalReport } from "../diagnostics";
 import type { SupportedProviderName } from "../providers";
 import { buildRepoMap, createApplication, createDefaultRunOptions, type ResolveAppConfigOptions } from "../runtime";
@@ -836,6 +843,38 @@ async function main(): Promise<void> {
       try {
         await handle.infrastructure.mcpClientManager.ping(serverId);
         console.log(`MCP server ${serverId} is reachable.`);
+      } finally {
+        handle.close();
+      }
+    });
+
+  mcpCommand
+    .command("serve")
+    .option("--transport <transport>", "MCP transport (stdio)", "stdio")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
+    .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
+    .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
+    .action(async (commandOptions: SandboxCommandOptions & { transport: string }) => {
+      if (commandOptions.transport !== "stdio") {
+        throw new Error(`Unsupported MCP transport: ${commandOptions.transport}`);
+      }
+      const handle = createApplication(commandOptions.cwd, {
+        sandbox: resolveSandboxCliOptions(commandOptions)
+      });
+      try {
+        const config = resolveMcpServerConfig(handle.config.workspaceRoot);
+        const server = new McpServer(
+          config,
+          new McpToolBridge(
+            handle.infrastructure.toolOrchestrator,
+            handle.config.workspaceRoot,
+            config.externalIdentity
+          ),
+          new McpSkillBridge(handle.infrastructure.skillRegistry)
+        );
+        const host = new McpStdioHost(server);
+        await host.start();
       } finally {
         handle.close();
       }

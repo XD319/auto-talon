@@ -96,6 +96,8 @@ export interface AppRuntimeHandle {
     approvalService: ApprovalService;
     auditService: AuditService;
     createRunOptions: (taskInput: string, cwd: string) => RuntimeRunOptions;
+    skillRegistry: SkillRegistry;
+    toolOrchestrator: ToolOrchestrator;
     traceService: TraceService;
     storage: StorageManager;
   };
@@ -285,7 +287,9 @@ export function createApplication(
       createRunOptions: (taskInput: string, cwdForRun: string) =>
         createDefaultRunOptions(taskInput, cwdForRun, config),
       mcpClientManager,
+      skillRegistry,
       storage,
+      toolOrchestrator,
       traceService
     },
     service

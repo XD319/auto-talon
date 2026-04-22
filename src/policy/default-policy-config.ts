@@ -23,6 +23,16 @@ export const DEFAULT_LOCAL_POLICY_CONFIG: LocalPolicyConfig = {
       priority: 90
     },
     {
+      description: "External MCP identity cannot run shell or write files by default.",
+      effect: "deny",
+      id: "mcp-external-read-only",
+      match: {
+        capabilities: ["filesystem.write", "shell.execute"],
+        users: ["mcp_external"]
+      },
+      priority: 89
+    },
+    {
       description: "MCP invocation is approval-gated for non-reviewer profiles.",
       effect: "allow_with_approval",
       id: "mcp-invoke-needs-approval",
