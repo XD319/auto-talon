@@ -30,11 +30,11 @@
   },
   "files": [
     "dist/",
-    "fixtures/runtime-smoke-tasks.json",
     "docs/",
     "scripts/setup.sh",
     "scripts/setup.ps1",
     "README.md",
+    "SECURITY.md",
     "CHANGELOG.md",
     "LICENSE"
   ],

@@ -75,6 +75,7 @@ describe("release checklist helpers", () => {
       "README.md",
       "CHANGELOG.md",
       "LICENSE",
+      "SECURITY.md",
       "dist/cli/bin.js",
       "dist/cli/index.js",
       "fixtures/runtime-smoke-tasks.json",
@@ -84,6 +85,23 @@ describe("release checklist helpers", () => {
 
     expect(result.ok).toBe(false);
     expect(result.details).toContain("forbidden");
+  });
+
+  it("accepts release assets without smoke fixtures", () => {
+    const result = validatePackContents([
+      "package.json",
+      "README.md",
+      "SECURITY.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "dist/cli/bin.js",
+      "dist/cli/index.js"
+    ]);
+
+    expect(result).toEqual({
+      details: "7 release files",
+      ok: true
+    });
   });
 });
 

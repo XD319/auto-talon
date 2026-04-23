@@ -179,8 +179,8 @@ export function validatePackContents(files: string[]): { details: string; ok: bo
   const requiredFiles = [
     "dist/cli/bin.js",
     "dist/cli/index.js",
-    "fixtures/runtime-smoke-tasks.json",
     "README.md",
+    "SECURITY.md",
     "CHANGELOG.md",
     "LICENSE",
     "package.json"
@@ -189,6 +189,7 @@ export function validatePackContents(files: string[]): { details: string; ok: bo
   const forbidden = files.filter((path) =>
     path.startsWith("src/") ||
     path.startsWith("test/") ||
+    path.startsWith("fixtures/") ||
     path.startsWith(".github/") ||
     path === "eslint.config.js" ||
     path === "tsconfig.json" ||
