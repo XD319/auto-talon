@@ -1,7 +1,7 @@
 {
   "name": "auto-talon",
   "version": "0.1.0",
-  "description": "Agent Runtime MVP without web UI",
+  "description": "CLI-first agent runtime with governance and traceability",
   "license": "MIT",
   "main": "dist/runtime/index.js",
   "types": "dist/runtime/index.d.ts",
@@ -13,6 +13,13 @@
     "url": "https://github.com/XD319/auto-talon/issues"
   },
   "homepage": "https://github.com/XD319/auto-talon#readme",
+  "keywords": [
+    "agent",
+    "cli",
+    "typescript",
+    "ai",
+    "mcp"
+  ],
   "packageManager": "pnpm@10.11.0",
   "engines": {
     "node": ">=22.5.0"
