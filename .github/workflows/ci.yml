@@ -10,8 +10,16 @@ concurrency:
 
 jobs:
   verify:
-    name: Lint, Test, Build
+    name: Node ${{ matrix.node }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: "20"
+            mode: runtime-floor
+          - node: "22.5.0"
+            mode: full
 
     steps:
       - name: Checkout repository
@@ -25,11 +33,21 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify Node runtime floor
+        if: matrix.mode == 'runtime-floor'
+        run: |
+          if pnpm dev version 2>&1 | tee node20-runtime-floor.log; then
+            echo "Expected Node 20 to fail with the documented runtime floor."
+            exit 1
+          fi
+          grep "requires Node.js >=22.5.0" node20-runtime-floor.log
+
       - name: Run verification
+        if: matrix.mode == 'full'
         run: pnpm check

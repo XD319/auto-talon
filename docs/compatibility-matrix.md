@@ -1,5 +1,11 @@
 # Compatibility Matrix (v0.1.0)
 
+## Runtime
+
+- Node.js `>=22.5.0`: supported and covered by full CI verification.
+- Node.js 20: covered by a CI compatibility-floor check. It is not a supported
+  runtime because auto-talon uses the built-in `node:sqlite` storage module.
+
 ## Provider
 
 - `mock` + `scripted-smoke`: supported and covered in CI smoke/eval.
