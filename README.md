@@ -42,7 +42,7 @@ policy decisions, approvals, sandbox decisions, and file writes are recorded.
 
 Requirements:
 
-- Node.js `>=22.5.0`
+- Node.js `>=22.13.0`
 - Corepack enabled for source installs
 
 Installed package:
@@ -150,4 +150,3 @@ corepack pnpm dev release check
 
 `talon release check` is a maintainer release gate for this repository. Use
 `talon doctor` for user workspace health checks.
-

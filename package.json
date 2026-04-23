@@ -22,7 +22,7 @@
   ],
   "packageManager": "pnpm@10.11.0",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "bin": {
     "talon": "dist/cli/bin.js"

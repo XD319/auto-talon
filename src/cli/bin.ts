@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 const originalEmitWarning = process.emitWarning.bind(process) as (...args: unknown[]) => void;
-const MINIMUM_NODE_VERSION = { major: 22, minor: 5, patch: 0 };
+const MINIMUM_NODE_VERSION = { major: 22, minor: 13, patch: 0 };
 
 if (!isSupportedNodeVersion(process.versions.node)) {
   console.error(
-    `Fatal CLI error: auto-talon requires Node.js >=22.5.0 because runtime storage uses the built-in node:sqlite module. Current Node.js version is ${process.versions.node}.`
+    `Fatal CLI error: auto-talon requires Node.js >=22.13.0 because runtime storage uses the built-in node:sqlite module without an experimental flag. Current Node.js version is ${process.versions.node}.`
   );
   process.exitCode = 1;
 } else {

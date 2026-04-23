@@ -2,7 +2,8 @@
 
 ## Runtime
 
-- Node.js `>=22.5.0`: supported and covered by full CI verification.
+- Node.js `>=22.13.0`: supported and covered by CI runtime-minimum and full
+  Node 22 verification.
 - Node.js 20: covered by a CI compatibility-floor check. It is not a supported
   runtime because auto-talon uses the built-in `node:sqlite` storage module.
 
