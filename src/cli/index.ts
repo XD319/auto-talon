@@ -944,6 +944,26 @@ export async function main(argv = process.argv): Promise<void> {
     }
   });
 
+  const registerSkillRollbackCommand = (command: ReturnType<typeof program.command>) => {
+    command
+      .command("rollback")
+      .argument("<skill_id>", "Skill identifier (for example: project:namespace/name)")
+      .requiredOption("--reason <text>", "Rollback reason for audit trail")
+      .action((skillId: string, commandOptions: { reason: string }) => {
+        const handle = createApplication(process.cwd());
+        try {
+          const rollback = handle.service.rollbackSkillPromotion(skillId, commandOptions.reason);
+          console.log(
+            `Rolled back ${skillId} to ${rollback.version} (from ${rollback.previousVersion ?? "unknown"})`
+          );
+        } finally {
+          handle.close();
+        }
+      });
+  };
+  registerSkillRollbackCommand(skillsCommand);
+  registerSkillRollbackCommand(program.command("skill").description("Singular alias for skills"));
+
   const workspaceCommand = program.command("workspace").description("Inspect workspace coding context");
 
   workspaceCommand

@@ -488,6 +488,14 @@ export class AgentApplicationService {
     return this.dependencies.skillDraftManager.promoteDraft(draftId);
   }
 
+  public rollbackSkillPromotion(skillId: string, reason: string) {
+    return this.dependencies.skillDraftManager.rollbackPromotion(skillId, reason);
+  }
+
+  public listSkillVersions(skillId: string) {
+    return this.dependencies.skillDraftManager.listVersions(skillId);
+  }
+
   public showMemoryScope(scope: MemoryScope, scopeKey: string): {
     memories: MemoryRecord[];
     snapshots: MemorySnapshotRecord[];

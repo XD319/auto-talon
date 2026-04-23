@@ -30,6 +30,16 @@ const runtimeConfigFileSchema = z.object({
       maxCandidatesPerScope: z.number().int().positive().optional()
     })
     .optional(),
+  promotion: z
+    .object({
+      enabled: z.boolean().optional(),
+      maxHumanJudgmentWeight: z.number().min(0).max(1).optional(),
+      minStability: z.number().min(0).max(1).optional(),
+      minSuccessCount: z.number().int().nonnegative().optional(),
+      minSuccessRate: z.number().min(0).max(1).optional(),
+      riskDenyKeywords: z.array(z.string().min(1)).optional()
+    })
+    .optional(),
   tokenBudget: tokenBudgetConfigSchema.optional(),
   workflow: z
     .object({
@@ -77,6 +87,14 @@ export interface RuntimeConfig {
     budgetRatio: number;
     maxCandidatesPerScope: number;
   };
+  promotion: {
+    enabled: boolean;
+    minSuccessCount: number;
+    minSuccessRate: number;
+    minStability: number;
+    maxHumanJudgmentWeight: number;
+    riskDenyKeywords: string[];
+  };
   tokenBudget: TokenBudget;
   workflow: WorkflowRuntimeConfig;
 }
@@ -95,6 +113,14 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     budgetRatio: 0.25,
     enabled: true,
     maxCandidatesPerScope: 10
+  },
+  promotion: {
+    enabled: true,
+    maxHumanJudgmentWeight: 0.4,
+    minStability: 0.6,
+    minSuccessCount: 3,
+    minSuccessRate: 0.8,
+    riskDenyKeywords: ["rm", "delete", "password", "secret", "drop table", "approval_required"]
   },
   tokenBudget: {
     inputLimit: 64_000,
@@ -209,6 +235,32 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         fileConfig?.recall?.maxCandidatesPerScope ??
         DEFAULT_RUNTIME_CONFIG.recall.maxCandidatesPerScope
     },
+    promotion: {
+      enabled:
+        envConfig.promotion?.enabled ??
+        fileConfig?.promotion?.enabled ??
+        DEFAULT_RUNTIME_CONFIG.promotion.enabled,
+      maxHumanJudgmentWeight:
+        envConfig.promotion?.maxHumanJudgmentWeight ??
+        fileConfig?.promotion?.maxHumanJudgmentWeight ??
+        DEFAULT_RUNTIME_CONFIG.promotion.maxHumanJudgmentWeight,
+      minStability:
+        envConfig.promotion?.minStability ??
+        fileConfig?.promotion?.minStability ??
+        DEFAULT_RUNTIME_CONFIG.promotion.minStability,
+      minSuccessCount:
+        envConfig.promotion?.minSuccessCount ??
+        fileConfig?.promotion?.minSuccessCount ??
+        DEFAULT_RUNTIME_CONFIG.promotion.minSuccessCount,
+      minSuccessRate:
+        envConfig.promotion?.minSuccessRate ??
+        fileConfig?.promotion?.minSuccessRate ??
+        DEFAULT_RUNTIME_CONFIG.promotion.minSuccessRate,
+      riskDenyKeywords:
+        envConfig.promotion?.riskDenyKeywords ??
+        fileConfig?.promotion?.riskDenyKeywords ??
+        DEFAULT_RUNTIME_CONFIG.promotion.riskDenyKeywords
+    },
     tokenBudget,
     workflow
   };
@@ -297,6 +349,54 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
     };
   }
 
+  const promotionEnabled = readBooleanEnv("AGENT_PROMOTION_ENABLED");
+  if (promotionEnabled !== undefined) {
+    config.promotion = {
+      ...(config.promotion ?? {}),
+      enabled: promotionEnabled
+    };
+  }
+
+  const minSuccessCount = readNonNegativeIntegerEnv("AGENT_PROMOTION_MIN_SUCCESS_COUNT");
+  if (minSuccessCount !== undefined) {
+    config.promotion = {
+      ...(config.promotion ?? {}),
+      minSuccessCount
+    };
+  }
+
+  const minSuccessRate = readBoundedNumberEnv("AGENT_PROMOTION_MIN_SUCCESS_RATE", 0, 1);
+  if (minSuccessRate !== undefined) {
+    config.promotion = {
+      ...(config.promotion ?? {}),
+      minSuccessRate
+    };
+  }
+
+  const minStability = readBoundedNumberEnv("AGENT_PROMOTION_MIN_STABILITY", 0, 1);
+  if (minStability !== undefined) {
+    config.promotion = {
+      ...(config.promotion ?? {}),
+      minStability
+    };
+  }
+
+  const maxHumanJudgmentWeight = readBoundedNumberEnv("AGENT_PROMOTION_MAX_HUMAN_JUDGMENT_WEIGHT", 0, 1);
+  if (maxHumanJudgmentWeight !== undefined) {
+    config.promotion = {
+      ...(config.promotion ?? {}),
+      maxHumanJudgmentWeight
+    };
+  }
+
+  const riskDenyKeywords = splitList(process.env.AGENT_PROMOTION_RISK_DENY_KEYWORDS);
+  if (riskDenyKeywords.length > 0) {
+    config.promotion = {
+      ...(config.promotion ?? {}),
+      riskDenyKeywords
+    };
+  }
+
   return runtimeConfigFileSchema.partial().parse(config);
 }
 
@@ -333,6 +433,33 @@ function readNonNegativeIntegerEnv(name: string): number | undefined {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error(`${name} must be a non-negative integer.`);
+  }
+  return parsed;
+}
+
+function readBooleanEnv(name: string): boolean | undefined {
+  const value = process.env[name];
+  if (value === undefined || value.trim().length === 0) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0") {
+    return false;
+  }
+  throw new Error(`${name} must be a boolean.`);
+}
+
+function readBoundedNumberEnv(name: string, min: number, max: number): number | undefined {
+  const value = process.env[name];
+  if (value === undefined || value.trim().length === 0) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (Number.isNaN(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${name} must be between ${min} and ${max}.`);
   }
   return parsed;
 }

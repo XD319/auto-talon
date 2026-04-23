@@ -1,0 +1,22 @@
+{
+  "auditId": "audit-skill-promoted-001",
+  "taskId": "task-promotion-001",
+  "toolCallId": null,
+  "approvalId": null,
+  "actor": "promotion.advisor",
+  "action": "skill_promoted",
+  "outcome": "pending",
+  "summary": "Skill promotion suggestion generated for project:experience/retry_flaky_tests",
+  "payload": {
+    "draftId": "experience__retry_flaky_tests__m9x2k",
+    "targetSkillId": "project:experience/retry_flaky_tests",
+    "sourceExperienceIds": [
+      "exp-101",
+      "exp-104",
+      "exp-105"
+    ],
+    "version": "0.1.0",
+    "reason": "Repeated successful retries for flaky tests."
+  },
+  "createdAt": "2026-04-23T19:30:01.000Z"
+}

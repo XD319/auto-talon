@@ -5,6 +5,7 @@ import { ApprovalService } from "../approvals/approval-service.js";
 import { AuditService } from "../audit/audit-service.js";
 import { ExperienceCollector } from "../experience/experience-collector.js";
 import { ExperiencePlane } from "../experience/experience-plane.js";
+import { PromotionAdvisor } from "../experience/promotion/promotion-advisor.js";
 import { MemoryPlane } from "../memory/memory-plane.js";
 import { CompactTriggerPolicy } from "../memory/compact-policy.js";
 import { DeterministicCompactSummarizer, ProviderSubagentSummarizer } from "../memory/compact-summarizer.js";
@@ -23,6 +24,7 @@ import {
 } from "../providers/index.js";
 import { SandboxService } from "../sandbox/sandbox-service.js";
 import { SkillContextService, SkillDraftManager, SkillRegistry } from "../skills/index.js";
+import { SkillVersionRegistry } from "../skills/versioning/index.js";
 import { StorageManager } from "../storage/database.js";
 import { migrateConfigFiles } from "../storage/config-migration.js";
 import { TraceService } from "../tracing/trace-service.js";
@@ -74,6 +76,14 @@ export interface AppConfig {
     budgetRatio: number;
     maxCandidatesPerScope: number;
   };
+  promotion: {
+    enabled: boolean;
+    minSuccessCount: number;
+    minSuccessRate: number;
+    minStability: number;
+    maxHumanJudgmentWeight: number;
+    riskDenyKeywords: string[];
+  };
   provider: ResolvedProviderConfig;
   runtimeVersion: string;
   runtimeConfigPath: string;
@@ -110,6 +120,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     defaultTimeoutMs: runtimeConfig.defaultTimeoutMs,
     compact: runtimeConfig.compact,
     recall: runtimeConfig.recall,
+    promotion: runtimeConfig.promotion,
     provider,
     runtimeVersion: "0.1.0",
     runtimeConfigPath: runtimeConfig.configPath,
@@ -210,7 +221,10 @@ export function createApplication(
   });
   const mcpClientManager = new McpClientManager(config.workspaceRoot);
   const mcpTools = mcpClientManager.discover();
+  const skillVersionRegistry = new SkillVersionRegistry(config.workspaceRoot);
   const skillDraftManager = new SkillDraftManager({
+    auditService,
+    skillVersionRegistry,
     workspaceRoot: config.workspaceRoot
   });
   const skillContextService = new SkillContextService({
@@ -260,6 +274,15 @@ export function createApplication(
     traceService
   });
   experienceCollector.start();
+  const promotionAdvisor = new PromotionAdvisor({
+    auditService,
+    config: config.promotion,
+    experiencePlane,
+    skillDraftManager,
+    skillVersionRegistry,
+    traceService
+  });
+  promotionAdvisor.start();
   const recallBudgetPolicy = new RecallBudgetPolicy({
     budgetRatio: config.recall.budgetRatio
   });
@@ -454,6 +477,7 @@ export function createApplication(
       experienceCollector.stop();
       inboxCollector.stop();
       commitmentCollector.stop();
+      promotionAdvisor.stop();
       service?.stopScheduler();
       void mcpClientManager.close();
       storage.close();

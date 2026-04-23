@@ -1,0 +1,16 @@
+{
+  "auditId": "audit-skill-rollback-001",
+  "taskId": "skill-admin",
+  "toolCallId": null,
+  "approvalId": null,
+  "actor": "skill.draft.manager",
+  "action": "skill_rolled_back",
+  "outcome": "succeeded",
+  "summary": "Skill project:experience/retry_flaky_tests rolled back",
+  "payload": {
+    "skillId": "project:experience/retry_flaky_tests",
+    "reason": "Regression in test stability.",
+    "version": "0.1.0"
+  },
+  "createdAt": "2026-04-23T20:00:01.000Z"
+}

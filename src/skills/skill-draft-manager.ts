@@ -1,16 +1,22 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { parseSkillMarkdown } from "./skill-asset.js";
+import type { AuditService } from "../audit/audit-service.js";
+import type { SkillVersionRegistry } from "./versioning/skill-version-registry.js";
 import type {
   ExperienceRecord,
+  PromotionAdvice,
   SkillCandidateGroup,
   SkillDraftRecord,
-  SkillFrontmatter
+  SkillFrontmatter,
+  SkillVersionEntry
 } from "../types/index.js";
 
 export interface SkillDraftManagerOptions {
   workspaceRoot: string;
+  auditService?: AuditService;
+  skillVersionRegistry?: SkillVersionRegistry;
 }
 
 export interface CreateSkillDraftOptions {
@@ -22,11 +28,15 @@ export class SkillDraftManager {
   private readonly workspaceRoot: string;
   private readonly draftsRoot: string;
   private readonly projectSkillsRoot: string;
+  private readonly auditService: AuditService | undefined;
+  private readonly skillVersionRegistry: SkillVersionRegistry | undefined;
 
   public constructor(options: SkillDraftManagerOptions) {
     this.workspaceRoot = resolve(options.workspaceRoot);
     this.draftsRoot = join(this.workspaceRoot, ".auto-talon", "skill-drafts");
     this.projectSkillsRoot = join(this.workspaceRoot, ".auto-talon", "skills");
+    this.auditService = options.auditService;
+    this.skillVersionRegistry = options.skillVersionRegistry;
   }
 
   public createDraftFromExperience(
@@ -74,6 +84,32 @@ export class SkillDraftManager {
       rootPath,
       sourceExperienceIds: experiences.map((experience) => experience.experienceId),
       targetSkillId: `project:${namespace}/${skillName}`
+    };
+  }
+
+  public createDraftFromAdvice(
+    advice: PromotionAdvice,
+    versionMetadata: { version: string; previousVersion: string | null }
+  ): SkillDraftRecord {
+    const draftId = `${advice.namespace}__${advice.skillName}__${Date.now().toString(36)}`;
+    const rootPath = join(this.draftsRoot, draftId);
+    const draftPath = join(rootPath, "SKILL.md");
+    if (existsSync(rootPath)) {
+      throw new Error(`Skill draft already exists: ${rootPath}`);
+    }
+
+    mkdirSync(rootPath, { recursive: true });
+    for (const directoryName of ["references", "templates", "scripts", "assets"]) {
+      mkdirSync(join(rootPath, directoryName), { recursive: true });
+    }
+
+    writeFileSync(draftPath, renderAdviceSkillDraftMarkdown(advice, versionMetadata), "utf8");
+    return {
+      draftId,
+      draftPath,
+      rootPath,
+      sourceExperienceIds: advice.sourceExperienceIds,
+      targetSkillId: `project:${advice.namespace}/${advice.skillName}`
     };
   }
 
@@ -149,6 +185,54 @@ export class SkillDraftManager {
       targetSkillId: `project:${frontmatter.namespace}/${frontmatter.name}`
     };
   }
+
+  public rollbackPromotion(skillId: string, reason: string): SkillVersionEntry {
+    const parts = parseSkillId(skillId);
+    const targetRoot = join(this.projectSkillsRoot, parts.namespace, parts.name);
+    if (!existsSync(targetRoot)) {
+      throw new Error(`Skill not found for rollback: ${skillId}`);
+    }
+    const current = this.skillVersionRegistry?.currentVersion(skillId);
+    const previousVersion = current?.previousVersion ?? "0.1.0";
+    rmSync(targetRoot, { force: true, recursive: true });
+    const rollbackEntry = this.skillVersionRegistry?.recordRollback({
+      fromVersion: current?.version ?? previousVersion,
+      reason,
+      skillId,
+      toVersion: previousVersion
+    });
+    this.auditService?.record({
+      action: "skill_rolled_back",
+      approvalId: null,
+      actor: "skill.draft.manager",
+      outcome: "succeeded",
+      payload: {
+        reason,
+        skillId,
+        version: rollbackEntry?.version ?? previousVersion
+      },
+      summary: `Skill ${skillId} rolled back`,
+      taskId: "skill-admin",
+      toolCallId: null
+    });
+    return (
+      rollbackEntry ?? {
+        action: "rollback",
+        createdAt: new Date().toISOString(),
+        draftId: null,
+        metadata: {},
+        previousVersion: current?.version ?? null,
+        reason,
+        skillId,
+        sourceExperienceIds: [],
+        version: previousVersion
+      }
+    );
+  }
+
+  public listVersions(skillId: string): SkillVersionEntry[] {
+    return this.skillVersionRegistry?.listVersions(skillId) ?? [];
+  }
 }
 
 function renderSkillDraftMarkdown(
@@ -203,6 +287,70 @@ function renderSkillDraftMarkdown(
   return `---\n${JSON.stringify(frontmatter, null, 2)}\n---\n${body}`;
 }
 
+function renderAdviceSkillDraftMarkdown(
+  advice: PromotionAdvice,
+  versionMetadata: { version: string; previousVersion: string | null }
+): string {
+  const frontmatter: SkillFrontmatter = {
+    category: advice.category,
+    description: advice.description,
+    disabled: false,
+    metadata: {
+      promotion: {
+        previousVersion: versionMetadata.previousVersion,
+        rationale: advice.rationale,
+        signals: advice.signals,
+        sourceExperienceIds: advice.sourceExperienceIds,
+        version: versionMetadata.version
+      },
+      sourceExperienceIds: advice.sourceExperienceIds
+    },
+    name: advice.skillName,
+    namespace: advice.namespace,
+    platforms: ["any"],
+    prerequisites: {
+      commands: [],
+      credentials: [],
+      env: [],
+      notes: []
+    },
+    relatedSkills: [],
+    tags: [],
+    version: versionMetadata.version
+  };
+
+  const body = [
+    `# ${advice.title}`,
+    "",
+    "## Summary",
+    advice.description,
+    "",
+    "## Applicability",
+    ...advice.applicability.map((item) => `- ${item}`),
+    "",
+    "## Anti-patterns",
+    ...advice.antiPatterns.map((item) => `- ${item}`),
+    "",
+    "## Risks",
+    ...advice.risks.map((item) => `- ${item}`),
+    "",
+    "## Examples",
+    ...advice.examples.flatMap((example, index) => [
+      `### Example ${index + 1}`,
+      `- Input: ${example.input}`,
+      `- Output: ${example.output}`,
+      ""
+    ]),
+    "## Rollback",
+    "Use `talon skill rollback <skill-id> --reason <text>` to revert this promotion.",
+    "",
+    "## Rationale",
+    advice.rationale,
+    ""
+  ].join("\n");
+  return `---\n${JSON.stringify(frontmatter, null, 2)}\n---\n${body}`;
+}
+
 function assertExperiencePromotable(experience: ExperienceRecord): void {
   if (experience.status !== "accepted" && experience.status !== "promoted") {
     throw new Error(`Experience ${experience.experienceId} must be accepted or promoted before skill draft creation.`);
@@ -249,4 +397,18 @@ function assertWithinRoot(candidatePath: string, rootPath: string): void {
   if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
     throw new Error(`Path ${candidate} is outside root ${root}.`);
   }
+}
+
+function parseSkillId(skillId: string): { namespace: string; name: string } {
+  if (!skillId.startsWith("project:")) {
+    throw new Error(`Only project skills can be rolled back: ${skillId}`);
+  }
+  const raw = skillId.slice("project:".length);
+  const split = raw.split("/");
+  const namespace = split[0];
+  const name = split[1];
+  if (namespace === undefined || name === undefined) {
+    throw new Error(`Invalid skill id: ${skillId}`);
+  }
+  return { name, namespace };
 }

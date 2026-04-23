@@ -66,6 +66,7 @@ export const TRACE_EVENT_TYPES = [
   "experience_captured",
   "experience_reviewed",
   "experience_promoted",
+  "skill_promotion_suggested",
   "experience_recall_ranked",
   "reviewer_trace",
   "inbox_item_created",
@@ -488,6 +489,20 @@ export interface ExperiencePromotedPayload extends JsonObject {
   promotedMemoryId: string | null;
 }
 
+export interface SkillPromotionSuggestedPayload extends JsonObject {
+  draftId: string;
+  targetSkillId: string;
+  version: string;
+  previousVersion: string | null;
+  sourceExperienceIds: string[];
+  successCount: number;
+  successRate: number;
+  stability: number;
+  riskLevel: "low" | "medium" | "high";
+  humanJudgmentWeight: number;
+  reasons: string[];
+}
+
 export interface ExperienceRecallRankedPayload extends JsonObject {
   query: string;
   selectedExperienceIds: string[];
@@ -663,6 +678,7 @@ export type TraceEvent =
   | TraceEventBase<"experience_captured", ExperienceCapturedPayload>
   | TraceEventBase<"experience_reviewed", ExperienceReviewedPayload>
   | TraceEventBase<"experience_promoted", ExperiencePromotedPayload>
+  | TraceEventBase<"skill_promotion_suggested", SkillPromotionSuggestedPayload>
   | TraceEventBase<"experience_recall_ranked", ExperienceRecallRankedPayload>
   | TraceEventBase<"reviewer_trace", ReviewerTracePayload>
   | TraceEventBase<"inbox_item_created", InboxItemCreatedPayload>

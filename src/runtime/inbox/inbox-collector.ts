@@ -116,6 +116,22 @@ export class InboxCollector {
           });
         }
         return;
+      case "skill_promotion_suggested":
+        this.dependencies.inboxService.append({
+          actionHint:
+            `talon skill approve ${event.payload.draftId} | ` +
+            `talon skill reject ${event.payload.draftId} | ` +
+            `talon skill rollback ${event.payload.targetSkillId} --reason "<text>"`,
+          category: "skill_promotion",
+          dedupKey: `skill_promotion_suggested:${event.payload.draftId}`,
+          severity: "action_required",
+          sourceTraceId: event.eventId,
+          summary: `Suggested promotion for ${event.payload.targetSkillId} (${event.payload.version})`,
+          taskId: event.taskId,
+          title: "Skill promotion requires review",
+          userId: this.resolveUserId(event.taskId)
+        });
+        return;
       case "schedule_run_finished":
         if (event.payload.status !== "completed") {
           return;

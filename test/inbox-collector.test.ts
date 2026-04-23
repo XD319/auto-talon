@@ -94,12 +94,37 @@ describe("inbox collector", () => {
         summary: "commitment blocked",
         taskId: "task-1"
       });
+      traceService.record({
+        actor: "promotion.advisor",
+        eventType: "skill_promotion_suggested",
+        payload: {
+          draftId: "draft-1",
+          humanJudgmentWeight: 0.2,
+          previousVersion: null,
+          reasons: ["success_count=3"],
+          riskLevel: "low",
+          sourceExperienceIds: ["exp-1", "exp-2", "exp-3"],
+          stability: 0.8,
+          successCount: 3,
+          successRate: 0.9,
+          targetSkillId: "project:experience/retry_flaky_tests",
+          version: "0.1.0"
+        },
+        stage: "memory",
+        summary: "skill promotion suggested",
+        taskId: "task-1"
+      });
       collector.stop();
 
       const items = storage.inbox.list({ userId: "u1" });
       expect(items.some((item) => item.category === "approval_requested")).toBe(true);
       expect(items.some((item) => item.category === "task_completed")).toBe(true);
       expect(items.some((item) => item.category === "task_blocked")).toBe(true);
+      expect(
+        items.some(
+          (item) => item.category === "skill_promotion" && item.severity === "action_required"
+        )
+      ).toBe(true);
     } finally {
       storage.close();
     }

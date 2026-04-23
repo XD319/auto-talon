@@ -68,3 +68,9 @@ The dashboard includes an `experience` panel with captured records for the selec
 
 - `experience_ref` is a read-only layer exposed by `talon memory list/show`.
 - Experience entries remain out of prompt recall until they are explicitly promoted.
+
+## Auto Promotion To Skills
+
+Experience auto-promotion is supported through `PromotionAdvisor`, which proposes draft skills after repeated successful and low-risk patterns are detected.
+
+See `docs/skill-promotion.md` for thresholds, versioning, inbox workflow, and rollback behavior.
