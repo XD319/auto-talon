@@ -28,3 +28,4 @@ SQLite runtime schema now includes thread continuity tables:
 - `threads` for first-class thread/session containers
 - `thread_runs` for each task run linked to a thread
 - `thread_lineage` for branch/compress/archive lineage events
+- `thread_snapshots` for structured compact/resume state (goal, open loops, blocked reason, next actions, memory links, capabilities)

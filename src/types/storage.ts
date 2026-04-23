@@ -10,6 +10,7 @@ import type {
   ThreadStatus,
   ThreadUpdatePatch
 } from "./thread.js";
+import type { ThreadSnapshotDraft, ThreadSnapshotRecord } from "./thread-snapshot.js";
 import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./approval.js";
 import type { AuditLogDraft, AuditLogRecord } from "./audit.js";
 import type { ExecutionCheckpointRecord } from "./checkpoint.js";
@@ -72,6 +73,13 @@ export interface ThreadRunRepository {
 export interface ThreadLineageRepository {
   append(record: ThreadLineageDraft): ThreadLineageRecord;
   listByThreadId(threadId: string): ThreadLineageRecord[];
+}
+
+export interface ThreadSnapshotRepository {
+  create(record: ThreadSnapshotDraft): ThreadSnapshotRecord;
+  findById(snapshotId: string): ThreadSnapshotRecord | null;
+  findLatestByThread(threadId: string): ThreadSnapshotRecord | null;
+  listByThread(threadId: string): ThreadSnapshotRecord[];
 }
 
 export interface TraceRepository {

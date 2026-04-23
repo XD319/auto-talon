@@ -23,6 +23,8 @@ export class ResumePacketBuilder {
       metadata: {
         ...(overrides?.metadata ?? {}),
         threadResume: {
+          contextMessages: projection.messages,
+          memoryContext: projection.memoryContext,
           projectedMessageCount: projection.messages.length
         }
       },

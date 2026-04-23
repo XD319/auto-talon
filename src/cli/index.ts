@@ -56,6 +56,8 @@ import {
   formatTaskTimeline,
   formatThreadDetail,
   formatThreadList,
+  formatThreadSnapshot,
+  formatThreadSnapshotList,
   formatTrace,
   formatTraceContextDebug,
   summarizeAudit,
@@ -191,6 +193,34 @@ export async function main(argv = process.argv): Promise<void> {
       handle.close();
     }
   });
+  threadCommand
+    .command("snapshots")
+    .argument("<thread_id>", "Thread identifier")
+    .action((threadId: string) => {
+      const handle = createApplication(process.cwd());
+      try {
+        console.log(formatThreadSnapshotList(handle.service.listThreadSnapshots(threadId)));
+      } finally {
+        handle.close();
+      }
+    });
+  threadCommand
+    .command("snapshot")
+    .argument("<snapshot_id>", "Snapshot identifier")
+    .action((snapshotId: string) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const snapshot = handle.service.showThreadSnapshot(snapshotId);
+        if (snapshot === null) {
+          console.error(`Thread snapshot ${snapshotId} not found.`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(formatThreadSnapshot(snapshot));
+      } finally {
+        handle.close();
+      }
+    });
 
   taskCommand.command("list").option("--json", "Print JSON").action((commandOptions: { json?: boolean }) => {
     const handle = createApplication(process.cwd());

@@ -19,4 +19,5 @@ export * from "./storage.js";
 export * from "./task.js";
 export * from "./tool.js";
 export * from "./thread.js";
+export * from "./thread-snapshot.js";
 export * from "./trace.js";

@@ -4,8 +4,12 @@
 flowchart LR
   CLI[CLIEntry] --> Bootstrap[createApplication]
   Bootstrap --> ThreadSvc[ThreadService]
+  Bootstrap --> SnapshotSvc[SessionSnapshotService]
+  Bootstrap --> CtxCompactor[ContextCompactor]
   Bootstrap --> Kernel[ExecutionKernel]
   ThreadSvc --> Kernel
+  SnapshotSvc --> Kernel
+  CtxCompactor --> Kernel
   Kernel --> Tools[ToolOrchestrator]
   Tools --> Policy[PolicyEngine]
   Kernel --> Trace[TraceService]
@@ -21,3 +25,4 @@ Core data path:
 3. Provider loop executes with policy + tool orchestration.
 4. Trace/audit/memory/experience are persisted in SQLite.
 5. Threads own cross-run continuity; each task run is linked into thread lineage.
+6. Compaction emits structured `thread_snapshots`, and resume injects snapshot-derived goal/open-loop context.

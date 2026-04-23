@@ -17,6 +17,11 @@ export function runMigrations(database: DatabaseSync): void {
       description: "add thread first-class tables",
       up: migrateV3,
       version: 3
+    },
+    {
+      description: "add thread snapshots table",
+      up: migrateV4,
+      version: 4
     }
   ];
 
@@ -321,6 +326,30 @@ function migrateV3(database: DatabaseSync): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_thread_lineage_thread ON thread_lineage(thread_id, created_at);
+  `);
+}
+
+function migrateV4(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS thread_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      run_id TEXT,
+      task_id TEXT,
+      trigger TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      open_loops_json TEXT NOT NULL,
+      blocked_reason TEXT,
+      next_actions_json TEXT NOT NULL,
+      active_memory_ids_json TEXT NOT NULL,
+      tool_capability_summary_json TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thread_snapshots_thread
+      ON thread_snapshots(thread_id, created_at DESC);
   `);
 }
 

@@ -8,6 +8,7 @@ import {
 } from "./context-assembler.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
+import { ContextCompactor, SessionSnapshotService } from "./context/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
 import { ProviderError } from "../providers/index.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
@@ -46,6 +47,8 @@ export interface ExecutionKernelDependencies {
   taskRepository: TaskRepository;
   threadRunRepository: ThreadRunRepository;
   threadLineageRepository: ThreadLineageRepository;
+  contextCompactor: ContextCompactor;
+  sessionSnapshotService: SessionSnapshotService;
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
   workflow: WorkflowRuntimeConfig;
@@ -163,6 +166,11 @@ export class ExecutionKernel {
         profile,
         repoMap?.summary
       );
+      const resumeContextMessages = readThreadResumeMessages(options.metadata);
+      if (resumeContextMessages.length > 0) {
+        injectResumeContextMessages(messages, resumeContextMessages);
+      }
+      const resumeMemoryContext = readThreadResumeMemoryContext(options.metadata);
       if (repoMap !== null) {
         this.dependencies.traceService.record({
           actor: "runtime.repo_map",
@@ -183,7 +191,7 @@ export class ExecutionKernel {
         cwd: options.cwd,
         managedAbortController,
         maxIterations: options.maxIterations,
-        memoryContext: [...memoryContext.fragments, ...skillContext],
+        memoryContext: [...memoryContext.fragments, ...resumeMemoryContext, ...skillContext],
         memoryRecall: memoryContext.recall,
         messages,
         ...(options.onAssistantTextDelta !== undefined
@@ -731,6 +739,7 @@ export class ExecutionKernel {
         toolCallThreshold: this.dependencies.compact.toolCallThreshold
       });
       if (compacted.triggered) {
+        const preCompactMessages = [...messages];
         if (task.threadId !== null && task.threadId !== undefined) {
           const latestRun = this.dependencies.threadRunRepository.findLatestByThreadId(task.threadId);
           this.dependencies.threadLineageRepository.append({
@@ -743,6 +752,29 @@ export class ExecutionKernel {
             sourceRunId: latestRun?.runId ?? null,
             targetRunId: latestRun?.runId ?? null,
             threadId: task.threadId
+          });
+          const snapshotDraft = this.dependencies.contextCompactor.buildSnapshot({
+            availableTools,
+            compact: {
+              maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
+              messages: preCompactMessages,
+              pendingToolCalls,
+              reason: compacted.reason,
+              sessionScopeKey: task.taskId,
+              taskId: task.taskId,
+              tokenEstimate: estimateTokenCount(preCompactMessages),
+              tokenThreshold: this.dependencies.compact.tokenThreshold,
+              toolCallCount,
+              toolCallThreshold: this.dependencies.compact.toolCallThreshold
+            },
+            memoryContext: state.memoryContext,
+            task
+          });
+          this.dependencies.sessionSnapshotService.createSnapshot({
+            ...snapshotDraft,
+            runId: latestRun?.runId ?? null,
+            threadId: task.threadId,
+            trigger: "compact"
           });
         }
         const initialSystemPrompt =
@@ -1085,6 +1117,60 @@ function summarizeToolOutput(output: unknown): string {
     return `output=${output.description ?? "symbol"}`;
   }
   return "output=[unsupported]";
+}
+
+function readThreadResumeMessages(metadata: RuntimeRunOptions["metadata"]): ConversationMessage[] {
+  if (metadata === undefined || metadata === null) {
+    return [];
+  }
+  const threadResume = (metadata as Record<string, unknown>).threadResume;
+  if (typeof threadResume !== "object" || threadResume === null) {
+    return [];
+  }
+  const contextMessages = (threadResume as Record<string, unknown>).contextMessages;
+  if (!Array.isArray(contextMessages)) {
+    return [];
+  }
+  return contextMessages.filter(
+    (message): message is ConversationMessage =>
+      typeof message === "object" &&
+      message !== null &&
+      typeof (message as { role?: unknown }).role === "string" &&
+      typeof (message as { content?: unknown }).content === "string"
+  );
+}
+
+function readThreadResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]): ContextFragment[] {
+  if (metadata === undefined || metadata === null) {
+    return [];
+  }
+  const threadResume = (metadata as Record<string, unknown>).threadResume;
+  if (typeof threadResume !== "object" || threadResume === null) {
+    return [];
+  }
+  const memoryContext = (threadResume as Record<string, unknown>).memoryContext;
+  if (!Array.isArray(memoryContext)) {
+    return [];
+  }
+  return memoryContext.filter(
+    (fragment): fragment is ContextFragment =>
+      typeof fragment === "object" &&
+      fragment !== null &&
+      typeof (fragment as { memoryId?: unknown }).memoryId === "string" &&
+      typeof (fragment as { text?: unknown }).text === "string"
+  );
+}
+
+function injectResumeContextMessages(
+  messages: ConversationMessage[],
+  resumeMessages: ConversationMessage[]
+): void {
+  if (resumeMessages.length === 0) {
+    return;
+  }
+  const firstSystemIndex = messages.findIndex((message) => message.role === "system");
+  const insertAt = firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0;
+  messages.splice(insertAt, 0, ...resumeMessages);
 }
 
 function estimateTokenCount(messages: ConversationMessage[]): number {

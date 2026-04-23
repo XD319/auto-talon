@@ -14,6 +14,7 @@ import type {
   ThreadLineageRecord,
   ThreadRecord,
   ThreadRunRecord,
+  ThreadSnapshotRecord,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -74,6 +75,36 @@ export function formatThreadDetail(
       ? "Lineage: none"
       : ["Lineage:", ...lineage.map((entry) => `- ${entry.createdAt} ${entry.eventType}`)].join("\n");
   return `${header}\n${runsSection}\n${lineageSection}`;
+}
+
+export function formatThreadSnapshotList(snapshots: ThreadSnapshotRecord[]): string {
+  if (snapshots.length === 0) {
+    return "No thread snapshots found.";
+  }
+  return snapshots
+    .map(
+      (snapshot) =>
+        `${snapshot.snapshotId} | ${snapshot.trigger} | ${snapshot.createdAt} | goal=${snapshot.goal.slice(0, 80)}`
+    )
+    .join("\n");
+}
+
+export function formatThreadSnapshot(snapshot: ThreadSnapshotRecord): string {
+  return [
+    `Snapshot ID: ${snapshot.snapshotId}`,
+    `Thread ID: ${snapshot.threadId}`,
+    `Run ID: ${snapshot.runId ?? "-"}`,
+    `Task ID: ${snapshot.taskId ?? "-"}`,
+    `Trigger: ${snapshot.trigger}`,
+    `Created At: ${snapshot.createdAt}`,
+    `Goal: ${snapshot.goal}`,
+    `Open Loops: ${snapshot.openLoops.join(", ") || "-"}`,
+    `Blocked: ${snapshot.blockedReason ?? "-"}`,
+    `Next Actions: ${snapshot.nextActions.join(", ") || "-"}`,
+    `Active Memory IDs: ${snapshot.activeMemoryIds.join(", ") || "-"}`,
+    `Tool Capabilities: ${snapshot.toolCapabilitySummary.join(", ") || "-"}`,
+    `Summary: ${snapshot.summary}`
+  ].join("\n");
 }
 
 export function formatTask(
@@ -160,7 +191,8 @@ export function formatTraceContextDebug(report: ContextTraceDebugReport): string
       profile: report.task.agentProfileId,
       contextAssembly: report.contextAssembly,
       memoryRecall: report.memoryRecall,
-      reviewerTrace: report.reviewerTrace
+      reviewerTrace: report.reviewerTrace,
+      latestThreadSnapshot: report.latestThreadSnapshot
     },
     null,
     2

@@ -39,6 +39,7 @@ import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
 
 import { AgentApplicationService } from "./application-service.js";
+import { ContextCompactor, SessionSnapshotService } from "./context/index.js";
 import { ExecutionKernel } from "./execution-kernel.js";
 import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./threads/index.js";
 import { resolveRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
@@ -239,16 +240,23 @@ export function createApplication(
     traceService
   });
   experienceCollector.start();
+  const contextCompactor = new ContextCompactor();
+  const sessionSnapshotService = new SessionSnapshotService({
+    snapshotRepository: storage.threadSnapshots,
+    traceService
+  });
 
   const executionKernel = new ExecutionKernel({
     compact: config.compact,
     agentProfileRegistry,
     executionCheckpointRepository: storage.checkpoints,
+    contextCompactor,
     memoryPlane,
     provider,
     runMetadataRepository: storage.runMetadata,
     runtimeVersion: config.runtimeVersion,
     skillContextService,
+    sessionSnapshotService,
     taskRepository: storage.tasks,
     threadLineageRepository: storage.threadLineage,
     threadRunRepository: storage.threadRuns,
@@ -263,6 +271,8 @@ export function createApplication(
     threadRunRepository: storage.threadRuns
   });
   const threadStateProjector = new ThreadStateProjector({
+    memoryRepository: storage.memories,
+    snapshotService: sessionSnapshotService,
     threadRunRepository: storage.threadRuns
   });
   const resumePacketBuilder = new ResumePacketBuilder({
@@ -290,6 +300,8 @@ export function createApplication(
     findThread: (threadId) => storage.threads.findById(threadId),
     listThreads: () => storage.threads.list(),
     listThreadRuns: (threadId) => storage.threadRuns.listByThreadId(threadId),
+    listThreadSnapshots: (threadId) => storage.threadSnapshots.listByThread(threadId),
+    findThreadSnapshot: (snapshotId) => storage.threadSnapshots.findById(snapshotId),
     listThreadLineage: (threadId) => storage.threadLineage.listByThreadId(threadId),
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),

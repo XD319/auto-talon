@@ -32,6 +32,7 @@ import type {
   ThreadLineageRecord,
   ThreadRecord,
   ThreadRunRecord,
+  ThreadSnapshotRecord,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -112,6 +113,9 @@ export interface ContextTraceDebugReport {
   reviewerTrace:
     | Extract<TraceEvent, { eventType: "reviewer_trace" }>["payload"]
     | null;
+  latestThreadSnapshot:
+    | Extract<TraceEvent, { eventType: "thread_snapshot_created" }>["payload"]
+    | null;
   task: TaskRecord | null;
 }
 
@@ -138,6 +142,8 @@ export interface RuntimeReadModel {
   listTasks(): TaskRecord[];
   listThreadLineage(threadId: string): ThreadLineageRecord[];
   listThreadRuns(threadId: string): ThreadRunRecord[];
+  listThreadSnapshots(threadId: string): ThreadSnapshotRecord[];
+  findThreadSnapshot(snapshotId: string): ThreadSnapshotRecord | null;
   listThreads(): ThreadRecord[];
   findThread(threadId: string): ThreadRecord | null;
   listToolCalls(taskId: string): ToolCallRecord[];
@@ -268,6 +274,14 @@ export class AgentApplicationService {
 
   public archiveThread(threadId: string): ThreadRecord {
     return this.dependencies.threadService.archiveThread(threadId);
+  }
+
+  public listThreadSnapshots(threadId: string): ThreadSnapshotRecord[] {
+    return this.dependencies.listThreadSnapshots(threadId);
+  }
+
+  public showThreadSnapshot(snapshotId: string): ThreadSnapshotRecord | null {
+    return this.dependencies.findThreadSnapshot(snapshotId);
   }
 
   public async continueThread(
@@ -612,9 +626,16 @@ export class AgentApplicationService {
         (event): event is Extract<TraceEvent, { eventType: "reviewer_trace" }> =>
           event.eventType === "reviewer_trace"
       )?.payload ?? null;
+    const latestThreadSnapshot = [...trace]
+      .reverse()
+      .find(
+        (event): event is Extract<TraceEvent, { eventType: "thread_snapshot_created" }> =>
+          event.eventType === "thread_snapshot_created"
+      )?.payload ?? null;
 
     return {
       contextAssembly,
+      latestThreadSnapshot,
       memoryRecall,
       reviewerTrace,
       task

@@ -52,6 +52,7 @@ export const TRACE_EVENT_TYPES = [
   "memory_recalled",
   "memory_written",
   "session_compacted",
+  "thread_snapshot_created",
   "memory_snapshot_created",
   "experience_captured",
   "experience_reviewed",
@@ -356,6 +357,13 @@ export interface SessionCompactedPayload extends JsonObject {
   summarizerId?: string;
 }
 
+export interface ThreadSnapshotCreatedPayload extends JsonObject {
+  snapshotId: string;
+  threadId: string;
+  trigger: "compact" | "manual" | "resume";
+  goal: string;
+}
+
 export interface MemorySnapshotCreatedPayload extends JsonObject {
   snapshotId: string;
   scope: MemoryScope;
@@ -455,6 +463,7 @@ export type TraceEvent =
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"memory_written", MemoryWrittenPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
+  | TraceEventBase<"thread_snapshot_created", ThreadSnapshotCreatedPayload>
   | TraceEventBase<"memory_snapshot_created", MemorySnapshotCreatedPayload>
   | TraceEventBase<"experience_captured", ExperienceCapturedPayload>
   | TraceEventBase<"experience_reviewed", ExperienceReviewedPayload>
