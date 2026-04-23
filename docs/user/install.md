@@ -11,7 +11,7 @@ From npm:
 
 ```bash
 npm install -g auto-talon
-agent init --yes
+talon init --yes
 ```
 
 From source:
@@ -31,6 +31,6 @@ Or use scripts:
 ## Verify
 
 ```bash
-agent version
-agent doctor
+talon version
+talon doctor
 ```

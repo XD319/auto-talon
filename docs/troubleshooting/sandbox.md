@@ -7,5 +7,5 @@
 
 Checks:
 
-- `agent sandbox`
-- `agent doctor`
+- `talon sandbox`
+- `talon doctor`

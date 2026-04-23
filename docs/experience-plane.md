@@ -52,11 +52,11 @@ The collector is deliberately separate from the kernel so experience extraction 
 
 ## CLI
 
-- `agent experience list`
-- `agent experience show <experience_id>`
-- `agent experience review <experience_id> <accepted|rejected|stale>`
-- `agent experience promote <experience_id> <project_memory|agent_memory|skill_candidate>`
-- `agent experience search <query>`
+- `talon experience list`
+- `talon experience show <experience_id>`
+- `talon experience review <experience_id> <accepted|rejected|stale>`
+- `talon experience promote <experience_id> <project_memory|agent_memory|skill_candidate>`
+- `talon experience search <query>`
 
 List and search support filters for type, source, status, value score, task id, reviewer, scope, and scope key.
 

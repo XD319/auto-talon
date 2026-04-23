@@ -9,10 +9,10 @@ Local commands:
 
 Smoke/eval:
 
-- `agent eval run`
-- `agent eval smoke`
-- `agent eval beta`
-- `agent release check` from the auto-talon repository root
+- `talon eval run`
+- `talon eval smoke`
+- `talon eval beta`
+- `talon release check` from the auto-talon repository root
 
 Fixtures:
 

@@ -14,9 +14,9 @@ Each skill folder contains `SKILL.md` and optional attachments:
 
 Commands:
 
-- `agent skills list`
-- `agent skills view <skill_id> --with references,templates`
-- `agent skills enable <skill_id>`
-- `agent skills disable <skill_id>`
-- `agent skills draft --from-experience <experience_id>`
-- `agent skills promote <draft_id>`
+- `talon skills list`
+- `talon skills view <skill_id> --with references,templates`
+- `talon skills enable <skill_id>`
+- `talon skills disable <skill_id>`
+- `talon skills draft --from-experience <experience_id>`
+- `talon skills promote <draft_id>`

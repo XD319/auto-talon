@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  validateLockfilePolicy,
   validatePackageMetadata,
   validatePackContents,
   validateReleaseRepository
@@ -47,6 +48,24 @@ describe("release checklist helpers", () => {
     expect(validatePackageMetadata(process.cwd())).toEqual({
       details: "public npm metadata present",
       ok: true
+    });
+  });
+
+  it("requires pnpm to be the only repository lockfile", () => {
+    expect(validateLockfilePolicy(process.cwd())).toEqual({
+      details: "pnpm-lock.yaml is the only lockfile",
+      ok: true
+    });
+  });
+
+  it("rejects npm lockfiles in pnpm repositories", () => {
+    const workspace = createTempDir("auto-talon-release-lockfiles-");
+    writeFileSync(join(workspace, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+    writeFileSync(join(workspace, "package-lock.json"), "{}\n", "utf8");
+
+    expect(validateLockfilePolicy(workspace)).toEqual({
+      details: "package-lock.json is not allowed",
+      ok: false
     });
   });
 

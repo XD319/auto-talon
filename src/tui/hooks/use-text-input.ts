@@ -1,6 +1,8 @@
 import React from "react";
 import { useInput } from "ink";
 
+import { readClipboardText } from "../clipboard";
+
 export interface UseTextInputOptions {
   onHistoryNext: () => string | null;
   onHistoryPrevious: () => string | null;
@@ -90,9 +92,9 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
     }
 
     if (key.ctrl && key.shift && input === "v") {
-      void import("clipboardy")
-        .then(async (m) => {
-          const clip = normalizeNewlines(await m.default.read());
+      void readClipboardText()
+        .then((text) => {
+          const clip = normalizeNewlines(text);
           const insertionIndex = cursorIndexRef.current;
           setValue((current) => insertAt(current, insertionIndex, clip));
           setCursorIndex(insertionIndex + clip.length);

@@ -116,9 +116,9 @@ export function ChatTuiApp({
         controller.addSystemMessage(
           [
             "Commands: /help /clear /new /stop /title <name> /history /status /sandbox /rollback <id|last> /cost /context /diff /sessions",
-            "Tip: use `agent tui --mode dashboard` or `agent dashboard` for the observability view.",
+            "Tip: use `talon tui --mode dashboard` or `talon dashboard` for the observability view.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Tab slash-complete | Ctrl+P/N history",
-            "Session files: .auto-talon/sessions/<id>.json | resume: agent tui --resume <id>",
+            "Session files: .auto-talon/sessions/<id>.json | resume: talon tui --resume <id>",
             "Token pricing estimate: AGENT_TOKEN_PRICE_IN_PER_M / AGENT_TOKEN_PRICE_OUT_PER_M (optional)",
             "Transcript scroll uses the terminal buffer; use your terminal scrollbar or mouse wheel."
           ].join("\n")
@@ -198,7 +198,7 @@ export function ChatTuiApp({
       }
 
       if (text === "/dashboard") {
-        controller.addSystemMessage("Open dashboard with: agent tui --mode dashboard (or agent dashboard).");
+        controller.addSystemMessage("Open dashboard with: talon tui --mode dashboard (or talon dashboard).");
         return true;
       }
 

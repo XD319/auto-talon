@@ -53,9 +53,9 @@ Supporting fields include `title`, `content`, `summary`, `keywords`, `scopeKey`,
 
 Minimal review flow:
 
-- `agent memory review <memory_id> verified`
-- `agent memory review <memory_id> stale`
-- `agent memory review <memory_id> rejected`
+- `talon memory review <memory_id> verified`
+- `talon memory review <memory_id> stale`
+- `talon memory review <memory_id> rejected`
 
 ## Selective Recall
 
@@ -69,7 +69,7 @@ Recall does not inject all stored memory. The memory plane:
 3. explains each score with source metadata
 4. applies the context policy filter before any fragment enters model context
 
-Trace records a `memory_recalled` event so `agent trace <task_id>` can show what was selected or blocked.
+Trace records a `memory_recalled` event so `talon trace <task_id>` can show what was selected or blocked.
 
 ## Session Compact
 
@@ -85,8 +85,8 @@ without replaying the entire conversation back into the prompt.
 
 Snapshots persist lightweight metadata about a memory scope at a point in time.
 
-- Create: `agent memory snapshot create <scope>`
-- Inspect metadata: `agent memory show <scope>`
+- Create: `talon memory snapshot create <scope>`
+- Inspect metadata: `talon memory show <scope>`
 
 Each snapshot stores:
 
@@ -133,7 +133,7 @@ Boundary rules:
 
 ## CLI Surface
 
-- `agent memory list`
-- `agent memory show <scope>`
-- `agent memory snapshot create <scope>`
-- `agent memory review <memory_id> <verified|rejected|stale>`
+- `talon memory list`
+- `talon memory show <scope>`
+- `talon memory snapshot create <scope>`
+- `talon memory review <memory_id> <verified|rejected|stale>`

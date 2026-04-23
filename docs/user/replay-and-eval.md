@@ -3,18 +3,18 @@
 ## Replay
 
 ```bash
-agent replay <task_id>
-agent replay <task_id> --provider mock --from-iteration 2
-agent replay <task_id> --dry-run
+talon replay <task_id>
+talon replay <task_id> --provider mock --from-iteration 2
+talon replay <task_id> --dry-run
 ```
 
 ## Eval
 
 ```bash
-agent eval run
-agent eval run --provider scripted-smoke --explain
-agent eval smoke
-agent eval beta
+talon eval run
+talon eval run --provider scripted-smoke --explain
+talon eval smoke
+talon eval beta
 ```
 
-For auto-talon maintainer release verification, run `agent release check` from the repository root.
+For auto-talon maintainer release verification, run `talon release check` from the repository root.

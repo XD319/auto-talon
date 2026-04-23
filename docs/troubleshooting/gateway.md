@@ -7,6 +7,6 @@
 
 Checks:
 
-- `agent gateway list-adapters`
-- `agent trace <task_id>`
-- `agent audit <task_id>`
+- `talon gateway list-adapters`
+- `talon trace <task_id>`
+- `talon audit <task_id>`

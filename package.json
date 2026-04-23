@@ -18,7 +18,7 @@
     "node": ">=22.5.0"
   },
   "bin": {
-    "agent": "dist/cli/bin.js"
+    "talon": "dist/cli/bin.js"
   },
   "files": [
     "dist/",
@@ -32,11 +32,11 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "npm run lint && npm test && npm run build",
+    "check": "pnpm run lint && pnpm test && pnpm run build",
     "dev": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts",
     "dev:tui": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts tui",
     "dev:dashboard": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts dashboard",
-    "prepack": "npm run build",
+    "prepack": "pnpm run build",
     "release:check": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts release check",
     "setup": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts init --yes",
     "lint": "eslint .",
@@ -50,8 +50,6 @@
     "ink": "^3.2.0",
     "node-html-parser": "^6.1.13",
     "react": "^17.0.2",
-    "react-markdown": "^8.0.7",
-    "remark-gfm": "^3.0.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {

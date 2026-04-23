@@ -16,4 +16,4 @@
 
 1. Create `SKILL.md` in `.auto-talon/skills/<namespace>/<name>/`.
 2. Add optional attachments (`references`, `templates`, `scripts`, `assets`).
-3. Validate via `agent skills list` and `agent skills view`.
+3. Validate via `talon skills list` and `talon skills view`.

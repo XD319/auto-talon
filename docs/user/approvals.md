@@ -4,9 +4,9 @@ High-risk tool operations may require reviewer approval.
 
 CLI:
 
-- `agent approve pending`
-- `agent approve allow <approval_id> --reviewer <id>`
-- `agent approve deny <approval_id> --reviewer <id>`
+- `talon approve pending`
+- `talon approve allow <approval_id> --reviewer <id>`
+- `talon approve deny <approval_id> --reviewer <id>`
 
 TUI shortcuts (when input is empty):
 
@@ -15,5 +15,5 @@ TUI shortcuts (when input is empty):
 
 Audit and trace:
 
-- `agent trace <task_id>`
-- `agent audit <task_id>`
+- `talon trace <task_id>`
+- `talon audit <task_id>`

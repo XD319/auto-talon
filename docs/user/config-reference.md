@@ -14,11 +14,11 @@ All config files live under `.auto-talon/` and include `version`.
 Create defaults with:
 
 ```bash
-agent init --yes
+talon init --yes
 ```
 
 Run validation with:
 
 ```bash
-agent doctor
+talon doctor
 ```

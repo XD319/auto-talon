@@ -47,6 +47,7 @@ export async function runReleaseChecklist(
   const test = runCommand("corepack", ["pnpm", "test"], cwd);
   const build = runCommand("corepack", ["pnpm", "build"], cwd);
   const packageMetadata = validatePackageMetadata(cwd);
+  const lockfiles = validateLockfilePolicy(cwd);
   const pack = runPackDryRun(cwd);
   const packContents = pack.ok
     ? validatePackContents(pack.files)
@@ -78,6 +79,7 @@ export async function runReleaseChecklist(
       existsSync(join(cwd, "scripts", "setup.sh")) && existsSync(join(cwd, "scripts", "setup.ps1")),
       "scripts/setup.sh and scripts/setup.ps1"
     ),
+    toItem("lockfiles", "pnpm is the only repository lockfile", lockfiles.ok, lockfiles.details),
     toItem("package-metadata", "Public npm package metadata is complete", packageMetadata.ok, packageMetadata.details),
     toItem("pack-contents", "npm package includes only release assets", packContents.ok, packContents.details)
   ];
@@ -149,13 +151,27 @@ export function validatePackageMetadata(cwd: string): { details: string; ok: boo
       missing.push(key);
     }
   }
-  if (!hasBinAgent(packageJson)) {
-    missing.push("bin.agent");
+  if (!hasBinTalon(packageJson)) {
+    missing.push("bin.talon");
   }
 
   return {
     details: missing.length === 0 ? "public npm metadata present" : `missing or invalid: ${missing.join(", ")}`,
     ok: missing.length === 0
+  };
+}
+
+export function validateLockfilePolicy(cwd: string): { details: string; ok: boolean } {
+  const hasPnpmLock = existsSync(join(cwd, "pnpm-lock.yaml"));
+  const hasPackageLock = existsSync(join(cwd, "package-lock.json"));
+  const issues = [
+    ...(!hasPnpmLock ? ["missing pnpm-lock.yaml"] : []),
+    ...(hasPackageLock ? ["package-lock.json is not allowed"] : [])
+  ];
+
+  return {
+    details: issues.length === 0 ? "pnpm-lock.yaml is the only lockfile" : issues.join("; "),
+    ok: issues.length === 0
   };
 }
 
@@ -233,12 +249,12 @@ function readPackageJson(cwd: string): Record<string, unknown> | null {
   return JSON.parse(readFileSync(packageJsonPath, "utf8")) as Record<string, unknown>;
 }
 
-function hasBinAgent(packageJson: Record<string, unknown>): boolean {
+function hasBinTalon(packageJson: Record<string, unknown>): boolean {
   const bin = packageJson.bin;
   return (
     typeof bin === "object" &&
     bin !== null &&
-    (bin as Record<string, unknown>).agent === "dist/cli/bin.js"
+    (bin as Record<string, unknown>).talon === "dist/cli/bin.js"
   );
 }
 

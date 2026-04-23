@@ -8,8 +8,8 @@ Installed package:
 
 ```bash
 npm install -g auto-talon
-agent init --yes
-agent run "summarize this repository"
+talon init --yes
+talon run "summarize this repository"
 ```
 
 Source checkout:
@@ -51,4 +51,4 @@ corepack pnpm check
 corepack pnpm dev release check
 ```
 
-`agent release check` is a maintainer release gate for this repository. Use `agent doctor` for user workspace health checks.
+`talon release check` is a maintainer release gate for this repository. Use `talon doctor` for user workspace health checks.

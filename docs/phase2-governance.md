@@ -42,9 +42,9 @@ Runtime lifecycle around approvals:
 
 CLI commands:
 
-- `agent approve pending`
-- `agent approve allow <approval_id>`
-- `agent approve deny <approval_id>`
+- `talon approve pending`
+- `talon approve allow <approval_id>`
+- `talon approve deny <approval_id>`
 
 ## Sandbox
 

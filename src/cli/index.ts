@@ -66,7 +66,7 @@ import type { SkillAttachmentKind } from "../types/skill";
 
 export async function main(argv = process.argv): Promise<void> {
   const program = new Command();
-  program.name("agent").description("Agent Runtime MVP CLI").version("0.1.0");
+  program.name("talon").description("Agent Runtime MVP CLI").version("0.1.0");
 
   program.command("version").description("Show runtime and environment version").action(() => {
     const handle = createApplication(process.cwd());

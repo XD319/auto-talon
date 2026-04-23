@@ -3,13 +3,13 @@
 ## Local webhook
 
 ```bash
-agent gateway serve-webhook --port 7070
+talon gateway serve-webhook --port 7070
 ```
 
 ## Feishu
 
 ```bash
-agent gateway serve-feishu --cwd .
+talon gateway serve-feishu --cwd .
 ```
 
 Configuration files:
@@ -20,5 +20,5 @@ Configuration files:
 Inspect adapters:
 
 ```bash
-agent gateway list-adapters
+talon gateway list-adapters
 ```

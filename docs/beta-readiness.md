@@ -10,7 +10,7 @@ This phase adds the smallest practical mechanism for deciding whether the runtim
 
 ## Replay Baseline
 
-- `agent replay <task_id>` can reconstruct the key execution chain for a historical task.
+- `talon replay <task_id>` can reconstruct the key execution chain for a historical task.
 - Replay can start from a chosen iteration with `--from-iteration`.
 - Replay can use the currently configured provider, or a history-backed mock replay provider with `--provider mock`.
 - Historical trace, tool results, approval flow, and audit entries stay visible in the replay report.
@@ -21,7 +21,7 @@ This phase adds the smallest practical mechanism for deciding whether the runtim
 
 ## Eval Baseline
 
-- `agent eval run` runs the fixed real-task sample set.
+- `talon eval run` runs the fixed real-task sample set.
 - The report must include:
   - provider name
   - model name when trace exposes it
@@ -47,9 +47,9 @@ Before entering the next stage, the runtime should satisfy all of the following:
 
 ## CLI Entrypoints
 
-- `agent replay <task_id> --from-iteration <n> --provider current|mock`
-- `agent eval run --provider scripted-smoke|mock|glm --json --output eval-report.json`
-- `agent eval beta --provider scripted-smoke|mock|glm --min-success-rate 0.8`
+- `talon replay <task_id> --from-iteration <n> --provider current|mock`
+- `talon eval run --provider scripted-smoke|mock|glm --json --output eval-report.json`
+- `talon eval beta --provider scripted-smoke|mock|glm --min-success-rate 0.8`
 
 ## Expected Use
 

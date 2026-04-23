@@ -40,6 +40,6 @@ Or provide:
 
 ## Commands
 
-- `agent gateway serve-feishu --cwd .`
-- `agent gateway serve-feishu --cwd . --local-webhook-port 7070`
-- `agent gateway list-adapters --cwd .`
+- `talon gateway serve-feishu --cwd .`
+- `talon gateway serve-feishu --cwd . --local-webhook-port 7070`
+- `talon gateway list-adapters --cwd .`

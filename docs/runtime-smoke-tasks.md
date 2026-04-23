@@ -21,7 +21,7 @@
 
 执行入口：
 
-- CLI: `agent smoke run`
+- CLI: `talon smoke run`
 - 测试入口：`test/runtime-smoke.test.ts`
 
 批量执行报告至少输出：
