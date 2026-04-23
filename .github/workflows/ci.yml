@@ -42,10 +42,11 @@ jobs:
       - name: Verify Node runtime floor
         if: matrix.mode == 'runtime-floor'
         run: |
-          if pnpm dev version 2>&1 | tee node20-runtime-floor.log; then
+          if pnpm dev version > node20-runtime-floor.log 2>&1; then
             echo "Expected Node 20 to fail with the documented runtime floor."
             exit 1
           fi
+          cat node20-runtime-floor.log
           grep "requires Node.js >=22.5.0" node20-runtime-floor.log
 
       - name: Run verification
