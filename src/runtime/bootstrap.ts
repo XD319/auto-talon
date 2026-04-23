@@ -40,6 +40,7 @@ import { ShellExecutor } from "../tools/shell/shell-executor.js";
 
 import { AgentApplicationService } from "./application-service.js";
 import { ExecutionKernel } from "./execution-kernel.js";
+import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./threads/index.js";
 import { resolveRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
 import { initializeWorkspaceFiles, migrateWorkspaceConfigFiles } from "./workspace-setup.js";
 
@@ -111,6 +112,7 @@ export interface AppRuntimeHandle {
     auditService: AuditService;
     createRunOptions: (taskInput: string, cwd: string) => RuntimeRunOptions;
     skillRegistry: SkillRegistry;
+    threadService: ThreadService;
     toolOrchestrator: ToolOrchestrator;
     traceService: TraceService;
     storage: StorageManager;
@@ -248,10 +250,24 @@ export function createApplication(
     runtimeVersion: config.runtimeVersion,
     skillContextService,
     taskRepository: storage.tasks,
+    threadLineageRepository: storage.threadLineage,
+    threadRunRepository: storage.threadRuns,
     toolOrchestrator,
     traceService,
     workflow: config.workflow,
     workspaceRoot: config.workspaceRoot
+  });
+  const threadService = new ThreadService({
+    threadLineageRepository: storage.threadLineage,
+    threadRepository: storage.threads,
+    threadRunRepository: storage.threadRuns
+  });
+  const threadStateProjector = new ThreadStateProjector({
+    threadRunRepository: storage.threadRuns
+  });
+  const resumePacketBuilder = new ResumePacketBuilder({
+    config,
+    stateProjector: threadStateProjector
   });
 
   const service = new AgentApplicationService({
@@ -271,6 +287,10 @@ export function createApplication(
     approvalService,
     findTask: (taskId) => storage.tasks.findById(taskId),
     listTasks: () => storage.tasks.list(),
+    findThread: (threadId) => storage.threads.findById(threadId),
+    listThreads: () => storage.threads.list(),
+    listThreadRuns: (threadId) => storage.threadRuns.listByThreadId(threadId),
+    listThreadLineage: (threadId) => storage.threadLineage.listByThreadId(threadId),
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
@@ -281,6 +301,8 @@ export function createApplication(
     runtimeConfigPath: config.runtimeConfigPath,
     runtimeConfigSource: config.runtimeConfigSource,
     runtimeVersion: config.runtimeVersion,
+    resumePacketBuilder,
+    threadService,
     tokenBudget: {
       inputLimit: config.tokenBudget.inputLimit,
       outputLimit: config.tokenBudget.outputLimit,
@@ -310,6 +332,7 @@ export function createApplication(
       mcpClientManager,
       skillRegistry,
       storage,
+      threadService,
       toolOrchestrator,
       traceService
     },

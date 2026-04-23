@@ -25,6 +25,8 @@ import type {
   RuntimeRunResult,
   TaskRecord,
   TaskRepository,
+  ThreadLineageRepository,
+  ThreadRunRepository,
   TokenBudget
 } from "../types/index.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
@@ -42,6 +44,8 @@ export interface ExecutionKernelDependencies {
   runtimeVersion: string;
   skillContextService: SkillContextService;
   taskRepository: TaskRepository;
+  threadRunRepository: ThreadRunRepository;
+  threadLineageRepository: ThreadLineageRepository;
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
   workflow: WorkflowRuntimeConfig;
@@ -82,6 +86,7 @@ export class ExecutionKernel {
       providerName: this.dependencies.provider.name,
       requesterUserId: options.userId,
       taskId,
+      threadId: options.threadId ?? null,
       tokenBudget: options.tokenBudget
     });
 
@@ -550,6 +555,11 @@ export class ExecutionKernel {
             taskId: task.taskId
           });
 
+          this.persistThreadRun(task, task.input, {
+            finalOutput: providerResponse.message,
+            status: task.status
+          });
+
           return {
             output: providerResponse.message,
             task
@@ -721,6 +731,20 @@ export class ExecutionKernel {
         toolCallThreshold: this.dependencies.compact.toolCallThreshold
       });
       if (compacted.triggered) {
+        if (task.threadId !== null && task.threadId !== undefined) {
+          const latestRun = this.dependencies.threadRunRepository.findLatestByThreadId(task.threadId);
+          this.dependencies.threadLineageRepository.append({
+            eventType: "compress",
+            lineageId: randomUUID(),
+            payload: {
+              messageCount: messages.length,
+              reason: compacted.reason
+            },
+            sourceRunId: latestRun?.runId ?? null,
+            targetRunId: latestRun?.runId ?? null,
+            threadId: task.threadId
+          });
+        }
         const initialSystemPrompt =
           messages.find((message) => message.role === "system") ?? null;
         messages.length = 0;
@@ -839,6 +863,12 @@ export class ExecutionKernel {
       taskId: task.taskId
     });
 
+    this.persistThreadRun(task, task.input, {
+      errorCode: error.code,
+      errorMessage: error.message,
+      status: isCancelled ? "cancelled" : "failed"
+    });
+
     return new AppError({
       cause: error,
       code: error.code,
@@ -847,6 +877,41 @@ export class ExecutionKernel {
         taskId: task.taskId
       },
       message: error.message
+    });
+  }
+
+  private persistThreadRun(
+    task: TaskRecord,
+    input: string,
+    summary: {
+      status: TaskRecord["status"];
+      finalOutput?: string | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    }
+  ): void {
+    if (task.threadId === null || task.threadId === undefined) {
+      return;
+    }
+    if (this.dependencies.threadRunRepository.findByTaskId(task.taskId) !== null) {
+      return;
+    }
+    this.dependencies.threadRunRepository.create({
+      finishedAt: task.finishedAt,
+      input,
+      metadata: {
+        providerName: task.providerName
+      },
+      runId: randomUUID(),
+      status: task.status,
+      summary: {
+        errorCode: summary.errorCode ?? null,
+        errorMessage: summary.errorMessage ?? null,
+        finalOutput: summary.finalOutput ?? task.finalOutput ?? null,
+        status: summary.status
+      },
+      taskId: task.taskId,
+      threadId: task.threadId
     });
   }
 }

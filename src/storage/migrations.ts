@@ -12,6 +12,11 @@ export function runMigrations(database: DatabaseSync): void {
       description: "add profile and requester columns",
       up: migrateV2,
       version: 2
+    },
+    {
+      description: "add thread first-class tables",
+      up: migrateV3,
+      version: 3
     }
   ];
 
@@ -265,6 +270,58 @@ function migrateV2(database: DatabaseSync): void {
     "requester_user_id",
     "TEXT NOT NULL DEFAULT 'local-user'"
   );
+}
+
+function migrateV3(database: DatabaseSync): void {
+  addColumnIfMissing(database, "tasks", "thread_id", "TEXT");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_tasks_thread_id ON tasks(thread_id)");
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS threads (
+      thread_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      agent_profile_id TEXT NOT NULL DEFAULT 'executor',
+      provider_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_threads_owner ON threads(owner_user_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS thread_runs (
+      run_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      task_id TEXT NOT NULL REFERENCES tasks(task_id),
+      run_number INTEGER NOT NULL,
+      input TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      finished_at TEXT,
+      summary_json TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thread_runs_thread ON thread_runs(thread_id, run_number);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_runs_task ON thread_runs(task_id);
+
+    CREATE TABLE IF NOT EXISTS thread_lineage (
+      lineage_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      event_type TEXT NOT NULL,
+      source_run_id TEXT,
+      target_run_id TEXT,
+      created_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thread_lineage_thread ON thread_lineage(thread_id, created_at);
+  `);
 }
 
 function readUserVersion(database: DatabaseSync): number {

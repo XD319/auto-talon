@@ -3,6 +3,7 @@
 Core:
 
 - `talon run`
+- `talon continue --last|--thread <id> <task>`
 - `talon tui`
 - `talon dashboard`
 - `talon init`
@@ -12,6 +13,7 @@ Core:
 Operational:
 
 - `talon task list|show|timeline`
+- `talon thread list|show|archive`
 - `talon trace [task_id] [--summary]`
 - `talon audit <task_id> [--summary]`
 - `talon approve pending|allow|deny`

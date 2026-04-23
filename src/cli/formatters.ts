@@ -11,6 +11,9 @@ import type {
   SkillListResult,
   SkillView,
   TaskRecord,
+  ThreadLineageRecord,
+  ThreadRecord,
+  ThreadRunRecord,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -29,6 +32,48 @@ export function formatTaskList(tasks: TaskRecord[]): string {
         `${task.taskId} | ${task.status} | iter=${task.currentIteration}/${task.maxIterations} | ${task.input}`
     )
     .join("\n");
+}
+
+export function formatThreadList(threads: ThreadRecord[]): string {
+  if (threads.length === 0) {
+    return "No threads found.";
+  }
+  return threads
+    .map(
+      (thread) =>
+        `${thread.threadId} | ${thread.status} | owner=${thread.ownerUserId} | updated=${thread.updatedAt} | ${thread.title}`
+    )
+    .join("\n");
+}
+
+export function formatThreadDetail(
+  thread: ThreadRecord,
+  runs: ThreadRunRecord[],
+  lineage: ThreadLineageRecord[] = []
+): string {
+  const header = [
+    `Thread ID: ${thread.threadId}`,
+    `Title: ${thread.title}`,
+    `Status: ${thread.status}`,
+    `Owner: ${thread.ownerUserId}`,
+    `Profile: ${thread.agentProfileId}`,
+    `Provider: ${thread.providerName}`,
+    `CWD: ${thread.cwd}`,
+    `Created: ${thread.createdAt}`,
+    `Updated: ${thread.updatedAt}`,
+    `Archived: ${thread.archivedAt ?? "-"}`
+  ].join("\n");
+  const runsSection =
+    runs.length === 0
+      ? "Runs: none"
+      : ["Runs:", ...runs.map((run) => `- #${run.runNumber} ${run.taskId} ${run.status} ${run.input}`)].join(
+          "\n"
+        );
+  const lineageSection =
+    lineage.length === 0
+      ? "Lineage: none"
+      : ["Lineage:", ...lineage.map((entry) => `- ${entry.createdAt} ${entry.eventType}`)].join("\n");
+  return `${header}\n${runsSection}\n${lineageSection}`;
 }
 
 export function formatTask(

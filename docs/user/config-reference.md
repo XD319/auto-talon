@@ -22,3 +22,9 @@ Run validation with:
 ```bash
 talon doctor
 ```
+
+SQLite runtime schema now includes thread continuity tables:
+
+- `threads` for first-class thread/session containers
+- `thread_runs` for each task run linked to a thread
+- `thread_lineage` for branch/compress/archive lineage events

@@ -1,0 +1,37 @@
+import type { AppConfig } from "../bootstrap.js";
+import type { RuntimeRunOptions } from "../../types/index.js";
+import type { ThreadStateProjector } from "./thread-state-projector.js";
+
+export interface ResumePacketBuilderDependencies {
+  stateProjector: ThreadStateProjector;
+  config: AppConfig;
+}
+
+export class ResumePacketBuilder {
+  public constructor(private readonly dependencies: ResumePacketBuilderDependencies) {}
+
+  public buildResumePacket(
+    threadId: string,
+    newInput: string,
+    overrides?: Partial<RuntimeRunOptions>
+  ): RuntimeRunOptions & { threadId: string } {
+    const projection = this.dependencies.stateProjector.projectState(threadId);
+    return {
+      agentProfileId: overrides?.agentProfileId ?? this.dependencies.config.defaultProfileId,
+      cwd: overrides?.cwd ?? this.dependencies.config.workspaceRoot,
+      maxIterations: overrides?.maxIterations ?? this.dependencies.config.defaultMaxIterations,
+      metadata: {
+        ...(overrides?.metadata ?? {}),
+        threadResume: {
+          projectedMessageCount: projection.messages.length
+        }
+      },
+      taskInput: newInput,
+      threadId,
+      timeoutMs: overrides?.timeoutMs ?? this.dependencies.config.defaultTimeoutMs,
+      tokenBudget: overrides?.tokenBudget ?? this.dependencies.config.tokenBudget,
+      userId:
+        overrides?.userId ?? process.env.USERNAME ?? process.env.USER ?? "local-user"
+    };
+  }
+}

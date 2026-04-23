@@ -26,6 +26,7 @@ export const TASK_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 
 export interface TaskRecord {
   taskId: string;
+  threadId?: string | null;
   input: string;
   status: TaskStatus;
   cwd: string;
@@ -47,6 +48,7 @@ export interface TaskRecord {
 
 export interface TaskDraft {
   taskId: string;
+  threadId?: string | null;
   input: string;
   cwd: string;
   providerName: string;

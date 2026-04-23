@@ -1,5 +1,15 @@
 import type { GatewaySessionBinding } from "./adapter.js";
 import type { GatewaySessionBindingDraft } from "./gateway.js";
+import type {
+  ThreadDraft,
+  ThreadLineageDraft,
+  ThreadLineageRecord,
+  ThreadRecord,
+  ThreadRunDraft,
+  ThreadRunRecord,
+  ThreadStatus,
+  ThreadUpdatePatch
+} from "./thread.js";
 import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./approval.js";
 import type { AuditLogDraft, AuditLogRecord } from "./audit.js";
 import type { ExecutionCheckpointRecord } from "./checkpoint.js";
@@ -37,6 +47,31 @@ export interface TaskRepository {
   findById(taskId: string): TaskRecord | null;
   list(): TaskRecord[];
   update(taskId: string, patch: TaskUpdatePatch): TaskRecord;
+}
+
+export interface ThreadListQuery {
+  ownerUserId?: string;
+  status?: ThreadStatus;
+}
+
+export interface ThreadRepository {
+  create(thread: ThreadDraft): ThreadRecord;
+  findById(threadId: string): ThreadRecord | null;
+  list(query?: ThreadListQuery): ThreadRecord[];
+  update(threadId: string, patch: ThreadUpdatePatch): ThreadRecord;
+  findLatestByOwner(ownerUserId: string): ThreadRecord | null;
+}
+
+export interface ThreadRunRepository {
+  create(record: ThreadRunDraft): ThreadRunRecord;
+  findByTaskId(taskId: string): ThreadRunRecord | null;
+  listByThreadId(threadId: string): ThreadRunRecord[];
+  findLatestByThreadId(threadId: string): ThreadRunRecord | null;
+}
+
+export interface ThreadLineageRepository {
+  append(record: ThreadLineageDraft): ThreadLineageRecord;
+  listByThreadId(threadId: string): ThreadLineageRecord[];
 }
 
 export interface TraceRepository {

@@ -189,6 +189,7 @@ export interface Provider {
 
 export interface RuntimeRunOptions {
   taskInput: string;
+  threadId?: string;
   cwd: string;
   userId: string;
   agentProfileId: AgentProfileId;

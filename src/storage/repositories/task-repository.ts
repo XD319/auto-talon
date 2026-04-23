@@ -14,6 +14,7 @@ import { parseJsonValue, serializeJsonValue } from "./json.js";
 
 interface TaskRow {
   task_id: string;
+  thread_id: string | null;
   input: string;
   status: TaskRecord["status"];
   cwd: string;
@@ -43,6 +44,7 @@ export class SqliteTaskRepository implements TaskRepository {
         `
           INSERT INTO tasks (
             task_id,
+            thread_id,
             input,
             status,
             cwd,
@@ -60,11 +62,12 @@ export class SqliteTaskRepository implements TaskRepository {
             error_message,
             token_budget_json,
             metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
         task.taskId,
+        task.threadId ?? null,
         task.input,
         "pending",
         task.cwd,
@@ -186,6 +189,7 @@ export class SqliteTaskRepository implements TaskRepository {
       startedAt: row.started_at,
       status: row.status,
       taskId: row.task_id,
+      threadId: row.thread_id,
       tokenBudget: parseJsonValue<TokenBudget>(row.token_budget_json),
       updatedAt: row.updated_at
     };

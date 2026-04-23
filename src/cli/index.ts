@@ -54,6 +54,8 @@ import {
   formatTask,
   formatTaskList,
   formatTaskTimeline,
+  formatThreadDetail,
+  formatThreadList,
   formatTrace,
   formatTraceContextDebug,
   summarizeAudit,
@@ -86,6 +88,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--profile <profile>", "Agent profile", "executor")
+    .option("--thread <threadId>", "Reuse an existing thread id")
     .option("--max-iterations <number>", "Maximum loop iterations")
     .option("--timeout-ms <number>", "Task timeout in milliseconds")
     .action(async (task: string, commandOptions: RunCommandOptions) => {
@@ -95,6 +98,9 @@ export async function main(argv = process.argv): Promise<void> {
       try {
         const runOptions = createDefaultRunOptions(task, commandOptions.cwd, handle.config);
         runOptions.agentProfileId = commandOptions.profile as typeof runOptions.agentProfileId;
+        if (commandOptions.thread !== undefined) {
+          runOptions.threadId = commandOptions.thread;
+        }
         if (commandOptions.maxIterations !== undefined) {
           runOptions.maxIterations = Number(commandOptions.maxIterations);
         }
@@ -118,7 +124,73 @@ export async function main(argv = process.argv): Promise<void> {
       }
     });
 
+  program
+    .command("continue")
+    .argument("<task>", "Task prompt to continue in a thread")
+    .option("--last", "Continue the latest thread for current user")
+    .option("--thread <threadId>", "Continue a specific thread id")
+    .option("--cwd <path>", "Working directory", process.cwd())
+    .action(async (task: string, commandOptions: { cwd: string; last?: boolean; thread?: string }) => {
+      const handle = createApplication(commandOptions.cwd);
+      try {
+        const result =
+          commandOptions.thread !== undefined
+            ? await handle.service.continueThread(commandOptions.thread, task, { cwd: commandOptions.cwd })
+            : commandOptions.last === true
+              ? await handle.service.continueLatest(task, { cwd: commandOptions.cwd })
+              : await handle.service.continueLatest(task, { cwd: commandOptions.cwd });
+        console.log(`Task ID: ${result.task.taskId}`);
+        console.log(`Thread ID: ${result.task.threadId ?? "-"}`);
+        console.log(`Status: ${result.task.status}`);
+        if (result.output !== null) {
+          console.log(result.output);
+        }
+      } finally {
+        handle.close();
+      }
+    });
+
   const taskCommand = program.command("task").description("Inspect persisted tasks");
+
+  const threadCommand = program.command("thread").description("Inspect persisted threads");
+  threadCommand
+    .command("list")
+    .option("--status <status>", "Filter status: active | archived | deleted")
+    .option("--json", "Print JSON")
+    .action((commandOptions: { json?: boolean; status?: "active" | "archived" | "deleted" }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const threads = handle.service.listThreads(commandOptions.status);
+        console.log(
+          commandOptions.json === true ? JSON.stringify(threads, null, 2) : formatThreadList(threads)
+        );
+      } finally {
+        handle.close();
+      }
+    });
+  threadCommand.command("show").argument("<thread_id>", "Thread identifier").action((threadId: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      const result = handle.service.showThread(threadId);
+      if (result.thread === null) {
+        console.error(`Thread ${threadId} not found.`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(formatThreadDetail(result.thread, result.runs, result.lineage));
+    } finally {
+      handle.close();
+    }
+  });
+  threadCommand.command("archive").argument("<thread_id>", "Thread identifier").action((threadId: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      const thread = handle.service.archiveThread(threadId);
+      console.log(`Archived thread: ${thread.threadId}`);
+    } finally {
+      handle.close();
+    }
+  });
 
   taskCommand.command("list").option("--json", "Print JSON").action((commandOptions: { json?: boolean }) => {
     const handle = createApplication(process.cwd());
@@ -1136,6 +1208,7 @@ interface SandboxCommandOptions {
 interface RunCommandOptions extends SandboxCommandOptions {
   maxIterations?: string;
   profile: string;
+  thread?: string;
   timeoutMs?: string;
 }
 

@@ -29,6 +29,9 @@ import type {
   ProviderUsage,
   RuntimeRunOptions,
   TaskRecord,
+  ThreadLineageRecord,
+  ThreadRecord,
+  ThreadRunRecord,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -37,6 +40,7 @@ import type { MemoryPlane } from "../memory/memory-plane.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import type { ExecutionKernel } from "./execution-kernel.js";
+import type { ResumePacketBuilder, ThreadService } from "./threads/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
 
@@ -132,6 +136,10 @@ export interface RuntimeReadModel {
   listPendingApprovals(): ApprovalRecord[];
   listMemories(): MemoryRecord[];
   listTasks(): TaskRecord[];
+  listThreadLineage(threadId: string): ThreadLineageRecord[];
+  listThreadRuns(threadId: string): ThreadRunRecord[];
+  listThreads(): ThreadRecord[];
+  findThread(threadId: string): ThreadRecord | null;
   listToolCalls(taskId: string): ToolCallRecord[];
   listTrace(taskId: string): TraceEvent[];
   updateToolCall(toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord;
@@ -142,6 +150,8 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   auditService: AuditService;
   databasePath: string;
   executionKernel: ExecutionKernel;
+  resumePacketBuilder: ResumePacketBuilder;
+  threadService: ThreadService;
   experiencePlane: ExperiencePlane;
   memoryPlane: MemoryPlane;
   provider: Provider;
@@ -188,7 +198,18 @@ export class AgentApplicationService {
 
   public async runTask(options: RuntimeRunOptions): Promise<RunTaskResult> {
     try {
-      const result = await this.dependencies.executionKernel.run(options);
+      const resolvedThread = this.dependencies.threadService.getOrCreateThread({
+        agentProfileId: options.agentProfileId,
+        cwd: options.cwd,
+        ownerUserId: options.userId,
+        providerName: this.dependencies.provider.name,
+        threadId: options.threadId,
+        title: options.taskInput.slice(0, 80)
+      });
+      const result = await this.dependencies.executionKernel.run({
+        ...options,
+        threadId: resolvedThread.threadId
+      });
       return {
         output: result.output,
         task: result.task
@@ -219,6 +240,55 @@ export class AgentApplicationService {
 
   public listTasks(): TaskRecord[] {
     return this.dependencies.listTasks();
+  }
+
+  public listThreads(status?: ThreadRecord["status"]): ThreadRecord[] {
+    const threads = this.dependencies.listThreads();
+    if (status === undefined) {
+      return threads;
+    }
+    return threads.filter((thread) => thread.status === status);
+  }
+
+  public showThread(threadId: string): {
+    thread: ThreadRecord | null;
+    runs: ThreadRunRecord[];
+    lineage: ThreadLineageRecord[];
+  } {
+    const thread = this.dependencies.findThread(threadId);
+    if (thread === null) {
+      return { thread: null, runs: [], lineage: [] };
+    }
+    return {
+      thread,
+      runs: this.dependencies.listThreadRuns(threadId),
+      lineage: this.dependencies.listThreadLineage(threadId)
+    };
+  }
+
+  public archiveThread(threadId: string): ThreadRecord {
+    return this.dependencies.threadService.archiveThread(threadId);
+  }
+
+  public async continueThread(
+    threadId: string,
+    input: string,
+    overrides?: Partial<RuntimeRunOptions>
+  ): Promise<RunTaskResult> {
+    const options = this.dependencies.resumePacketBuilder.buildResumePacket(threadId, input, overrides);
+    return this.runTask(options);
+  }
+
+  public async continueLatest(
+    input: string,
+    overrides?: Partial<RuntimeRunOptions>
+  ): Promise<RunTaskResult> {
+    const ownerUserId = overrides?.userId ?? process.env.USERNAME ?? process.env.USER ?? "local-user";
+    const latest = this.dependencies.threadService.findLatestThread(ownerUserId);
+    if (latest === null) {
+      throw new Error("No threads found for current user.");
+    }
+    return this.continueThread(latest.threadId, input, overrides);
   }
 
   public listMemories(): MemoryRecord[] {

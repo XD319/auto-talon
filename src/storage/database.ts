@@ -13,6 +13,9 @@ import { SqliteMemoryRepository } from "./repositories/memory-repository.js";
 import { SqliteMemorySnapshotRepository } from "./repositories/memory-snapshot-repository.js";
 import { SqliteRunMetadataRepository } from "./repositories/run-metadata-repository.js";
 import { SqliteTaskRepository } from "./repositories/task-repository.js";
+import { SqliteThreadLineageRepository } from "./repositories/thread-lineage-repository.js";
+import { SqliteThreadRepository } from "./repositories/thread-repository.js";
+import { SqliteThreadRunRepository } from "./repositories/thread-run-repository.js";
 import { SqliteToolCallRepository } from "./repositories/tool-call-repository.js";
 import { SqliteTraceRepository } from "./repositories/trace-repository.js";
 
@@ -23,6 +26,9 @@ export interface StorageConfig {
 export class StorageManager {
   public readonly database: DatabaseSync;
   public readonly tasks: SqliteTaskRepository;
+  public readonly threads: SqliteThreadRepository;
+  public readonly threadRuns: SqliteThreadRunRepository;
+  public readonly threadLineage: SqliteThreadLineageRepository;
   public readonly traces: SqliteTraceRepository;
   public readonly toolCalls: SqliteToolCallRepository;
   public readonly artifacts: SqliteArtifactRepository;
@@ -44,6 +50,9 @@ export class StorageManager {
     runMigrations(this.database);
 
     this.tasks = new SqliteTaskRepository(this.database);
+    this.threads = new SqliteThreadRepository(this.database);
+    this.threadRuns = new SqliteThreadRunRepository(this.database);
+    this.threadLineage = new SqliteThreadLineageRepository(this.database);
     this.traces = new SqliteTraceRepository(this.database);
     this.toolCalls = new SqliteToolCallRepository(this.database);
     this.artifacts = new SqliteArtifactRepository(this.database);
