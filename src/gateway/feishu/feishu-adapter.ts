@@ -409,15 +409,15 @@ async function createDefaultClients(config: FeishuGatewayConfig): Promise<{
     appSecret: config.appSecret,
     domain,
     loggerLevel
-  }) as unknown as FeishuClientLike;
+  }) as FeishuClientLike;
   const wsClient = new lark.WSClient({
     appId: config.appId,
     appSecret: config.appSecret,
     domain,
     loggerLevel
-  }) as unknown as FeishuWsClientLike;
+  }) as FeishuWsClientLike;
   const createEventDispatcher = () =>
-    new lark.EventDispatcher({ loggerLevel }) as unknown as FeishuEventDispatcherLike;
+    new lark.EventDispatcher({ loggerLevel }) as FeishuEventDispatcherLike;
   return { client, createEventDispatcher, wsClient };
 }
 

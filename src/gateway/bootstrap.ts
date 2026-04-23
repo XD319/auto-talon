@@ -1,11 +1,12 @@
 import type { AppRuntimeHandle, CreateApplicationOptions } from "../runtime";
 import { createApplication } from "../runtime";
 
+import type { GatewayAdapterPlugin } from "./plugins";
+import type { LocalWebhookAdapter } from "./local-webhook-adapter";
 import { GatewayManager } from "./gateway-manager";
 import { GatewayGuard } from "./gateway-guard";
 import { DefaultGatewayIdentityMapper } from "./identity-mapper";
-import { LocalWebhookAdapter } from "./local-webhook-adapter";
-import { createFeishuGatewayPlugin, createLocalWebhookPlugin, type GatewayAdapterPlugin } from "./plugins";
+import { createFeishuGatewayPlugin, createLocalWebhookPlugin } from "./plugins";
 import { GatewayRuntimeFacade } from "./runtime-facade";
 import { RepositoryBackedGatewaySessionMapper } from "./session-mapper";
 
