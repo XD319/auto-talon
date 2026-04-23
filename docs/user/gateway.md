@@ -8,6 +8,14 @@ talon gateway serve-webhook --port 7070
 
 ## Feishu
 
+The Feishu/Lark adapter is loaded as an optional gateway plugin so the core CLI
+runtime stays lightweight. Install the Lark SDK only in workspaces that run this
+adapter:
+
+```bash
+pnpm add @larksuiteoapi/node-sdk
+```
+
 ```bash
 talon gateway serve-feishu --cwd .
 ```

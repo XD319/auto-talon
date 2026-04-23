@@ -389,7 +389,18 @@ async function createDefaultClients(config: FeishuGatewayConfig): Promise<{
   createEventDispatcher: () => FeishuEventDispatcherLike;
   wsClient: FeishuWsClientLike;
 }> {
-  const lark = await import("@larksuiteoapi/node-sdk");
+  const packageName = "@larksuiteoapi/node-sdk";
+  let lark: LarkSdkModule;
+  try {
+    lark = (await import(packageName)) as LarkSdkModule;
+  } catch (error) {
+    if (isModuleNotFoundError(error)) {
+      throw new Error(
+        "Feishu gateway plugin requires @larksuiteoapi/node-sdk. Install it in this workspace with `pnpm add @larksuiteoapi/node-sdk` or `npm install @larksuiteoapi/node-sdk` before running `talon gateway serve-feishu`."
+      );
+    }
+    throw error;
+  }
   const domain = config.domain === "lark" ? lark.Domain.Lark : lark.Domain.Feishu;
   const loggerLevel =
     process.env.AUTO_TALON_FEISHU_DEBUG === "1" ? lark.LoggerLevel.debug : lark.LoggerLevel.info;
@@ -408,6 +419,38 @@ async function createDefaultClients(config: FeishuGatewayConfig): Promise<{
   const createEventDispatcher = () =>
     new lark.EventDispatcher({ loggerLevel }) as unknown as FeishuEventDispatcherLike;
   return { client, createEventDispatcher, wsClient };
+}
+
+interface LarkSdkModule {
+  Client: new (options: {
+    appId: string;
+    appSecret: string;
+    domain: unknown;
+    loggerLevel: unknown;
+  }) => unknown;
+  Domain: {
+    Feishu: unknown;
+    Lark: unknown;
+  };
+  EventDispatcher: new (options: { loggerLevel: unknown }) => unknown;
+  LoggerLevel: {
+    debug: unknown;
+    info: unknown;
+  };
+  WSClient: new (options: {
+    appId: string;
+    appSecret: string;
+    domain: unknown;
+    loggerLevel: unknown;
+  }) => unknown;
+}
+
+function isModuleNotFoundError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    ("code" in error ? (error as { code?: unknown }).code === "ERR_MODULE_NOT_FOUND" : true) &&
+    error.message.includes("@larksuiteoapi/node-sdk")
+  );
 }
 
 function parseMessageEvent(payload: unknown): {

@@ -3,10 +3,9 @@ import { createApplication } from "../runtime";
 
 import { GatewayManager } from "./gateway-manager";
 import { GatewayGuard } from "./gateway-guard";
-import { FeishuAdapter } from "./feishu/feishu-adapter";
-import { resolveFeishuGatewayConfig } from "./feishu/feishu-config";
 import { DefaultGatewayIdentityMapper } from "./identity-mapper";
 import { LocalWebhookAdapter } from "./local-webhook-adapter";
+import { createFeishuGatewayPlugin, createLocalWebhookPlugin, type GatewayAdapterPlugin } from "./plugins";
 import { GatewayRuntimeFacade } from "./runtime-facade";
 import { RepositoryBackedGatewaySessionMapper } from "./session-mapper";
 
@@ -50,6 +49,16 @@ export interface LocalWebhookGatewayHandle {
   manager: GatewayManager;
 }
 
+export async function startGatewayPlugin(
+  runtimeHandle: AppRuntimeHandle,
+  plugin: GatewayAdapterPlugin
+): Promise<{ adapter: ReturnType<GatewayAdapterPlugin["createAdapter"]>; manager: GatewayManager }> {
+  const adapter = plugin.createAdapter(runtimeHandle);
+  const manager = new GatewayManager(createGatewayRuntime(runtimeHandle), [adapter]);
+  await manager.startAll();
+  return { adapter, manager };
+}
+
 export async function startLocalWebhookGateway(
   runtimeHandle: AppRuntimeHandle,
   options: { host?: string; port: number }
@@ -58,24 +67,20 @@ export async function startLocalWebhookGateway(
     options.host === undefined
       ? { port: options.port }
       : { host: options.host, port: options.port };
-  const adapter = new LocalWebhookAdapter(adapterOptions);
-  const manager = new GatewayManager(createGatewayRuntime(runtimeHandle), [adapter]);
-  await manager.startAll();
+  const started = await startGatewayPlugin(runtimeHandle, createLocalWebhookPlugin(adapterOptions));
+  const adapter = started.adapter as LocalWebhookAdapter;
 
   return {
     adapter,
-    manager
+    manager: started.manager
   };
 }
 
 export interface FeishuGatewayHandle {
-  adapter: FeishuAdapter;
+  adapter: ReturnType<GatewayAdapterPlugin["createAdapter"]>;
   manager: GatewayManager;
 }
 
 export async function startFeishuGateway(runtimeHandle: AppRuntimeHandle): Promise<FeishuGatewayHandle> {
-  const adapter = new FeishuAdapter(resolveFeishuGatewayConfig(runtimeHandle.config.workspaceRoot));
-  const manager = new GatewayManager(createGatewayRuntime(runtimeHandle), [adapter]);
-  await manager.startAll();
-  return { adapter, manager };
+  return startGatewayPlugin(runtimeHandle, createFeishuGatewayPlugin());
 }

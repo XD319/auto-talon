@@ -4,12 +4,11 @@ import { Command } from "commander";
 
 import {
   createGatewayRuntime,
+  createFeishuGatewayPlugin,
   startFeishuGateway,
   startLocalWebhookGateway,
   GatewayManager,
-  LocalWebhookAdapter,
-  FeishuAdapter,
-  resolveFeishuGatewayConfig
+  LocalWebhookAdapter
 } from "../gateway";
 import {
   McpServer,
@@ -1109,7 +1108,7 @@ export async function main(argv = process.argv): Promise<void> {
           new LocalWebhookAdapter({ port: 0, adapterId: "local-webhook" })
         ];
         try {
-          listedAdapters.push(new FeishuAdapter(resolveFeishuGatewayConfig(commandOptions.cwd)));
+          listedAdapters.push(createFeishuGatewayPlugin().createAdapter(handle));
         } catch {
           // Optional adapter: only listed when config is present.
         }
