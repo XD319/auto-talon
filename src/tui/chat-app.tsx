@@ -320,14 +320,18 @@ export function ChatTuiApp({
     onTabComplete: completeSlashCommand,
     onSubmit: (value) => {
       if (handleSlashCommand(value)) {
-        return;
+        return true;
+      }
+      const accepted = controller.submitPrompt(value);
+      if (!accepted) {
+        return false;
       }
       historyRef.current.push(value);
       if (historyRef.current.length > 200) {
         historyRef.current = historyRef.current.slice(-200);
       }
       historyIndexRef.current = null;
-      void controller.submitPrompt(value);
+      return true;
     },
     onSubmitBlockedBusy: () => {
       controller.addSystemMessage("Agent is still running. Wait for completion or use /stop to interrupt.");

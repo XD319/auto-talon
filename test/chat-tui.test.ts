@@ -1,9 +1,15 @@
+import { PassThrough } from "node:stream";
+
+import { render } from "ink";
+import React from "react";
 import { describe, expect, it } from "vitest";
 
 import {
   completeApprovalMessage,
   mergeTraceMessages,
-  syncPendingApprovalMessages
+  syncPendingApprovalMessages,
+  useChatController,
+  type ChatController
 } from "../src/tui/hooks/use-chat-controller.js";
 import {
   canSubmitTextInput,
@@ -17,9 +23,23 @@ import {
   displayChatMessages,
   resolveApprovalMessage,
   toApprovalMessage,
-  toTraceActivityMessage
+  toTraceActivityMessage,
+  type ChatMessage
 } from "../src/tui/view-models/chat-messages.js";
-import type { ApprovalRecord, ToolCallRecord, TraceEvent } from "../src/types/index.js";
+import type { AgentApplicationService, AppConfig } from "../src/runtime/index.js";
+import type { ApprovalRecord, RuntimeRunOptions, TaskRecord, ToolCallRecord, TraceEvent } from "../src/types/index.js";
+
+type ControllerServiceStub = Pick<
+  AgentApplicationService,
+  | "listPendingApprovals"
+  | "listTasks"
+  | "providerStats"
+  | "resolveApproval"
+  | "runTask"
+  | "showTask"
+  | "subscribeToTaskTrace"
+  | "traceTask"
+>;
 
 describe("chat tui view-models", () => {
   it("formats trace events into activity messages", () => {
@@ -105,6 +125,60 @@ describe("use-chat-controller helpers", () => {
     expect(completed.some((message) => message.kind === "approval")).toBe(false);
     expect(completed.at(-1)?.kind).toBe("approval_result");
     expect(completed.at(-1)?.id).toBe("approval-result:approval-1:allow");
+  });
+
+  it("rejects overlapping prompt submissions before they can drop replies", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createStreamingControllerService();
+    let submitPrompt: ChatController["submitPrompt"] | null = null;
+    let messages: ChatMessage[] = [];
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        submitPrompt = instance.submitPrompt;
+      }, [instance]);
+
+      React.useEffect(() => {
+        messages = instance.messages;
+      }, [instance.messages]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => submitPrompt !== null);
+      if (submitPrompt === null) {
+        throw new Error("submitPrompt should be initialized before the test submits prompts.");
+      }
+      expect(submitPrompt("one")).toBe(true);
+      expect(submitPrompt("two")).toBe(false);
+
+      await waitFor(() => messages.some((message) => message.kind === "agent"));
+
+      expect(
+        messages.filter((message) => message.kind === "user").map((message) => message.text)
+      ).toEqual(["one"]);
+      expect(
+        messages.filter((message) => message.kind === "agent").map((message) => message.text)
+      ).toEqual(["reply-one"]);
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
   });
 });
 
@@ -238,4 +312,213 @@ function createApprovalLookupService() {
       trace: []
     })
   };
+}
+
+function createControllerConfig(): AppConfig {
+  return {
+    allowedFetchHosts: [],
+    approvalTtlMs: 60_000,
+    budget: {
+      pricing: {},
+      task: {
+        hardCostUsd: null,
+        hardInputTokens: null,
+        hardOutputTokens: null,
+        softCostUsd: null,
+        softInputTokens: null,
+        softOutputTokens: null
+      },
+      thread: {
+        hardCostUsd: null,
+        hardInputTokens: null,
+        hardOutputTokens: null,
+        softCostUsd: null,
+        softInputTokens: null,
+        softOutputTokens: null
+      }
+    },
+    compact: {
+      messageThreshold: 20,
+      summarizer: "deterministic",
+      tokenThreshold: 8_000,
+      toolCallThreshold: 10
+    },
+    databasePath: ":memory:",
+    defaultMaxIterations: 4,
+    defaultProfileId: "executor",
+    defaultTimeoutMs: 10_000,
+    promotion: {
+      enabled: false,
+      maxHumanJudgmentWeight: 0,
+      minStability: 0,
+      minSuccessCount: 0,
+      minSuccessRate: 0,
+      riskDenyKeywords: []
+    },
+    provider: {
+      apiKey: null,
+      baseUrl: null,
+      builtinProviderName: "mock",
+      configPath: "memory",
+      configSource: "defaults",
+      displayName: "Mock Provider",
+      family: "mock",
+      maxRetries: 0,
+      model: "mock",
+      name: "mock",
+      timeoutMs: 10_000,
+      transport: "mock"
+    },
+    recall: {
+      budgetRatio: 0,
+      enabled: false,
+      maxCandidatesPerScope: 0
+    },
+    routing: {
+      helpers: {
+        classify: null,
+        recallRank: null,
+        summarize: null
+      },
+      mode: "balanced",
+      providers: {}
+    },
+    runtimeConfigPath: "memory",
+    runtimeConfigSource: "defaults",
+    runtimeVersion: "test",
+    sandbox: {
+      configPath: null,
+      configSource: "defaults",
+      dockerImage: null,
+      mode: "local",
+      network: "disabled",
+      profileName: null,
+      readRoots: [process.cwd()],
+      shellAllowlist: [],
+      workspaceRoot: process.cwd(),
+      writeRoots: [process.cwd()]
+    },
+    tokenBudget: {
+      inputLimit: 8_000,
+      outputLimit: 4_000,
+      reservedOutput: 500,
+      usedCostUsd: 0,
+      usedInput: 0,
+      usedOutput: 0
+    },
+    workflow: {
+      failureGuidedRetry: {
+        enabled: false,
+        maxRepairAttempts: 0
+      },
+      repoMap: {
+        enabled: false
+      },
+      testCommands: []
+    },
+    workspaceRoot: process.cwd()
+  };
+}
+
+function createStreamingControllerService(): ControllerServiceStub {
+  const tasks = new Map<string, TaskRecord>();
+
+  return {
+    async runTask(options: RuntimeRunOptions) {
+      const task = createControllerTask(options);
+      tasks.set(task.taskId, task);
+
+      if (options.taskInput === "one") {
+        await delay(5);
+        options.onAssistantTextDelta?.("partial-one");
+        await delay(20);
+        task.status = "succeeded";
+        task.finalOutput = "reply-one";
+        return {
+          output: "reply-one",
+          task
+        };
+      }
+
+      await delay(10);
+      options.onAssistantTextDelta?.("partial-two");
+      await delay(10);
+      task.status = "succeeded";
+      task.finalOutput = "reply-two";
+      return {
+        output: "reply-two",
+        task
+      };
+    },
+    listPendingApprovals() {
+      return [];
+    },
+    listTasks() {
+      return [...tasks.values()];
+    },
+    providerStats() {
+      return null;
+    },
+    resolveApproval() {
+      throw new Error("resolveApproval should not be called in this test.");
+    },
+    showTask(taskId: string) {
+      return {
+        approvals: [],
+        artifacts: [],
+        inboxItems: [],
+        scheduleRuns: [],
+        task: tasks.get(taskId) ?? null,
+        toolCalls: [],
+        trace: []
+      };
+    },
+    subscribeToTaskTrace() {
+      return () => {};
+    },
+    traceTask() {
+      return [];
+    }
+  };
+}
+
+function createControllerTask(options: RuntimeRunOptions): TaskRecord {
+  const timestamp = new Date().toISOString();
+  return {
+    agentProfileId: options.agentProfileId,
+    createdAt: timestamp,
+    currentIteration: 0,
+    cwd: options.cwd,
+    errorCode: null,
+    errorMessage: null,
+    finalOutput: null,
+    finishedAt: null,
+    input: options.taskInput,
+    maxIterations: options.maxIterations,
+    metadata: options.metadata ?? {},
+    providerName: "mock",
+    requesterUserId: options.userId,
+    startedAt: timestamp,
+    status: "running",
+    taskId: options.taskId ?? "task",
+    threadId: options.threadId ?? null,
+    tokenBudget: options.tokenBudget,
+    updatedAt: timestamp
+  };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for predicate.");
+    }
+    await delay(10);
+  }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

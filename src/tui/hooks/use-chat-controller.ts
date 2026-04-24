@@ -49,7 +49,7 @@ export interface ChatController {
   requestInterrupt: () => boolean;
   runDurationLabel: string;
   statusLine: string;
-  submitPrompt: (text: string) => Promise<void>;
+  submitPrompt: (text: string) => boolean;
   resolvePendingApproval: (action: "allow" | "deny") => Promise<void>;
   summary: {
     pendingApprovals: number;
@@ -99,6 +99,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const pendingDeltaRef = React.useRef("");
   const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const approvalInFlightRef = React.useRef(false);
+  const submitInFlightRef = React.useRef(false);
   const seenApprovalMessageIdsRef = React.useRef<Set<string>>(collectApprovalMessageIds(messages));
   const busy = busyCount > 0;
 
@@ -200,7 +201,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setMessages((current) => [
       ...current,
       {
-        id: `system:${Date.now()}`,
+        id: `system:${randomUUID()}`,
         kind: "system",
         text,
         timestamp: new Date().toISOString()
@@ -380,7 +381,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   );
 
   const submitPrompt = React.useCallback(
-    async (text: string) => {
+    (text: string): boolean => {
+      if (submitInFlightRef.current) {
+        return false;
+      }
+      submitInFlightRef.current = true;
       beginBusy();
       setStatusLine("running");
       const taskId = randomUUID();
@@ -394,115 +399,120 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       setMessages((current) => [
         ...current,
         {
-          id: `user:${Date.now()}`,
+          id: `user:${randomUUID()}`,
           kind: "user",
           text,
           timestamp: new Date().toISOString()
         }
       ]);
 
-      try {
-        const runOptions = createDefaultRunOptions(text, input.cwd, input.config);
-        const abortController = new AbortController();
-        activeAbortControllerRef.current = abortController;
-        runOptions.signal = abortController.signal;
-        runOptions.taskId = taskId;
-        runOptions.onAssistantTextDelta = (delta: string) => {
-          streamedAnyRef.current = true;
-          if (streamingAgentIdRef.current === null) {
+      void (async () => {
+        try {
+          const runOptions = createDefaultRunOptions(text, input.cwd, input.config);
+          const abortController = new AbortController();
+          activeAbortControllerRef.current = abortController;
+          runOptions.signal = abortController.signal;
+          runOptions.taskId = taskId;
+          runOptions.onAssistantTextDelta = (delta: string) => {
+            streamedAnyRef.current = true;
+            if (streamingAgentIdRef.current === null) {
+              return;
+            }
+            pendingDeltaRef.current += delta;
+            if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
+              flushPendingDelta();
+              return;
+            }
+            if (flushTimerRef.current === null) {
+              flushTimerRef.current = setTimeout(flushPendingDelta, STREAM_FLUSH_INTERVAL_MS);
+            }
+          };
+
+          const result = await input.service.runTask(runOptions);
+          flushPendingDelta();
+          activeTaskIdRef.current = result.task.taskId;
+          setActiveTaskId(result.task.taskId);
+          appendNewTraceEvents(result.task.taskId);
+
+          const activeStreamId = streamingAgentIdRef.current;
+          streamingAgentIdRef.current = null;
+
+          const runError = result.error;
+          if (runError !== undefined) {
+            cancelPendingDelta();
+            removeStreamingMessage(activeStreamId);
+            setMessages((current) => [
+              ...current,
+              {
+                code: runError.code,
+                id: `error:${result.task.taskId}:${randomUUID()}`,
+                kind: "error",
+                message: runError.message,
+                source: "runtime",
+                timestamp: new Date().toISOString()
+              }
+            ]);
+            setStatusLine(`failed: ${runError.code}`);
             return;
           }
-          pendingDeltaRef.current += delta;
-          if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
-            flushPendingDelta();
-            return;
+
+          const messageText =
+            result.output !== undefined && result.output !== null && result.output.length > 0
+              ? result.output
+              : summarizeTaskResult(result.task);
+          if (activeStreamId !== null) {
+            finalizeStreamingAgentMessage(activeStreamId, messageText);
+          } else {
+            setMessages((current) => [
+              ...current,
+              {
+                id: `agent:${result.task.taskId}:${randomUUID()}`,
+                kind: "agent",
+                text: messageText,
+                timestamp: new Date().toISOString()
+              }
+            ]);
           }
-          if (flushTimerRef.current === null) {
-            flushTimerRef.current = setTimeout(flushPendingDelta, STREAM_FLUSH_INTERVAL_MS);
-          }
-        };
-
-        const result = await input.service.runTask(runOptions);
-        flushPendingDelta();
-        activeTaskIdRef.current = result.task.taskId;
-        setActiveTaskId(result.task.taskId);
-        appendNewTraceEvents(result.task.taskId);
-
-        const activeStreamId = streamingAgentIdRef.current;
-        streamingAgentIdRef.current = null;
-
-        const runError = result.error;
-        if (runError !== undefined) {
+          setStatusLine(result.task.status);
+        } catch (error) {
+          const activeStreamId = streamingAgentIdRef.current;
+          streamingAgentIdRef.current = null;
           cancelPendingDelta();
           removeStreamingMessage(activeStreamId);
+
+          const aborted = activeAbortControllerRef.current?.signal.aborted === true;
+
+          if (aborted) {
+            addSystemMessage("Interrupted current task.");
+            setStatusLine("interrupted");
+            return;
+          }
+
           setMessages((current) => [
             ...current,
             {
-              code: runError.code,
-              id: `error:${result.task.taskId}:${Date.now()}`,
+              code: "runtime_error",
+              id: `error:submit:${randomUUID()}`,
               kind: "error",
-              message: runError.message,
+              message: error instanceof Error ? error.message : String(error),
               source: "runtime",
               timestamp: new Date().toISOString()
             }
           ]);
-          setStatusLine(`failed: ${runError.code}`);
-          return;
+          setStatusLine("failed to run task");
+        } finally {
+          submitInFlightRef.current = false;
+          activeAbortControllerRef.current = null;
+          streamingAgentIdRef.current = null;
+          streamedAnyRef.current = false;
+          cancelPendingDelta();
+          endBusy();
+          stopTraceSubscription();
+          setTimeout(refresh, 0);
         }
+      })();
 
-        const messageText =
-          result.output !== undefined && result.output !== null && result.output.length > 0
-            ? result.output
-            : summarizeTaskResult(result.task);
-        if (activeStreamId !== null) {
-          finalizeStreamingAgentMessage(activeStreamId, messageText);
-        } else {
-          setMessages((current) => [
-            ...current,
-            {
-              id: `agent:${result.task.taskId}:${Date.now()}`,
-              kind: "agent",
-              text: messageText,
-              timestamp: new Date().toISOString()
-            }
-          ]);
-        }
-        setStatusLine(result.task.status);
-      } catch (error) {
-        const activeStreamId = streamingAgentIdRef.current;
-        streamingAgentIdRef.current = null;
-        cancelPendingDelta();
-        removeStreamingMessage(activeStreamId);
-
-        const aborted = activeAbortControllerRef.current?.signal.aborted === true;
-
-        if (aborted) {
-          addSystemMessage("Interrupted current task.");
-          setStatusLine("interrupted");
-          return;
-        }
-
-        setMessages((current) => [
-          ...current,
-          {
-            code: "runtime_error",
-            id: `error:submit:${Date.now()}`,
-            kind: "error",
-            message: error instanceof Error ? error.message : String(error),
-            source: "runtime",
-            timestamp: new Date().toISOString()
-          }
-        ]);
-        setStatusLine("failed to run task");
-      } finally {
-        activeAbortControllerRef.current = null;
-        streamingAgentIdRef.current = null;
-        streamedAnyRef.current = false;
-        cancelPendingDelta();
-        endBusy();
-        stopTraceSubscription();
-        setTimeout(refresh, 0);
-      }
+      return true;
     },
     [
       addSystemMessage,

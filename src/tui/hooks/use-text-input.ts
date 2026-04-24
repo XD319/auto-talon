@@ -12,7 +12,7 @@ export interface UseTextInputOptions {
   hasPendingApproval: boolean;
   onApprovalAction: (action: "allow" | "deny") => void;
   onExit: () => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string) => boolean | Promise<boolean>;
   onSubmitBlockedBusy?: () => void;
   /** Return replacement value, or null to leave input unchanged. */
   onTabComplete?: (value: string) => string | null;
@@ -193,10 +193,17 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       } else {
         const hasInput = value.trim().length > 0;
         if (canSubmitTextInput(value, options.busy)) {
-          options.onSubmit(value);
-          setValue("");
-          setCursorIndex(0);
-          preferredColumnRef.current = null;
+          void Promise.resolve(options.onSubmit(value))
+            .then((accepted) => {
+              if (accepted === false) {
+                options.onSubmitBlockedBusy?.();
+                return;
+              }
+              setValue("");
+              setCursorIndex(0);
+              preferredColumnRef.current = null;
+            })
+            .catch(() => {});
         } else if (hasInput && options.busy) {
           options.onSubmitBlockedBusy?.();
         }
