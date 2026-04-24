@@ -1683,10 +1683,11 @@ export async function main(argv = process.argv): Promise<void> {
       const handle = createApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
       });
+      const gatewayRuntime = createGatewayRuntime(handle);
       const gatewayHandle = await startLocalWebhookGateway(handle, {
         host: commandOptions.host,
         port: Number(commandOptions.port)
-      });
+      }, gatewayRuntime);
 
       console.log(
         `Local webhook adapter ${gatewayHandle.adapter.descriptor.adapterId} listening on http://${commandOptions.host}:${commandOptions.port}`
@@ -1718,13 +1719,14 @@ export async function main(argv = process.argv): Promise<void> {
       const handle = createApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
       });
-      const feishu = await startFeishuGateway(handle);
+      const gatewayRuntime = createGatewayRuntime(handle);
+      const feishu = await startFeishuGateway(handle, gatewayRuntime);
       const extraManagers: GatewayManager[] = [feishu.manager];
       if (commandOptions.localWebhookPort !== undefined) {
         const local = await startLocalWebhookGateway(handle, {
           host: "127.0.0.1",
           port: Number(commandOptions.localWebhookPort)
-        });
+        }, gatewayRuntime);
         extraManagers.push(local.manager);
       }
 

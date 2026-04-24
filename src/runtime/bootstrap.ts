@@ -27,7 +27,7 @@ import { SandboxService } from "../sandbox/sandbox-service.js";
 import { SkillContextService, SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import { SkillVersionRegistry } from "../skills/versioning/index.js";
 import { StorageManager } from "../storage/database.js";
-import { migrateConfigFiles } from "../storage/config-migration.js";
+import { migrateConfigFiles, validateConfigVersions } from "../storage/config-migration.js";
 import { TraceService } from "../tracing/trace-service.js";
 import type {
   BudgetLimits,
@@ -61,7 +61,7 @@ import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./thre
 import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import { resolveRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
-import { initializeWorkspaceFiles, migrateWorkspaceConfigFiles } from "./workspace-setup.js";
+import { initializeWorkspaceFiles } from "./workspace-setup.js";
 
 export interface AppConfig {
   approvalTtlMs: number;
@@ -129,8 +129,8 @@ export interface ResolveAppConfigOptions {
 export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigOptions = {}): AppConfig {
   const workspaceRoot = resolve(process.env.AGENT_WORKSPACE_ROOT ?? cwd);
   initializeWorkspaceFiles(workspaceRoot);
-  migrateWorkspaceConfigFiles(workspaceRoot);
   migrateConfigFiles(workspaceRoot);
+  validateConfigVersions(workspaceRoot);
   const provider = resolveProviderConfig(workspaceRoot);
   const sandbox = resolveSandboxProfile(workspaceRoot, options);
   const runtimeConfig = resolveRuntimeConfig(workspaceRoot);

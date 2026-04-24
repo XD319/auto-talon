@@ -29,6 +29,7 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
   public constructor(private readonly options: LocalWebhookAdapterOptions) {
     this.descriptor = {
       adapterId: this.options.adapterId ?? "local-webhook",
+      contractVersion: 1,
       capabilities: {
         approvalInteraction: {
           detail: "Returns approval state but does not resolve approvals inline.",

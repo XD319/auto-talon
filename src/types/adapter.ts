@@ -42,6 +42,7 @@ export type AdapterLifecycleState = "created" | "starting" | "running" | "stoppe
 
 export interface AdapterDescriptor {
   adapterId: string;
+  contractVersion: number;
   description: string;
   displayName: string;
   kind: AdapterKind;

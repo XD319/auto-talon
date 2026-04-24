@@ -96,6 +96,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
   ) {
     this.descriptor = {
       adapterId: options.adapterId ?? "feishu-im",
+      contractVersion: 1,
       capabilities: {
         approvalInteraction: { supported: true },
         attachmentCapability: { supported: true },

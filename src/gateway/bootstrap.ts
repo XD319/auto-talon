@@ -57,23 +57,30 @@ export interface LocalWebhookGatewayHandle {
 
 export async function startGatewayPlugin(
   runtimeHandle: AppRuntimeHandle,
-  plugin: GatewayAdapterPlugin
+  plugin: GatewayAdapterPlugin,
+  gatewayRuntime?: GatewayRuntimeFacade
 ): Promise<{ adapter: ReturnType<GatewayAdapterPlugin["createAdapter"]>; manager: GatewayManager }> {
   const adapter = plugin.createAdapter(runtimeHandle);
-  const manager = new GatewayManager(createGatewayRuntime(runtimeHandle), [adapter]);
+  const runtimeApi = gatewayRuntime ?? createGatewayRuntime(runtimeHandle);
+  const manager = new GatewayManager(runtimeApi, [adapter]);
   await manager.startAll();
   return { adapter, manager };
 }
 
 export async function startLocalWebhookGateway(
   runtimeHandle: AppRuntimeHandle,
-  options: { host?: string; port: number }
+  options: { host?: string; port: number },
+  gatewayRuntime?: GatewayRuntimeFacade
 ): Promise<LocalWebhookGatewayHandle> {
   const adapterOptions =
     options.host === undefined
       ? { port: options.port }
       : { host: options.host, port: options.port };
-  const started = await startGatewayPlugin(runtimeHandle, createLocalWebhookPlugin(adapterOptions));
+  const started = await startGatewayPlugin(
+    runtimeHandle,
+    createLocalWebhookPlugin(adapterOptions),
+    gatewayRuntime
+  );
   const adapter = started.adapter as LocalWebhookAdapter;
 
   return {
@@ -87,6 +94,9 @@ export interface FeishuGatewayHandle {
   manager: GatewayManager;
 }
 
-export async function startFeishuGateway(runtimeHandle: AppRuntimeHandle): Promise<FeishuGatewayHandle> {
-  return startGatewayPlugin(runtimeHandle, createFeishuGatewayPlugin());
+export async function startFeishuGateway(
+  runtimeHandle: AppRuntimeHandle,
+  gatewayRuntime?: GatewayRuntimeFacade
+): Promise<FeishuGatewayHandle> {
+  return startGatewayPlugin(runtimeHandle, createFeishuGatewayPlugin(), gatewayRuntime);
 }

@@ -151,6 +151,7 @@ describe("Phase 5 gateway adapters", () => {
       const result = await gateway.submitTask(
         {
           adapterId: "sdk-local",
+          contractVersion: 1,
           capabilities: {
             approvalInteraction: { supported: false },
             attachmentCapability: { supported: false },
@@ -207,6 +208,7 @@ describe("Phase 5 gateway adapters", () => {
       const result = await gateway.submitTask(
         {
           adapterId: "sdk-no-approval",
+          contractVersion: 1,
           capabilities: {
             approvalInteraction: { supported: false, detail: "No inline approval flow." },
             attachmentCapability: { supported: false },
@@ -336,6 +338,7 @@ describe("Phase 5 gateway adapters", () => {
           {
             descriptor: {
               adapterId: "missing-attachment",
+              contractVersion: 1,
               capabilities: {
                 approvalInteraction: { supported: true },
                 attachmentCapability: { supported: false },

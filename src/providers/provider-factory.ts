@@ -4,7 +4,7 @@ import type { Provider } from "../types/index.js";
 import { MockProvider } from "./mock-provider.js";
 import { OpenAiCompatibleProvider } from "./openai-compatible-provider.js";
 import type { ResolvedProviderConfig } from "./config.js";
-import { requireProviderManifest } from "./provider-registry.js";
+import { assertProviderManifestCompatibility, requireProviderManifest } from "./provider-registry.js";
 import { ManagedProvider } from "./provider-runtime.js";
 
 export function createProvider(config: ResolvedProviderConfig): Provider {
@@ -45,6 +45,8 @@ function createProviderInstance(
 
     throw new Error(`Provider ${config.name} has no runtime transport implementation.`);
   }
+
+  assertProviderManifestCompatibility(manifest);
 
   if (manifest.transport === "mock") {
     return new MockProvider(config);

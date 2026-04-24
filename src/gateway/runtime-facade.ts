@@ -275,6 +275,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     const launchResult: GatewayTaskLaunchResult = {
       adapter: {
         adapterId: params.adapterId,
+        contractVersion: 1,
         capabilities: {
           approvalInteraction: { supported: true },
           attachmentCapability: { supported: true },

@@ -7,21 +7,17 @@ import {
   MockProvider,
   OpenAiCompatibleProvider,
   ProviderError,
+  createProvider,
   classifyProviderHttpError
 } from "../src/providers/index.js";
-import type { Provider, ProviderConfig, ProviderInput, ProviderResponse } from "../src/types/index.js";
-
-interface ProviderContractHarness {
-  createAuthErrorProvider(): Provider;
-  createEmptyProvider(): Provider;
-  createMalformedResponseProvider(): Provider;
-  createNetworkFailureProvider(maxRetries?: number): Provider;
-  createRateLimitProvider(maxRetries?: number): Provider;
-  createTextProvider(): Provider;
-  createTimeoutProvider(maxRetries?: number): Provider;
-  createToolCallProvider(): Provider;
-  createUnavailableProvider(maxRetries?: number): Provider;
-}
+import { listProviderManifests, resolveDefaultProviderSettings } from "../src/providers/provider-registry.js";
+import {
+  createProviderInput,
+  finalResponse,
+  jsonResponse,
+  type ProviderContractHarness
+} from "../src/testing/provider-contract-harness.js";
+import type { Provider, ProviderConfig, ProviderResponse } from "../src/types/index.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -197,6 +193,32 @@ describe("Provider runtime safeguards", () => {
 
     expect(requestBody?.max_tokens).toBe(2_345);
   });
+
+  it("keeps streaming capability consistent between manifests and runtime providers", () => {
+    const manifests = listProviderManifests();
+
+    for (const manifest of manifests) {
+      if (manifest.transport === "mock") {
+        continue;
+      }
+      const defaults = resolveDefaultProviderSettings(manifest.name);
+      const provider = createProvider({
+        ...defaults,
+        anthropicVersion: manifest.anthropicCompatible?.anthropicVersion ?? null,
+        builtinProviderName: manifest.name,
+        configPath: ".auto-talon/provider.config.json",
+        configSource: "defaults",
+        displayName: manifest.displayName,
+        family: manifest.family,
+        name: manifest.name,
+        providerLabel:
+          manifest.openAiCompatible?.providerLabel ?? manifest.anthropicCompatible?.providerLabel ?? null,
+        transport: manifest.transport
+      });
+
+      expect(provider.capabilities?.streaming).toBe(manifest.supportsStreaming);
+    }
+  });
 });
 
 function runProviderContractSuite(name: string, harness: ProviderContractHarness): void {
@@ -274,6 +296,17 @@ function runProviderContractSuite(name: string, harness: ProviderContractHarness
         category: "provider_unavailable"
       });
     });
+
+    it("exposes provider descriptor for compatibility checks", () => {
+      const provider = harness.createDescribableProvider();
+      expect(typeof provider.describe).toBe("function");
+
+      const descriptor = provider.describe?.();
+      expect(descriptor).toBeDefined();
+      expect(descriptor?.name).toBe(provider.name);
+      expect(descriptor?.capabilities).toEqual(provider.capabilities);
+      expect(descriptor?.baseUrl).not.toBeUndefined();
+    });
   });
 }
 
@@ -283,6 +316,22 @@ function createMockHarness(): ProviderContractHarness {
       managedMock(() => {
         throw providerError("auth_error", "bad key", false);
       }),
+    createDescribableProvider: () => managedOpenAiCompatible(jsonResponse({
+      choices: [
+        {
+          index: 0,
+          message: {
+            content: "ok",
+            role: "assistant"
+          }
+        }
+      ],
+      usage: {
+        completion_tokens: 1,
+        prompt_tokens: 1,
+        total_tokens: 2
+      }
+    })),
     createEmptyProvider: () => managedMock(() => finalResponse("")),
     createMalformedResponseProvider: () =>
       managedMock(() => ({ kind: "final", usage: { inputTokens: 1, outputTokens: 1 } } as ProviderResponse)),
@@ -316,6 +365,25 @@ function createGlmHarness(): ProviderContractHarness {
           type: "authentication_error"
         }
       }, 401)),
+    createDescribableProvider: () =>
+      managedGlm(jsonResponse({
+        choices: [
+          {
+            finish_reason: "stop",
+            index: 0,
+            message: {
+              content: "descriptor",
+              role: "assistant"
+            }
+          }
+        ],
+        model: "glm-4.5-air",
+        usage: {
+          completion_tokens: 1,
+          prompt_tokens: 1,
+          total_tokens: 2
+        }
+      })),
     createEmptyProvider: () =>
       managedGlm(jsonResponse({
         choices: [
@@ -439,6 +507,25 @@ function createOpenAiCompatibleHarness(): ProviderContractHarness {
           type: "authentication_error"
         }
       }, 401)),
+    createDescribableProvider: () =>
+      managedOpenAiCompatible(jsonResponse({
+        choices: [
+          {
+            finish_reason: "stop",
+            index: 0,
+            message: {
+              content: "descriptor",
+              role: "assistant"
+            }
+          }
+        ],
+        model: "kimi-k2",
+        usage: {
+          completion_tokens: 1,
+          prompt_tokens: 1,
+          total_tokens: 2
+        }
+      })),
     createEmptyProvider: () =>
       managedOpenAiCompatible(jsonResponse({
         choices: [
@@ -563,6 +650,26 @@ function createAnthropicHarness(): ProviderContractHarness {
         },
         type: "error"
       }, 401), {
+        model: "claude-sonnet-4-20250514",
+        name: "anthropic"
+      }),
+    createDescribableProvider: () =>
+      managedAnthropicCompatible(jsonResponse({
+        content: [
+          {
+            text: "descriptor",
+            type: "text"
+          }
+        ],
+        id: "msg-descriptor",
+        model: "claude-sonnet-4-20250514",
+        stop_reason: "end_turn",
+        type: "message",
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1
+        }
+      }), {
         model: "claude-sonnet-4-20250514",
         name: "anthropic"
       }),
@@ -697,6 +804,27 @@ function createMiniMaxHarness(): ProviderContractHarness {
         },
         type: "error"
       }, 401), {
+        baseUrl: "https://api.minimax.io/anthropic",
+        model: "MiniMax-M2.7",
+        name: "minimax"
+      }),
+    createDescribableProvider: () =>
+      managedAnthropicCompatible(jsonResponse({
+        content: [
+          {
+            text: "descriptor",
+            type: "text"
+          }
+        ],
+        id: "msg-descriptor",
+        model: "MiniMax-M2.7",
+        stop_reason: "end_turn",
+        type: "message",
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1
+        }
+      }), {
         baseUrl: "https://api.minimax.io/anthropic",
         model: "MiniMax-M2.7",
         name: "minimax"
@@ -921,91 +1049,6 @@ function managedAnthropicCompatible(
   );
 }
 
-function createProviderInput(taskInput: string): ProviderInput {
-  return {
-    agentProfileId: "executor",
-    availableTools: [
-      {
-        capability: "filesystem.read",
-        description: "Read files from the workspace.",
-        inputSchema: {
-          properties: {
-            action: {
-              enum: ["read_file"],
-              type: "string"
-            },
-            path: {
-              type: "string"
-            }
-          },
-          required: ["action", "path"],
-          type: "object"
-        },
-        name: "file_read",
-        privacyLevel: "internal",
-        riskLevel: "low"
-      }
-    ],
-    iteration: 1,
-    memoryContext: [],
-    messages: [
-      {
-        content: "You are a helpful agent.",
-        role: "system"
-      },
-      {
-        content: taskInput,
-        role: "user"
-      }
-    ],
-    signal: new AbortController().signal,
-    task: {
-      agentProfileId: "executor",
-      createdAt: new Date().toISOString(),
-      currentIteration: 0,
-      cwd: "D:\\workspace",
-      errorCode: null,
-      errorMessage: null,
-      finalOutput: null,
-      finishedAt: null,
-      input: taskInput,
-      maxIterations: 4,
-      metadata: {},
-      providerName: "mock",
-      requesterUserId: "tester",
-      startedAt: null,
-      status: "running",
-      taskId: "task-1",
-      tokenBudget: {
-        inputLimit: 8_000,
-        outputLimit: 2_000,
-        reservedOutput: 500,
-        usedInput: 0,
-        usedOutput: 0
-      },
-      updatedAt: new Date().toISOString()
-    },
-    tokenBudget: {
-      inputLimit: 8_000,
-      outputLimit: 2_000,
-      reservedOutput: 500,
-      usedInput: 0,
-      usedOutput: 0
-    }
-  };
-}
-
-function finalResponse(message: string): ProviderResponse {
-  return {
-    kind: "final",
-    message,
-    usage: {
-      inputTokens: 1,
-      outputTokens: 1
-    }
-  };
-}
-
 function providerError(
   category: ProviderError["category"],
   message: string,
@@ -1017,14 +1060,5 @@ function providerError(
     providerName: "mock",
     retriable,
     summary: message
-  });
-}
-
-function jsonResponse(payload: object, status = 200): Response {
-  return new Response(JSON.stringify(payload), {
-    headers: {
-      "Content-Type": "application/json"
-    },
-    status
   });
 }

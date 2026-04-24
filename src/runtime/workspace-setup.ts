@@ -1,12 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 type JsonObject = Record<string, unknown>;
-
-interface VersionedConfig {
-  version?: number;
-  [key: string]: unknown;
-}
 
 const CONFIG_VERSION = 1;
 
@@ -94,10 +89,6 @@ export interface InitWorkspaceResult {
   workspaceConfigDir: string;
 }
 
-export interface ConfigMigrationResult {
-  migrated: string[];
-}
-
 export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceResult {
   const workspaceConfigDir = join(workspaceRoot, ".auto-talon");
   mkdirSync(workspaceConfigDir, { recursive: true });
@@ -121,53 +112,6 @@ export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceRe
   return {
     createdFiles,
     workspaceConfigDir
-  };
-}
-
-export function migrateWorkspaceConfigFiles(workspaceRoot: string): ConfigMigrationResult {
-  const files = [
-    "provider.config.json",
-    "runtime.config.json",
-    "sandbox.config.json",
-    "gateway.config.json",
-    "feishu.config.json",
-    "mcp.config.json",
-    "mcp-server.config.json",
-    "skill-overrides.json"
-  ];
-
-  const migrated: string[] = [];
-  for (const fileName of files) {
-    const configPath = join(workspaceRoot, ".auto-talon", fileName);
-    if (!existsSync(configPath)) {
-      continue;
-    }
-    const raw = readFileSync(configPath, "utf8").trim();
-    if (raw.length === 0) {
-      continue;
-    }
-    const parsed = JSON.parse(raw) as VersionedConfig;
-    const next = migrateToLatest(parsed);
-    if (next.changed) {
-      writeFileSync(configPath, `${JSON.stringify(next.value, null, 2)}\n`, "utf8");
-      migrated.push(fileName);
-    }
-  }
-
-  return { migrated };
-}
-
-function migrateToLatest(config: VersionedConfig): { changed: boolean; value: VersionedConfig } {
-  const currentVersion = typeof config.version === "number" ? config.version : 0;
-  if (currentVersion >= CONFIG_VERSION) {
-    return { changed: false, value: config };
-  }
-  return {
-    changed: true,
-    value: {
-      ...config,
-      version: CONFIG_VERSION
-    }
   };
 }
 

@@ -1,5 +1,7 @@
 export * from "./bootstrap.js";
+export * from "./adapter-contract.js";
 export * from "./capability-policy.js";
+export * from "./examples/index.js";
 export * from "./feishu/index.js";
 export * from "./gateway-guard.js";
 export * from "./gateway-manager.js";

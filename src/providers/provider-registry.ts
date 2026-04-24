@@ -19,6 +19,7 @@ export const SUPPORTED_PROVIDER_NAMES = [
 export type SupportedProviderName = (typeof SUPPORTED_PROVIDER_NAMES)[number];
 
 export type ProviderTransportKind = "anthropic-compatible" | "mock" | "openai-compatible";
+export const SUPPORTED_PROVIDER_CONTRACT_VERSION = 1;
 
 export interface ProviderCatalogEntry {
   aliases: string[];
@@ -56,6 +57,7 @@ export interface ProviderManifest {
   supportsConfiguration: boolean;
   supportsStreaming: boolean;
   supportsToolCalls: boolean;
+  contractVersion: number;
   transport: ProviderTransportKind;
 }
 
@@ -174,6 +176,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "anthropic-compatible"
   },
   "xfyun-coding": {
@@ -190,6 +193,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: false,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   gemini: {
@@ -206,6 +210,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   glm: {
@@ -222,6 +227,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   minimax: {
@@ -239,6 +245,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "anthropic-compatible"
   },
   moonshot: {
@@ -255,6 +262,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   "openai-compatible": {
@@ -270,6 +278,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   openai: {
@@ -286,6 +295,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   ollama: {
@@ -302,6 +312,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   openrouter: {
@@ -318,6 +329,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   mock: {
@@ -328,6 +340,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: false,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "mock"
   },
   qwen: {
@@ -344,6 +357,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   },
   xai: {
@@ -360,6 +374,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
     supportsConfiguration: true,
     supportsStreaming: true,
     supportsToolCalls: true,
+    contractVersion: 1,
     transport: "openai-compatible"
   }
 };
@@ -385,6 +400,16 @@ export function listProviderManifests(): ProviderManifest[] {
 export function resolveProviderManifest(name: string): ProviderManifest | null {
   const normalized = normalizeProviderName(name);
   return normalized === null ? null : PROVIDER_MANIFESTS[normalized];
+}
+
+export function assertProviderManifestCompatibility(manifest: ProviderManifest): void {
+  if (manifest.contractVersion > SUPPORTED_PROVIDER_CONTRACT_VERSION) {
+    throw new Error(
+      `Provider "${manifest.name}" requires contract version ${manifest.contractVersion}, ` +
+        `but this runtime only supports up to ${SUPPORTED_PROVIDER_CONTRACT_VERSION}. ` +
+        "Please upgrade auto-talon."
+    );
+  }
 }
 
 export function requireProviderManifest(name: string): ProviderManifest {

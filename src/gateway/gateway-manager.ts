@@ -1,5 +1,6 @@
 import type { AdapterCapabilityName, GatewayRuntimeApi, InboundMessageAdapter } from "../types/index.js";
 import type { OutboundResponseAdapter } from "../types/index.js";
+import { validateAdapterContract } from "./adapter-contract.js";
 
 const ALL_CAPABILITIES: AdapterCapabilityName[] = [
   "textInteraction",
@@ -25,18 +26,13 @@ export class GatewayManager {
 
   public async startAll(): Promise<void> {
     for (const adapter of this.adapters) {
-      if (!adapter.descriptor.capabilities.textInteraction.supported) {
+      const contractViolations = validateAdapterContract(adapter);
+      if (contractViolations.length > 0) {
         throw new Error(
-          `Adapter ${adapter.descriptor.adapterId} cannot start without textInteraction support.`
+          `Adapter ${adapter.descriptor.adapterId} failed contract validation: ${contractViolations
+            .map((violation) => violation.message)
+            .join(" ")}`
         );
-      }
-      for (const capabilityName of ALL_CAPABILITIES) {
-        const declared = adapter.descriptor.capabilities[capabilityName];
-        if (declared === undefined || typeof declared.supported !== "boolean") {
-          throw new Error(
-            `Adapter ${adapter.descriptor.adapterId} must declare ${capabilityName} capability explicitly.`
-          );
-        }
       }
       this.assertRequiredCapabilities(adapter);
       if (
