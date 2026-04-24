@@ -58,6 +58,7 @@ import {
 import { JobRunner } from "./jobs/index.js";
 import { SchedulerService } from "./scheduler/index.js";
 import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./threads/index.js";
+import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import { resolveRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles, migrateWorkspaceConfigFiles } from "./workspace-setup.js";
@@ -348,6 +349,18 @@ export function createApplication(
     snapshotRepository: storage.threadSnapshots,
     traceService
   });
+  const workerDispatcher = new WorkerDispatcher({
+    auditService,
+    budgetService,
+    traceService
+  });
+  const summarizerWorker = new SummarizerWorker({
+    contextCompactor,
+    sessionSnapshotService
+  });
+  const retrievalWorker = new RetrievalWorker({
+    recallPlanner
+  });
   const deliveryService = new DeliveryService();
   const deliveryProducer = deliveryService.createProducer();
   const inboxService = new InboxService({
@@ -408,6 +421,9 @@ export function createApplication(
     routingMode: config.routing.mode,
     runtimeVersion: config.runtimeVersion,
     sessionSnapshotService,
+    workerDispatcher,
+    summarizerWorker,
+    retrievalWorker,
     taskRepository: storage.tasks,
     threadLineageRepository: storage.threadLineage,
     threadRunRepository: storage.threadRuns,

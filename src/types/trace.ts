@@ -87,7 +87,12 @@ export const TRACE_EVENT_TYPES = [
   "next_action_created",
   "next_action_updated",
   "next_action_blocked",
-  "next_action_done"
+  "next_action_done",
+  "worker_dispatched",
+  "worker_succeeded",
+  "worker_failed",
+  "worker_timeout",
+  "worker_retried"
 ] as const;
 
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];
@@ -678,6 +683,51 @@ export interface NextActionDonePayload extends JsonObject {
   taskId: string | null;
 }
 
+export interface WorkerDispatchedPayload extends JsonObject {
+  workerId: string;
+  workerKind: "summarizer" | "retrieval";
+  taskId: string;
+  threadId: string | null;
+  timeoutMs: number;
+}
+
+export interface WorkerSucceededPayload extends JsonObject {
+  workerId: string;
+  workerKind: "summarizer" | "retrieval";
+  taskId: string;
+  threadId: string | null;
+  durationMs: number;
+  outputSummary: string;
+}
+
+export interface WorkerFailedPayload extends JsonObject {
+  workerId: string;
+  workerKind: "summarizer" | "retrieval";
+  taskId: string;
+  threadId: string | null;
+  durationMs: number;
+  errorMessage: string;
+  retriable: boolean;
+}
+
+export interface WorkerTimeoutPayload extends JsonObject {
+  workerId: string;
+  workerKind: "summarizer" | "retrieval";
+  taskId: string;
+  threadId: string | null;
+  timeoutMs: number;
+}
+
+export interface WorkerRetriedPayload extends JsonObject {
+  workerId: string;
+  workerKind: "summarizer" | "retrieval";
+  taskId: string;
+  threadId: string | null;
+  attemptNumber: number;
+  maxAttempts: number;
+  delayMs: number;
+}
+
 export interface FileRollbackPayload extends JsonObject {
   artifactId: string;
   operation: string;
@@ -758,7 +808,12 @@ export type TraceEvent =
   | TraceEventBase<"next_action_created", NextActionCreatedPayload>
   | TraceEventBase<"next_action_updated", NextActionUpdatedPayload>
   | TraceEventBase<"next_action_blocked", NextActionBlockedPayload>
-  | TraceEventBase<"next_action_done", NextActionDonePayload>;
+  | TraceEventBase<"next_action_done", NextActionDonePayload>
+  | TraceEventBase<"worker_dispatched", WorkerDispatchedPayload>
+  | TraceEventBase<"worker_succeeded", WorkerSucceededPayload>
+  | TraceEventBase<"worker_failed", WorkerFailedPayload>
+  | TraceEventBase<"worker_timeout", WorkerTimeoutPayload>
+  | TraceEventBase<"worker_retried", WorkerRetriedPayload>;
 
 export type TraceEventDraft = Omit<TraceEvent, "eventId" | "sequence" | "timestamp"> &
   Partial<Pick<TraceEvent, "eventId" | "sequence" | "timestamp">>;

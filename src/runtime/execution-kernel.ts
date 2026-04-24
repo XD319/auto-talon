@@ -11,6 +11,7 @@ import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
 import type { ContextCompactor, SessionSnapshotService } from "./context/index.js";
 import type { RecallPlanner } from "./retrieval/index.js";
+import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
 import type { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { ProviderError } from "../providers/index.js";
@@ -62,6 +63,9 @@ export interface ExecutionKernelDependencies {
   compact: RuntimeConfig["compact"];
   budgetPricing?: Record<string, BudgetPricingEntry>;
   budgetService?: BudgetService;
+  workerDispatcher?: WorkerDispatcher;
+  summarizerWorker?: SummarizerWorker;
+  retrievalWorker?: RetrievalWorker;
   providerRouter?: ProviderRouter;
   routingMode?: "cheap_first" | "balanced" | "quality_first";
   toolExposurePlanner?: ToolExposurePlanner;
@@ -90,6 +94,34 @@ export class ExecutionKernel {
   private readonly contextAssembler = new ExecutionContextAssembler();
 
   public constructor(private readonly dependencies: ExecutionKernelDependencies) {}
+
+  private async planRecall(
+    input: Parameters<RecallPlanner["plan"]>[0]
+  ): Promise<ReturnType<RecallPlanner["plan"]>> {
+    const workerDispatcher = this.dependencies.workerDispatcher;
+    const retrievalWorker = this.dependencies.retrievalWorker;
+    if (workerDispatcher === undefined || retrievalWorker === undefined) {
+      return this.dependencies.recallPlanner.plan(input);
+    }
+    const result = await workerDispatcher.dispatch(
+      {
+        backoffBaseMs: 150,
+        backoffMaxMs: 1_000,
+        input,
+        maxAttempts: 2,
+        taskId: input.task.taskId,
+        threadId: input.task.threadId ?? null,
+        timeoutMs: 5_000,
+        workerId: randomUUID(),
+        workerKind: "retrieval"
+      },
+      (request) => retrievalWorker.execute(request)
+    );
+    if (result.output !== null) {
+      return result.output;
+    }
+    return this.dependencies.recallPlanner.plan(input);
+  }
 
   public async run(options: RuntimeRunOptions): Promise<RuntimeRunResult> {
     const taskId = options.taskId ?? randomUUID();
@@ -192,7 +224,7 @@ export class ExecutionKernel {
       const availableTools =
         initialToolExposure?.tools ??
         this.dependencies.toolOrchestrator.listTools(profile.allowedToolNames);
-      const recallPlan = this.dependencies.recallPlanner.plan({
+      const recallPlan = await this.planRecall({
         task,
         threadCommitmentState:
           threadId === null ? null : this.dependencies.getThreadCommitmentState?.(threadId) ?? null,
@@ -878,29 +910,56 @@ export class ExecutionKernel {
             targetRunId: latestRun?.runId ?? null,
             threadId: task.threadId
           });
-          const snapshotDraft = this.dependencies.contextCompactor.buildSnapshot({
-            availableTools,
-            compact: {
-              maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
-              messages: preCompactMessages,
-              pendingToolCalls,
-              reason: compactReason,
-              sessionScopeKey: task.taskId,
-              taskId: task.taskId,
-              tokenEstimate: estimateTokenCount(preCompactMessages),
-              tokenThreshold: this.dependencies.compact.tokenThreshold,
-              toolCallCount,
-              toolCallThreshold: this.dependencies.compact.toolCallThreshold
-            },
-            memoryContext: state.memoryContext,
-            task
-          });
-          this.dependencies.sessionSnapshotService.createSnapshot({
-            ...snapshotDraft,
-            runId: latestRun?.runId ?? null,
-            threadId: task.threadId,
-            trigger: "compact"
-          });
+          const compactInput = {
+            maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
+            messages: preCompactMessages,
+            pendingToolCalls,
+            reason: compactReason,
+            sessionScopeKey: task.taskId,
+            taskId: task.taskId,
+            tokenEstimate: estimateTokenCount(preCompactMessages),
+            tokenThreshold: this.dependencies.compact.tokenThreshold,
+            toolCallCount,
+            toolCallThreshold: this.dependencies.compact.toolCallThreshold
+          } as const;
+          const workerDispatcher = this.dependencies.workerDispatcher;
+          const summarizerWorker = this.dependencies.summarizerWorker;
+          if (workerDispatcher !== undefined && summarizerWorker !== undefined) {
+            await workerDispatcher.dispatch(
+              {
+                backoffBaseMs: 150,
+                backoffMaxMs: 1000,
+                input: {
+                  availableTools,
+                  compactInput,
+                  compactResult: compacted,
+                  memoryContext: state.memoryContext,
+                  runId: latestRun?.runId ?? null,
+                  task
+                },
+                maxAttempts: 2,
+                taskId: task.taskId,
+                threadId: task.threadId,
+                timeoutMs: 5_000,
+                workerId: randomUUID(),
+                workerKind: "summarizer"
+              },
+              (input) => summarizerWorker.execute(input)
+            );
+          } else {
+            const snapshotDraft = this.dependencies.contextCompactor.buildSnapshot({
+              availableTools,
+              compact: compactInput,
+              memoryContext: state.memoryContext,
+              task
+            });
+            this.dependencies.sessionSnapshotService.createSnapshot({
+              ...snapshotDraft,
+              runId: latestRun?.runId ?? null,
+              threadId: task.threadId,
+              trigger: "compact"
+            });
+          }
         }
         const initialSystemPrompt =
           messages.find((message) => message.role === "system") ?? null;
@@ -935,7 +994,7 @@ export class ExecutionKernel {
         });
         messages.push(...compacted.replacementMessages);
         const refreshThreadId = task.threadId ?? null;
-        const refreshedContext = this.dependencies.recallPlanner.plan({
+        const refreshedContext = await this.planRecall({
           task,
           threadCommitmentState:
             refreshThreadId === null
