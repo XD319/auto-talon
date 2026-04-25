@@ -157,6 +157,94 @@ describe("ExperienceCollector runtime hooks", () => {
       handle.close();
     }
   });
+
+  it("does not fail when a finished tool call is replayed from persisted state", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider((input) => {
+        const toolCount = input.messages.filter((message) => message.role === "tool").length;
+        if (toolCount === 0) {
+          return {
+            kind: "tool_calls",
+            message: "Use the cached file read result.",
+            toolCalls: [
+              {
+                input: {
+                  path: "README.md"
+                },
+                reason: "Need cached context",
+                toolCallId: "tool-readme-replay",
+                toolName: "file_read"
+              }
+            ],
+            usage: {
+              inputTokens: 8,
+              outputTokens: 4
+            }
+          };
+        }
+
+        return {
+          kind: "final",
+          message: "Replayed the cached tool result successfully.",
+          usage: {
+            inputTokens: 10,
+            outputTokens: 4
+          }
+        };
+      })
+    });
+
+    handle.infrastructure.storage.toolCalls.create({
+      errorCode: null,
+      errorMessage: null,
+      finishedAt: new Date().toISOString(),
+      input: {
+        path: "README.md"
+      },
+      iteration: 1,
+      output: {
+        content: "cached README contents",
+        path: "README.md"
+      },
+      requestedAt: new Date().toISOString(),
+      riskLevel: "low",
+      startedAt: new Date().toISOString(),
+      status: "finished",
+      summary: "Read cached README contents.",
+      taskId: "prior-task",
+      toolCallId: "tool-readme-replay",
+      toolName: "file_read"
+    });
+
+    try {
+      const result = await handle.service.runTask(
+        createDefaultRunOptions("reuse cached tool result", workspaceRoot, handle.config)
+      );
+      const traces = handle.service.traceTask(result.task.taskId);
+      const replayedToolFinish = traces.find((event) => event.eventType === "tool_call_finished");
+      const experiences = handle.infrastructure.storage.experiences.list({
+        taskId: result.task.taskId,
+        sourceType: "tool_result"
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.output).toContain("Replayed the cached tool result successfully.");
+      expect(replayedToolFinish?.payload).toMatchObject({
+        outputPreview: expect.stringContaining("cached README contents"),
+        summary: "Read cached README contents.",
+        toolCallId: "tool-readme-replay",
+        toolName: "file_read"
+      });
+      expect(experiences[0]?.summary).toBe("Read cached README contents.");
+      expect(experiences[0]?.content).toContain("cached README contents");
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 async function createTempWorkspace(): Promise<string> {

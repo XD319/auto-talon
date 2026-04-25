@@ -109,6 +109,29 @@ export class ToolOrchestrator {
       );
     }
 
+    const replayOutcome = this.replayTerminalOutcome(toolCall);
+    if (replayOutcome !== null) {
+      const replayedSummary =
+        toolCall.summary ?? `Tool ${tool.name} finished (replayed).`;
+      this.dependencies.traceService.record({
+        actor: `tool.${tool.name}`,
+        eventType: "tool_call_finished",
+        payload: {
+          iteration: request.iteration,
+          outputPreview: safePreview(toolCall.output),
+          replayed: true,
+          status: toolCall.status,
+          summary: replayedSummary,
+          toolCallId: toolCall.toolCallId,
+          toolName: tool.name
+        },
+        stage: "tooling",
+        summary: `Tool ${tool.name} replayed from persisted terminal status`,
+        taskId: request.taskId
+      });
+      return replayOutcome;
+    }
+
     const parsed = tool.inputSchema.safeParse(request.input);
     if (!parsed.success) {
       const validationSummary = summarizeValidationIssues(parsed.error.issues);
@@ -606,6 +629,31 @@ export class ToolOrchestrator {
     });
 
     throw error;
+  }
+
+  private replayTerminalOutcome(toolCall: ToolCallRecord): ToolExecutionCompletedOutcome | null {
+    if (toolCall.status === "failed") {
+      throw new AppError({
+        code: toolCall.errorCode ?? "tool_execution_error",
+        message:
+          toolCall.errorMessage ??
+          `Tool ${toolCall.toolName} previously failed (replayed).`
+      });
+    }
+
+    if (toolCall.status !== "finished") {
+      return null;
+    }
+
+    return {
+      kind: "completed",
+      result: {
+        output: toolCall.output,
+        success: true,
+        summary: toolCall.summary ?? `Tool ${toolCall.toolName} finished (replayed).`
+      },
+      toolCall
+    };
   }
 }
 

@@ -18,9 +18,17 @@ export class ExperienceCollector {
       return;
     }
     this.unsubscribe = this.dependencies.traceService.subscribe((event) => {
-      const draft = draftFromTraceEvent(event);
-      if (draft !== null) {
-        this.dependencies.experiencePlane.capture(draft);
+      try {
+        const draft = draftFromTraceEvent(event);
+        if (draft !== null) {
+          this.dependencies.experiencePlane.capture(draft);
+        }
+      } catch (error) {
+        console.warn("[experience-collector] skipped trace event", {
+          error: error instanceof Error ? error.message : String(error),
+          eventType: event.eventType,
+          taskId: event.taskId
+        });
       }
     });
   }
@@ -92,19 +100,27 @@ function draftFromTraceEvent(event: TraceEvent): ExperienceDraft | null {
         workspace: event.taskId
       });
     case "tool_call_finished":
-      return createDraft({
-        content: event.payload.outputPreview,
-        sourceLabel: `Tool result: ${event.payload.toolName}`,
-        sourceType: "tool_result",
-        status: "candidate",
-        summary: event.payload.summary,
-        taskId: event.taskId,
-        title: `Tool result: ${event.payload.toolName}`,
-        toolCallId: event.payload.toolCallId,
-        type: "pattern",
-        valueScore: 0.42,
-        workspace: event.taskId
-      });
+      {
+        const toolName = readNonEmptyString(event.payload.toolName) ?? "tool";
+        const summary =
+          readNonEmptyString(event.payload.summary) ??
+          readNonEmptyString(event.summary) ??
+          `Tool ${toolName} finished.`;
+        const outputPreview = readNonEmptyString(event.payload.outputPreview) ?? summary;
+        return createDraft({
+          content: outputPreview,
+          sourceLabel: `Tool result: ${toolName}`,
+          sourceType: "tool_result",
+          status: "candidate",
+          summary,
+          taskId: event.taskId,
+          title: `Tool result: ${toolName}`,
+          toolCallId: readNonEmptyString(event.payload.toolCallId),
+          type: "pattern",
+          valueScore: 0.42,
+          workspace: event.taskId
+        });
+      }
     case "tool_call_failed":
       return createDraft({
         content: `${event.payload.errorCode}: ${event.payload.errorMessage}`,
@@ -232,4 +248,8 @@ function buildPhrases(tokens: string[]): string[] {
     phrases.push(`${tokens[index]} ${tokens[index + 1]}`);
   }
   return [...new Set(phrases)];
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }

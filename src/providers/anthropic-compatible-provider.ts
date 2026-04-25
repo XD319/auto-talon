@@ -342,11 +342,12 @@ function toAnthropicMessages(messages: ConversationMessage[]): AnthropicCompatib
   return messages
     .filter((message) => message.role !== "system")
     .map((message) => {
+      const content = typeof message.content === "string" ? message.content : "";
       if (message.role === "tool") {
         return {
           content: [
             {
-              content: message.content,
+              content,
               tool_use_id: message.toolCallId ?? "tool-result",
               type: "tool_result"
             }
@@ -357,9 +358,9 @@ function toAnthropicMessages(messages: ConversationMessage[]): AnthropicCompatib
 
       if (message.role === "assistant" && message.toolCalls !== undefined && message.toolCalls.length > 0) {
         const contentBlocks: AnthropicCompatibleContentBlock[] = [];
-        if (message.content.trim().length > 0) {
+        if (content.trim().length > 0) {
           contentBlocks.push({
-            text: message.content,
+            text: content,
             type: "text"
           });
         }
@@ -380,7 +381,7 @@ function toAnthropicMessages(messages: ConversationMessage[]): AnthropicCompatib
       }
 
       return {
-        content: message.content,
+        content,
         role: message.role === "assistant" ? "assistant" : "user"
       };
     });

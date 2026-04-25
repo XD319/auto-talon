@@ -1251,8 +1251,9 @@ function createToolFeedbackMessage(
   toolCall: { toolCallId: string; toolName: string },
   privacyLevel: "public" | "internal" | "restricted"
 ): ConversationMessage {
+  const serializedOutput = JSON.stringify(output, null, 2);
   return {
-    content: JSON.stringify(output, null, 2),
+    content: serializedOutput ?? "null",
     metadata: {
       privacyLevel,
       retentionKind: "session",

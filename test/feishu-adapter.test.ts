@@ -483,6 +483,103 @@ describe("feishu adapter", () => {
     expect(create).toHaveBeenCalledTimes(2);
   });
 
+  it("reprocesses a redelivered message after reply delivery exhausts retries", async () => {
+    vi.useFakeTimers();
+    const create = vi.fn(() =>
+      Promise.reject(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }))
+    );
+    const patch = vi.fn(() => Promise.resolve({}));
+    const logger = {
+      error: vi.fn()
+    };
+    const submitTask = vi.fn(() => Promise.resolve({
+      adapter: {
+        adapterId: "feishu-im",
+        capabilities: {
+          approvalInteraction: { supported: true },
+          attachmentCapability: { supported: true },
+          fileCapability: { supported: true },
+          streamingCapability: { supported: true },
+          structuredCardCapability: { supported: true },
+          textInteraction: { supported: true }
+        },
+        description: "x",
+        displayName: "x",
+        kind: "sdk" as const,
+        lifecycleState: "running" as const
+      },
+      notices: [],
+      result: { errorCode: null, errorMessage: null, output: "ok", pendingApprovalId: null, status: "succeeded", taskId: "t1" },
+      sessionBinding: {
+        adapterId: "feishu-im",
+        createdAt: new Date().toISOString(),
+        externalSessionId: "chat",
+        externalUserId: "open",
+        metadata: {},
+        runtimeUserId: "feishu-im:open",
+        sessionBindingId: "s1",
+        taskId: "t1",
+        updatedAt: new Date().toISOString()
+      }
+    }));
+
+    let handlers: Record<string, (data: unknown) => Promise<void> | void> = {};
+    const adapter = new FeishuAdapter(
+      { appId: "app", appSecret: "secret", domain: "feishu" },
+      {
+        logger,
+        createClients: () => Promise.resolve({
+          client: { im: { message: { create, patch } } },
+          createEventDispatcher: () => ({
+            register: (registeredHandlers) => {
+              handlers = registeredHandlers;
+              return {
+                handlers: registeredHandlers
+              };
+            }
+          }),
+          wsClient: { start: vi.fn() }
+        })
+      }
+    );
+    await adapter.start({
+      runtimeApi: {
+        getTaskSnapshot: () => null,
+        registerOutboundAdapter: () => undefined,
+        resolveApproval: vi.fn(() => Promise.resolve(null)),
+        submitTask,
+        subscribeToCompletion: () => () => undefined,
+        subscribeToTaskEvents: () => () => undefined
+      }
+    });
+
+    const payload = {
+      event_id: "event-1",
+      message: {
+        chat_id: "chat",
+        content: JSON.stringify({ text: "hello" }),
+        message_id: "message-1"
+      },
+      sender: {
+        sender_id: {
+          open_id: "open"
+        }
+      }
+    };
+
+    const firstAttempt = handlers["im.message.receive_v1"]?.(payload);
+    await vi.runAllTimersAsync();
+    await firstAttempt;
+
+    const secondAttempt = handlers["im.message.receive_v1"]?.(payload);
+    await vi.runAllTimersAsync();
+    await secondAttempt;
+
+    expect(submitTask).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(6);
+    expect(logger.error).toHaveBeenCalledTimes(2);
+  });
+
   it("redacts secrets from logged errors", async () => {
     const create = vi.fn(() =>
       Promise.reject(

@@ -540,9 +540,10 @@ export class OpenAiCompatibleProvider implements Provider {
 }
 
 function toProviderMessage(message: ConversationMessage): OpenAiCompatibleMessage {
+  const content = typeof message.content === "string" ? message.content : "";
   if (message.role === "assistant" && message.toolCalls !== undefined && message.toolCalls.length > 0) {
     return {
-      content: message.content.length > 0 ? message.content : null,
+      content: content.length > 0 ? content : null,
       role: "assistant",
       tool_calls: message.toolCalls.map((toolCall) => ({
         function: {
@@ -557,14 +558,14 @@ function toProviderMessage(message: ConversationMessage): OpenAiCompatibleMessag
 
   if (message.role === "tool") {
     return {
-      content: message.content,
+      content,
       role: "tool",
       ...(message.toolCallId !== undefined ? { tool_call_id: message.toolCallId } : {})
     };
   }
 
   return {
-    content: message.content,
+    content,
     role: message.role
   };
 }

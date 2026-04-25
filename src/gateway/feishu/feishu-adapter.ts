@@ -74,9 +74,10 @@ export interface FeishuAdapterOptions {
     wsClient: FeishuWsClientLike;
   }>;
   logger?: {
-    error?: (message: string, data?: unknown) => void;
-    info?: (message: string, data?: unknown) => void;
-    warn?: (message: string, data?: unknown) => void;
+    debug?: (...message: unknown[]) => void;
+    error?: (...message: unknown[]) => void;
+    info?: (...message: unknown[]) => void;
+    warn?: (...message: unknown[]) => void;
   };
 }
 
@@ -88,6 +89,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
   private wsClient: FeishuWsClientLike | null = null;
   private readonly handledInboundKeys: string[] = [];
   private readonly handledInboundKeySet = new Set<string>();
+  private readonly inFlightInboundKeySet = new Set<string>();
   private readonly taskMessageIds = new Map<string, { chatId: string; messageId: string }>();
 
   public constructor(
@@ -119,7 +121,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     this.runtimeApi = context.runtimeApi;
     const clients =
       this.options.createClients === undefined
-        ? await createDefaultClients(this.config)
+        ? await createDefaultClients(this.config, this.options.logger)
         : await this.options.createClients(this.config);
     this.client = clients.client;
     this.wsClient = clients.wsClient;
@@ -140,7 +142,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
             return;
           }
           const inboundKey = event.messageId ?? event.eventId;
-          if (inboundKey !== null && !this.markInboundMessageSeen(inboundKey)) {
+          if (inboundKey !== null && !this.beginInboundMessageHandling(inboundKey)) {
             this.logInfo("[feishu-adapter] ignored duplicate message event", { inboundKey });
             return;
           }
@@ -151,7 +153,13 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
             messageId: event.messageId,
             textLength: event.text.length
           });
-          await this.handleMessageEvent(event);
+          let handledSuccessfully = false;
+          try {
+            await this.handleMessageEvent(event);
+            handledSuccessfully = true;
+          } finally {
+            this.completeInboundMessageHandling(inboundKey, handledSuccessfully);
+          }
         } catch (error) {
           this.logError("[feishu-adapter] failed to handle im.message.receive_v1", error);
         }
@@ -170,9 +178,21 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     return Promise.resolve();
   }
 
-  private markInboundMessageSeen(inboundKey: string): boolean {
-    if (this.handledInboundKeySet.has(inboundKey)) {
+  private beginInboundMessageHandling(inboundKey: string): boolean {
+    if (this.handledInboundKeySet.has(inboundKey) || this.inFlightInboundKeySet.has(inboundKey)) {
       return false;
+    }
+    this.inFlightInboundKeySet.add(inboundKey);
+    return true;
+  }
+
+  private completeInboundMessageHandling(inboundKey: string | null, handledSuccessfully: boolean): void {
+    if (inboundKey === null) {
+      return;
+    }
+    this.inFlightInboundKeySet.delete(inboundKey);
+    if (!handledSuccessfully) {
+      return;
     }
     this.handledInboundKeySet.add(inboundKey);
     this.handledInboundKeys.push(inboundKey);
@@ -182,7 +202,6 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
         this.handledInboundKeySet.delete(oldest);
       }
     }
-    return true;
   }
 
   public async handleMessageEvent(event: {
@@ -404,7 +423,10 @@ function formatTaskResultText(result: GatewayTaskResultView): string {
   return "No output.";
 }
 
-async function createDefaultClients(config: FeishuGatewayConfig): Promise<{
+async function createDefaultClients(
+  config: FeishuGatewayConfig,
+  logger?: FeishuAdapterOptions["logger"]
+): Promise<{
   client: FeishuClientLike;
   createEventDispatcher: () => FeishuEventDispatcherLike;
   wsClient: FeishuWsClientLike;
@@ -422,22 +444,25 @@ async function createDefaultClients(config: FeishuGatewayConfig): Promise<{
     throw error;
   }
   const domain = config.domain === "lark" ? lark.Domain.Lark : lark.Domain.Feishu;
+  const sdkLogger = createFeishuSdkLogger(logger);
   const loggerLevel =
-    process.env.AUTO_TALON_FEISHU_DEBUG === "1" ? lark.LoggerLevel.debug : lark.LoggerLevel.info;
+    process.env.AUTO_TALON_FEISHU_DEBUG === "1" ? lark.LoggerLevel.debug : lark.LoggerLevel.error;
   const client = new lark.Client({
     appId: config.appId,
     appSecret: config.appSecret,
     domain,
+    logger: sdkLogger,
     loggerLevel
   }) as FeishuClientLike;
   const wsClient = new lark.WSClient({
     appId: config.appId,
     appSecret: config.appSecret,
     domain,
+    logger: sdkLogger,
     loggerLevel
   }) as FeishuWsClientLike;
   const createEventDispatcher = () =>
-    new lark.EventDispatcher({ loggerLevel }) as FeishuEventDispatcherLike;
+    new lark.EventDispatcher({ logger: sdkLogger, loggerLevel }) as FeishuEventDispatcherLike;
   return { client, createEventDispatcher, wsClient };
 }
 
@@ -446,23 +471,33 @@ interface LarkSdkModule {
     appId: string;
     appSecret: string;
     domain: unknown;
+    logger?: FeishuSdkLogger;
     loggerLevel: unknown;
   }) => unknown;
   Domain: {
     Feishu: unknown;
     Lark: unknown;
   };
-  EventDispatcher: new (options: { loggerLevel: unknown }) => unknown;
+  EventDispatcher: new (options: { logger?: FeishuSdkLogger; loggerLevel: unknown }) => unknown;
   LoggerLevel: {
+    error: unknown;
     debug: unknown;
-    info: unknown;
   };
   WSClient: new (options: {
     appId: string;
     appSecret: string;
     domain: unknown;
+    logger?: FeishuSdkLogger;
     loggerLevel: unknown;
   }) => unknown;
+}
+
+interface FeishuSdkLogger {
+  debug: (...message: unknown[]) => void;
+  error: (...message: unknown[]) => void;
+  info: (...message: unknown[]) => void;
+  trace: (...message: unknown[]) => void;
+  warn: (...message: unknown[]) => void;
 }
 
 function isModuleNotFoundError(error: unknown): boolean {
@@ -581,6 +616,45 @@ function summarizeMessagePayload(payload: unknown): Record<string, unknown> {
     payloadKeys: record === null ? [] : Object.keys(record).sort(),
     senderType: readString(sender, "sender_type")
   };
+}
+
+function createFeishuSdkLogger(logger?: FeishuAdapterOptions["logger"]): FeishuSdkLogger {
+  return {
+    debug: (...message) => {
+      logFeishuSdkMessage("debug", logger, message);
+    },
+    error: (...message) => {
+      logFeishuSdkMessage("error", logger, message);
+    },
+    info: (...message) => {
+      logFeishuSdkMessage("info", logger, message);
+    },
+    trace: (...message) => {
+      logFeishuSdkMessage("debug", logger, message);
+    },
+    warn: (...message) => {
+      logFeishuSdkMessage("warn", logger, message);
+    }
+  };
+}
+
+function logFeishuSdkMessage(
+  level: "debug" | "error" | "info" | "warn",
+  logger: FeishuAdapterOptions["logger"] | undefined,
+  message: unknown[]
+): void {
+  const sanitized = message.map((item) => sanitizeFeishuLogPayload(item));
+  const target = logger?.[level];
+  if (target !== undefined) {
+    target("[feishu-sdk]", ...sanitized);
+    return;
+  }
+
+  if (level === "debug") {
+    console.debug("[feishu-sdk]", ...sanitized);
+    return;
+  }
+  console[level]("[feishu-sdk]", ...sanitized);
 }
 
 const FEISHU_RETRY_DELAYS_MS = [200, 500];
