@@ -20,7 +20,7 @@ import type {
   ThreadRecord,
   ThreadRunRecord,
   ThreadCommitmentState,
-  ThreadSnapshotRecord,
+  ThreadSessionMemoryRecord,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -150,32 +150,30 @@ export function formatNextActionList(actions: NextActionRecord[]): string {
   ].join("\n");
 }
 
-export function formatThreadSnapshotList(snapshots: ThreadSnapshotRecord[]): string {
+export function formatThreadSnapshotList(snapshots: ThreadSessionMemoryRecord[]): string {
   if (snapshots.length === 0) {
-    return "No thread snapshots found.";
+    return "No thread session memories found.";
   }
   return snapshots
     .map(
       (snapshot) =>
-        `${snapshot.snapshotId} | ${snapshot.trigger} | ${snapshot.createdAt} | goal=${snapshot.goal.slice(0, 80)}`
+        `${snapshot.sessionMemoryId} | ${snapshot.trigger} | ${snapshot.createdAt} | goal=${snapshot.goal.slice(0, 80)}`
     )
     .join("\n");
 }
 
-export function formatThreadSnapshot(snapshot: ThreadSnapshotRecord): string {
+export function formatThreadSnapshot(snapshot: ThreadSessionMemoryRecord): string {
   return [
-    `Snapshot ID: ${snapshot.snapshotId}`,
+    `Session Memory ID: ${snapshot.sessionMemoryId}`,
     `Thread ID: ${snapshot.threadId}`,
     `Run ID: ${snapshot.runId ?? "-"}`,
     `Task ID: ${snapshot.taskId ?? "-"}`,
     `Trigger: ${snapshot.trigger}`,
     `Created At: ${snapshot.createdAt}`,
     `Goal: ${snapshot.goal}`,
+    `Decisions: ${snapshot.decisions.join(", ") || "-"}`,
     `Open Loops: ${snapshot.openLoops.join(", ") || "-"}`,
-    `Blocked: ${snapshot.blockedReason ?? "-"}`,
     `Next Actions: ${snapshot.nextActions.join(", ") || "-"}`,
-    `Active Memory IDs: ${snapshot.activeMemoryIds.join(", ") || "-"}`,
-    `Tool Capabilities: ${snapshot.toolCapabilitySummary.join(", ") || "-"}`,
     `Summary: ${snapshot.summary}`
   ].join("\n");
 }
@@ -368,7 +366,7 @@ export function formatTraceContextDebug(report: ContextTraceDebugReport): string
       contextAssembly: report.contextAssembly,
       memoryRecall: report.memoryRecall,
       reviewerTrace: report.reviewerTrace,
-      latestThreadSnapshot: report.latestThreadSnapshot
+      latestThreadSessionMemory: report.latestThreadSessionMemory
     },
     null,
     2

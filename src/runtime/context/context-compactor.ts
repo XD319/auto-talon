@@ -1,29 +1,24 @@
-import { randomUUID } from "node:crypto";
-
 import type {
-  ContextFragment,
   ProviderToolDescriptor,
   SessionCompactInput,
   TaskRecord,
-  ThreadSnapshotDraft
+  ThreadSessionMemoryDraft
 } from "../../types/index.js";
-import { serializeFocusState, type FocusState } from "../focus-state.js";
 
-export interface BuildSnapshotInput {
+export interface BuildSessionMemoryInput {
   task: TaskRecord;
   compact: SessionCompactInput & { reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" };
-  focusState?: FocusState;
-  memoryContext: ContextFragment[];
   availableTools: ProviderToolDescriptor[];
-  trigger?: ThreadSnapshotDraft["trigger"];
+  trigger?: ThreadSessionMemoryDraft["trigger"];
 }
 
 export class ContextCompactor {
-  public buildSnapshot(input: BuildSnapshotInput): ThreadSnapshotDraft {
+  public buildSessionMemory(input: BuildSessionMemoryInput): ThreadSessionMemoryDraft {
     const goal = summarize(
       input.compact.messages.find((message) => message.role === "user")?.content ?? input.task.input,
       500
     );
+    const decisions = collectDecisions(input.compact.messages);
     const unresolvedToolCalls = new Map<string, string>();
     const resolvedToolCalls = new Set<string>();
     for (const message of input.compact.messages) {
@@ -39,40 +34,68 @@ export class ContextCompactor {
     const openLoops = [...unresolvedToolCalls.entries()]
       .filter(([toolCallId]) => !resolvedToolCalls.has(toolCallId))
       .map(([toolCallId, toolName]) => `pending ${toolName} (${toolCallId})`);
-    const blockedReason = findBlockedReason(input.compact.messages);
     const nextActions = collectNextActions(input.compact.messages);
-    const activeMemoryIds = uniqueList(input.memoryContext.map((fragment) => fragment.memoryId));
-    const toolCapabilitySummary = uniqueList([
-      ...collectUsedTools(input.compact.messages),
-      ...input.availableTools.map((tool) => tool.name)
-    ]);
     const summary = [
       `goal=${goal || "[n/a]"}`,
+      `decisions=${decisions.join("; ") || "[none]"}`,
       `open_loops=${openLoops.join("; ") || "[none]"}`,
-      `blocked=${blockedReason ?? "[none]"}`,
-      `next_actions=${nextActions.join("; ") || "[none]"}`,
-      `active_memories=${activeMemoryIds.length}`,
-      `capabilities=${toolCapabilitySummary.join(", ") || "[none]"}`
+      `next_actions=${nextActions.join("; ") || "[none]"}`
     ].join("\n");
 
     return {
-      snapshotId: randomUUID(),
-      threadId: input.task.threadId ?? "",
-      runId: null,
-      taskId: input.task.taskId,
-      trigger: input.trigger ?? "compact",
+      decisions,
       goal,
-      openLoops,
-      blockedReason,
-      nextActions,
-      activeMemoryIds,
-      toolCapabilitySummary,
-      summary,
       metadata: {
         compactReason: input.compact.reason,
         compactTaskId: input.compact.taskId,
-        ...(input.focusState !== undefined ? { focusState: serializeFocusState(input.focusState) } : {})
-      }
+        toolCapabilitySummary: uniqueList([
+          ...collectUsedTools(input.compact.messages),
+          ...input.availableTools.map((tool) => tool.name)
+        ])
+      },
+      nextActions,
+      openLoops,
+      runId: null,
+      summary,
+      taskId: input.task.taskId,
+      threadId: input.task.threadId ?? "",
+      trigger: input.trigger ?? "compact"
+    };
+  }
+
+  public buildSnapshot(input: BuildSessionMemoryInput): {
+    activeMemoryIds: string[];
+    blockedReason: string | null;
+    goal: string;
+    metadata: ThreadSessionMemoryDraft["metadata"];
+    nextActions: string[];
+    openLoops: string[];
+    runId: string | null;
+    snapshotId: string;
+    summary: string;
+    taskId: string | null;
+    threadId: string;
+    toolCapabilitySummary: string[];
+    trigger: ThreadSessionMemoryDraft["trigger"];
+  } {
+    const sessionMemory = this.buildSessionMemory(input);
+    const toolCapabilitySummary = Array.isArray(sessionMemory.metadata?.toolCapabilitySummary)
+      ? sessionMemory.metadata.toolCapabilitySummary.filter((item): item is string => typeof item === "string")
+      : [];
+    return {
+      activeMemoryIds: [],
+      blockedReason: sessionMemory.openLoops[0] ?? null,
+      goal: sessionMemory.goal,
+      metadata: sessionMemory.metadata,
+      nextActions: sessionMemory.nextActions,
+      openLoops: sessionMemory.openLoops,
+      runId: sessionMemory.runId ?? null,
+      snapshotId: sessionMemory.sessionMemoryId ?? "session-memory-compat",
+      summary: sessionMemory.summary,
+      taskId: sessionMemory.taskId ?? null,
+      threadId: sessionMemory.threadId,
+      toolCapabilitySummary,
+      trigger: sessionMemory.trigger
     };
   }
 }
@@ -99,9 +122,7 @@ function collectNextActions(messages: SessionCompactInput["messages"]): string[]
   }
   const actions: string[] = [];
   if (Array.isArray(lastAssistant.toolCalls) && lastAssistant.toolCalls.length > 0) {
-    actions.push(
-      ...lastAssistant.toolCalls.map((call) => `run ${call.toolName} (${call.toolCallId})`)
-    );
+    actions.push(...lastAssistant.toolCalls.map((call) => `run ${call.toolName} (${call.toolCallId})`));
   }
   const compact = summarize(lastAssistant.content, 240);
   if (compact.length > 0) {
@@ -110,27 +131,13 @@ function collectNextActions(messages: SessionCompactInput["messages"]): string[]
   return uniqueList(actions);
 }
 
-function findBlockedReason(messages: SessionCompactInput["messages"]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message === undefined) {
-      continue;
-    }
-    if (message.role !== "tool") {
-      continue;
-    }
-    const lowered = message.content.toLowerCase();
-    if (
-      lowered.includes("approval_denied") ||
-      lowered.includes("approval denied") ||
-      lowered.includes("permission denied") ||
-      lowered.includes("error") ||
-      lowered.includes("failed")
-    ) {
-      return summarize(message.content, 240);
-    }
-  }
-  return null;
+function collectDecisions(messages: SessionCompactInput["messages"]): string[] {
+  const candidates = messages
+    .filter((message) => message.role === "assistant" || message.role === "user")
+    .slice(-6)
+    .map((message) => summarize(message.content, 180))
+    .filter((message) => message.length > 0);
+  return uniqueList(candidates).slice(-4);
 }
 
 function uniqueList(values: string[]): string[] {

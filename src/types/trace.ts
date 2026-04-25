@@ -56,7 +56,7 @@ export const TRACE_EVENT_TYPES = [
   "recall_explain",
   "memory_written",
   "session_compacted",
-  "thread_snapshot_created",
+  "thread_session_memory_written",
   "schedule_created",
   "schedule_paused",
   "schedule_resumed",
@@ -417,8 +417,8 @@ export interface SessionCompactedPayload extends JsonObject {
   summarizerId?: string;
 }
 
-export interface ThreadSnapshotCreatedPayload extends JsonObject {
-  snapshotId: string;
+export interface ThreadSessionMemoryWrittenPayload extends JsonObject {
+  sessionMemoryId: string;
   threadId: string;
   trigger: "compact" | "manual" | "resume";
   goal: string;
@@ -777,7 +777,7 @@ export type TraceEvent =
   | TraceEventBase<"recall_explain", RecallExplainPayload>
   | TraceEventBase<"memory_written", MemoryWrittenPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
-  | TraceEventBase<"thread_snapshot_created", ThreadSnapshotCreatedPayload>
+  | TraceEventBase<"thread_session_memory_written", ThreadSessionMemoryWrittenPayload>
   | TraceEventBase<"schedule_created", ScheduleCreatedPayload>
   | TraceEventBase<"schedule_paused", SchedulePausedPayload>
   | TraceEventBase<"schedule_resumed", ScheduleResumedPayload>

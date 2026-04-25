@@ -10,6 +10,11 @@ import type {
   ThreadStatus,
   ThreadUpdatePatch
 } from "./thread.js";
+import type {
+  SessionSearchHit,
+  ThreadSessionMemoryDraft,
+  ThreadSessionMemoryRecord
+} from "./thread-session-memory.js";
 import type { ThreadSnapshotDraft, ThreadSnapshotRecord } from "./thread-snapshot.js";
 import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./approval.js";
 import type { AuditLogDraft, AuditLogRecord } from "./audit.js";
@@ -110,6 +115,14 @@ export interface ThreadSnapshotRepository {
   findById(snapshotId: string): ThreadSnapshotRecord | null;
   findLatestByThread(threadId: string): ThreadSnapshotRecord | null;
   listByThread(threadId: string): ThreadSnapshotRecord[];
+}
+
+export interface ThreadSessionMemoryRepository {
+  create(record: ThreadSessionMemoryDraft): ThreadSessionMemoryRecord;
+  findById(sessionMemoryId: string): ThreadSessionMemoryRecord | null;
+  findLatestByThread(threadId: string): ThreadSessionMemoryRecord | null;
+  listByThread(threadId: string): ThreadSessionMemoryRecord[];
+  search(input: { limit: number; query: string; threadId: string }): SessionSearchHit[];
 }
 
 export interface ScheduleRepository {

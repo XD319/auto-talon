@@ -94,6 +94,9 @@ describe("RecallPlanner", () => {
         }),
         recordRecall: () => undefined
       },
+      sessionSearchService: {
+        searchAsContext: () => []
+      },
       skillContextService: {
         rankSkills: () => []
       } as never,

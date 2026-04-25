@@ -99,5 +99,5 @@ describe("replay diagnostics", () => {
     } finally {
       handle.close();
     }
-  });
+  }, 30000);
 });

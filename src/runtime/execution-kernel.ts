@@ -7,17 +7,9 @@ import {
   buildFilteredContextDebugFragments,
   ExecutionContextAssembler
 } from "./context-assembler.js";
-import {
-  prepareFocusTurn,
-  rebuildFocusStateFromMessages,
-  restoreFocusState,
-  serializeFocusState,
-  updateFocusStateFromToolResult,
-  type FocusState
-} from "./focus-state.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
-import type { ContextCompactor, SessionSnapshotService } from "./context/index.js";
+import type { ContextCompactor, ThreadSessionMemoryService } from "./context/index.js";
 import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
@@ -32,12 +24,12 @@ import type {
   ExecutionCheckpointRepository,
   MemoryRecallResult,
   Provider,
-  ProviderToolDescriptor,
   ProviderToolCall,
   RuntimeTaskEvent,
   RunMetadataRepository,
   RuntimeRunOptions,
   RuntimeRunResult,
+  SessionCompactResult,
   TaskRecord,
   TaskRepository,
   ThreadCommitmentState,
@@ -48,12 +40,14 @@ import type {
 } from "../types/index.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
 import { buildCapabilityDeclaration } from "../memory/capability-declaration-builder.js";
+import type { CompactTriggerPolicy } from "../memory/compact-policy.js";
 import type { ToolOrchestrator } from "../tools/index.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
+  compactPolicy: CompactTriggerPolicy;
   executionCheckpointRepository: ExecutionCheckpointRepository;
   getThreadCommitmentState?: (threadId: string) => ThreadCommitmentState | null;
   memoryPlane: MemoryPlane;
@@ -65,7 +59,7 @@ export interface ExecutionKernelDependencies {
   threadRunRepository: ThreadRunRepository;
   threadLineageRepository: ThreadLineageRepository;
   contextCompactor: ContextCompactor;
-  sessionSnapshotService: SessionSnapshotService;
+  threadSessionMemoryService: ThreadSessionMemoryService;
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
   workflow: WorkflowRuntimeConfig;
@@ -84,7 +78,6 @@ export interface ExecutionKernelDependencies {
 interface ExecutionLoopState {
   costWarnedToolNames: string[];
   cwd: string;
-  focusState: FocusState;
   managedAbortController: ReturnType<typeof createManagedAbortController>;
   maxIterations: number;
   memoryContext: ContextFragment[];
@@ -95,9 +88,7 @@ interface ExecutionLoopState {
   onTaskEvent?: (event: RuntimeTaskEvent) => void;
   pendingToolCalls: ProviderToolCall[];
   selectedSkillContext: ContextFragment[];
-  turnClarificationMessage: string | null;
   turnFilteredFragments: ContextAssemblyDebugView["filteredOutFragments"];
-  turnFocusFragments: ContextAssemblyDebugView["activeContextFragments"];
   turnProviderMessages: ConversationMessage[];
   repoMapSummary?: string;
   task: TaskRecord;
@@ -212,7 +203,6 @@ export class ExecutionKernel {
       });
 
       const profile = this.dependencies.agentProfileRegistry.get(options.agentProfileId);
-      this.dependencies.memoryPlane.rememberTaskGoal(task);
       const threadId = task.threadId ?? null;
       const initialToolExposure = this.dependencies.toolExposurePlanner
         ? await this.dependencies.toolExposurePlanner.plan({
@@ -278,7 +268,6 @@ export class ExecutionKernel {
       return await this.executeLoop({
         cwd: options.cwd,
         costWarnedToolNames: [],
-        focusState: restoreFocusState(readThreadResumeFocusState(options.metadata)),
         managedAbortController,
         maxIterations: options.maxIterations,
         memoryContext: [...recallPlan.fragments, ...resumeMemoryContext],
@@ -292,9 +281,7 @@ export class ExecutionKernel {
         ...(repoMap?.summary !== undefined ? { repoMapSummary: repoMap.summary } : {}),
         selectedSkillContext: recallPlan.fragments.filter((fragment) => fragment.scope === "skill_ref"),
         task,
-        turnClarificationMessage: null,
         turnFilteredFragments: [],
-        turnFocusFragments: [],
         turnProviderMessages: messages,
         tokenBudget: options.tokenBudget
       });
@@ -346,7 +333,6 @@ export class ExecutionKernel {
       return await this.executeLoop({
         cwd: resumedTask.cwd,
         costWarnedToolNames: [],
-        focusState: rebuildFocusStateFromMessages(checkpoint.messages, resumedTask.cwd),
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
@@ -355,9 +341,7 @@ export class ExecutionKernel {
         pendingToolCalls: checkpoint.pendingToolCalls,
         selectedSkillContext: [],
         task: resumedTask,
-        turnClarificationMessage: null,
         turnFilteredFragments: [],
-        turnFocusFragments: [],
         turnProviderMessages: checkpoint.messages,
         tokenBudget: resumedTask.tokenBudget
       });
@@ -413,7 +397,6 @@ export class ExecutionKernel {
     let task = state.task;
     const messages = [...state.messages];
     let pendingToolCalls = [...state.pendingToolCalls];
-    let focusPreparedForTurn = pendingToolCalls.length > 0;
 
     for (
       let iteration = pendingToolCalls.length > 0 ? task.currentIteration : task.currentIteration + 1;
@@ -430,37 +413,6 @@ export class ExecutionKernel {
       });
 
       if (pendingToolCalls.length === 0) {
-        if (!focusPreparedForTurn) {
-          const preparedFocusTurn = prepareFocusTurn({
-            cwd: state.cwd,
-            memoryContext: state.memoryContext,
-            messages,
-            now: new Date().toISOString(),
-            state: state.focusState,
-            taskId: task.taskId,
-            userInput: task.input
-          });
-          state.focusState = preparedFocusTurn.focusState;
-          state.memoryContext =
-            preparedFocusTurn.clarificationMessage === null
-              ? preparedFocusTurn.memoryContext
-              : state.memoryContext;
-          state.turnClarificationMessage = preparedFocusTurn.clarificationMessage;
-          state.turnFilteredFragments = preparedFocusTurn.filteredMemoryFragments;
-          state.turnFocusFragments = preparedFocusTurn.activeContextFragments;
-          state.turnProviderMessages = preparedFocusTurn.providerMessages;
-          focusPreparedForTurn = true;
-        }
-
-        if (state.turnClarificationMessage !== null) {
-          return this.completeWithClarification(
-            task,
-            state.turnClarificationMessage,
-            state.focusState,
-            state.onTaskEvent
-          );
-        }
-
         if (this.dependencies.toolExposurePlanner !== undefined) {
           const exposure = await this.dependencies.toolExposurePlanner.plan({
             agentProfileId: state.task.agentProfileId,
@@ -488,9 +440,7 @@ export class ExecutionKernel {
             .filter((decision) => decision.costWarning === true)
             .map((decision) => decision.toolName);
         }
-        availableTools = filterAvailableToolsForFocusedTurn(availableTools, task.input, state.focusState);
         const assembled = this.contextAssembler.assemble({
-          activeContextFragments: state.turnFocusFragments,
           availableTools,
           filteredOutFragments: state.turnFilteredFragments,
           iteration,
@@ -782,7 +732,6 @@ export class ExecutionKernel {
 
           this.persistThreadRun(task, task.input, {
             finalOutput: providerResponse.message,
-            focusState: state.focusState,
             status: task.status
           });
 
@@ -865,25 +814,7 @@ export class ExecutionKernel {
         const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
         const structuredOutputSummary = summarizeToolOutput(outcome.result.output);
         const toolSummary = `${outcome.result.summary} | ${structuredOutputSummary}`;
-        state.focusState = updateFocusStateFromToolResult(state.focusState, {
-          cwd: state.cwd,
-          output: outcome.result.output,
-          taskId: task.taskId,
-          timestamp: new Date().toISOString(),
-          toolName: toolCall.toolName
-        });
         if (toolDescriptor !== null) {
-          this.dependencies.memoryPlane.recordToolOutcome({
-            output:
-              typeof outcome.result.output === "string"
-                ? outcome.result.output
-                : JSON.stringify(outcome.result.output, null, 2),
-            privacyLevel: toolDescriptor.privacyLevel,
-            summary: toolSummary,
-            task,
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName
-          });
           messages.push(
             createToolFeedbackMessage(outcome.result.output, toolCall, toolDescriptor.privacyLevel)
           );
@@ -953,11 +884,11 @@ export class ExecutionKernel {
         summary: "Pre-compress lifecycle hook published",
         taskId: task.taskId
       });
-      const compacted = await this.dependencies.memoryPlane.compactSession({
+      const compacted = this.compactMessages({
         maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
         messages,
         pendingToolCalls,
-        sessionScopeKey: task.taskId,
+        sessionScopeKey: task.threadId ?? task.taskId,
         taskId: task.taskId,
         tokenEstimate: estimateTokenCount(messages),
         tokenThreshold: this.dependencies.compact.tokenThreshold,
@@ -985,7 +916,7 @@ export class ExecutionKernel {
             messages: preCompactMessages,
             pendingToolCalls,
             reason: compactReason,
-            sessionScopeKey: task.taskId,
+            sessionScopeKey: task.threadId,
             taskId: task.taskId,
             tokenEstimate: estimateTokenCount(preCompactMessages),
             tokenThreshold: this.dependencies.compact.tokenThreshold,
@@ -1003,8 +934,6 @@ export class ExecutionKernel {
                   availableTools,
                   compactInput,
                   compactResult: compacted,
-                  focusState: state.focusState,
-                  memoryContext: state.memoryContext,
                   runId: latestRun?.runId ?? null,
                   task
                 },
@@ -1018,15 +947,13 @@ export class ExecutionKernel {
               (input) => summarizerWorker.execute(input)
             );
           } else {
-            const snapshotDraft = this.dependencies.contextCompactor.buildSnapshot({
+            const sessionMemoryDraft = this.dependencies.contextCompactor.buildSessionMemory({
               availableTools,
               compact: compactInput,
-              focusState: state.focusState,
-              memoryContext: state.memoryContext,
               task
             });
-            this.dependencies.sessionSnapshotService.createSnapshot({
-              ...snapshotDraft,
+            this.dependencies.threadSessionMemoryService.create({
+              ...sessionMemoryDraft,
               runId: latestRun?.runId ?? null,
               threadId: task.threadId,
               trigger: "compact"
@@ -1088,6 +1015,85 @@ export class ExecutionKernel {
       code: "max_rounds_exceeded",
       message: `Task exceeded ${state.maxIterations} iterations.`
     });
+  }
+
+  private compactMessages(
+    input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0]
+  ): SessionCompactResult {
+    const decision = this.dependencies.compactPolicy.shouldCompact(input);
+    if (!decision.triggered) {
+      return {
+        reason: null,
+        replacementMessages: input.messages.map((message) => ({
+          content: message.content,
+          role: toConversationRole(message.role),
+          ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
+          ...(message.toolName !== undefined ? { toolName: message.toolName } : {})
+        })),
+        summaryMemory: null,
+        triggered: false
+      };
+    }
+
+    const draft = this.dependencies.contextCompactor.buildSessionMemory({
+      availableTools: [],
+      compact: {
+        ...input,
+        reason:
+          decision.reason === "token_budget" || decision.reason === "tool_call_count"
+            ? decision.reason
+            : "message_count"
+      },
+      task: {
+        agentProfileId: "executor",
+        createdAt: "",
+        currentIteration: 0,
+        cwd: "",
+        errorCode: null,
+        errorMessage: null,
+        finalOutput: null,
+        finishedAt: null,
+        input: input.messages.find((message) => message.role === "user")?.content ?? "",
+        maxIterations: 0,
+        metadata: {},
+        providerName: "",
+        requesterUserId: "",
+        startedAt: null,
+        status: "running",
+        taskId: input.taskId,
+        threadId: input.sessionScopeKey,
+        tokenBudget: {
+          inputLimit: 0,
+          outputLimit: 0,
+          reservedOutput: 0,
+          usedInput: 0,
+          usedOutput: 0
+        },
+        updatedAt: ""
+      }
+    });
+    const preserved = input.messages.slice(-3).map((message) => ({
+      content: message.content,
+      role: toConversationRole(message.role),
+      ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
+      ...(message.toolName !== undefined ? { toolName: message.toolName } : {})
+    }));
+
+    return {
+      reason:
+        decision.reason === "token_budget" || decision.reason === "tool_call_count"
+          ? decision.reason
+          : "message_count",
+      replacementMessages: [
+        {
+          content: `Session summary:\n${draft.summary}`,
+          role: "system"
+        },
+        ...preserved
+      ],
+      summaryMemory: null,
+      triggered: true
+    };
   }
 
   private finalizeTaskFailure(
@@ -1182,50 +1188,6 @@ export class ExecutionKernel {
     });
   }
 
-  private completeWithClarification(
-    task: TaskRecord,
-    message: string,
-    focusState: FocusState,
-    onTaskEvent?: (event: RuntimeTaskEvent) => void
-  ): RuntimeRunResult {
-    this.dependencies.executionCheckpointRepository.delete(task.taskId);
-    const completedTask = this.dependencies.taskRepository.update(task.taskId, {
-      finalOutput: message,
-      finishedAt: new Date().toISOString(),
-      status: "succeeded"
-    });
-    this.dependencies.traceService.record({
-      actor: "runtime.kernel",
-      eventType: "final_outcome",
-      payload: {
-        errorCode: null,
-        errorMessage: null,
-        output: message,
-        status: "succeeded"
-      },
-      stage: "completion",
-      summary: "Task completed with clarification",
-      taskId: task.taskId
-    });
-    emitTaskEvent(onTaskEvent, {
-      errorCode: null,
-      errorMessage: null,
-      kind: "result",
-      outputPreview: summarizeText(message, 200),
-      status: "succeeded",
-      taskId: task.taskId
-    });
-    this.persistThreadRun(completedTask, completedTask.input, {
-      finalOutput: message,
-      focusState,
-      status: completedTask.status
-    });
-    return {
-      output: message,
-      task: completedTask
-    };
-  }
-
   private persistThreadRun(
     task: TaskRecord,
     input: string,
@@ -1234,7 +1196,6 @@ export class ExecutionKernel {
       finalOutput?: string | null;
       errorCode?: string | null;
       errorMessage?: string | null;
-      focusState?: FocusState;
     }
   ): void {
     if (task.threadId === null || task.threadId === undefined) {
@@ -1247,9 +1208,6 @@ export class ExecutionKernel {
       finishedAt: task.finishedAt,
       input,
       metadata: {
-        ...(summary.focusState !== undefined
-          ? { focusState: serializeFocusState(summary.focusState) }
-          : {}),
         providerName: task.providerName
       },
       runId: randomUUID(),
@@ -1480,17 +1438,6 @@ function readThreadResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]):
   );
 }
 
-function readThreadResumeFocusState(metadata: RuntimeRunOptions["metadata"]): unknown {
-  if (metadata === undefined || metadata === null) {
-    return null;
-  }
-  const threadResume = (metadata as Record<string, unknown>).threadResume;
-  if (typeof threadResume !== "object" || threadResume === null) {
-    return null;
-  }
-  return (threadResume as Record<string, unknown>).focusState ?? null;
-}
-
 function injectResumeContextMessages(
   messages: ConversationMessage[],
   resumeMessages: ConversationMessage[]
@@ -1507,33 +1454,15 @@ function rebuildTurnProviderMessages(
   messages: ConversationMessage[],
   previousProviderMessages: ConversationMessage[]
 ): ConversationMessage[] {
-  const first = previousProviderMessages[0];
-  if (
-    first?.role === "system" &&
-    typeof first.content === "string" &&
-    first.content.startsWith("Resolve references like ")
-  ) {
-    return [first, ...messages];
-  }
+  void previousProviderMessages;
   return messages;
 }
 
-function filterAvailableToolsForFocusedTurn(
-  availableTools: ProviderToolDescriptor[],
-  taskInput: string,
-  focusState: FocusState
-): ProviderToolDescriptor[] {
-  if (!shouldRestrictPublicWebFetch(taskInput, focusState)) {
-    return availableTools;
-  }
-  return availableTools.filter((tool) => tool.name !== "web_fetch");
+function shouldRestrictPublicWebFetch(taskInput: string): boolean {
+  void taskInput;
+  return false;
 }
-
-function shouldRestrictPublicWebFetch(taskInput: string, focusState: FocusState): boolean {
-  if (focusState.activeTarget?.kind !== "file") {
-    return false;
-  }
-  const normalized = taskInput.toLowerCase();
+/*
   const localTransformIntent =
     /\btranslate\b|\brewrite\b|\bpolish\b|\brephrase\b|\bedit\b|\bconvert\b/u.test(normalized) ||
     /翻译|改写|润色|改成|改为|转成|转换/u.test(taskInput);
@@ -1547,7 +1476,15 @@ function shouldRestrictPublicWebFetch(taskInput: string, focusState: FocusState)
   return !explicitWebIntent;
 }
 
+*/
+void shouldRestrictPublicWebFetch;
 function estimateTokenCount(messages: ConversationMessage[]): number {
   const joined = messages.map((message) => message.content).join("\n");
   return Math.ceil(joined.length / 4);
+}
+
+function toConversationRole(role: string): "assistant" | "system" | "tool" | "user" {
+  return role === "assistant" || role === "system" || role === "tool" || role === "user"
+    ? role
+    : "system";
 }

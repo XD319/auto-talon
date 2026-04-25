@@ -49,7 +49,7 @@ import type {
   ThreadLineageRecord,
   ThreadRecord,
   ThreadRunRecord,
-  ThreadSnapshotRecord,
+  ThreadSessionMemoryRecord,
   ThreadCommitmentState,
   TraceEvent,
   ToolCallRecord
@@ -140,8 +140,8 @@ export interface ContextTraceDebugReport {
   reviewerTrace:
     | Extract<TraceEvent, { eventType: "reviewer_trace" }>["payload"]
     | null;
-  latestThreadSnapshot:
-    | Extract<TraceEvent, { eventType: "thread_snapshot_created" }>["payload"]
+  latestThreadSessionMemory:
+    | Extract<TraceEvent, { eventType: "thread_session_memory_written" }>["payload"]
     | null;
   task: TaskRecord | null;
 }
@@ -169,8 +169,8 @@ export interface RuntimeReadModel {
   listTasks(): TaskRecord[];
   listThreadLineage(threadId: string): ThreadLineageRecord[];
   listThreadRuns(threadId: string): ThreadRunRecord[];
-  listThreadSnapshots(threadId: string): ThreadSnapshotRecord[];
-  findThreadSnapshot(snapshotId: string): ThreadSnapshotRecord | null;
+  listThreadSessionMemories(threadId: string): ThreadSessionMemoryRecord[];
+  findThreadSessionMemory(sessionMemoryId: string): ThreadSessionMemoryRecord | null;
   listSchedules(query?: ScheduleListQuery): ScheduleRecord[];
   findSchedule(scheduleId: string): ScheduleRecord | null;
   listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[];
@@ -344,12 +344,12 @@ export class AgentApplicationService {
     return this.dependencies.threadService.archiveThread(threadId);
   }
 
-  public listThreadSnapshots(threadId: string): ThreadSnapshotRecord[] {
-    return this.dependencies.listThreadSnapshots(threadId);
+  public listThreadSnapshots(threadId: string): ThreadSessionMemoryRecord[] {
+    return this.dependencies.listThreadSessionMemories(threadId);
   }
 
-  public showThreadSnapshot(snapshotId: string): ThreadSnapshotRecord | null {
-    return this.dependencies.findThreadSnapshot(snapshotId);
+  public showThreadSnapshot(snapshotId: string): ThreadSessionMemoryRecord | null {
+    return this.dependencies.findThreadSessionMemory(snapshotId);
   }
 
   public async continueThread(
@@ -895,16 +895,16 @@ export class AgentApplicationService {
         (event): event is Extract<TraceEvent, { eventType: "reviewer_trace" }> =>
           event.eventType === "reviewer_trace"
       )?.payload ?? null;
-    const latestThreadSnapshot = [...trace]
+    const latestThreadSessionMemory = [...trace]
       .reverse()
       .find(
-        (event): event is Extract<TraceEvent, { eventType: "thread_snapshot_created" }> =>
-          event.eventType === "thread_snapshot_created"
+        (event): event is Extract<TraceEvent, { eventType: "thread_session_memory_written" }> =>
+          event.eventType === "thread_session_memory_written"
       )?.payload ?? null;
 
     return {
       contextAssembly,
-      latestThreadSnapshot,
+      latestThreadSessionMemory,
       memoryRecall,
       reviewerTrace,
       task

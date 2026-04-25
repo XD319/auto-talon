@@ -2,10 +2,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import type { ContextPolicy } from "../policy/context-policy.js";
-import { RecallEngine, overlapRatio, tokenize, uniqueStrings } from "../recall/recall-engine.js";
+import { RecallEngine, overlapRatio, uniqueStrings } from "../recall/recall-engine.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import { CompactTriggerPolicy } from "./compact-policy.js";
-import { DeterministicCompactSummarizer, type CompactSummarizer } from "./compact-summarizer.js";
 import type {
   ContextFragment,
   MemoryDraft,
@@ -33,8 +32,6 @@ const memoryReviewSchema = z.object({
 });
 
 export interface MemoryPlaneDependencies {
-  compactPolicy?: CompactTriggerPolicy;
-  compactSummarizer?: CompactSummarizer;
   contextPolicy: ContextPolicy;
   memoryRepository: MemoryRepository;
   memorySnapshotRepository: MemorySnapshotRepository;
@@ -48,13 +45,9 @@ export interface BuildContextResult {
 
 export class MemoryPlane {
   private readonly recallEngine = new RecallEngine();
-  private readonly compactPolicy: CompactTriggerPolicy;
-  private readonly compactSummarizer: CompactSummarizer;
+  private readonly compactPolicy = new CompactTriggerPolicy();
 
-  public constructor(private readonly dependencies: MemoryPlaneDependencies) {
-    this.compactPolicy = dependencies.compactPolicy ?? new CompactTriggerPolicy();
-    this.compactSummarizer = dependencies.compactSummarizer ?? new DeterministicCompactSummarizer();
-  }
+  public constructor(private readonly dependencies: MemoryPlaneDependencies) {}
 
   public buildContext(task: TaskRecord): BuildContextResult {
     this.ageExpiredMemories();
@@ -64,7 +57,6 @@ export class MemoryPlane {
       limit: 6,
       projectScopeKey: task.cwd,
       query: task.input,
-      workingScopeKey: task.taskId,
       taskId: task.taskId
     });
 
@@ -116,77 +108,16 @@ export class MemoryPlane {
     });
   }
 
-  public rememberTaskGoal(task: TaskRecord): MemoryRecord {
-    return this.persistMemory({
-      confidence: 0.95,
-      content: task.input,
-      expiresAt: null,
-      keywords: tokenize(task.input),
-      privacyLevel: "internal",
-      retentionPolicy: {
-        kind: "working",
-        reason: "Task goal should stay available during the active session.",
-        ttlDays: null
-      },
-      scope: "working",
-      scopeKey: task.taskId,
-      source: {
-        label: `Task goal for ${task.taskId}`,
-        sourceType: "user_input",
-        taskId: task.taskId,
-        toolCallId: null,
-        traceEventId: null
-      },
-      status: "verified",
-      summary: summarize(task.input),
-      title: "Task goal"
-    });
-  }
-
-  public recordToolOutcome(input: {
-    output: string;
-    privacyLevel: MemoryRecord["privacyLevel"];
-    summary: string;
-    task: TaskRecord;
-    toolCallId: string;
-    toolName: string;
-  }): MemoryRecord | null {
-    return this.persistMemoryIfAllowed({
-      confidence: 0.72,
-      content: input.output,
-      expiresAt: null,
-      keywords: tokenize(`${input.toolName} ${input.summary} ${input.output}`),
-      privacyLevel: input.privacyLevel,
-      retentionPolicy: {
-        kind: "working",
-        reason: "Tool outcomes are retained only for the active session by default.",
-        ttlDays: null
-      },
-      scope: "working",
-      scopeKey: input.task.taskId,
-      source: {
-        label: `Tool output from ${input.toolName}`,
-        sourceType: "tool_output",
-        taskId: input.task.taskId,
-        toolCallId: input.toolCallId,
-        traceEventId: null
-      },
-      status: "candidate",
-      summary: input.summary,
-      title: `Tool result: ${input.toolName}`
-    });
-  }
-
   public recordFinalOutcome(task: TaskRecord, output: string): MemoryRecord[] {
     void task;
     void output;
     return [];
   }
 
-  public async compactSession(input: SessionCompactInput): Promise<SessionCompactResult> {
+  public compactSession(input: SessionCompactInput): Promise<SessionCompactResult> {
     const decision = this.compactPolicy.shouldCompact(input);
     if (!decision.triggered) {
-      return {
+      return Promise.resolve({
         reason: null,
         replacementMessages: input.messages.map((message) => ({
           content: message.content,
@@ -194,71 +125,28 @@ export class MemoryPlane {
         })),
         summaryMemory: null,
         triggered: false
-      };
+      });
     }
 
-    const summarized = await this.compactSummarizer.summarize(input);
-    const summary = summarized.summary;
-    const summaryMemory = this.persistMemory({
-      confidence: 0.88,
-      content: summary,
-      expiresAt: null,
-      keywords: tokenize(summary),
-      privacyLevel: "internal",
-      retentionPolicy: {
-        kind: "working",
-        reason: "Compacted session summaries preserve the active task thread.",
-        ttlDays: null
-      },
-      scope: "working",
-      scopeKey: input.sessionScopeKey,
-      source: {
-        label: `Session compact for ${input.taskId}`,
-        sourceType: "session_compact",
-        taskId: input.taskId,
-        toolCallId: null,
-        traceEventId: null
-      },
-      status: "verified",
-      summary,
-      title: "Session compact"
-    });
-
-    const compactReason =
-      decision.reason === "token_budget" || decision.reason === "tool_call_count"
-        ? decision.reason
-        : "message_count";
-    this.dependencies.traceService.record({
-      actor: "memory.plane",
-      eventType: "session_compacted",
-      payload: {
-        reason: compactReason,
-        replacedMessageCount: input.messages.length - 3,
-        summaryMemoryId: summaryMemory.memoryId,
-        summarizerId: summarized.summarizerId
-      },
-      stage: "memory",
-      summary: "Session messages compacted into a typed memory summary",
-      taskId: input.taskId
-    });
-
-    const preserved = input.messages.slice(-3).map((message) => ({
-      content: message.content,
-      role: toConversationRole(message.role)
-    }));
-
-    return {
-      reason: compactReason,
+    const summary = summarizeCompactMessages(input);
+    return Promise.resolve({
+      reason:
+        decision.reason === "token_budget" || decision.reason === "tool_call_count"
+          ? decision.reason
+          : "message_count",
       replacementMessages: [
         {
           content: `Session summary:\n${summary}`,
           role: "system"
         },
-        ...preserved
+        ...input.messages.slice(-3).map((message) => ({
+          content: message.content,
+          role: toConversationRole(message.role)
+        }))
       ],
-      summaryMemory,
+      summaryMemory: null,
       triggered: true
-    };
+    });
   }
 
   public list(query?: MemoryQuery): MemoryRecord[] {
@@ -374,12 +262,6 @@ export class MemoryPlane {
       ...this.dependencies.memoryRepository.list({
         includeExpired: false,
         limit: request.limit * 3,
-        scope: "working",
-        scopeKey: request.workingScopeKey
-      }),
-      ...this.dependencies.memoryRepository.list({
-        includeExpired: false,
-        limit: request.limit * 3,
         scope: "project",
         scopeKey: request.projectScopeKey
       }),
@@ -406,7 +288,7 @@ export class MemoryPlane {
   }
 
   private persistMemoryIfAllowed(record: MemoryDraft): MemoryRecord | null {
-    if (record.scope !== "working") {
+    if (record.scope === "project" || record.scope === "profile") {
       const decision = this.dependencies.contextPolicy.decideLongTermWrite({
         content: record.content,
         privacyLevel: record.privacyLevel,
@@ -525,6 +407,18 @@ function candidateToFragment(candidate: MemoryRecallCandidate): ContextFragment 
 function summarize(value: string, maxLength = 160): string {
   const compact = value.replace(/\s+/gu, " ").trim();
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
+}
+
+function summarizeCompactMessages(input: SessionCompactInput): string {
+  const userMessages = input.messages.filter((message) => message.role === "user");
+  const assistantMessages = input.messages.filter((message) => message.role === "assistant");
+  const toolMessages = input.messages.filter((message) => message.role === "tool");
+  return [
+    `goal=${summarize(userMessages.at(0)?.content ?? "", 220) || "[n/a]"}`,
+    `latest_user_request=${summarize(userMessages.at(-1)?.content ?? "", 220) || "[n/a]"}`,
+    `completed_work=${summarize(assistantMessages.slice(-3).map((message) => message.content).join(" | "), 260) || "[n/a]"}`,
+    `tool_signals=${summarize(toolMessages.slice(-3).map((message) => message.content).join(" | "), 260) || "[n/a]"}`
+  ].join("\n");
 }
 
 function toConversationRole(role: string): "assistant" | "system" | "tool" | "user" {

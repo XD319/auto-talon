@@ -42,6 +42,11 @@ export function runMigrations(database: DatabaseSync): void {
       description: "rename legacy memory scopes to layered names",
       up: migrateV8,
       version: 8
+    },
+    {
+      description: "add thread session memory and session search tables",
+      up: migrateV9,
+      version: 9
     }
   ];
 
@@ -533,6 +538,61 @@ function migrateV8(database: DatabaseSync): void {
     SET retention_policy_json = json_set(retention_policy_json, '$.kind', 'working')
     WHERE json_extract(retention_policy_json, '$.kind') = 'session';
   `);
+}
+
+function migrateV9(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS thread_session_memory (
+      session_memory_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      run_id TEXT,
+      task_id TEXT,
+      trigger TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      decisions_json TEXT NOT NULL,
+      open_loops_json TEXT NOT NULL,
+      next_actions_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thread_session_memory_thread
+      ON thread_session_memory(thread_id, created_at DESC);
+  `);
+
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_index USING fts5(
+        session_memory_id UNINDEXED,
+        thread_id UNINDEXED,
+        summary,
+        goal,
+        decisions,
+        open_loops,
+        next_actions,
+        keywords,
+        created_at UNINDEXED
+      );
+    `);
+  } catch {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_index (
+        session_memory_id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        decisions TEXT NOT NULL,
+        open_loops TEXT NOT NULL,
+        next_actions TEXT NOT NULL,
+        keywords TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_session_index_thread_created
+        ON session_index(thread_id, created_at DESC);
+    `);
+  }
 }
 
 function readUserVersion(database: DatabaseSync): number {

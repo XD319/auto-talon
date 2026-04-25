@@ -9,6 +9,7 @@ import type {
   MemoryRecallResult,
   RecallExplainPayload,
   TaskRecord,
+  ThreadSessionMemoryRecord,
   ThreadCommitmentState,
   TokenBudget
 } from "../../types/index.js";
@@ -22,12 +23,14 @@ export interface RecallPlannerDependencies {
     recall: (request: {
       taskId: string;
       query: string;
-      workingScopeKey: string;
       projectScopeKey: string;
       profileScopeKey: string;
       limit: number;
     }) => MemoryRecallResult;
     recordRecall: (taskId: string, recall: MemoryRecallResult) => void;
+  };
+  sessionSearchService?: {
+    searchAsContext: (input: { limit: number; query: string; threadId: string }) => ContextFragment[];
   };
   skillContextService: SkillContextService;
   traceService: TraceService;
@@ -64,8 +67,7 @@ export class RecallPlanner {
       profileScopeKey: createProfileScopeKey(input.task),
       projectScopeKey: input.task.cwd,
       query: enrichedQuery,
-      taskId: input.task.taskId,
-      workingScopeKey: input.task.taskId
+      taskId: input.task.taskId
     });
     this.dependencies.memoryPlane.recordRecall(input.task.taskId, memoryRecall);
     const memoryDecisionById = new Map(
@@ -90,8 +92,20 @@ export class RecallPlanner {
       .slice(0, this.dependencies.maxCandidatesPerScope)
       .map((candidate) => toSkillCandidate(candidate.metadata, candidate.score));
 
+    const threadId = input.task.threadId;
+    const sessionCandidates =
+      threadId === null || threadId === undefined
+        ? []
+        : this.dependencies.sessionSearchService
+            ?.searchAsContext({
+              limit: this.dependencies.maxCandidatesPerScope,
+              query: enrichedQuery,
+              threadId
+            })
+            .map((fragment) => toSessionCandidate(fragment)) ?? [];
+
     const selection = this.selector.select(
-      [...memoryCandidates, ...experienceCandidates, ...skillCandidates],
+      [...memoryCandidates, ...experienceCandidates, ...skillCandidates, ...sessionCandidates],
       {
         scopeWeights: budget.scopeWeights,
         tokenBudget: budget.totalTokenBudget
@@ -99,7 +113,8 @@ export class RecallPlanner {
     );
 
     const explain: RecallExplainPayload = {
-      candidateCount: memoryCandidates.length + experienceCandidates.length + skillCandidates.length,
+      candidateCount:
+        memoryCandidates.length + experienceCandidates.length + skillCandidates.length + sessionCandidates.length,
       enrichedQuery,
       items: [...selection.selected, ...selection.skipped].map((item) => ({
         id: item.id,
@@ -136,12 +151,20 @@ export class RecallPlanner {
       profileScopeKey: createProfileScopeKey(input.task),
       projectScopeKey: input.task.cwd,
       query: input.task.input,
-      taskId: input.task.taskId,
-      workingScopeKey: input.task.taskId
+      taskId: input.task.taskId
     });
     this.dependencies.memoryPlane.recordRecall(input.task.taskId, memoryRecall);
     const skillFragments = this.dependencies.skillContextService.buildContext(input.task);
-    const fragments = [...memoryRecall.selectedFragments, ...skillFragments];
+    const threadId = input.task.threadId;
+    const sessionFragments =
+      threadId === null || threadId === undefined
+        ? []
+        : this.dependencies.sessionSearchService?.searchAsContext({
+            limit: 3,
+            query: input.task.input,
+            threadId
+          }) ?? [];
+    const fragments = [...memoryRecall.selectedFragments, ...skillFragments, ...sessionFragments];
     const explain: RecallExplainPayload = {
       candidateCount: fragments.length,
       enrichedQuery: input.task.input,
@@ -269,18 +292,34 @@ function toSkillCandidate(
   };
 }
 
+function toSessionCandidate(fragment: ContextFragment): ScoredRecallCandidate {
+  return {
+    fragment,
+    id: fragment.memoryId,
+    reason: fragment.explanation,
+    score: Number(fragment.confidence.toFixed(4)),
+    scope: fragment.scope,
+    tokenEstimate: estimateTokens(fragment.text)
+  };
+}
+
 function buildEnrichedQuery(
   task: TaskRecord,
   threadCommitmentState: ThreadCommitmentState | null | undefined,
   toolPlan: string[] | undefined
 ): string {
-  const metadataThreadGoal = readThreadGoal(task.metadata);
+  const sessionMemory = readThreadSessionMemory(task.metadata);
+  const sessionGoal = sessionMemory?.goal ?? readLegacyThreadResumeGoal(task.metadata);
+  const sessionDecisions = sessionMemory?.decisions.join(" ") ?? "";
+  const sessionNextActions = sessionMemory?.nextActions.join(" ") ?? "";
   const currentObjective = threadCommitmentState?.currentObjective?.title ?? "";
   const nextAction = threadCommitmentState?.nextAction?.title ?? "";
   const activeActions = (threadCommitmentState?.activeNextActions ?? []).map((action) => action.title).join(" ");
   return [
     task.input,
-    metadataThreadGoal,
+    sessionGoal,
+    sessionDecisions,
+    sessionNextActions,
     currentObjective,
     nextAction,
     activeActions,
@@ -290,7 +329,26 @@ function buildEnrichedQuery(
     .join(" ");
 }
 
-function readThreadGoal(metadata: TaskRecord["metadata"]): string {
+function readThreadSessionMemory(metadata: TaskRecord["metadata"]): ThreadSessionMemoryRecord | null {
+  const threadResume = metadata.threadResume;
+  if (typeof threadResume !== "object" || threadResume === null) {
+    return null;
+  }
+  const sessionMemory = (threadResume as Record<string, unknown>).sessionMemory;
+  if (typeof sessionMemory !== "object" || sessionMemory === null) {
+    return null;
+  }
+  const candidate = sessionMemory as Partial<ThreadSessionMemoryRecord>;
+  return typeof candidate.goal === "string" &&
+    typeof candidate.summary === "string" &&
+    Array.isArray(candidate.decisions) &&
+    Array.isArray(candidate.openLoops) &&
+    Array.isArray(candidate.nextActions)
+    ? (candidate as ThreadSessionMemoryRecord)
+    : null;
+}
+
+function readLegacyThreadResumeGoal(metadata: TaskRecord["metadata"]): string {
   const threadResume = metadata.threadResume;
   if (typeof threadResume !== "object" || threadResume === null) {
     return "";

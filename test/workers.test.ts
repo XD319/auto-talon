@@ -3,14 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { AuditService } from "../src/audit/audit-service.js";
 import { BudgetService } from "../src/runtime/budget/budget-service.js";
 import { ContextCompactor } from "../src/runtime/context/context-compactor.js";
-import { SessionSnapshotService } from "../src/runtime/context/session-snapshot-service.js";
+import { ThreadSessionMemoryService } from "../src/runtime/context/thread-session-memory-service.js";
 import { RetrievalWorker } from "../src/runtime/workers/retrieval-worker.js";
 import { SummarizerWorker } from "../src/runtime/workers/summarizer-worker.js";
 import { WorkerDispatcher } from "../src/runtime/workers/worker-dispatcher.js";
 import { StorageManager } from "../src/storage/database.js";
 import { TraceService } from "../src/tracing/trace-service.js";
 import type {
-  ContextFragment,
   RecallPlanResult,
   RecallPlanningInput,
   TaskRecord,
@@ -166,16 +165,16 @@ describe("worker dispatcher", () => {
 });
 
 describe("summarizer worker", () => {
-  it("creates a snapshot when compaction is triggered", async () => {
+  it("creates thread session memory when compaction is triggered", async () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     const traceService = new TraceService(storage.traces);
-    const sessionSnapshotService = new SessionSnapshotService({
-      snapshotRepository: storage.threadSnapshots,
+    const threadSessionMemoryService = new ThreadSessionMemoryService({
+      repository: storage.threadSessionMemories,
       traceService
     });
     const worker = new SummarizerWorker({
       contextCompactor: new ContextCompactor(),
-      sessionSnapshotService
+      threadSessionMemoryService
     });
     storage.threads.create({
       agentProfileId: "executor",
@@ -186,7 +185,6 @@ describe("summarizer worker", () => {
       title: "worker thread"
     });
     const task = createTask();
-    const memoryContext: ContextFragment[] = [];
     try {
       const result = await worker.execute({
         availableTools: [],
@@ -203,15 +201,14 @@ describe("summarizer worker", () => {
           summaryMemory: null,
           triggered: true
         },
-        memoryContext,
         runId: null,
         task
       });
       expect(result.compacted).toBe(true);
-      expect(result.snapshot?.threadId).toBe(task.threadId);
-      expect(traceService.listByTaskId(task.taskId).some((event) => event.eventType === "thread_snapshot_created")).toBe(
-        true
-      );
+      expect(result.sessionMemory?.threadId).toBe(task.threadId);
+      expect(
+        traceService.listByTaskId(task.taskId).some((event) => event.eventType === "thread_session_memory_written")
+      ).toBe(true);
     } finally {
       storage.close();
     }
@@ -249,4 +246,3 @@ describe("retrieval worker", () => {
     expect(plan).toHaveBeenCalledTimes(1);
   });
 });
-

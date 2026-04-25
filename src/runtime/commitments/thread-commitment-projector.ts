@@ -6,12 +6,12 @@ import type {
 
 import type { CommitmentService } from "./commitment-service.js";
 import type { NextActionService } from "./next-action-service.js";
-import type { SessionSnapshotService } from "../context/session-snapshot-service.js";
+import type { ThreadSessionMemoryService } from "../context/thread-session-memory-service.js";
 
 export interface ThreadCommitmentProjectorDependencies {
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
-  snapshotService: SessionSnapshotService;
+  threadSessionMemoryService: ThreadSessionMemoryService;
 }
 
 export class ThreadCommitmentProjector {
@@ -26,7 +26,7 @@ export class ThreadCommitmentProjector {
       statuses: ["active", "blocked", "pending"],
       threadId
     });
-    const latestSnapshot = this.dependencies.snapshotService.findLatestByThread(threadId);
+    const latestSessionMemory = this.dependencies.threadSessionMemoryService.findLatestByThread(threadId);
     const currentObjective = pickCurrentObjective(commitments);
     const nextAction = pickNextAction(nextActions);
     return {
@@ -34,12 +34,12 @@ export class ThreadCommitmentProjector {
       blockedReason:
         nextAction?.blockedReason ??
         currentObjective?.blockedReason ??
-        latestSnapshot?.blockedReason ??
+        latestSessionMemory?.openLoops[0] ??
         null,
       currentObjective,
       nextAction,
       openCommitments: commitments,
-      pendingDecision: currentObjective?.pendingDecision ?? null
+      pendingDecision: currentObjective?.pendingDecision ?? latestSessionMemory?.decisions[0] ?? null
     };
   }
 }

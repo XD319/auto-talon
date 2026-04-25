@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { ContextCompactor } from "../src/runtime/context/context-compactor.js";
-import type { ContextFragment, ProviderToolDescriptor, TaskRecord } from "../src/types/index.js";
+import type { ProviderToolDescriptor, TaskRecord } from "../src/types/index.js";
 
 describe("context compactor", () => {
-  it("extracts goal, open loops, blocked reason, actions and capabilities", () => {
+  it("extracts goal, decisions, open loops, actions and capabilities", () => {
     const compactor = new ContextCompactor();
     const task: TaskRecord = {
       agentProfileId: "executor",
@@ -27,21 +27,6 @@ describe("context compactor", () => {
       tokenBudget: { inputLimit: 1000, outputLimit: 500, reservedOutput: 100, usedInput: 0, usedOutput: 0 },
       updatedAt: "2026-01-01T00:00:01.000Z"
     };
-    const memoryContext: ContextFragment[] = [
-      {
-        confidence: 0.9,
-        explanation: "cached",
-        fragmentId: "f1",
-        memoryId: "mem-1",
-        privacyLevel: "internal",
-        retentionPolicy: { kind: "session", reason: "session", ttlDays: null },
-        scope: "session",
-        sourceType: "user_input",
-        status: "verified",
-        text: "memory text",
-        title: "memory title"
-      }
-    ];
     const availableTools: ProviderToolDescriptor[] = [
       {
         capability: "shell.execute",
@@ -53,7 +38,7 @@ describe("context compactor", () => {
       }
     ];
 
-    const snapshot = compactor.buildSnapshot({
+    const sessionMemory = compactor.buildSessionMemory({
       availableTools,
       compact: {
         maxMessagesBeforeCompact: 6,
@@ -76,15 +61,16 @@ describe("context compactor", () => {
         sessionScopeKey: "task-1",
         taskId: "task-1"
       },
-      memoryContext,
       task
     });
 
-    expect(snapshot.goal).toContain("My long-running objective");
-    expect(snapshot.openLoops.join(" ")).toContain("tc-1");
-    expect(snapshot.blockedReason?.toLowerCase()).toContain("approval denied");
-    expect(snapshot.nextActions.length).toBeGreaterThan(0);
-    expect(snapshot.activeMemoryIds).toContain("mem-1");
-    expect(snapshot.toolCapabilitySummary).toContain("Shell");
+    expect(sessionMemory.goal).toContain("My long-running objective");
+    expect(sessionMemory.decisions.join(" ")).toContain("Next I should execute pending Shell command");
+    expect(sessionMemory.openLoops.join(" ")).toContain("tc-1");
+    expect(sessionMemory.nextActions.length).toBeGreaterThan(0);
+    expect(
+      Array.isArray(sessionMemory.metadata?.toolCapabilitySummary) &&
+        sessionMemory.metadata.toolCapabilitySummary.includes("Shell")
+    ).toBe(true);
   });
 });

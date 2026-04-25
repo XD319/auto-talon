@@ -8,7 +8,6 @@ import { ExperiencePlane } from "../experience/experience-plane.js";
 import { PromotionAdvisor } from "../experience/promotion/promotion-advisor.js";
 import { MemoryPlane } from "../memory/memory-plane.js";
 import { CompactTriggerPolicy } from "../memory/compact-policy.js";
-import { DeterministicCompactSummarizer, ProviderSubagentSummarizer } from "../memory/compact-summarizer.js";
 import { McpClientManager } from "../mcp/index.js";
 import { ContextPolicy } from "../policy/context-policy.js";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config.js";
@@ -43,7 +42,7 @@ import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
 
 import { AgentApplicationService } from "./application-service.js";
-import { ContextCompactor, SessionSnapshotService } from "./context/index.js";
+import { ContextCompactor, SessionSearchService, ThreadSessionMemoryService } from "./context/index.js";
 import { BudgetService } from "./budget/index.js";
 import { ExecutionKernel } from "./execution-kernel.js";
 import { RecallBudgetPolicy, RecallPlanner } from "./retrieval/index.js";
@@ -296,18 +295,6 @@ export function createApplication(
     traceService
   });
   const memoryPlane = new MemoryPlane({
-    compactPolicy: new CompactTriggerPolicy(),
-    compactSummarizer:
-      config.compact.summarizer === "provider_subagent"
-        ? new ProviderSubagentSummarizer(() => {
-            const selected = providerRouter.selectProvider({
-              kind: "summarize",
-              taskId: "session_compaction",
-              threadId: null
-            });
-            return selected.provider;
-          })
-        : new DeterministicCompactSummarizer(),
     contextPolicy,
     memoryRepository: storage.memories,
     memorySnapshotRepository: storage.memorySnapshots,
@@ -341,12 +328,16 @@ export function createApplication(
     experiencePlane,
     maxCandidatesPerScope: config.recall.maxCandidatesPerScope,
     memoryPlane,
+    sessionSearchService: new SessionSearchService({
+      repository: storage.threadSessionMemories
+    }),
     skillContextService,
     traceService
   });
   const contextCompactor = new ContextCompactor();
-  const sessionSnapshotService = new SessionSnapshotService({
-    snapshotRepository: storage.threadSnapshots,
+  const compactPolicy = new CompactTriggerPolicy();
+  const threadSessionMemoryService = new ThreadSessionMemoryService({
+    repository: storage.threadSessionMemories,
     traceService
   });
   const workerDispatcher = new WorkerDispatcher({
@@ -356,7 +347,7 @@ export function createApplication(
   });
   const summarizerWorker = new SummarizerWorker({
     contextCompactor,
-    sessionSnapshotService
+    threadSessionMemoryService
   });
   const retrievalWorker = new RetrievalWorker({
     recallPlanner
@@ -389,13 +380,13 @@ export function createApplication(
   const threadCommitmentProjector = new ThreadCommitmentProjector({
     commitmentService,
     nextActionService,
-    snapshotService: sessionSnapshotService
+    threadSessionMemoryService
   });
   const commitmentCollector = new CommitmentCollector({
     commitmentService,
     findTask: (taskId) => storage.tasks.findById(taskId),
     nextActionService,
-    snapshotService: sessionSnapshotService,
+    threadSessionMemoryService,
     traceService
   });
   commitmentCollector.start();
@@ -407,6 +398,7 @@ export function createApplication(
 
   const executionKernel = new ExecutionKernel({
     compact: config.compact,
+    compactPolicy,
     agentProfileRegistry,
     budgetPricing: config.budget.pricing,
     budgetService,
@@ -420,7 +412,7 @@ export function createApplication(
     runMetadataRepository: storage.runMetadata,
     routingMode: config.routing.mode,
     runtimeVersion: config.runtimeVersion,
-    sessionSnapshotService,
+    threadSessionMemoryService,
     workerDispatcher,
     summarizerWorker,
     retrievalWorker,
@@ -440,9 +432,7 @@ export function createApplication(
   });
   const threadStateProjector = new ThreadStateProjector({
     commitmentProjector: threadCommitmentProjector,
-    memoryRepository: storage.memories,
-    snapshotService: sessionSnapshotService,
-    threadRunRepository: storage.threadRuns
+    threadSessionMemoryService
   });
   const resumePacketBuilder = new ResumePacketBuilder({
     config,
@@ -509,8 +499,8 @@ export function createApplication(
     listScheduleRunsByThread: (threadId) => storage.scheduleRuns.listByThreadId(threadId),
     listInboxItems: (query) => storage.inbox.list(query),
     listThreadRuns: (threadId) => storage.threadRuns.listByThreadId(threadId),
-    listThreadSnapshots: (threadId) => storage.threadSnapshots.listByThread(threadId),
-    findThreadSnapshot: (snapshotId) => storage.threadSnapshots.findById(snapshotId),
+    listThreadSessionMemories: (threadId) => storage.threadSessionMemories.listByThread(threadId),
+    findThreadSessionMemory: (sessionMemoryId) => storage.threadSessionMemories.findById(sessionMemoryId),
     listThreadLineage: (threadId) => storage.threadLineage.listByThreadId(threadId),
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),

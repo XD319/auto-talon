@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { JsonObject } from "./common.js";
 import type { PrivacyLevel } from "./governance.js";
 
-export const MEMORY_SCOPES = ["profile", "project", "working", "experience_ref", "skill_ref"] as const;
+export const MEMORY_SCOPES = ["profile", "project", "working", "experience_ref", "skill_ref", "session_ref"] as const;
 
 export const PERSISTED_MEMORY_SCOPES = ["profile", "project"] as const;
 
@@ -108,7 +108,6 @@ export interface MemoryQuery {
 export interface MemoryRecallRequest {
   taskId: string;
   query: string;
-  workingScopeKey: string;
   projectScopeKey: string;
   profileScopeKey: string;
   limit: number;

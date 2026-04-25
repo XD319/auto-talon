@@ -13,6 +13,7 @@ const DEFAULT_SCOPE_WEIGHTS: Record<MemoryScope, number> = {
   experience_ref: 0.75,
   profile: 0.9,
   project: 0.95,
+  session_ref: 1,
   skill_ref: 0.65,
   working: 1
 };

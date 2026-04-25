@@ -1,12 +1,12 @@
 import type { TraceEvent, TaskRecord } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
-import type { SessionSnapshotService } from "../context/session-snapshot-service.js";
+import type { ThreadSessionMemoryService } from "../context/thread-session-memory-service.js";
 import type { CommitmentService } from "./commitment-service.js";
 import type { NextActionService } from "./next-action-service.js";
 
 export interface CommitmentCollectorDependencies {
   traceService: TraceService;
-  snapshotService: SessionSnapshotService;
+  threadSessionMemoryService: ThreadSessionMemoryService;
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
   findTask: (taskId: string) => TaskRecord | null;
@@ -36,8 +36,8 @@ export class CommitmentCollector {
       case "task_created":
         this.onTaskCreated(event);
         return;
-      case "thread_snapshot_created":
-        this.onSnapshot(event);
+      case "thread_session_memory_written":
+        this.onSessionMemory(event);
         return;
       case "approval_requested":
         this.onApprovalRequested(event);
@@ -106,16 +106,16 @@ export class CommitmentCollector {
     }
   }
 
-  private onSnapshot(event: Extract<TraceEvent, { eventType: "thread_snapshot_created" }>): void {
-    const snapshot = this.dependencies.snapshotService.findById(event.payload.snapshotId);
-    if (snapshot === null) {
+  private onSessionMemory(event: Extract<TraceEvent, { eventType: "thread_session_memory_written" }>): void {
+    const sessionMemory = this.dependencies.threadSessionMemoryService.findById(event.payload.sessionMemoryId);
+    if (sessionMemory === null) {
       return;
     }
     const commitments = this.dependencies.commitmentService.list({
       statuses: ["open", "in_progress", "blocked", "waiting_decision"],
-      threadId: snapshot.threadId
+      threadId: sessionMemory.threadId
     });
-    const objective = snapshot.goal.trim().slice(0, 160);
+    const objective = sessionMemory.goal.trim().slice(0, 160);
     const commitment =
       commitments[0] ??
       this.dependencies.commitmentService.create({
@@ -123,28 +123,28 @@ export class CommitmentCollector {
         source: "snapshot",
         sourceTraceId: event.eventId,
         status: "in_progress",
-        summary: snapshot.summary,
-        taskId: snapshot.taskId,
-        threadId: snapshot.threadId,
+        summary: sessionMemory.summary,
+        taskId: sessionMemory.taskId,
+        threadId: sessionMemory.threadId,
         title: objective.length > 0 ? objective : "Continue thread objective"
       });
-    if (snapshot.blockedReason !== null && snapshot.blockedReason.length > 0) {
-      this.dependencies.commitmentService.block(commitment.commitmentId, snapshot.blockedReason);
+    if (sessionMemory.openLoops.length > 0) {
+      this.dependencies.commitmentService.block(commitment.commitmentId, sessionMemory.openLoops[0]!);
     }
     const existing = this.dependencies.nextActionService.list({
       statuses: ["pending", "active", "blocked"],
-      threadId: snapshot.threadId
+      threadId: sessionMemory.threadId
     });
     if (existing.length === 0) {
-      snapshot.nextActions.forEach((title, index) => {
+      sessionMemory.nextActions.forEach((title, index) => {
         this.dependencies.nextActionService.create({
           commitmentId: commitment.commitmentId,
           rank: index,
           source: "snapshot",
           sourceTraceId: event.eventId,
           status: index === 0 ? "active" : "pending",
-          taskId: snapshot.taskId,
-          threadId: snapshot.threadId,
+          taskId: sessionMemory.taskId,
+          threadId: sessionMemory.threadId,
           title
         });
       });

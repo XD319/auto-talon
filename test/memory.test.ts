@@ -56,7 +56,7 @@ describe("Phase 3 memory plane", () => {
       });
 
       expect(result.triggered).toBe(true);
-      expect(result.summaryMemory?.sourceType).toBe("session_compact");
+      expect(result.summaryMemory).toBeNull();
       expect(result.replacementMessages[0]?.content).toContain("Session summary");
     } finally {
       close();
@@ -79,6 +79,7 @@ describe("Phase 3 memory plane", () => {
       });
       expect(tokenResult.triggered).toBe(true);
       expect(tokenResult.reason).toBe("token_budget");
+      expect(tokenResult.summaryMemory).toBeNull();
 
       const toolResult = await memoryPlane.compactSession({
         maxMessagesBeforeCompact: 100,
@@ -93,6 +94,7 @@ describe("Phase 3 memory plane", () => {
       });
       expect(toolResult.triggered).toBe(true);
       expect(toolResult.reason).toBe("tool_call_count");
+      expect(toolResult.summaryMemory).toBeNull();
     } finally {
       close();
     }
