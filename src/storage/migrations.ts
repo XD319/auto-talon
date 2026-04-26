@@ -47,6 +47,11 @@ export function runMigrations(database: DatabaseSync): void {
       description: "add thread session memory and session search tables",
       up: migrateV9,
       version: 9
+    },
+    {
+      description: "split thread session memory into current state and events",
+      up: migrateV10,
+      version: 10
     }
   ];
 
@@ -593,6 +598,112 @@ function migrateV9(database: DatabaseSync): void {
         ON session_index(thread_id, created_at DESC);
     `);
   }
+}
+
+function migrateV10(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS thread_session_memory_events (
+      session_memory_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      run_id TEXT,
+      task_id TEXT,
+      trigger TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      decisions_json TEXT NOT NULL,
+      open_loops_json TEXT NOT NULL,
+      next_actions_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thread_session_memory_events_thread
+      ON thread_session_memory_events(thread_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS thread_session_memories_current (
+      thread_id TEXT PRIMARY KEY REFERENCES threads(thread_id),
+      session_memory_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      decisions_json TEXT NOT NULL,
+      open_loops_json TEXT NOT NULL,
+      next_actions_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+  `);
+
+  database.exec(`
+    INSERT OR IGNORE INTO thread_session_memory_events (
+      session_memory_id,
+      thread_id,
+      run_id,
+      task_id,
+      trigger,
+      summary,
+      goal,
+      decisions_json,
+      open_loops_json,
+      next_actions_json,
+      created_at,
+      metadata_json
+    )
+    SELECT
+      session_memory_id,
+      thread_id,
+      run_id,
+      task_id,
+      trigger,
+      summary,
+      goal,
+      decisions_json,
+      open_loops_json,
+      next_actions_json,
+      created_at,
+      metadata_json
+    FROM thread_session_memory;
+  `);
+
+  database.exec(`
+    INSERT INTO thread_session_memories_current (
+      thread_id,
+      session_memory_id,
+      summary,
+      goal,
+      decisions_json,
+      open_loops_json,
+      next_actions_json,
+      updated_at,
+      metadata_json
+    )
+    SELECT
+      source.thread_id,
+      source.session_memory_id,
+      source.summary,
+      source.goal,
+      source.decisions_json,
+      source.open_loops_json,
+      source.next_actions_json,
+      source.created_at,
+      source.metadata_json
+    FROM thread_session_memory AS source
+    WHERE source.session_memory_id = (
+      SELECT candidate.session_memory_id
+      FROM thread_session_memory AS candidate
+      WHERE candidate.thread_id = source.thread_id
+      ORDER BY candidate.created_at DESC, candidate.session_memory_id DESC
+      LIMIT 1
+    )
+    ON CONFLICT(thread_id) DO UPDATE SET
+      session_memory_id = excluded.session_memory_id,
+      summary = excluded.summary,
+      goal = excluded.goal,
+      decisions_json = excluded.decisions_json,
+      open_loops_json = excluded.open_loops_json,
+      next_actions_json = excluded.next_actions_json,
+      updated_at = excluded.updated_at,
+      metadata_json = excluded.metadata_json;
+  `);
 }
 
 function readUserVersion(database: DatabaseSync): number {

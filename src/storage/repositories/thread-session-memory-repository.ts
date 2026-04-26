@@ -10,7 +10,7 @@ import type {
 } from "../../types/index.js";
 import { parseJsonValue, serializeJsonValue } from "./json.js";
 
-interface ThreadSessionMemoryRow {
+interface ThreadSessionMemoryEventRow {
   session_memory_id: string;
   thread_id: string;
   run_id: string | null;
@@ -43,53 +43,93 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
   public create(record: ThreadSessionMemoryDraft): ThreadSessionMemoryRecord {
     const sessionMemoryId = record.sessionMemoryId ?? randomUUID();
     const createdAt = new Date().toISOString();
-    this.database
-      .prepare(
-        `INSERT INTO thread_session_memory (
-          session_memory_id, thread_id, run_id, task_id, trigger, summary, goal,
-          decisions_json, open_loops_json, next_actions_json, created_at, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        sessionMemoryId,
-        record.threadId,
-        record.runId ?? null,
-        record.taskId ?? null,
-        record.trigger,
-        record.summary,
-        record.goal,
-        serializeJsonValue(record.decisions),
-        serializeJsonValue(record.openLoops),
-        serializeJsonValue(record.nextActions),
-        createdAt,
-        serializeJsonValue(record.metadata ?? {})
-      );
+    const decisionsJson = serializeJsonValue(record.decisions);
+    const openLoopsJson = serializeJsonValue(record.openLoops);
+    const nextActionsJson = serializeJsonValue(record.nextActions);
+    const metadataJson = serializeJsonValue(record.metadata ?? {});
 
-    const keywordText = uniqueTokens([
-      record.goal,
-      record.summary,
-      ...record.decisions,
-      ...record.openLoops,
-      ...record.nextActions
-    ]).join(" ");
+    this.database.exec("BEGIN");
+    try {
+      this.database
+        .prepare(
+          `INSERT INTO thread_session_memory_events (
+            session_memory_id, thread_id, run_id, task_id, trigger, summary, goal,
+            decisions_json, open_loops_json, next_actions_json, created_at, metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          sessionMemoryId,
+          record.threadId,
+          record.runId ?? null,
+          record.taskId ?? null,
+          record.trigger,
+          record.summary,
+          record.goal,
+          decisionsJson,
+          openLoopsJson,
+          nextActionsJson,
+          createdAt,
+          metadataJson
+        );
 
-    this.database
-      .prepare(
-        `INSERT INTO session_index (
-          session_memory_id, thread_id, summary, goal, decisions, open_loops, next_actions, keywords, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        sessionMemoryId,
-        record.threadId,
-        record.summary,
+      this.database
+        .prepare(
+          `INSERT INTO thread_session_memories_current (
+            thread_id, session_memory_id, summary, goal,
+            decisions_json, open_loops_json, next_actions_json, updated_at, metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(thread_id) DO UPDATE SET
+            session_memory_id = excluded.session_memory_id,
+            summary = excluded.summary,
+            goal = excluded.goal,
+            decisions_json = excluded.decisions_json,
+            open_loops_json = excluded.open_loops_json,
+            next_actions_json = excluded.next_actions_json,
+            updated_at = excluded.updated_at,
+            metadata_json = excluded.metadata_json`
+        )
+        .run(
+          record.threadId,
+          sessionMemoryId,
+          record.summary,
+          record.goal,
+          decisionsJson,
+          openLoopsJson,
+          nextActionsJson,
+          createdAt,
+          metadataJson
+        );
+
+      const keywordText = uniqueTokens([
         record.goal,
-        record.decisions.join("\n"),
-        record.openLoops.join("\n"),
-        record.nextActions.join("\n"),
-        keywordText,
-        createdAt
-      );
+        record.summary,
+        ...record.decisions,
+        ...record.openLoops,
+        ...record.nextActions
+      ]).join(" ");
+
+      this.database
+        .prepare(
+          `INSERT OR REPLACE INTO session_index (
+            session_memory_id, thread_id, summary, goal, decisions, open_loops, next_actions, keywords, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          sessionMemoryId,
+          record.threadId,
+          record.summary,
+          record.goal,
+          record.decisions.join("\n"),
+          record.openLoops.join("\n"),
+          record.nextActions.join("\n"),
+          keywordText,
+          createdAt
+        );
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
 
     const created = this.findById(sessionMemoryId);
     if (created === null) {
@@ -100,26 +140,43 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
 
   public findById(sessionMemoryId: string): ThreadSessionMemoryRecord | null {
     const row = this.database
-      .prepare("SELECT * FROM thread_session_memory WHERE session_memory_id = ?")
-      .get(sessionMemoryId) as ThreadSessionMemoryRow | undefined;
+      .prepare("SELECT * FROM thread_session_memory_events WHERE session_memory_id = ?")
+      .get(sessionMemoryId) as ThreadSessionMemoryEventRow | undefined;
     return row === undefined ? null : this.mapRow(row);
   }
 
   public findLatestByThread(threadId: string): ThreadSessionMemoryRecord | null {
     const row = this.database
       .prepare(
-        "SELECT * FROM thread_session_memory WHERE thread_id = ? ORDER BY created_at DESC, session_memory_id DESC LIMIT 1"
+        `SELECT
+          current.thread_id,
+          current.session_memory_id,
+          events.run_id,
+          events.task_id,
+          events.trigger,
+          current.summary,
+          current.goal,
+          current.decisions_json,
+          current.open_loops_json,
+          current.next_actions_json,
+          current.updated_at AS created_at,
+          current.metadata_json
+        FROM thread_session_memories_current AS current
+        LEFT JOIN thread_session_memory_events AS events
+          ON events.session_memory_id = current.session_memory_id
+        WHERE current.thread_id = ?
+        LIMIT 1`
       )
-      .get(threadId) as ThreadSessionMemoryRow | undefined;
+      .get(threadId) as ThreadSessionMemoryEventRow | undefined;
     return row === undefined ? null : this.mapRow(row);
   }
 
   public listByThread(threadId: string): ThreadSessionMemoryRecord[] {
     const rows = this.database
       .prepare(
-        "SELECT * FROM thread_session_memory WHERE thread_id = ? ORDER BY created_at DESC, session_memory_id DESC"
+        "SELECT * FROM thread_session_memory_events WHERE thread_id = ? ORDER BY created_at DESC, session_memory_id DESC"
       )
-      .all(threadId) as unknown as ThreadSessionMemoryRow[];
+      .all(threadId) as unknown as ThreadSessionMemoryEventRow[];
     return rows.map((row) => this.mapRow(row));
   }
 
@@ -272,7 +329,7 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
     };
   }
 
-  private mapRow(row: ThreadSessionMemoryRow): ThreadSessionMemoryRecord {
+  private mapRow(row: ThreadSessionMemoryEventRow): ThreadSessionMemoryRecord {
     return {
       createdAt: row.created_at,
       decisions: parseJsonValue<string[]>(row.decisions_json),

@@ -100,6 +100,29 @@ When the active session grows beyond the configured threshold, the runtime creat
 
 without replaying the entire conversation back into the prompt.
 
+## Thread Session Memory Storage Model
+
+Thread session memory now uses a split model instead of a single append-only table:
+
+- `thread_session_memories_current`
+  - one row per `thread_id`
+  - stores the latest session state used by resume flows
+- `thread_session_memory_events`
+  - append-only history of every session memory write
+  - powers thread history views and cross-session search
+
+Read/write behavior:
+
+- writes append to `events` and upsert `current` in one transaction
+- `findLatestByThread` reads from `current`
+- history listing and session search read from `events` (via `session_index`)
+
+Migration behavior:
+
+- historical rows from legacy `thread_session_memory` are backfilled into `events`
+- per-thread latest records are backfilled into `current`
+- read paths switch directly to the new model after migration (no legacy read fallback)
+
 ## Snapshot
 
 Snapshots persist lightweight metadata about a memory scope at a point in time.
