@@ -107,7 +107,8 @@ describe("RecallPlanner", () => {
         recordRecall: () => undefined
       },
       sessionSearchService: {
-        searchAsContext: () => []
+        searchAsContext: () => [],
+        searchGlobalAsContext: () => []
       },
       skillContextService: {
         rankSkills: () => []
@@ -135,5 +136,59 @@ describe("RecallPlanner", () => {
       query: result.explain.enrichedQuery,
       taskId: "task-1"
     });
+  });
+
+  it("triggers global session search only when historical signals are present", () => {
+    let globalSearchCalls = 0;
+    const planner = new RecallPlanner({
+      budgetPolicy: new RecallBudgetPolicy({ budgetRatio: 0.05 }),
+      enabled: true,
+      experiencePlane: {
+        recallExperiences: () => []
+      } as never,
+      maxCandidatesPerScope: 5,
+      memoryPlane: {
+        recall: () => ({
+          candidates: [],
+          decisions: [],
+          query: "q",
+          selectedFragments: []
+        }),
+        recordRecall: () => undefined
+      },
+      sessionSearchService: {
+        searchAsContext: () => [],
+        searchGlobalAsContext: () => {
+          globalSearchCalls += 1;
+          return [];
+        }
+      },
+      skillContextService: {
+        rankSkills: () => []
+      } as never,
+      traceService: {
+        record: () => undefined
+      } as never
+    });
+
+    const neutralTask = createTask();
+    neutralTask.input = "fix flaky sqlite tests quickly";
+    planner.plan({
+      task: neutralTask,
+      threadCommitmentState: null,
+      tokenBudget: neutralTask.tokenBudget,
+      toolPlan: ["shell"]
+    });
+
+    const historicalTask = createTask();
+    historicalTask.input = "remember what we did last time for sqlite flakes";
+    planner.plan({
+      task: historicalTask,
+      threadCommitmentState: null,
+      tokenBudget: historicalTask.tokenBudget,
+      toolPlan: ["shell"]
+    });
+
+    expect(globalSearchCalls).toBe(1);
   });
 });

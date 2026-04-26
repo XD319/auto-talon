@@ -12,6 +12,7 @@ import type {
   ProviderStatsSnapshot,
   ScheduleRecord,
   ScheduleRunRecord,
+  SessionSearchHit,
   SkillDraftRecord,
   SkillListResult,
   SkillView,
@@ -176,6 +177,18 @@ export function formatThreadSnapshot(snapshot: ThreadSessionMemoryRecord): strin
     `Next Actions: ${snapshot.nextActions.join(", ") || "-"}`,
     `Summary: ${snapshot.summary}`
   ].join("\n");
+}
+
+export function formatThreadSessionSearchHits(hits: SessionSearchHit[]): string {
+  if (hits.length === 0) {
+    return "No session memory hits found.";
+  }
+  return hits
+    .map(
+      (hit, index) =>
+        `#${index + 1} ${hit.sessionMemoryId} | thread=${hit.threadId} | score=${hit.score.toFixed(3)} | goal=${hit.goal.slice(0, 80)}`
+    )
+    .join("\n");
 }
 
 export function formatScheduleList(schedules: ScheduleRecord[]): string {

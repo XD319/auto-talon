@@ -500,6 +500,18 @@ export function createApplication(
     listInboxItems: (query) => storage.inbox.list(query),
     listThreadRuns: (threadId) => storage.threadRuns.listByThreadId(threadId),
     listThreadSessionMemories: (threadId) => storage.threadSessionMemories.listByThread(threadId),
+    searchThreadSessionMemories: (input) =>
+      input.threadId !== undefined
+        ? storage.threadSessionMemories.search({
+            limit: input.limit,
+            query: input.query,
+            threadId: input.threadId
+          })
+        : storage.threadSessionMemories.searchGlobal({
+            excludeThreadId: input.excludeThreadId ?? null,
+            limit: input.limit,
+            query: input.query
+          }),
     findThreadSessionMemory: (sessionMemoryId) => storage.threadSessionMemories.findById(sessionMemoryId),
     listThreadLineage: (threadId) => storage.threadLineage.listByThreadId(threadId),
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),

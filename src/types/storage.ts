@@ -123,6 +123,11 @@ export interface ThreadSessionMemoryRepository {
   findLatestByThread(threadId: string): ThreadSessionMemoryRecord | null;
   listByThread(threadId: string): ThreadSessionMemoryRecord[];
   search(input: { limit: number; query: string; threadId: string }): SessionSearchHit[];
+  searchGlobal(input: {
+    limit: number;
+    query: string;
+    excludeThreadId?: string | null;
+  }): SessionSearchHit[];
 }
 
 export interface ScheduleRepository {

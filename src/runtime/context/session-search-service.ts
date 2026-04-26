@@ -18,21 +18,44 @@ export class SessionSearchService {
     if (hits.length === 0) {
       return [];
     }
-    return [toContextFragment(input.threadId, hits)];
+    return [toContextFragment("thread", input.threadId, hits)];
+  }
+
+  public searchGlobalAsContext(input: {
+    limit: number;
+    query: string;
+    excludeThreadId?: string | null;
+  }): ContextFragment[] {
+    const hits = this.dependencies.repository.searchGlobal(input);
+    if (hits.length === 0) {
+      return [];
+    }
+    return [toContextFragment("global", input.excludeThreadId ?? null, hits)];
   }
 }
 
-function toContextFragment(threadId: string, hits: SessionSearchHit[]): ContextFragment {
+function toContextFragment(
+  mode: "global" | "thread",
+  threadId: string | null,
+  hits: SessionSearchHit[]
+): ContextFragment {
   const topHits = hits.slice(0, 3);
+  const sourceDescription =
+    mode === "global"
+      ? `global session history matched via FTS5${threadId === null ? "" : ` excluding thread=${threadId}`}`
+      : `session history matched via FTS5 for thread=${threadId}`;
   return {
     confidence: 0.82,
-    explanation: `session history matched via FTS5 for thread=${threadId}`,
+    explanation: sourceDescription,
     fragmentId: randomUUID(),
-    memoryId: `session-search:${threadId}:${topHits.map((item) => item.sessionMemoryId).join(",")}`,
+    memoryId: `session-search:${mode}:${threadId ?? "none"}:${topHits.map((item) => item.sessionMemoryId).join(",")}`,
     privacyLevel: "internal",
     retentionPolicy: {
       kind: "working",
-      reason: "Session search references are injected only for the active thread.",
+      reason:
+        mode === "global"
+          ? "Global session search references are injected for historical recall."
+          : "Session search references are injected only for the active thread.",
       ttlDays: null
     },
     scope: "session_ref",
@@ -42,6 +65,7 @@ function toContextFragment(threadId: string, hits: SessionSearchHit[]): ContextF
       .map((hit, index) =>
         [
           `Session history ${index + 1}`,
+          `thread_id=${hit.threadId}`,
           `goal=${hit.goal}`,
           `summary=${hit.summary}`,
           `decisions=${hit.decisions.join("; ") || "[none]"}`,

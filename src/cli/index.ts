@@ -66,6 +66,7 @@ import {
   formatThreadList,
   formatThreadSnapshot,
   formatThreadSnapshotList,
+  formatThreadSessionSearchHits,
   formatTrace,
   formatTraceContextDebug,
   summarizeAudit,
@@ -1304,6 +1305,53 @@ export async function main(argv = process.argv): Promise<void> {
         handle.close();
       }
     });
+
+  memoryCommand
+    .command("search")
+    .argument("<query>", "Session memory search query")
+    .option("--thread <threadId>", "Search within specific thread")
+    .option("--global", "Search across all threads")
+    .option("--exclude-thread <threadId>", "Exclude one thread from global search")
+    .option("--limit <number>", "Max hit count", "5")
+    .action(
+      (
+        query: string,
+        commandOptions: {
+          thread?: string;
+          global?: boolean;
+          excludeThread?: string;
+          limit?: string;
+        }
+      ) => {
+        const handle = createApplication(process.cwd());
+        try {
+          const limit = Number.parseInt(commandOptions.limit ?? "5", 10);
+          if (Number.isNaN(limit) || limit <= 0) {
+            throw new Error("Limit must be a positive integer.");
+          }
+          if (commandOptions.global !== true && commandOptions.thread === undefined) {
+            throw new Error("Provide --thread <threadId> or use --global.");
+          }
+          if (commandOptions.global === true && commandOptions.thread !== undefined) {
+            throw new Error("Use either --global or --thread, not both.");
+          }
+          const hits = handle.service.searchThreadSnapshots({
+            ...(commandOptions.global === true
+              ? {
+                  excludeThreadId: commandOptions.excludeThread ?? null
+                }
+              : {
+                  threadId: commandOptions.thread
+                }),
+            limit,
+            query
+          });
+          console.log(formatThreadSessionSearchHits(hits));
+        } finally {
+          handle.close();
+        }
+      }
+    );
 
   memoryCommand
     .command("show")

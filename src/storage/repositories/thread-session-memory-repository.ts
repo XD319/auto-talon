@@ -125,20 +125,40 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
 
   public search(input: { limit: number; query: string; threadId: string }): SessionSearchHit[] {
     const rows = this.searchFts(input) ?? this.searchFallback(input);
-    return rows.map((row) => ({
-      createdAt: row.created_at,
-      decisions: splitLines(row.decisions),
-      goal: row.goal,
-      nextActions: splitLines(row.next_actions),
-      openLoops: splitLines(row.open_loops),
-      score: row.score,
-      sessionMemoryId: row.session_memory_id,
-      summary: row.summary,
-      threadId: row.thread_id
-    }));
+    return rows.map((row) => this.mapSearchRow(row));
+  }
+
+  public searchGlobal(input: {
+    limit: number;
+    query: string;
+    excludeThreadId?: string | null;
+  }): SessionSearchHit[] {
+    const rows = this.searchGlobalFts(input) ?? this.searchGlobalFallback(input);
+    return rows.map((row) => this.mapSearchRow(row));
   }
 
   private searchFts(input: { limit: number; query: string; threadId: string }): SessionIndexRow[] | null {
+    const whereClause = "thread_id = ? AND session_index MATCH ?";
+    const parameters: unknown[] = [input.threadId, input.query, input.limit];
+    return this.searchFtsWithQuery(whereClause, parameters);
+  }
+
+  private searchGlobalFts(input: {
+    limit: number;
+    query: string;
+    excludeThreadId?: string | null;
+  }): SessionIndexRow[] | null {
+    const whereClauses = ["session_index MATCH ?"];
+    const parameters: unknown[] = [input.query];
+    if (input.excludeThreadId !== undefined && input.excludeThreadId !== null) {
+      whereClauses.push("thread_id != ?");
+      parameters.push(input.excludeThreadId);
+    }
+    parameters.push(input.limit);
+    return this.searchFtsWithQuery(whereClauses.join(" AND "), parameters);
+  }
+
+  private searchFtsWithQuery(whereClause: string, parameters: unknown[]): SessionIndexRow[] | null {
     try {
       return this.database
         .prepare(
@@ -153,17 +173,45 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
             created_at,
             bm25(session_index) AS score
           FROM session_index
-          WHERE thread_id = ? AND session_index MATCH ?
+          WHERE ${whereClause}
           ORDER BY score ASC, created_at DESC
           LIMIT ?`
         )
-        .all(input.threadId, input.query, input.limit) as unknown as SessionIndexRow[];
+        .all(...parameters) as unknown as SessionIndexRow[];
     } catch {
       return null;
     }
   }
 
   private searchFallback(input: { limit: number; query: string; threadId: string }): SessionIndexRow[] {
+    return this.searchFallbackByScope({
+      limit: input.limit,
+      query: input.query,
+      whereClause: "thread_id = ?",
+      whereParams: [input.threadId]
+    });
+  }
+
+  private searchGlobalFallback(input: {
+    limit: number;
+    query: string;
+    excludeThreadId?: string | null;
+  }): SessionIndexRow[] {
+    const hasExclude = input.excludeThreadId !== undefined && input.excludeThreadId !== null;
+    return this.searchFallbackByScope({
+      limit: input.limit,
+      query: input.query,
+      whereClause: hasExclude ? "thread_id != ?" : "1=1",
+      whereParams: hasExclude ? [input.excludeThreadId] : []
+    });
+  }
+
+  private searchFallbackByScope(input: {
+    limit: number;
+    query: string;
+    whereClause: string;
+    whereParams: unknown[];
+  }): SessionIndexRow[] {
     const pattern = `%${input.query.trim().replace(/\s+/gu, "%")}%`;
     return this.database
       .prepare(
@@ -183,7 +231,7 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
             ELSE 1
           END AS score
         FROM session_index
-        WHERE thread_id = ?
+        WHERE ${input.whereClause}
           AND (
             summary LIKE ?
             OR goal LIKE ?
@@ -195,8 +243,33 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
         ORDER BY score ASC, created_at DESC
         LIMIT ?`
       )
-      .all(pattern, pattern, pattern, input.threadId, pattern, pattern, pattern, pattern, pattern, pattern, input.limit) as
-      unknown as SessionIndexRow[];
+      .all(
+        pattern,
+        pattern,
+        pattern,
+        ...input.whereParams,
+        pattern,
+        pattern,
+        pattern,
+        pattern,
+        pattern,
+        pattern,
+        input.limit
+      ) as unknown as SessionIndexRow[];
+  }
+
+  private mapSearchRow(row: SessionIndexRow): SessionSearchHit {
+    return {
+      createdAt: row.created_at,
+      decisions: splitLines(row.decisions),
+      goal: row.goal,
+      nextActions: splitLines(row.next_actions),
+      openLoops: splitLines(row.open_loops),
+      score: row.score,
+      sessionMemoryId: row.session_memory_id,
+      summary: row.summary,
+      threadId: row.thread_id
+    };
   }
 
   private mapRow(row: ThreadSessionMemoryRow): ThreadSessionMemoryRecord {

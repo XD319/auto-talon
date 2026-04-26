@@ -31,6 +31,11 @@ export interface RecallPlannerDependencies {
   };
   sessionSearchService?: {
     searchAsContext: (input: { limit: number; query: string; threadId: string }) => ContextFragment[];
+    searchGlobalAsContext: (input: {
+      limit: number;
+      query: string;
+      excludeThreadId?: string | null;
+    }) => ContextFragment[];
   };
   skillContextService: SkillContextService;
   traceService: TraceService;
@@ -93,7 +98,7 @@ export class RecallPlanner {
       .map((candidate) => toSkillCandidate(candidate.metadata, candidate.score));
 
     const threadId = input.task.threadId;
-    const sessionCandidates =
+    const sessionFragments =
       threadId === null || threadId === undefined
         ? []
         : this.dependencies.sessionSearchService
@@ -102,7 +107,18 @@ export class RecallPlanner {
               query: enrichedQuery,
               threadId
             })
-            .map((fragment) => toSessionCandidate(fragment)) ?? [];
+            ?? [];
+    const globalSessionFragments =
+      this.dependencies.sessionSearchService === undefined || !hasHistoricalRecallSignal(enrichedQuery)
+        ? []
+        : this.dependencies.sessionSearchService.searchGlobalAsContext({
+            excludeThreadId: threadId ?? null,
+            limit: this.dependencies.maxCandidatesPerScope,
+            query: enrichedQuery
+          });
+    const sessionCandidates = [...sessionFragments, ...globalSessionFragments].map((fragment) =>
+      toSessionCandidate(fragment)
+    );
 
     const selection = this.selector.select(
       [...memoryCandidates, ...experienceCandidates, ...skillCandidates, ...sessionCandidates],
@@ -156,7 +172,7 @@ export class RecallPlanner {
     this.dependencies.memoryPlane.recordRecall(input.task.taskId, memoryRecall);
     const skillFragments = this.dependencies.skillContextService.buildContext(input.task);
     const threadId = input.task.threadId;
-    const sessionFragments =
+    const localSessionFragments =
       threadId === null || threadId === undefined
         ? []
         : this.dependencies.sessionSearchService?.searchAsContext({
@@ -164,7 +180,20 @@ export class RecallPlanner {
             query: input.task.input,
             threadId
           }) ?? [];
-    const fragments = [...memoryRecall.selectedFragments, ...skillFragments, ...sessionFragments];
+    const globalSessionFragments =
+      this.dependencies.sessionSearchService === undefined || !hasHistoricalRecallSignal(input.task.input)
+        ? []
+        : this.dependencies.sessionSearchService.searchGlobalAsContext({
+            excludeThreadId: threadId ?? null,
+            limit: 3,
+            query: input.task.input
+          });
+    const fragments = [
+      ...memoryRecall.selectedFragments,
+      ...skillFragments,
+      ...localSessionFragments,
+      ...globalSessionFragments
+    ];
     const explain: RecallExplainPayload = {
       candidateCount: fragments.length,
       enrichedQuery: input.task.input,
@@ -359,4 +388,11 @@ function readLegacyThreadResumeGoal(metadata: TaskRecord["metadata"]): string {
 
 function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
+}
+
+const HISTORICAL_RECALL_SIGNAL_PATTERN =
+  /\b(previous|last\s*time|remember|earlier|before)\b|上次|之前|先前|记得|还记得/u;
+
+function hasHistoricalRecallSignal(query: string): boolean {
+  return HISTORICAL_RECALL_SIGNAL_PATTERN.test(query.toLowerCase());
 }

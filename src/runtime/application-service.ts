@@ -45,6 +45,7 @@ import type {
   ScheduleRecord,
   ScheduleRunListQuery,
   ScheduleRunRecord,
+  SessionSearchHit,
   TaskRecord,
   ThreadLineageRecord,
   ThreadRecord,
@@ -170,6 +171,12 @@ export interface RuntimeReadModel {
   listThreadLineage(threadId: string): ThreadLineageRecord[];
   listThreadRuns(threadId: string): ThreadRunRecord[];
   listThreadSessionMemories(threadId: string): ThreadSessionMemoryRecord[];
+  searchThreadSessionMemories(input: {
+    limit: number;
+    query: string;
+    threadId?: string;
+    excludeThreadId?: string | null;
+  }): SessionSearchHit[];
   findThreadSessionMemory(sessionMemoryId: string): ThreadSessionMemoryRecord | null;
   listSchedules(query?: ScheduleListQuery): ScheduleRecord[];
   findSchedule(scheduleId: string): ScheduleRecord | null;
@@ -350,6 +357,15 @@ export class AgentApplicationService {
 
   public showThreadSnapshot(snapshotId: string): ThreadSessionMemoryRecord | null {
     return this.dependencies.findThreadSessionMemory(snapshotId);
+  }
+
+  public searchThreadSnapshots(input: {
+    limit: number;
+    query: string;
+    threadId?: string;
+    excludeThreadId?: string | null;
+  }): SessionSearchHit[] {
+    return this.dependencies.searchThreadSessionMemories(input);
   }
 
   public async continueThread(
