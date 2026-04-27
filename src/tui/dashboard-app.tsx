@@ -148,8 +148,8 @@ export function AgentTuiApp({
         ]}
         meta={[`reviewer ${reviewerId}`, `refresh ${refreshIntervalMs}ms`]}
         productName="AUTOTALON"
-        subtitle="Operational dashboard for governed runtime activity"
-        title="Runtime Dashboard"
+        subtitle="Runtime approvals and observability for governed activity"
+        title="Ops"
       />
       <Box marginTop={1} flexDirection={compactLayout ? "column" : "row"}>
         <Box
