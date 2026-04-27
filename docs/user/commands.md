@@ -5,7 +5,8 @@ Core:
 - `talon run`
 - `talon continue --last|--thread <id> [task]`
 - `talon tui`
-- `talon dashboard`
+- `talon ops`
+- `talon dashboard` (compatibility alias of `talon ops`)
 - `talon init`
 - `talon doctor`
 - `talon version`

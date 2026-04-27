@@ -1,24 +1,26 @@
 # AutoTalon v0.1.0
 
-Low-cost, long-running agent assistant for personal knowledge work.
+Personal assistant workspace for day-to-day execution.
 
-AutoTalon is for personal knowledge workers who want an agent assistant they can
-run for the long haul without giving up inspectability, local control, or cost
-awareness. It keeps the product centered on a CLI-first workflow while the
+AutoTalon is for personal knowledge workers who want a personal assistant they
+can run for the long haul without giving up inspectability, local control, or
+cost awareness. It keeps the product centered on a CLI-first workflow while the
 runtime underneath provides governed execution, durable memory, traceability,
 skills, gateway adapters, and evaluation surfaces.
 
 ## What It Does
 
 - Runs agent tasks from the terminal with configurable provider profiles.
+- Opens a personal assistant workspace in `talon tui` with today/inbox/thread
+  oriented workflows.
 - Records task state, trace events, tool calls, approvals, and audit logs in a
   local SQLite workspace.
 - Gates risky tool use with policy and explicit approval flows.
 - Supports replay, smoke tests, eval reports, and maintainer release checks.
 - Provides layered memory (`profile`/`project`/`working` + `experience_ref`/`skill_ref`) for repeatable work.
 - Exposes optional gateway adapters for local webhooks and Feishu/Lark.
-- Includes Ink-based TUI and dashboard views for operators who want an
-  interactive shell-native surface.
+- Includes Ink-based TUI surfaces for personal execution and ops observation in
+  the same runtime.
 
 ## Demo
 
@@ -77,7 +79,7 @@ Use the interactive surfaces:
 
 ```bash
 talon tui
-talon dashboard
+talon ops
 ```
 
 Validate providers and release readiness:
@@ -100,6 +102,8 @@ talon gateway list-adapters
 ## When To Use It
 
 - You want a local-first agent assistant with auditable execution history.
+- You want a personal assistant workspace that keeps today/inbox/thread actions
+  close to your terminal workflow.
 - You need policy and approval behavior before allowing file or shell actions.
 - You want durable memory, skill recall, replay, and eval tooling around ongoing
   knowledge work instead of one-off prompts.
@@ -108,12 +112,14 @@ talon gateway list-adapters
 
 ## Positioning
 
-AutoTalon is a product for personal knowledge workers, backed by an inspectable
-agent runtime rather than a hosted black box. The user-facing promise is a
-low-cost long-term assistant; the technical foundation is CLI operation,
-governance, traceability, reproducible execution, memory, and adapter boundaries.
-The core package stays intentionally small, and integrations such as Feishu/Lark
-are loaded only when their gateway command is used.
+AutoTalon is a personal assistant product for individual operators and
+knowledge workers, backed by an inspectable agent runtime rather than a hosted
+black box. The user-facing promise is a low-cost long-term assistant; the
+technical foundation is CLI operation, governance, traceability, reproducible
+execution, memory, and adapter boundaries. The core package stays intentionally
+small, and integrations such as Feishu/Lark are loaded only when their gateway
+command is used. Runtime observation remains available via `talon ops`, while
+`talon dashboard` is preserved as a compatibility alias.
 
 ## Documentation
 
