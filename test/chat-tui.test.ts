@@ -36,6 +36,7 @@ type ControllerServiceStub = Pick<
   | "listTasks"
   | "continueThread"
   | "providerStats"
+  | "createThread"
   | "resolveApproval"
   | "runTask"
   | "showTask"
@@ -228,6 +229,9 @@ describe("use-chat-controller helpers", () => {
     });
     const service: ControllerServiceStub = {
       continueThread,
+      createThread() {
+        throw new Error("createThread should not be called in this test.");
+      },
       listPendingApprovals() {
         return [];
       },
@@ -296,6 +300,109 @@ describe("use-chat-controller helpers", () => {
       expect(continueThread).toHaveBeenCalledTimes(1);
       expect(continueThread.mock.calls[0]?.[0]).toBe("thread-123");
       expect(continueThread.mock.calls[0]?.[1]).toBe("second");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("creates and activates a thread before prompt submission", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const runTask = vi.fn((options: RuntimeRunOptions) => Promise.resolve({
+      output: "reply",
+      task: {
+        ...createControllerTask(options),
+        finalOutput: "reply",
+        status: "succeeded",
+        threadId: options.threadId ?? null
+      }
+    }));
+    const createThread = vi.fn(() => ({
+      agentProfileId: "executor" as const,
+      archivedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      cwd: process.cwd(),
+      metadata: {},
+      ownerUserId: "local-user",
+      providerName: "mock",
+      status: "active" as const,
+      threadId: "thread-new",
+      title: "Untitled thread",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    }));
+    const continueThread = vi.fn((threadId: string, text: string, overrides?: Partial<RuntimeRunOptions>) => {
+      const options = {
+        ...createDefaultRunOptions(text, process.cwd(), config),
+        ...overrides,
+        taskInput: text,
+        threadId
+      };
+      return Promise.resolve({
+        output: "reply",
+        task: {
+          ...createControllerTask(options),
+          finalOutput: "reply",
+          status: "succeeded",
+          threadId
+        }
+      });
+    });
+    const service: ControllerServiceStub = {
+      continueThread,
+      createThread,
+      listPendingApprovals() {
+        return [];
+      },
+      listTasks() {
+        return [];
+      },
+      providerStats() {
+        return null;
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask,
+      showTask() {
+        return { approvals: [], artifacts: [], inboxItems: [], scheduleRuns: [], task: null, toolCalls: [], trace: [] };
+      },
+      subscribeToTaskTrace() {
+        return () => {};
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let submitPrompt: ChatController["submitPrompt"] | null = null;
+    let createAndActivateThread: ChatController["createAndActivateThread"] | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+      React.useEffect(() => {
+        submitPrompt = instance.submitPrompt;
+        createAndActivateThread = instance.createAndActivateThread;
+      }, [instance]);
+      return null;
+    }
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+    try {
+      await waitFor(() => submitPrompt !== null && createAndActivateThread !== null);
+      createAndActivateThread?.();
+      expect(submitPrompt?.("after switch")).toBe(true);
+      await waitFor(() => continueThread.mock.calls.length === 1);
+      expect(createThread).toHaveBeenCalledTimes(1);
+      expect(runTask).toHaveBeenCalledTimes(0);
+      expect(continueThread.mock.calls[0]?.[0]).toBe("thread-new");
     } finally {
       app.unmount();
       await app.waitUntilExit();
@@ -594,6 +701,21 @@ function createStreamingControllerService(): ControllerServiceStub {
         threadId
       };
       return runTask(options);
+    },
+    createThread() {
+      return {
+        agentProfileId: "executor",
+        archivedAt: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        cwd: process.cwd(),
+        metadata: {},
+        ownerUserId: "local-user",
+        providerName: "mock",
+        status: "active",
+        threadId: "thread-created",
+        title: "Untitled thread",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      };
     },
     runTask,
     listPendingApprovals() {

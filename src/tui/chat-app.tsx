@@ -133,7 +133,7 @@ export function ChatTuiApp({
       if (text === "/help") {
         controller.addSystemMessage(
           [
-            "Commands: /today /inbox /thread /next /commitments /schedule /help /ops /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
+            "Commands: /today /inbox /thread [summary|list|new|switch] /next [list|done|block] /commitments [list|done|block] /schedule /help /ops /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
             "Compatibility: /dashboard remains available and maps to /ops.",
             "Tip: use `talon ops` or `talon tui --mode ops` for the observability view.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Tab slash-complete | Ctrl+P/N history",
@@ -166,49 +166,16 @@ export function ChatTuiApp({
         return true;
       }
 
-      if (text === "/thread") {
-        if (controller.activeThreadId !== null) {
-          controller.addSystemMessage(formatThreadDetailForTui(service, controller.activeThreadId));
-          return true;
-        }
-        const userId = resolveRuntimeUserId();
-        const threads = service
-          .listThreads("active")
-          .filter((item) => item.ownerUserId === userId)
-          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-          .slice(0, 20);
-        controller.addSystemMessage(
-          threads.length === 0
-            ? `Active threads (user=${userId}): none`
-            : `Active threads (user=${userId}, showing ${threads.length}):\n${threads
-                .map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title} [${item.status}]`)
-                .join("\n")}`
-        );
-        return true;
+      if (text.startsWith("/thread")) {
+        return handleThreadCommand(text, controller, service);
       }
 
-      if (text === "/next") {
-        const summary = buildTodaySummary(service, { activeThreadId: controller.activeThreadId, limit: 20 });
-        controller.addSystemMessage(
-          summary.nextActions.total === 0
-            ? `Next actions (user=${summary.userId}): none`
-            : `Next actions (user=${summary.userId}, showing ${summary.nextActions.items.length}/${summary.nextActions.total}):\n${summary.nextActions.items
-                .map((item) => `- ${item.nextActionId.slice(0, 8)} | ${item.title} [${item.status}]`)
-                .join("\n")}`
-        );
-        return true;
+      if (text.startsWith("/next")) {
+        return handleNextActionCommand(text, controller, service);
       }
 
-      if (text === "/commitments") {
-        const summary = buildTodaySummary(service, { activeThreadId: controller.activeThreadId, limit: 20 });
-        controller.addSystemMessage(
-          summary.commitments.total === 0
-            ? `Commitments (user=${summary.userId}): none`
-            : `Commitments (user=${summary.userId}, showing ${summary.commitments.items.length}/${summary.commitments.total}):\n${summary.commitments.items
-                .map((item) => `- ${item.commitmentId.slice(0, 8)} | ${item.title} [${item.status}]`)
-                .join("\n")}`
-        );
-        return true;
+      if (text.startsWith("/commitments")) {
+        return handleCommitmentCommand(text, controller, service);
       }
 
       if (text === "/schedule") {
@@ -503,4 +470,329 @@ function isLiveTranscriptMessage(message: ChatMessage): boolean {
 
 function isEmptyConversation(messages: ChatMessage[]): boolean {
   return !messages.some((message) => message.kind === "user" || message.kind === "agent");
+}
+
+function parseSlashInput(text: string): { args: string[]; command: string; rest: string } {
+  const trimmed = text.trim();
+  const parts = trimmed.split(/\s+/u).filter((part) => part.length > 0);
+  const command = parts[0] ?? "";
+  const args = parts.slice(1);
+  const rest = command.length >= trimmed.length ? "" : trimmed.slice(command.length).trim();
+  return { args, command, rest };
+}
+
+function handleThreadCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {
+  const parsed = parseSlashInput(text);
+  const sub = parsed.args[0] ?? "summary";
+  if (parsed.command !== "/thread") {
+    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
+    return true;
+  }
+
+  if (sub === "new") {
+    const title = parsed.rest.slice("new".length).trim() || "Untitled thread";
+    const threadId = controller.createAndActivateThread(title);
+    controller.resetVisibleChatPreserveActiveThread();
+    controller.addSystemMessage(`Switched to new thread ${threadId.slice(0, 8)} | ${title}`);
+    controller.addSystemMessage(formatThreadDetailForTui(service, threadId));
+    return true;
+  }
+
+  if (sub === "switch") {
+    const prefix = parsed.args[1] ?? "";
+    if (prefix.length === 0) {
+      controller.addSystemMessage("Usage: /thread switch <thread-id-prefix>");
+      return true;
+    }
+    const userId = resolveRuntimeUserId();
+    const candidates = service
+      .listThreads("active")
+      .filter((item) => item.ownerUserId === userId && item.threadId.startsWith(prefix));
+    if (candidates.length !== 1) {
+      controller.addSystemMessage(
+        candidates.length === 0
+          ? `No thread matched prefix '${prefix}'.`
+          : `Ambiguous thread prefix '${prefix}':\n${candidates.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
+      );
+      return true;
+    }
+    const match = candidates[0];
+    if (match === undefined) {
+      return true;
+    }
+    controller.switchActiveThread(match.threadId);
+    controller.resetVisibleChatPreserveActiveThread();
+    controller.addSystemMessage(`Switched to thread ${match.threadId.slice(0, 8)} | ${match.title}`);
+    controller.addSystemMessage(formatThreadDetailForTui(service, match.threadId));
+    return true;
+  }
+
+  if (sub === "list") {
+    const userId = resolveRuntimeUserId();
+    const threads = service
+      .listThreads("active")
+      .filter((item) => item.ownerUserId === userId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 20);
+    controller.addSystemMessage(
+      threads.length === 0
+        ? `Active threads (user=${userId}): none`
+        : `Active threads (user=${userId}, showing ${threads.length}):\n${threads
+            .map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title} [${item.status}]`)
+            .join("\n")}`
+    );
+    return true;
+  }
+
+  if (sub === "summary") {
+    const maybePrefix = parsed.args[1] ?? "";
+    if (maybePrefix.length > 0) {
+      const userId = resolveRuntimeUserId();
+      const candidates = service
+        .listThreads("active")
+        .filter((item) => item.ownerUserId === userId && item.threadId.startsWith(maybePrefix));
+      if (candidates.length !== 1) {
+        controller.addSystemMessage(
+          candidates.length === 0
+            ? `No thread matched prefix '${maybePrefix}'.`
+            : `Ambiguous thread prefix '${maybePrefix}':\n${candidates.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
+        );
+        return true;
+      }
+      controller.addSystemMessage(formatThreadDetailForTui(service, candidates[0]!.threadId));
+      return true;
+    }
+    if (controller.activeThreadId !== null) {
+      controller.addSystemMessage(formatThreadDetailForTui(service, controller.activeThreadId));
+    } else {
+      return handleThreadCommand("/thread list", controller, service);
+    }
+    return true;
+  }
+
+  controller.addSystemMessage("Usage: /thread [new [title]|list|switch <thread-id-prefix>|summary [thread-id-prefix]]");
+  return true;
+}
+
+function handleNextActionCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {
+  const { args, command } = parseSlashInput(text);
+  if (command !== "/next") {
+    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
+    return true;
+  }
+  const sub = args[0] ?? "list";
+  if (sub === "list") {
+    const requestedThreadPrefix = args[1] ?? "";
+    const threadId = resolveThreadIdForList(controller.activeThreadId, requestedThreadPrefix, service);
+    if (threadId.kind === "error") {
+      controller.addSystemMessage(threadId.message);
+      return true;
+    }
+    const resolvedThreadId = threadId.threadId;
+    const query =
+      resolvedThreadId === null
+        ? { statuses: ["active", "pending", "blocked"] as Array<"active" | "pending" | "blocked"> }
+        : { threadId: resolvedThreadId };
+    const items = service.listNextActions(query).slice(0, 20);
+    const scope = resolvedThreadId === null ? `user=${resolveRuntimeUserId()}` : `thread=${resolvedThreadId.slice(0, 8)}`;
+    controller.addSystemMessage(
+      items.length === 0
+        ? `Next actions (${scope}): none`
+        : `Next actions (${scope}, showing ${items.length}):\n${items
+            .map((item) => `- ${item.nextActionId.slice(0, 8)} | ${item.title} [${item.status}]`)
+            .join("\n")}`
+    );
+    return true;
+  }
+  const prefix = args[1] ?? "";
+  if (prefix.length === 0) {
+    controller.addSystemMessage(sub === "block" ? "Usage: /next block <next-action-id-prefix> <reason...>" : "Usage: /next done <next-action-id-prefix>");
+    return true;
+  }
+  const matches = resolveNextActionByPrefix(prefix, controller.activeThreadId, service);
+  if (matches.kind !== "one") {
+    controller.addSystemMessage(matches.message);
+    return true;
+  }
+  if (sub === "done") {
+    const updated = service.markNextActionDone(matches.item.nextActionId);
+    controller.addSystemMessage(`Next action done: ${updated.nextActionId.slice(0, 8)} | ${updated.title}`);
+    return true;
+  }
+  if (sub === "block") {
+    const reason = args.slice(2).join(" ").trim();
+    if (reason.length === 0) {
+      controller.addSystemMessage("Usage: /next block <next-action-id-prefix> <reason...>");
+      return true;
+    }
+    const updated = service.blockNextAction(matches.item.nextActionId, reason);
+    controller.addSystemMessage(`Next action blocked: ${updated.nextActionId.slice(0, 8)} | ${updated.title}`);
+    return true;
+  }
+  controller.addSystemMessage("Usage: /next [list [thread-id-prefix]|done <next-action-id-prefix>|block <next-action-id-prefix> <reason...>]");
+  return true;
+}
+
+function handleCommitmentCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {
+  const { args, command } = parseSlashInput(text);
+  if (command !== "/commitments") {
+    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
+    return true;
+  }
+  const sub = args[0] ?? "list";
+  if (sub === "list") {
+    const requestedThreadPrefix = args[1] ?? "";
+    const threadId = resolveThreadIdForList(controller.activeThreadId, requestedThreadPrefix, service);
+    if (threadId.kind === "error") {
+      controller.addSystemMessage(threadId.message);
+      return true;
+    }
+    const resolvedThreadId = threadId.threadId;
+    const query =
+      resolvedThreadId === null
+        ? {
+            ownerUserId: resolveRuntimeUserId(),
+            statuses: ["open", "in_progress", "blocked", "waiting_decision"] as Array<
+              "open" | "in_progress" | "blocked" | "waiting_decision"
+            >
+          }
+        : { threadId: resolvedThreadId };
+    const items = service.listCommitments(query).slice(0, 20);
+    const scope = resolvedThreadId === null ? `user=${resolveRuntimeUserId()}` : `thread=${resolvedThreadId.slice(0, 8)}`;
+    controller.addSystemMessage(
+      items.length === 0
+        ? `Commitments (${scope}): none`
+        : `Commitments (${scope}, showing ${items.length}):\n${items
+            .map((item) => `- ${item.commitmentId.slice(0, 8)} | ${item.title} [${item.status}]`)
+            .join("\n")}`
+    );
+    return true;
+  }
+  const prefix = args[1] ?? "";
+  if (prefix.length === 0) {
+    controller.addSystemMessage(
+      sub === "block"
+        ? "Usage: /commitments block <commitment-id-prefix> <reason...>"
+        : "Usage: /commitments done <commitment-id-prefix>"
+    );
+    return true;
+  }
+  const matches = resolveCommitmentByPrefix(prefix, controller.activeThreadId, service);
+  if (matches.kind !== "one") {
+    controller.addSystemMessage(matches.message);
+    return true;
+  }
+  if (sub === "done") {
+    const updated = service.completeCommitment(matches.item.commitmentId);
+    controller.addSystemMessage(`Commitment completed: ${updated.commitmentId.slice(0, 8)} | ${updated.title}`);
+    return true;
+  }
+  if (sub === "block") {
+    const reason = args.slice(2).join(" ").trim();
+    if (reason.length === 0) {
+      controller.addSystemMessage("Usage: /commitments block <commitment-id-prefix> <reason...>");
+      return true;
+    }
+    const updated = service.blockCommitment(matches.item.commitmentId, reason);
+    controller.addSystemMessage(`Commitment blocked: ${updated.commitmentId.slice(0, 8)} | ${updated.title}`);
+    return true;
+  }
+  controller.addSystemMessage("Usage: /commitments [list [thread-id-prefix]|done <commitment-id-prefix>|block <commitment-id-prefix> <reason...>]");
+  return true;
+}
+
+function resolveThreadIdForList(
+  activeThreadId: string | null,
+  prefix: string,
+  service: AgentApplicationService
+): { kind: "ok"; threadId: string | null } | { kind: "error"; message: string } {
+  if (prefix.length === 0) {
+    return { kind: "ok", threadId: activeThreadId };
+  }
+  const userId = resolveRuntimeUserId();
+  const matches = service
+    .listThreads("active")
+    .filter((item) => item.ownerUserId === userId && item.threadId.startsWith(prefix));
+  if (matches.length === 1) {
+    return { kind: "ok", threadId: matches[0]!.threadId };
+  }
+  return {
+    kind: "error",
+    message:
+      matches.length === 0
+        ? `No thread matched prefix '${prefix}'.`
+        : `Ambiguous thread prefix '${prefix}':\n${matches.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
+  };
+}
+
+function resolveNextActionByPrefix(
+  prefix: string,
+  activeThreadId: string | null,
+  service: AgentApplicationService
+):
+  | { item: ReturnType<AgentApplicationService["listNextActions"]>[number]; kind: "one" }
+  | { kind: "error"; message: string } {
+  const items = activeThreadId === null ? service.listNextActions() : service.listNextActions({ threadId: activeThreadId });
+  const matches = items.filter((item) => item.nextActionId.startsWith(prefix));
+  if (matches.length === 1) {
+    return { item: matches[0]!, kind: "one" };
+  }
+  if (matches.length === 0 && activeThreadId !== null) {
+    const globalMatches = service.listNextActions().filter((item) => item.nextActionId.startsWith(prefix));
+    if (globalMatches.length === 1) {
+      return { item: globalMatches[0]!, kind: "one" };
+    }
+    return {
+      kind: "error",
+      message:
+        globalMatches.length === 0
+          ? `No next action matched prefix '${prefix}'.`
+          : `Ambiguous next action prefix '${prefix}':\n${globalMatches
+              .map((item) => `- ${item.nextActionId.slice(0, 8)} | ${item.title}`)
+              .join("\n")}`
+    };
+  }
+  return {
+    kind: "error",
+    message:
+      matches.length === 0
+        ? `No next action matched prefix '${prefix}'.`
+        : `Ambiguous next action prefix '${prefix}':\n${matches.map((item) => `- ${item.nextActionId.slice(0, 8)} | ${item.title}`).join("\n")}`
+  };
+}
+
+function resolveCommitmentByPrefix(
+  prefix: string,
+  activeThreadId: string | null,
+  service: AgentApplicationService
+):
+  | { item: ReturnType<AgentApplicationService["listCommitments"]>[number]; kind: "one" }
+  | { kind: "error"; message: string } {
+  const items = activeThreadId === null ? service.listCommitments() : service.listCommitments({ threadId: activeThreadId });
+  const matches = items.filter((item) => item.commitmentId.startsWith(prefix));
+  if (matches.length === 1) {
+    return { item: matches[0]!, kind: "one" };
+  }
+  if (matches.length === 0 && activeThreadId !== null) {
+    const globalMatches = service.listCommitments().filter((item) => item.commitmentId.startsWith(prefix));
+    if (globalMatches.length === 1) {
+      return { item: globalMatches[0]!, kind: "one" };
+    }
+    return {
+      kind: "error",
+      message:
+        globalMatches.length === 0
+          ? `No commitment matched prefix '${prefix}'.`
+          : `Ambiguous commitment prefix '${prefix}':\n${globalMatches
+              .map((item) => `- ${item.commitmentId.slice(0, 8)} | ${item.title}`)
+              .join("\n")}`
+    };
+  }
+  return {
+    kind: "error",
+    message:
+      matches.length === 0
+        ? `No commitment matched prefix '${prefix}'.`
+        : `Ambiguous commitment prefix '${prefix}':\n${matches.map((item) => `- ${item.commitmentId.slice(0, 8)} | ${item.title}`).join("\n")}`
+  };
 }

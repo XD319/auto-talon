@@ -22,11 +22,11 @@ describe("personal assistant slash commands", () => {
       "/today",
       "/inbox",
       "/thread",
-      "/next",
-      "/commitments",
-      "/schedule",
-      "/help",
-      "/ops"
+      "/thread new ",
+      "/thread list",
+      "/thread switch ",
+      "/thread summary ",
+      "/next"
     ]);
     expect(SLASH_COMMANDS).not.toContain("/dashboard");
   });
@@ -35,6 +35,9 @@ describe("personal assistant slash commands", () => {
     expect(completeSlashCommand("/t")).toBe("/today ");
     expect(completeSlashCommand("/th")).toBe("/thread ");
     expect(completeSlashCommand("/co")).toBe("/commitments ");
+    expect(completeSlashCommand("/thread s")).toBe("/thread switch ");
+    expect(completeSlashCommand("/next d")).toBe("/next done ");
+    expect(completeSlashCommand("/commitments b")).toBe("/commitments block ");
   });
 });
 

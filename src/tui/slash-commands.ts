@@ -2,8 +2,18 @@ export const SLASH_COMMANDS = [
   "/today",
   "/inbox",
   "/thread",
+  "/thread new ",
+  "/thread list",
+  "/thread switch ",
+  "/thread summary ",
   "/next",
+  "/next list",
+  "/next done ",
+  "/next block ",
   "/commitments",
+  "/commitments list",
+  "/commitments done ",
+  "/commitments block ",
   "/schedule",
   "/help",
   "/ops",
@@ -48,7 +58,7 @@ export function completeSlashCommand(value: string): string | null {
   }
   const common = longestCommonPrefix([...hits]);
   if (common.length > value.length) {
-    return common;
+    return SLASH_COMMANDS.includes(common as (typeof SLASH_COMMANDS)[number]) ? `${common} ` : common;
   }
   const first = hits[0];
   return first !== undefined ? (first.endsWith(" ") ? first : `${first} `) : null;

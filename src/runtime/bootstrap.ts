@@ -49,6 +49,7 @@ import { RecallBudgetPolicy, RecallPlanner } from "./retrieval/index.js";
 import { DeliveryService } from "./delivery/index.js";
 import { InboxCollector, InboxService } from "./inbox/index.js";
 import {
+  AssistantThreadProjectionService,
   CommitmentCollector,
   CommitmentService,
   NextActionService,
@@ -390,6 +391,10 @@ export function createApplication(
     traceService
   });
   commitmentCollector.start();
+  const assistantThreadProjectionService = new AssistantThreadProjectionService({
+    commitmentService,
+    nextActionService
+  });
   const toolExposurePlanner = new ToolExposurePlanner({
     budgetService,
     toolOrchestrator,
@@ -545,6 +550,7 @@ export function createApplication(
     commitmentService,
     nextActionService,
     threadCommitmentProjector,
+    assistantThreadProjectionService,
     workspaceRoot: config.workspaceRoot
   });
   if (options.scheduler?.autoStart === true) {

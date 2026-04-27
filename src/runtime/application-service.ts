@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync, promises as fs } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { z } from "zod";
@@ -64,6 +65,7 @@ import type { ResumePacketBuilder, ThreadService } from "./threads/index.js";
 import type { CreateScheduleInput, SchedulerService } from "./scheduler/index.js";
 import type { InboxService } from "./inbox/index.js";
 import type {
+  AssistantThreadProjectionService,
   CommitmentService,
   NextActionService,
   ThreadCommitmentProjector
@@ -222,6 +224,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
     reservedOutput: number;
   };
   traceService: TraceService;
+  assistantThreadProjectionService: AssistantThreadProjectionService;
   providerRouter?: ProviderRouter;
   budgetService?: BudgetService;
   workspaceRoot: string;
@@ -265,6 +268,7 @@ export class AgentApplicationService {
         ...options,
         threadId: resolvedThread.threadId
       });
+      this.projectAssistantOutput(result.task.threadId ?? null, result.task.taskId, result.output ?? null);
       return {
         output: result.output,
         task: result.task
@@ -295,6 +299,23 @@ export class AgentApplicationService {
 
   public listTasks(): TaskRecord[] {
     return this.dependencies.listTasks();
+  }
+
+  public createThread(input: {
+    agentProfileId: ThreadRecord["agentProfileId"];
+    cwd: string;
+    ownerUserId: string;
+    providerName?: string;
+    title?: string;
+  }): ThreadRecord {
+    return this.dependencies.threadService.createThread({
+      agentProfileId: input.agentProfileId,
+      cwd: input.cwd,
+      ownerUserId: input.ownerUserId,
+      providerName: input.providerName ?? this.dependencies.provider.name,
+      threadId: randomUUID(),
+      title: input.title?.trim().length ? input.title : "Untitled thread"
+    });
   }
 
   public listThreads(status?: ThreadRecord["status"]): ThreadRecord[] {
@@ -634,6 +655,7 @@ export class AgentApplicationService {
     if (approval.status === "approved") {
       try {
         const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
+        this.projectAssistantOutput(result.task.threadId ?? null, result.task.taskId, result.output ?? null);
         return {
           approval,
           output: result.output,
@@ -863,6 +885,21 @@ export class AgentApplicationService {
       if (event.taskId === taskId) {
         listener(event);
       }
+    });
+  }
+
+  private projectAssistantOutput(
+    threadId: string | null,
+    taskId: string,
+    output: string | null
+  ): void {
+    if (threadId === null || output === null || output.trim().length === 0) {
+      return;
+    }
+    this.dependencies.assistantThreadProjectionService.project({
+      output,
+      taskId,
+      threadId
     });
   }
 

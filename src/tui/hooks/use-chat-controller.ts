@@ -44,15 +44,18 @@ export interface ChatController {
   addSystemMessage: (text: string) => void;
   busy: boolean;
   clearConversation: () => void;
+  createAndActivateThread: (title?: string) => string;
   fileEdits: FileEditEntry[];
   formatDiffSummary: () => string;
   hasPendingApproval: boolean;
   messages: ChatMessage[];
   pendingApproval: ApprovalRecord | null;
   requestInterrupt: () => boolean;
+  resetVisibleChatPreserveActiveThread: () => void;
   runDurationLabel: string;
   statusLine: string;
   submitPrompt: (text: string) => boolean;
+  switchActiveThread: (threadId: string) => void;
   resolvePendingApproval: (action: "allow" | "deny") => Promise<void>;
   summary: {
     pendingApprovals: number;
@@ -241,6 +244,45 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setActiveThreadId(null);
     stopTraceSubscription();
   }, [stopTraceSubscription]);
+
+  const resetVisibleChatPreserveActiveThread = React.useCallback(() => {
+    setMessages([welcomeMessage]);
+    setStatusLine("conversation cleared");
+    setUiStatus({
+      approvalLabel: null,
+      primaryLabel: "conversation cleared",
+      primaryTone: "muted",
+      runState: "idle",
+      taskLabel: null
+    });
+    setActiveTaskId(null);
+    setPendingApproval(null);
+    activeTaskIdRef.current = null;
+    seenApprovalMessageIdsRef.current.clear();
+    setFileEdits([]);
+    stopTraceSubscription();
+  }, [stopTraceSubscription]);
+
+  const switchActiveThread = React.useCallback((threadId: string) => {
+    activeThreadIdRef.current = threadId;
+    setActiveThreadId(threadId);
+  }, []);
+
+  const createAndActivateThread = React.useCallback(
+    (title = "Untitled thread"): string => {
+      const userId = process.env.USERNAME ?? process.env.USER ?? "local-user";
+      const thread = input.service.createThread({
+        agentProfileId: input.config.defaultProfileId,
+        cwd: input.cwd,
+        ownerUserId: userId,
+        providerName: input.config.provider.name,
+        title
+      });
+      switchActiveThread(thread.threadId);
+      return thread.threadId;
+    },
+    [input.config.defaultProfileId, input.config.provider.name, input.cwd, input.service, switchActiveThread]
+  );
 
   const refresh = React.useCallback(() => {
     try {
@@ -778,16 +820,19 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     addSystemMessage,
     busy,
     clearConversation,
+    createAndActivateThread,
     fileEdits,
     formatDiffSummary,
     hasPendingApproval: pendingApproval !== null,
     messages,
     pendingApproval,
     requestInterrupt,
+    resetVisibleChatPreserveActiveThread,
     resolvePendingApproval,
     runDurationLabel,
     statusLine,
     submitPrompt,
+    switchActiveThread,
     summary,
     tokenHud,
     uiStatus

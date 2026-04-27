@@ -47,3 +47,17 @@ Release / diagnostics:
 - `talon smoke run`
 - `talon eval beta`
 - `talon release check` (maintainer-only; run from the auto-talon repository root)
+
+TUI slash commands (chat mode):
+
+- `/thread` (alias of `/thread summary`)
+- `/thread new [title]`
+- `/thread list`
+- `/thread switch <thread-id-prefix>`
+- `/thread summary [thread-id-prefix]`
+- `/next list [thread-id-prefix]`
+- `/next done <next-action-id-prefix>`
+- `/next block <next-action-id-prefix> <reason...>`
+- `/commitments list [thread-id-prefix]`
+- `/commitments done <commitment-id-prefix>`
+- `/commitments block <commitment-id-prefix> <reason...>`
