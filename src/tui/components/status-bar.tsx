@@ -17,15 +17,8 @@ export interface StatusBarProps {
 }
 
 function StatusBarBase({ details = [], hints = [], metrics = [], primary }: StatusBarProps): React.ReactElement {
-  const renderedMetrics = metrics.filter((item) => item.label.length > 0);
-  const renderedDetails = details.filter((item) => item.length > 0);
   const separator = "  |  ";
-  const segments: StatusItem[] = [
-    primary,
-    ...renderedMetrics,
-    ...renderedDetails.map((label) => ({ label, tone: "muted" as const })),
-    ...hints.filter((label) => label.length > 0).map((label) => ({ label, tone: "muted" as const }))
-  ].filter((item) => item.label.length > 0);
+  const segments = buildStatusSegments({ details, hints, metrics, primary });
 
   return (
     <Box>
@@ -42,6 +35,22 @@ function StatusBarBase({ details = [], hints = [], metrics = [], primary }: Stat
 }
 
 export const StatusBar = React.memo(StatusBarBase);
+
+export function buildStatusSegments({ details = [], hints = [], metrics = [], primary }: StatusBarProps): StatusItem[] {
+  const renderedMetrics = metrics.filter((item) => item.label.length > 0);
+  const renderedDetails = details.filter((item) => item.length > 0);
+  return [
+    primary,
+    ...renderedMetrics,
+    ...renderedDetails.map((label) => ({ label, tone: "muted" as const })),
+    ...hints.filter((label) => label.length > 0).map((label) => ({ label, tone: "muted" as const }))
+  ].filter((item) => item.label.length > 0);
+}
+
+export function normalizeStatusLabel(label: string, maxLength = 72): string {
+  const compact = label.replace(/\s+/gu, " ").trim();
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3)}...`;
+}
 
 export function buildTokenMetrics(
   inputTokens: number,

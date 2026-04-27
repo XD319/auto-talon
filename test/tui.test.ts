@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createApplication, createDefaultRunOptions } from "../src/runtime/index.js";
 import { nextPanel, previousPanel } from "../src/tui/hooks/use-dashboard-controller.js";
-import { RuntimeDashboardQueryService } from "../src/tui/view-models/runtime-dashboard.js";
+import { extractChainLabel, RuntimeDashboardQueryService } from "../src/tui/view-models/runtime-dashboard.js";
 import type { LocalPolicyConfig, Provider, ProviderInput, ProviderResponse } from "../src/types/index.js";
+import type { TraceEvent } from "../src/types/index.js";
 
 class ScriptedProvider implements Provider {
   public readonly name = "scripted-provider";
@@ -255,6 +256,23 @@ describe("Phase 4 Ink TUI query models", () => {
   it("cycles panel ids for keyboard navigation", () => {
     expect(nextPanel("tasks")).toBe("approvals");
     expect(previousPanel("tasks")).toBe("errors");
+  });
+
+  it("extracts safe chain labels when trace payload misses toolCallId", () => {
+    const malformedEvent = {
+      actor: "runtime",
+      eventType: "approval_requested",
+      payload: {
+        toolName: "file_write"
+      },
+      sequence: 1,
+      stage: "governance",
+      summary: "approval requested",
+      taskId: "task-1",
+      timestamp: new Date().toISOString()
+    } as unknown as TraceEvent;
+
+    expect(extractChainLabel(malformedEvent)).toBe("file_write");
   });
 });
 

@@ -2,7 +2,7 @@ import React from "react";
 import { Box, Text, useApp, useInput } from "ink";
 
 import { Banner } from "./components/banner.js";
-import { StatusBar } from "./components/status-bar.js";
+import { normalizeStatusLabel, StatusBar } from "./components/status-bar.js";
 import { useDashboardController, nextPanel, previousPanel } from "./hooks/use-dashboard-controller.js";
 import {
   ApprovalPanel,
@@ -40,7 +40,10 @@ export function AgentTuiApp({
     reviewerId
   });
   const stdoutWidth = process.stdout.columns ?? 120;
-  const leftPaneWidth = clamp(Math.floor(stdoutWidth * 0.34), 30, 46);
+  const compactLayout = stdoutWidth < 96;
+  const leftPaneWidth = compactLayout
+    ? Math.max(20, stdoutWidth - 8)
+    : clamp(Math.floor(stdoutWidth * 0.34), 24, 46);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -148,13 +151,14 @@ export function AgentTuiApp({
         subtitle="Operational dashboard for governed runtime activity"
         title="Runtime Dashboard"
       />
-      <Box marginTop={1}>
+      <Box marginTop={1} flexDirection={compactLayout ? "column" : "row"}>
         <Box
           borderStyle="classic"
           borderColor={theme.border}
           width={leftPaneWidth}
           flexDirection="column"
-          marginRight={1}
+          marginRight={compactLayout ? 0 : 1}
+          marginBottom={compactLayout ? 1 : 0}
           paddingX={1}
         >
           <Text color={theme.panelTitle}>Tasks</Text>
@@ -184,7 +188,14 @@ export function AgentTuiApp({
             ))
           )}
         </Box>
-        <Box borderStyle="classic" borderColor={theme.border} flexDirection="column" flexGrow={1} paddingX={1}>
+        <Box
+          borderStyle="classic"
+          borderColor={theme.border}
+          flexDirection="column"
+          flexGrow={1}
+          width={compactLayout ? Math.max(20, stdoutWidth - 2) : undefined}
+          paddingX={1}
+        >
           <PanelTabs selectedPanel={controller.selectedPanel} />
           <Box marginTop={1} flexDirection="column">
             {controller.selectedPanel === "tasks" ? (
@@ -216,11 +227,11 @@ export function AgentTuiApp({
           details={[
             `panel ${controller.selectedPanel}`,
             `task ${controller.uiStatus.taskLabel ?? "none"}`,
-            `selected ${selectedTask === null ? "none" : selectedTask.finalSummary}`
+            `selected ${selectedTask === null ? "none" : normalizeStatusLabel(selectedTask.finalSummary, 56)}`
           ]}
           hints={[
-            `1-${PANEL_ORDER.length} panels | Tab switch | [ ] task`,
-            "Arrows browse | a/d approval | r refresh | q quit"
+            `1-${PANEL_ORDER.length} panels, Tab switch, [ ] task`,
+            "Arrows browse, a/d approval, r refresh, q quit"
           ]}
           metrics={[
             { label: `running ${controller.snapshot.summary.runningTaskCount}`, tone: "accent" },

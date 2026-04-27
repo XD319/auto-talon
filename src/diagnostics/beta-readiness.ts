@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -93,17 +94,30 @@ export async function runBetaReadinessCheck(
   };
 }
 
-function verifyOptionalFeishuConfig(): { details: string; ok: boolean } {
+export function verifyOptionalFeishuConfig(cwd = process.cwd()): { details: string; ok: boolean } {
+  const hasFileConfig = existsSync(join(cwd, ".auto-talon", "feishu.config.json"));
+  const hasEnvConfig = [
+    process.env.AGENT_FEISHU_APP_ID,
+    process.env.AGENT_FEISHU_APP_SECRET,
+    process.env.AGENT_FEISHU_DOMAIN
+  ].some((value) => value !== undefined && value.trim().length > 0);
+  if (!hasFileConfig && !hasEnvConfig) {
+    return {
+      details: "feishu config not provided; adapter remains optional",
+      ok: true
+    };
+  }
   try {
-    resolveFeishuGatewayConfig(process.cwd());
+    resolveFeishuGatewayConfig(cwd);
     return {
       details: "feishu config found and parsed",
       ok: true
     };
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
     return {
-      details: "feishu config missing or invalid; adapter remains optional",
-      ok: true
+      details: `feishu config present but invalid: ${reason}`,
+      ok: false
     };
   }
 }

@@ -3,6 +3,11 @@ import { useInput } from "ink";
 
 import { readClipboardText } from "../clipboard.js";
 
+const graphemeSegmenter =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+
 export interface UseTextInputOptions {
   onHistoryNext: () => string | null;
   onHistoryPrevious: () => string | null;
@@ -147,13 +152,13 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
     }
 
     if (key.leftArrow) {
-      setCursorIndex((current) => Math.max(0, current - 1));
+      setCursorIndex((current) => getPreviousGraphemeIndex(value, current));
       preferredColumnRef.current = null;
       return;
     }
 
     if (key.rightArrow) {
-      setCursorIndex((current) => Math.min(value.length, current + 1));
+      setCursorIndex((current) => getNextGraphemeIndex(value, current));
       preferredColumnRef.current = null;
       return;
     }
@@ -244,8 +249,9 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       if (cursorIndex === 0) {
         return;
       }
-      setValue((current) => deleteCharacterBefore(current, cursorIndex).value);
-      setCursorIndex((current) => Math.max(0, current - 1));
+      const next = deleteCharacterBefore(value, cursorIndex);
+      setValue(next.value);
+      setCursorIndex(next.cursorIndex);
       preferredColumnRef.current = null;
       return;
     }
@@ -285,10 +291,11 @@ export function deleteCharacterBefore(
   if (cursorIndex <= 0) {
     return { cursorIndex: 0, value };
   }
+  const deleteStart = getPreviousGraphemeIndex(value, cursorIndex);
 
   return {
-    cursorIndex: cursorIndex - 1,
-    value: `${value.slice(0, cursorIndex - 1)}${value.slice(cursorIndex)}`
+    cursorIndex: deleteStart,
+    value: `${value.slice(0, deleteStart)}${value.slice(cursorIndex)}`
   };
 }
 
@@ -299,10 +306,11 @@ export function deleteCharacterAfter(
   if (cursorIndex >= value.length) {
     return { cursorIndex, value };
   }
+  const deleteEnd = getNextGraphemeIndex(value, cursorIndex);
 
   return {
     cursorIndex,
-    value: `${value.slice(0, cursorIndex)}${value.slice(cursorIndex + 1)}`
+    value: `${value.slice(0, cursorIndex)}${value.slice(deleteEnd)}`
   };
 }
 
@@ -314,6 +322,41 @@ function buildLinesWithCursor(value: string, cursorIndex: number): string[] {
 
 function normalizeNewlines(value: string): string {
   return value.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n");
+}
+
+function getPreviousGraphemeIndex(value: string, cursorIndex: number): number {
+  if (cursorIndex <= 0) {
+    return 0;
+  }
+  const bounded = Math.min(cursorIndex, value.length);
+  if (graphemeSegmenter === null) {
+    return bounded - 1;
+  }
+  let previous = 0;
+  for (const segment of graphemeSegmenter.segment(value)) {
+    if (segment.index >= bounded) {
+      break;
+    }
+    previous = segment.index;
+  }
+  return previous;
+}
+
+function getNextGraphemeIndex(value: string, cursorIndex: number): number {
+  const bounded = Math.max(0, Math.min(cursorIndex, value.length));
+  if (bounded >= value.length) {
+    return value.length;
+  }
+  if (graphemeSegmenter === null) {
+    return bounded + 1;
+  }
+  for (const segment of graphemeSegmenter.segment(value)) {
+    if (segment.index <= bounded) {
+      continue;
+    }
+    return segment.index;
+  }
+  return value.length;
 }
 
 export function moveCursorVertical(

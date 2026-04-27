@@ -37,6 +37,11 @@ Or provide:
 - `AGENT_FEISHU_APP_ID`
 - `AGENT_FEISHU_APP_SECRET`
 - `AGENT_FEISHU_DOMAIN`
+- `AGENT_FEISHU_DEBUG` (set `1` or `true` to enable verbose adapter/sdk logs)
+
+Legacy compatibility:
+
+- `AUTO_TALON_FEISHU_DEBUG` is still supported as a fallback debug flag.
 
 ## Commands
 

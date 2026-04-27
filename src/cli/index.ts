@@ -1542,6 +1542,9 @@ export async function main(argv = process.argv): Promise<void> {
         }
         for (const server of servers) {
           console.log(`${server.id}: ${server.toolCount} tools`);
+          if (server.discoveryError !== null) {
+            console.log(`  ! discovery error: ${server.discoveryError}`);
+          }
           for (const toolName of server.tools) {
             console.log(`  - ${toolName}`);
           }

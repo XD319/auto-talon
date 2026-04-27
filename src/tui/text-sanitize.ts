@@ -1,6 +1,9 @@
 const ANSI_ESCAPE_PATTERN =
   // eslint-disable-next-line no-control-regex
   /\u001b(?:\[[0-9;?]*[ -/]*[@-~]|[@-Z\\-_])/gu;
+const OSC_ESCAPE_PATTERN =
+  // eslint-disable-next-line no-control-regex
+  /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/gu;
 
 const NON_PRINTABLE_PATTERN =
   // eslint-disable-next-line no-control-regex
@@ -10,6 +13,7 @@ export function sanitizeTerminalText(input: string): string {
   return input
     .replace(/\r\n/gu, "\n")
     .replace(/\r/gu, "\n")
+    .replace(OSC_ESCAPE_PATTERN, "")
     .replace(ANSI_ESCAPE_PATTERN, "")
     .replace(NON_PRINTABLE_PATTERN, "");
 }

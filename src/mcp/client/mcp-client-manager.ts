@@ -9,6 +9,7 @@ export class McpClientManager {
   private readonly configPath: string;
   private readonly handles = new Map<string, McpStdioTransport>();
   private readonly serverConfigs = new Map<string, McpServerConfig>();
+  private readonly discoveryErrors = new Map<string, string>();
 
   public constructor(workspaceRoot: string) {
     this.configPath = join(workspaceRoot, ".auto-talon", "mcp.config.json");
@@ -17,6 +18,7 @@ export class McpClientManager {
   public discover(): ToolDefinition[] {
     const config = this.readConfig();
     const tools: ToolDefinition[] = [];
+    this.discoveryErrors.clear();
     for (const server of config.servers) {
       const handle = new McpStdioTransport(server);
       this.handles.set(server.id, handle);
@@ -26,7 +28,9 @@ export class McpClientManager {
         for (const descriptor of descriptors) {
           tools.push(new McpToolAdapter(descriptor, server, handle));
         }
-      } catch {
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.discoveryErrors.set(server.id, reason);
         continue;
       }
     }
@@ -34,9 +38,9 @@ export class McpClientManager {
   }
 
   public listServers(): Promise<
-    Array<{ id: string; toolCount: number; tools: string[] }>
+    Array<{ id: string; toolCount: number; tools: string[]; discoveryError: string | null }>
   > {
-    const result: Array<{ id: string; toolCount: number; tools: string[] }> = [];
+    const result: Array<{ id: string; toolCount: number; tools: string[]; discoveryError: string | null }> = [];
     for (const [serverId, handle] of this.handles) {
       let tools: Array<{ name: string }> = [];
       try {
@@ -45,6 +49,7 @@ export class McpClientManager {
         tools = [];
       }
       result.push({
+        discoveryError: this.discoveryErrors.get(serverId) ?? null,
         id: serverId,
         toolCount: tools.length,
         tools: tools.map((tool) => tool.name)

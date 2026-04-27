@@ -343,9 +343,24 @@ describe("use-text-input helpers", () => {
     expect(result.cursorIndex).toBe(1);
   });
 
+  it("deletes a full emoji grapheme for backspace", () => {
+    const value = "A👩🏽‍💻B";
+    const cursorIndex = "A👩🏽‍💻".length;
+    const result = deleteCharacterBefore(value, cursorIndex);
+    expect(result.value).toBe("AB");
+    expect(result.cursorIndex).toBe(1);
+  });
+
   it("deletes the character after the cursor for delete", () => {
     const result = deleteCharacterAfter("abc", 1);
     expect(result.value).toBe("ac");
+    expect(result.cursorIndex).toBe(1);
+  });
+
+  it("deletes a full emoji grapheme for delete", () => {
+    const value = "A👩🏽‍💻B";
+    const result = deleteCharacterAfter(value, 1);
+    expect(result.value).toBe("AB");
     expect(result.cursorIndex).toBe(1);
   });
 

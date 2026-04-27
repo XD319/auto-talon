@@ -126,6 +126,23 @@ describe("runtime config", () => {
 
     expect(() => resolveRuntimeConfig(workspaceRoot)).toThrow(/reservedOutput/);
   });
+
+  it("falls back to default workflow test commands when normalized list is empty", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        workflow: {
+          testCommands: ["   ", "\t"]
+        }
+      }),
+      "utf8"
+    );
+
+    const config = resolveRuntimeConfig(workspaceRoot);
+    expect(config.workflow.testCommands).toEqual(["npm test", "npm run build"]);
+  });
 });
 
 async function createTempWorkspace(): Promise<string> {

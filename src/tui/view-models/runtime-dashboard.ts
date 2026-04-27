@@ -594,7 +594,7 @@ function collectDiffRiskReasons(
   return reasons;
 }
 
-function extractChainLabel(event: TraceEvent): string | null {
+export function extractChainLabel(event: TraceEvent): string | null {
   switch (event.eventType) {
     case "approval_requested":
     case "approval_resolved":
@@ -602,8 +602,12 @@ function extractChainLabel(event: TraceEvent): string | null {
     case "tool_call_requested":
     case "tool_call_started":
     case "tool_call_finished":
-    case "tool_call_failed":
-      return `${event.payload.toolName}#${event.payload.toolCallId.slice(0, 8)}`;
+    case "tool_call_failed": {
+      const payload = event.payload as { toolCallId?: unknown; toolName?: unknown };
+      const toolName = typeof payload.toolName === "string" ? payload.toolName : "unknown_tool";
+      const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : null;
+      return toolCallId === null ? toolName : `${toolName}#${toolCallId.slice(0, 8)}`;
+    }
     default:
       return null;
   }

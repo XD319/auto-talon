@@ -62,6 +62,15 @@ interface FeishuWsClientLike {
   stop?: () => void;
 }
 
+function isFeishuDebugEnabled(): boolean {
+  const nextFlag = process.env.AGENT_FEISHU_DEBUG;
+  if (nextFlag !== undefined) {
+    return nextFlag === "1" || nextFlag.toLowerCase() === "true";
+  }
+  const legacyFlag = process.env.AUTO_TALON_FEISHU_DEBUG;
+  return legacyFlag === "1" || legacyFlag?.toLowerCase() === "true";
+}
+
 interface FeishuEventDispatcherLike {
   register: (handlers: Record<string, (data: unknown) => Promise<void> | void>) => unknown;
 }
@@ -361,7 +370,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
       this.options.logger.info(message, data);
       return;
     }
-    if (process.env.AUTO_TALON_FEISHU_DEBUG === "1") {
+    if (isFeishuDebugEnabled()) {
       console.info(message, data);
     }
   }
@@ -445,8 +454,7 @@ async function createDefaultClients(
   }
   const domain = config.domain === "lark" ? lark.Domain.Lark : lark.Domain.Feishu;
   const sdkLogger = createFeishuSdkLogger(logger);
-  const loggerLevel =
-    process.env.AUTO_TALON_FEISHU_DEBUG === "1" ? lark.LoggerLevel.debug : lark.LoggerLevel.error;
+  const loggerLevel = isFeishuDebugEnabled() ? lark.LoggerLevel.debug : lark.LoggerLevel.error;
   const client = new lark.Client({
     appId: config.appId,
     appSecret: config.appSecret,

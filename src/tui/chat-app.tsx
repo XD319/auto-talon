@@ -384,7 +384,7 @@ export function ChatTuiApp({
       <Box>
         <StatusBar
           details={[`elapsed ${controller.runDurationLabel}`]}
-          hints={[controller.hasPendingApproval ? "a allow | d deny" : "Enter send"]}
+          hints={[controller.hasPendingApproval ? "a allow, d deny" : "Enter send"]}
           metrics={buildTokenMetrics(
             controller.tokenHud.inputTokens,
             controller.tokenHud.outputTokens,

@@ -394,6 +394,9 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
   if (merged.tokenBudget.reservedOutput >= merged.tokenBudget.outputLimit) {
     throw new Error("runtime tokenBudget.reservedOutput must be lower than outputLimit.");
   }
+  const normalizedTestCommands = merged.workflow.testCommands
+    .map((command) => command.trim())
+    .filter(Boolean);
 
   return {
     ...merged,
@@ -402,7 +405,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     configSource,
     workflow: {
       ...merged.workflow,
-      testCommands: merged.workflow.testCommands.map((command) => command.trim()).filter(Boolean)
+      testCommands:
+        normalizedTestCommands.length > 0
+          ? normalizedTestCommands
+          : [...DEFAULT_RUNTIME_CONFIG.workflow.testCommands]
     }
   };
 }
