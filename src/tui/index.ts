@@ -26,6 +26,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
   try {
     const sessionId = options.resumeSessionId ?? randomUUID();
     let initialMessages = undefined;
+    let initialSessionApprovalFingerprints = undefined;
     let initialThreadId = undefined;
     if (options.resumeSessionId !== undefined) {
       const loaded = await loadSession(handle.config.workspaceRoot, options.resumeSessionId);
@@ -38,6 +39,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
         }
       ];
       initialMessages = loaded?.messages ?? missing;
+      initialSessionApprovalFingerprints = loaded?.sessionApprovalFingerprints;
       initialThreadId = loaded?.threadId;
     }
 
@@ -46,6 +48,9 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
         config: handle.config,
         cwd,
         ...(initialMessages !== undefined ? { initialMessages } : {}),
+        ...(initialSessionApprovalFingerprints !== undefined
+          ? { initialSessionApprovalFingerprints }
+          : {}),
         ...(initialThreadId !== undefined ? { initialThreadId } : {}),
         initialSessionId: sessionId,
         reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer",

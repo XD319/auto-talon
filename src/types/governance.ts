@@ -7,7 +7,8 @@ export const TOOL_CAPABILITIES = [
   "filesystem.write",
   "network.fetch_public_readonly",
   "shell.execute",
-  "mcp.invoke"
+  "mcp.invoke",
+  "interaction.ask_user"
 ] as const;
 
 export type ToolCapability = (typeof TOOL_CAPABILITIES)[number];

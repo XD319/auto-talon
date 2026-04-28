@@ -3,9 +3,11 @@ import React from "react";
 import { Box, Text, useApp } from "ink";
 
 import type { AgentApplicationService, AppConfig } from "../runtime/index.js";
+import type { ApprovalAllowScope } from "../types/index.js";
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
 import { MessageStream, StaticMessageStream } from "./components/message-stream.js";
+import { PromptZone } from "./components/prompt-zone.js";
 import { buildTokenMetrics, StatusBar } from "./components/status-bar.js";
 import { useChatController } from "./hooks/use-chat-controller.js";
 import { useTextInput } from "./hooks/use-text-input.js";
@@ -24,6 +26,7 @@ export interface ChatTuiAppProps {
   config: AppConfig;
   cwd: string;
   initialMessages?: ChatMessage[];
+  initialSessionApprovalFingerprints?: string[];
   initialSessionId: string;
   initialThreadId?: string;
   reviewerId: string;
@@ -34,6 +37,7 @@ export function ChatTuiApp({
   config,
   cwd,
   initialMessages,
+  initialSessionApprovalFingerprints,
   initialSessionId,
   initialThreadId,
   reviewerId,
@@ -42,6 +46,9 @@ export function ChatTuiApp({
   const { exit } = useApp();
   const [sessionTitle, setSessionTitle] = React.useState("assistant");
   const [sessionId, setSessionId] = React.useState(initialSessionId);
+  const [approvalSelectionIndex, setApprovalSelectionIndex] = React.useState(0);
+  const [clarifySelectionIndex, setClarifySelectionIndex] = React.useState(0);
+  const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const historyRef = React.useRef<string[]>([]);
   const historyIndexRef = React.useRef<number | null>(null);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,6 +57,9 @@ export function ChatTuiApp({
     config,
     cwd,
     ...(initialMessages !== undefined ? { initialMessages } : {}),
+    ...(initialSessionApprovalFingerprints !== undefined
+      ? { initialSessionApprovalFingerprints }
+      : {}),
     ...(initialThreadId !== undefined ? { initialThreadId } : {}),
     reviewerId,
     service
@@ -87,6 +97,7 @@ export function ChatTuiApp({
       void saveSession(config.workspaceRoot, {
         id: sessionId,
         messages: controller.messages,
+        sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         ...(controller.activeThreadId !== null ? { threadId: controller.activeThreadId } : {}),
         updatedAt: new Date().toISOString()
       });
@@ -96,7 +107,20 @@ export function ChatTuiApp({
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [config.workspaceRoot, controller.busy, controller.messages, sessionId]);
+  }, [config.workspaceRoot, controller.activeThreadId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, sessionId]);
+
+  React.useEffect(() => {
+    if (controller.pendingApproval !== null) {
+      setApprovalSelectionIndex(0);
+    }
+  }, [controller.pendingApproval?.approvalId]);
+
+  React.useEffect(() => {
+    if (controller.pendingClarifyPrompt !== null) {
+      setClarifySelectionIndex(0);
+      setClarifyCustomActive(false);
+    }
+  }, [controller.pendingClarifyPrompt?.promptId]);
 
   const navigateHistoryPrevious = React.useCallback((): string | null => {
     const history = historyRef.current;
@@ -363,7 +387,19 @@ export function ChatTuiApp({
     ]
   );
 
+  const activePrompt =
+    controller.pendingClarifyPrompt !== null
+      ? {
+          kind: "clarify" as const,
+          customActive: clarifyCustomActive,
+          optionCount: controller.pendingClarifyPrompt.options.length
+        }
+      : controller.pendingApproval !== null
+        ? { kind: "approval" as const }
+        : undefined;
+
   const textInput = useTextInput({
+    ...(activePrompt !== undefined ? { activePrompt } : {}),
     busy: controller.busy,
     hasPendingApproval: controller.hasPendingApproval,
     onHistoryNext: navigateHistoryNext,
@@ -385,6 +421,60 @@ export function ChatTuiApp({
       void controller.resolvePendingApproval(action);
     },
     onExit: exit,
+    onPromptCtrlC: () => {
+      if (controller.pendingClarifyPrompt !== null) {
+        controller.cancelPendingClarifyPrompt();
+        return;
+      }
+      if (controller.pendingApproval !== null) {
+        void controller.resolvePendingApproval("deny");
+      }
+    },
+    onPromptMove: (delta) => {
+      if (controller.pendingApproval !== null) {
+        setApprovalSelectionIndex((current) => clampSelection(current + delta, APPROVAL_ACTIONS.length));
+        return;
+      }
+      if (controller.pendingClarifyPrompt !== null && !clarifyCustomActive) {
+        setClarifySelectionIndex((current) =>
+          clampSelection(current + delta, controller.pendingClarifyPrompt!.options.length)
+        );
+      }
+    },
+    onPromptShortcut: (index) => {
+      const action = APPROVAL_ACTIONS[index];
+      if (action !== undefined) {
+        void controller.resolvePendingApproval(action.action, action.scope);
+      }
+    },
+    onPromptSubmit: (value) => {
+      if (controller.pendingApproval !== null) {
+        const action = APPROVAL_ACTIONS[approvalSelectionIndex] ?? APPROVAL_ACTIONS[0];
+        if (action !== undefined) {
+          void controller.resolvePendingApproval(action.action, action.scope);
+        }
+        return;
+      }
+      if (controller.pendingClarifyPrompt !== null) {
+        if (clarifyCustomActive) {
+          const answerText = value.trim();
+          if (answerText.length > 0) {
+            void controller.answerPendingClarifyPrompt({ answerText });
+          }
+          return;
+        }
+        const option = controller.pendingClarifyPrompt.options[clarifySelectionIndex];
+        if (option !== undefined) {
+          void controller.answerPendingClarifyPrompt({ answerOptionId: option.id });
+        }
+      }
+    },
+    onPromptTab: () => {
+      if (controller.pendingClarifyPrompt?.allowCustomAnswer !== true) {
+        return;
+      }
+      setClarifyCustomActive((current) => !current);
+    },
     onTabComplete: completeSlashCommand,
     onSubmit: (value) => {
       if (handleSlashCommand(value)) {
@@ -411,6 +501,12 @@ export function ChatTuiApp({
       ? SLASH_COMMANDS.filter((command) => command.startsWith(textInput.value))
       : [];
 
+  React.useEffect(() => {
+    if (controller.pendingApproval !== null || controller.pendingClarifyPrompt !== null) {
+      textInput.clearValue();
+    }
+  }, [controller.pendingApproval?.approvalId, controller.pendingClarifyPrompt?.promptId]);
+
   return (
     <Box flexDirection="column">
       <StaticMessageStream messages={staticMessages} />
@@ -428,19 +524,51 @@ export function ChatTuiApp({
           <Text color={theme.muted}>No conversation yet.</Text>
         ) : null}
       </Box>
+      <PromptZone
+        approvalPrompt={
+          controller.pendingApproval === null
+            ? null
+            : {
+                approval: controller.pendingApproval,
+                selectedIndex: approvalSelectionIndex,
+                toolCall:
+                  service
+                    .showTask(controller.pendingApproval.taskId)
+                    .toolCalls.find((item) => item.toolCallId === controller.pendingApproval?.toolCallId) ?? null
+              }
+        }
+        clarifyPrompt={
+          controller.pendingClarifyPrompt === null
+            ? null
+            : {
+                customActive: clarifyCustomActive,
+                customLines: textInput.lines,
+                prompt: controller.pendingClarifyPrompt,
+                selectedIndex: clarifySelectionIndex
+              }
+        }
+      />
       <Box>
-        <InputBox
-          busy={controller.busy}
-          hasPendingApproval={controller.hasPendingApproval}
-          lines={textInput.lines}
-          slashHints={slashHints}
-          value={textInput.value}
-        />
+        {controller.pendingApproval === null && controller.pendingClarifyPrompt === null ? (
+          <InputBox
+            busy={controller.busy}
+            hasPendingApproval={controller.hasPendingApproval}
+            lines={textInput.lines}
+            slashHints={slashHints}
+            value={textInput.value}
+          />
+        ) : null}
       </Box>
       <Box>
         <StatusBar
           details={[`elapsed ${controller.runDurationLabel}`]}
-          hints={[controller.hasPendingApproval ? "a allow, d deny" : "Enter send"]}
+          hints={[
+            controller.pendingClarifyPrompt !== null
+              ? "Arrows choose, Tab custom, Enter submit"
+              : controller.hasPendingApproval
+                ? "1 once, 2 session, 3 always, 4 deny"
+                : "Enter send"
+          ]}
           metrics={buildTokenMetrics(
             controller.tokenHud.inputTokens,
             controller.tokenHud.outputTokens,
@@ -459,6 +587,26 @@ export function ChatTuiApp({
 
 function shortenPath(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `...${value.slice(-(maxLength - 3))}`;
+}
+
+const APPROVAL_ACTIONS: Array<{ action: "allow" | "deny"; scope?: ApprovalAllowScope }> = [
+  { action: "allow", scope: "once" },
+  { action: "allow", scope: "session" },
+  { action: "allow", scope: "always" },
+  { action: "deny" }
+];
+
+function clampSelection(index: number, size: number): number {
+  if (size <= 0) {
+    return 0;
+  }
+  if (index < 0) {
+    return size - 1;
+  }
+  if (index >= size) {
+    return 0;
+  }
+  return index;
 }
 
 function isLiveTranscriptMessage(message: ChatMessage): boolean {

@@ -3,7 +3,14 @@ import { randomUUID } from "node:crypto";
 import React from "react";
 
 import { createDefaultRunOptions, type AgentApplicationService, type AppConfig } from "../../runtime/index.js";
-import type { ApprovalRecord, TaskRecord, ToolCallRecord, TraceEvent } from "../../types/index.js";
+import type {
+  ApprovalAllowScope,
+  ApprovalRecord,
+  ClarifyPromptRecord,
+  TaskRecord,
+  ToolCallRecord,
+  TraceEvent
+} from "../../types/index.js";
 import {
   contextWindowPercent,
   estimateSessionCostUsd
@@ -20,6 +27,7 @@ export interface UseChatControllerOptions {
   config: AppConfig;
   cwd: string;
   initialMessages?: ChatMessage[];
+  initialSessionApprovalFingerprints?: string[];
   initialThreadId?: string;
   reviewerId: string;
   service: AgentApplicationService;
@@ -48,17 +56,23 @@ export interface ChatController {
   fileEdits: FileEditEntry[];
   formatDiffSummary: () => string;
   hasPendingApproval: boolean;
+  hasPendingClarifyPrompt: boolean;
   messages: ChatMessage[];
   pendingApproval: ApprovalRecord | null;
+  pendingClarifyPrompt: ClarifyPromptRecord | null;
   requestInterrupt: () => boolean;
   resetVisibleChatPreserveActiveThread: () => void;
   runDurationLabel: string;
   statusLine: string;
   submitPrompt: (text: string) => boolean;
   switchActiveThread: (threadId: string) => void;
-  resolvePendingApproval: (action: "allow" | "deny") => Promise<void>;
+  sessionApprovalFingerprints: string[];
+  answerPendingClarifyPrompt: (input: { answerOptionId?: string; answerText?: string }) => Promise<void>;
+  cancelPendingClarifyPrompt: () => void;
+  resolvePendingApproval: (action: "allow" | "deny", allowScope?: ApprovalAllowScope) => Promise<void>;
   summary: {
     pendingApprovals: number;
+    pendingClarifyPrompts: number;
     runningTasks: number;
     tasks: number;
   };
@@ -83,12 +97,17 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const [statusLine, setStatusLine] = React.useState("idle");
   const [summary, setSummary] = React.useState({
     pendingApprovals: 0,
+    pendingClarifyPrompts: 0,
     runningTasks: 0,
     tasks: 0
   });
   const [pendingApproval, setPendingApproval] = React.useState<ApprovalRecord | null>(null);
+  const [pendingClarifyPrompt, setPendingClarifyPrompt] = React.useState<ClarifyPromptRecord | null>(null);
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = React.useState<string | null>(input.initialThreadId ?? null);
+  const [sessionApprovalFingerprints, setSessionApprovalFingerprints] = React.useState<string[]>(
+    input.initialSessionApprovalFingerprints ?? []
+  );
   const [fileEdits, setFileEdits] = React.useState<FileEditEntry[]>([]);
   const [tokenHud, setTokenHud] = React.useState<TokenHud>({
     contextPercent: 0,
@@ -237,9 +256,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     });
     setActiveTaskId(null);
     setPendingApproval(null);
+    setPendingClarifyPrompt(null);
     activeTaskIdRef.current = null;
     activeThreadIdRef.current = null;
     seenApprovalMessageIdsRef.current.clear();
+    setSessionApprovalFingerprints([]);
     setFileEdits([]);
     setActiveThreadId(null);
     stopTraceSubscription();
@@ -257,6 +278,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     });
     setActiveTaskId(null);
     setPendingApproval(null);
+    setPendingClarifyPrompt(null);
     activeTaskIdRef.current = null;
     seenApprovalMessageIdsRef.current.clear();
     setFileEdits([]);
@@ -288,17 +310,33 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     try {
       const tasks = input.service.listTasks();
       const approvals = input.service.listPendingApprovals();
+      const clarifyPrompts = input.service.listPendingClarifyPrompts();
       const runningTasks = tasks.filter((task) => task.status === "running").length;
       const nextSummary = {
         pendingApprovals: approvals.length,
+        pendingClarifyPrompts: clarifyPrompts.length,
         runningTasks,
         tasks: tasks.length
       };
       setSummary((current) => (summaryEquals(current, nextSummary) ? current : nextSummary));
+      const activeClarifyPrompt =
+        clarifyPrompts.find((item) => item.taskId === activeTaskIdRef.current) ?? clarifyPrompts[0] ?? null;
+      setPendingClarifyPrompt((current) =>
+        clarifyPromptRefEquals(current, activeClarifyPrompt) ? current : activeClarifyPrompt
+      );
       const activeApproval =
         approvals.find((item) => item.taskId === activeTaskIdRef.current) ?? approvals[0] ?? null;
       setPendingApproval((current) => (approvalRefEquals(current, activeApproval) ? current : activeApproval));
-      if (activeApproval !== null) {
+      if (activeClarifyPrompt !== null) {
+        setStatusLine(`waiting clarification: ${activeClarifyPrompt.question}`);
+        updateUiStatus(setUiStatus, {
+          approvalLabel: null,
+          primaryLabel: "clarification required",
+          primaryTone: "warn",
+          runState: "waiting_approval",
+          taskLabel: activeClarifyPrompt.taskId.slice(0, 8)
+        });
+      } else if (activeApproval !== null) {
         setStatusLine(`waiting approval: ${activeApproval.toolName}`);
         updateUiStatus(setUiStatus, {
           approvalLabel: activeApproval.toolName,
@@ -501,6 +539,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           activeAbortControllerRef.current = abortController;
           runOptions.signal = abortController.signal;
           runOptions.taskId = taskId;
+          runOptions.metadata = {
+            ...(runOptions.metadata ?? {}),
+            interactivePromptMode: "tui",
+            sessionApprovalFingerprints
+          };
           runOptions.onAssistantTextDelta = (delta: string) => {
             streamedAnyRef.current = true;
             if (streamingAgentIdRef.current === null) {
@@ -650,6 +693,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       input.config,
       input.cwd,
       input.service,
+      sessionApprovalFingerprints,
       refresh,
       removeStreamingMessage,
       startTraceSubscription,
@@ -695,7 +739,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   }, [fileEdits, input.service]);
 
   const resolvePendingApproval = React.useCallback(
-    async (action: "allow" | "deny") => {
+    async (action: "allow" | "deny", allowScope?: ApprovalAllowScope) => {
       if (pendingApproval === null || approvalInFlightRef.current) {
         return;
       }
@@ -705,7 +749,17 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       const approval = pendingApproval;
       startTraceSubscription(approval.taskId);
       try {
-        const result = await input.service.resolveApproval(approval.approvalId, action, input.reviewerId);
+        const result = await input.service.resolveApproval(
+          approval.approvalId,
+          action,
+          input.reviewerId,
+          allowScope
+        );
+        if (action === "allow" && allowScope === "session" && approval.fingerprint !== null) {
+          setSessionApprovalFingerprints((current) =>
+            current.includes(approval.fingerprint!) ? current : [...current, approval.fingerprint!]
+          );
+        }
         appendNewTraceEvents(result.task.taskId);
         activeTaskIdRef.current = result.task.taskId;
         setActiveTaskId(result.task.taskId);
@@ -760,7 +814,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         setStatusLine(`${action === "allow" ? "approved" : "denied"} ${approval.toolName}`);
         setUiStatus({
           approvalLabel: approval.toolName,
-          primaryLabel: `${action === "allow" ? "approved" : "denied"} ${approval.toolName}`,
+          primaryLabel:
+            action === "allow"
+              ? `approved ${approval.toolName}${allowScope !== undefined ? ` (${allowScope})` : ""}`
+              : `denied ${approval.toolName}`,
           primaryTone: action === "allow" ? "success" : "warn",
           runState: result.task.status === "succeeded" ? "succeeded" : "idle",
           taskLabel: result.task.taskId.slice(0, 8)
@@ -799,11 +856,76 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       input.reviewerId,
       input.service,
       pendingApproval,
+      setSessionApprovalFingerprints,
       refresh,
       startTraceSubscription,
       stopTraceSubscription
     ]
   );
+
+  const answerPendingClarifyPrompt = React.useCallback(
+    async (clarifyInput: { answerOptionId?: string; answerText?: string }) => {
+      if (pendingClarifyPrompt === null || approvalInFlightRef.current) {
+        return;
+      }
+
+      approvalInFlightRef.current = true;
+      beginBusy();
+      const prompt = pendingClarifyPrompt;
+      startTraceSubscription(prompt.taskId);
+      try {
+        const result = await input.service.answerClarifyPrompt(prompt.promptId, input.reviewerId, clarifyInput);
+        appendNewTraceEvents(result.task.taskId);
+        activeTaskIdRef.current = result.task.taskId;
+        setActiveTaskId(result.task.taskId);
+        const promptOutput = result.output;
+        if (promptOutput !== null) {
+          setMessages((current) => [
+            ...current,
+            {
+              id: `agent:${result.task.taskId}:${Date.now()}`,
+              kind: "agent",
+              text: promptOutput,
+              timestamp: new Date().toISOString()
+            }
+          ]);
+        }
+        setStatusLine("clarification answered");
+      } finally {
+        approvalInFlightRef.current = false;
+        endBusy();
+        stopTraceSubscription();
+        refresh();
+      }
+    },
+    [
+      appendNewTraceEvents,
+      beginBusy,
+      endBusy,
+      input.reviewerId,
+      input.service,
+      pendingClarifyPrompt,
+      refresh,
+      startTraceSubscription,
+      stopTraceSubscription
+    ]
+  );
+
+  const cancelPendingClarifyPrompt = React.useCallback(() => {
+    if (pendingClarifyPrompt === null || approvalInFlightRef.current) {
+      return;
+    }
+    approvalInFlightRef.current = true;
+    beginBusy();
+    try {
+      input.service.cancelClarifyPrompt(pendingClarifyPrompt.promptId, input.reviewerId);
+      setStatusLine("clarification cancelled");
+    } finally {
+      approvalInFlightRef.current = false;
+      endBusy();
+      refresh();
+    }
+  }, [beginBusy, endBusy, input.reviewerId, input.service, pendingClarifyPrompt, refresh]);
 
   const requestInterrupt = React.useCallback((): boolean => {
     const controller = activeAbortControllerRef.current;
@@ -824,10 +946,15 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     fileEdits,
     formatDiffSummary,
     hasPendingApproval: pendingApproval !== null,
+    hasPendingClarifyPrompt: pendingClarifyPrompt !== null,
     messages,
     pendingApproval,
+    pendingClarifyPrompt,
     requestInterrupt,
     resetVisibleChatPreserveActiveThread,
+    sessionApprovalFingerprints,
+    answerPendingClarifyPrompt,
+    cancelPendingClarifyPrompt,
     resolvePendingApproval,
     runDurationLabel,
     statusLine,
@@ -941,6 +1068,7 @@ function collectApprovalMessageIds(messages: ChatMessage[]): Set<string> {
 function summaryEquals(left: ChatController["summary"], right: ChatController["summary"]): boolean {
   return (
     left.pendingApprovals === right.pendingApprovals &&
+    left.pendingClarifyPrompts === right.pendingClarifyPrompts &&
     left.runningTasks === right.runningTasks &&
     left.tasks === right.tasks
   );
@@ -952,6 +1080,18 @@ function approvalRefEquals(left: ApprovalRecord | null, right: ApprovalRecord | 
   }
   return (
     left.approvalId === right.approvalId &&
+    left.status === right.status &&
+    left.taskId === right.taskId &&
+    left.toolCallId === right.toolCallId
+  );
+}
+
+function clarifyPromptRefEquals(left: ClarifyPromptRecord | null, right: ClarifyPromptRecord | null): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return (
+    left.promptId === right.promptId &&
     left.status === right.status &&
     left.taskId === right.taskId &&
     left.toolCallId === right.toolCallId

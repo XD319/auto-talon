@@ -6,6 +6,7 @@ import { runMigrations } from "./migrations.js";
 import { SqliteApprovalRepository } from "./repositories/approval-repository.js";
 import { SqliteArtifactRepository } from "./repositories/artifact-repository.js";
 import { SqliteAuditLogRepository } from "./repositories/audit-log-repository.js";
+import { SqliteClarifyPromptRepository } from "./repositories/clarify-prompt-repository.js";
 import { SqliteExecutionCheckpointRepository } from "./repositories/execution-checkpoint-repository.js";
 import { SqliteExperienceRepository } from "./repositories/experience-repository.js";
 import { SqliteGatewaySessionRepository } from "./repositories/gateway-session-repository.js";
@@ -45,6 +46,7 @@ export class StorageManager {
   public readonly artifacts: SqliteArtifactRepository;
   public readonly runMetadata: SqliteRunMetadataRepository;
   public readonly approvals: SqliteApprovalRepository;
+  public readonly clarifyPrompts: SqliteClarifyPromptRepository;
   public readonly auditLogs: SqliteAuditLogRepository;
   public readonly checkpoints: SqliteExecutionCheckpointRepository;
   public readonly experiences: SqliteExperienceRepository;
@@ -76,6 +78,7 @@ export class StorageManager {
     this.artifacts = new SqliteArtifactRepository(this.database);
     this.runMetadata = new SqliteRunMetadataRepository(this.database);
     this.approvals = new SqliteApprovalRepository(this.database);
+    this.clarifyPrompts = new SqliteClarifyPromptRepository(this.database);
     this.auditLogs = new SqliteAuditLogRepository(this.database);
     this.checkpoints = new SqliteExecutionCheckpointRepository(this.database);
     this.experiences = new SqliteExperienceRepository(this.database);

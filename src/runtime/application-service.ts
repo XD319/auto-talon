@@ -6,7 +6,9 @@ import { DatabaseSync } from "node:sqlite";
 
 import { z } from "zod";
 
+import type { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
 import type { ApprovalService } from "../approvals/approval-service.js";
+import type { ClarifyService } from "../approvals/clarify-service.js";
 import type { AuditService } from "../audit/audit-service.js";
 import type {
   ExperiencePlane,
@@ -18,8 +20,10 @@ import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type {
   ApprovalRecord,
+  ApprovalAllowScope,
   ArtifactRecord,
   AuditLogRecord,
+  ClarifyPromptRecord,
   CommitmentDraft,
   CommitmentListQuery,
   CommitmentRecord,
@@ -83,6 +87,13 @@ export interface ApprovalActionResult {
   approval: ApprovalRecord;
   error?: AppError;
   output: string | null;
+  task: TaskRecord;
+}
+
+export interface ClarifyActionResult {
+  error?: AppError;
+  output: string | null;
+  prompt: ClarifyPromptRecord;
   task: TaskRecord;
 }
 
@@ -163,11 +174,13 @@ export interface RuntimeReadModel {
   findMemory(memoryId: string): MemoryRecord | null;
   findTask(taskId: string): TaskRecord | null;
   listApprovals(taskId: string): ApprovalRecord[];
+  listClarifyPrompts(taskId: string): ClarifyPromptRecord[];
   listArtifacts(taskId: string): ArtifactRecord[];
   listAuditLogs(taskId: string): AuditLogRecord[];
   listExperiences(): ExperienceRecord[];
   listMemorySnapshots(scope: MemoryScope, scopeKey: string): MemorySnapshotRecord[];
   listPendingApprovals(): ApprovalRecord[];
+  listPendingClarifyPrompts(): ClarifyPromptRecord[];
   listMemories(): MemoryRecord[];
   listTasks(): TaskRecord[];
   listThreadLineage(threadId: string): ThreadLineageRecord[];
@@ -192,12 +205,15 @@ export interface RuntimeReadModel {
   listToolCalls(taskId: string): ToolCallRecord[];
   listTrace(taskId: string): TraceEvent[];
   findExecutionCheckpoint(taskId: string): ExecutionCheckpointRecord | null;
+  saveExecutionCheckpoint(record: ExecutionCheckpointRecord): ExecutionCheckpointRecord;
   updateToolCall(toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord;
 }
 
 export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
+  approvalRuleStore: ApprovalRuleStore;
   approvalService: ApprovalService;
   auditService: AuditService;
+  clarifyService: ClarifyService;
   databasePath: string;
   executionKernel: ExecutionKernel;
   schedulerService: SchedulerService;
@@ -247,9 +263,21 @@ export interface TaskTimelineReport {
 
 const approvalActionSchema = z.object({
   action: z.enum(["allow", "deny"]),
+  allowScope: z.enum(["once", "session", "always"]).optional(),
   approvalId: z.string().min(1),
   reviewerId: z.string().min(1)
 });
+
+const clarifyAnswerSchema = z
+  .object({
+    answerOptionId: z.string().min(1).optional(),
+    answerText: z.string().min(1).optional(),
+    promptId: z.string().min(1),
+    reviewerId: z.string().min(1)
+  })
+  .refine((value) => value.answerOptionId !== undefined || value.answerText !== undefined, {
+    message: "answerOptionId or answerText is required."
+  });
 
 export class AgentApplicationService {
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {}
@@ -589,19 +617,40 @@ export class AgentApplicationService {
     return this.dependencies.listPendingApprovals();
   }
 
+  public listPendingClarifyPrompts(): ClarifyPromptRecord[] {
+    this.reconcileExpiredApprovals();
+    return this.dependencies.listPendingClarifyPrompts();
+  }
+
   public async resolveApproval(
     approvalId: string,
     action: "allow" | "deny",
-    reviewerId: string
+    reviewerId: string,
+    allowScope?: ApprovalAllowScope
   ): Promise<ApprovalActionResult> {
     this.reconcileExpiredApprovals();
     const parsed = approvalActionSchema.parse({
       action,
+      allowScope,
       approvalId,
       reviewerId
     });
 
-    const approval = this.dependencies.approvalService.resolve(parsed);
+    const approval = this.dependencies.approvalService.resolve({
+      action: parsed.action,
+      approvalId: parsed.approvalId,
+      reviewerId: parsed.reviewerId,
+      ...(parsed.allowScope !== undefined ? { allowScope: parsed.allowScope } : {})
+    });
+    if (approval.status === "approved" && approval.fingerprint !== null && approval.allowScope === "always") {
+      this.dependencies.approvalRuleStore.add({
+        createdAt: new Date().toISOString(),
+        createdBy: reviewerId,
+        description: approval.reason.split("\n")[0] ?? approval.toolName,
+        fingerprint: approval.fingerprint,
+        toolName: approval.toolName
+      });
+    }
 
     this.dependencies.traceService.record({
       actor: `reviewer.${reviewerId}`,
@@ -643,6 +692,7 @@ export class AgentApplicationService {
             ? "timed_out"
             : "denied",
       payload: {
+        allowScope: approval.allowScope,
         reviewerId,
         status: approval.status,
         toolName: approval.toolName
@@ -701,6 +751,120 @@ export class AgentApplicationService {
     return {
       approval,
       output: null,
+      task: failedTask
+    };
+  }
+
+  public async answerClarifyPrompt(
+    promptId: string,
+    reviewerId: string,
+    input: { answerOptionId?: string; answerText?: string }
+  ): Promise<ClarifyActionResult> {
+    this.reconcileExpiredApprovals();
+    const parsed = clarifyAnswerSchema.parse({
+      ...input,
+      promptId,
+      reviewerId
+    });
+    const prompt = this.dependencies.clarifyService.answer({
+      promptId: parsed.promptId,
+      reviewerId: parsed.reviewerId,
+      ...(parsed.answerOptionId !== undefined ? { answerOptionId: parsed.answerOptionId } : {}),
+      ...(parsed.answerText !== undefined ? { answerText: parsed.answerText } : {})
+    });
+    const checkpoint = this.dependencies.findExecutionCheckpoint(prompt.taskId);
+    if (checkpoint === null) {
+      throw new AppError({
+        code: "task_not_resumable",
+        message: `Task ${prompt.taskId} has no checkpoint for clarification.`
+      });
+    }
+
+    this.dependencies.traceService.record({
+      actor: `reviewer.${reviewerId}`,
+      eventType: "clarify_resolved",
+      payload: {
+        answerOptionId: prompt.answerOptionId,
+        answerText: prompt.answerText,
+        promptId: prompt.promptId,
+        status: "answered"
+      },
+      stage: "governance",
+      summary: `Clarification answered for task ${prompt.taskId}`,
+      taskId: prompt.taskId
+    });
+
+    const answerText =
+      prompt.answerText ??
+      prompt.options.find((item) => item.id === prompt.answerOptionId)?.label ??
+      "";
+    const updatedCheckpoint = {
+      ...checkpoint,
+      messages: [
+        ...checkpoint.messages,
+        {
+          role: "user" as const,
+          content: answerText,
+          metadata: {
+            clarifyPromptId: prompt.promptId,
+            clarifyAnswerOptionId: prompt.answerOptionId
+          }
+        }
+      ],
+      pendingClarifyPromptId: null,
+      updatedAt: new Date().toISOString()
+    };
+    this.dependencies.saveExecutionCheckpoint(updatedCheckpoint);
+
+    try {
+      const result = await this.dependencies.executionKernel.resumeTask(prompt.taskId);
+      this.projectAssistantOutput(result.task.threadId ?? null, result.task.taskId, result.output ?? null);
+      return {
+        output: result.output,
+        prompt,
+        task: result.task
+      };
+    } catch (error) {
+      const appError = toAppError(error);
+      const task = this.dependencies.findTask(prompt.taskId);
+      if (task === null) {
+        throw appError;
+      }
+      return {
+        error: appError,
+        output: null,
+        prompt,
+        task
+      };
+    }
+  }
+
+  public cancelClarifyPrompt(promptId: string, reviewerId: string): ClarifyActionResult {
+    this.reconcileExpiredApprovals();
+    const prompt = this.dependencies.clarifyService.cancel({ promptId, reviewerId });
+    this.dependencies.traceService.record({
+      actor: `reviewer.${reviewerId}`,
+      eventType: "clarify_cancelled",
+      payload: {
+        promptId: prompt.promptId,
+        reviewerId
+      },
+      stage: "governance",
+      summary: `Clarification cancelled for task ${prompt.taskId}`,
+      taskId: prompt.taskId
+    });
+
+    const failedTask = this.dependencies.executionKernel.failWaitingClarificationTask(
+      prompt.taskId,
+      new AppError({
+        code: "clarification_cancelled",
+        message: `Clarification prompt ${prompt.promptId} was cancelled.`
+      })
+    );
+
+    return {
+      output: null,
+      prompt,
       task: failedTask
     };
   }
@@ -1158,6 +1322,35 @@ export class AgentApplicationService {
         new AppError({
           code: "approval_timeout",
           message: `Approval ${approval.approvalId} timed out.`
+        })
+      );
+    }
+
+    for (const prompt of this.dependencies.clarifyService.expirePending()) {
+      this.dependencies.traceService.record({
+        actor: "clarify.service",
+        eventType: "clarify_resolved",
+        payload: {
+          promptId: prompt.promptId,
+          status: "timed_out"
+        },
+        stage: "governance",
+        summary: `Clarification timed out for task ${prompt.taskId}`,
+        taskId: prompt.taskId
+      });
+
+      this.dependencies.updateToolCall(prompt.toolCallId, {
+        errorCode: "approval_timeout",
+        errorMessage: `Clarification prompt ${prompt.promptId} timed out.`,
+        finishedAt: new Date().toISOString(),
+        status: "timed_out"
+      });
+
+      this.dependencies.executionKernel.failWaitingClarificationTask(
+        prompt.taskId,
+        new AppError({
+          code: "approval_timeout",
+          message: `Clarification prompt ${prompt.promptId} timed out.`
         })
       );
     }

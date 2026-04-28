@@ -230,7 +230,7 @@ export type RuntimeTaskEvent =
       taskId: string;
       toolCallId: string;
       toolName: string;
-      status: "started" | "approval_required" | "finished" | "failed";
+      status: "started" | "approval_required" | "clarify_required" | "finished" | "failed";
       iteration: number;
       summary?: string;
     }

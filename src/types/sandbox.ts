@@ -38,11 +38,18 @@ export interface SandboxMcpPlan extends JsonObject {
   target: string;
 }
 
+export interface SandboxPromptPlan extends JsonObject {
+  kind: "prompt";
+  target: "interactive_user";
+  pathScope: "workspace";
+}
+
 export type SandboxExecutionPlan =
   | SandboxFileAccessPlan
   | SandboxShellPlan
   | SandboxWebPlan
-  | SandboxMcpPlan;
+  | SandboxMcpPlan
+  | SandboxPromptPlan;
 
 export type SandboxMode = "local" | "docker";
 

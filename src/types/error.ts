@@ -4,6 +4,7 @@ export const RUNTIME_ERROR_CODES = [
   "approval_timeout",
   "budget_exceeded",
   "cancelled",
+  "clarification_cancelled",
   "interrupt",
   "invalid_state",
   "max_rounds_exceeded",

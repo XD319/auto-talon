@@ -1,4 +1,5 @@
 import type { RuntimeErrorCode } from "./error.js";
+import type { ApprovalAllowScope } from "./approval-rule.js";
 
 export const APPROVAL_STATUSES = [
   "pending",
@@ -33,6 +34,8 @@ export interface ApprovalRecord {
   decidedAt: string | null;
   reviewerId: string | null;
   reviewerNotes: string | null;
+  allowScope: ApprovalAllowScope | null;
+  fingerprint: string | null;
   policyDecisionId: string;
   errorCode: RuntimeErrorCode | null;
 }
@@ -44,6 +47,7 @@ export interface ApprovalDraft {
   toolName: string;
   requesterUserId: string;
   reason: string;
+  fingerprint?: string | null;
   requestedAt: string;
   expiresAt: string;
   policyDecisionId: string;
@@ -54,6 +58,7 @@ export interface ApprovalUpdatePatch {
   decidedAt?: string | null;
   reviewerId?: string | null;
   reviewerNotes?: string | null;
+  allowScope?: ApprovalAllowScope | null;
   errorCode?: RuntimeErrorCode | null;
 }
 

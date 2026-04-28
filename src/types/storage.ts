@@ -17,6 +17,7 @@ import type {
 } from "./thread-session-memory.js";
 import type { ThreadSnapshotDraft, ThreadSnapshotRecord } from "./thread-snapshot.js";
 import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./approval.js";
+import type { ClarifyPromptDraft, ClarifyPromptRecord, ClarifyPromptUpdatePatch } from "./clarify.js";
 import type { AuditLogDraft, AuditLogRecord } from "./audit.js";
 import type { ExecutionCheckpointRecord } from "./checkpoint.js";
 import type {
@@ -205,6 +206,15 @@ export interface ApprovalRepository {
   listByTaskId(taskId: string): ApprovalRecord[];
   listPending(): ApprovalRecord[];
   update(approvalId: string, patch: ApprovalUpdatePatch): ApprovalRecord;
+}
+
+export interface ClarifyPromptRepository {
+  create(record: ClarifyPromptDraft): ClarifyPromptRecord;
+  findById(promptId: string): ClarifyPromptRecord | null;
+  findLatestByToolCall(taskId: string, toolCallId: string): ClarifyPromptRecord | null;
+  listByTaskId(taskId: string): ClarifyPromptRecord[];
+  listPending(): ClarifyPromptRecord[];
+  update(promptId: string, patch: ClarifyPromptUpdatePatch): ClarifyPromptRecord;
 }
 
 export interface AuditLogRepository {

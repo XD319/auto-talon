@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
+import { buildApprovalFingerprint } from "../approvals/approval-fingerprint.js";
+import type { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
+import type { ClarifyService } from "../approvals/clarify-service.js";
 import { AppError, toAppError } from "../runtime/app-error.js";
 import { safePreview } from "../runtime/serialization.js";
 import type { ApprovalService } from "../approvals/approval-service.js";
@@ -10,6 +13,7 @@ import type { PolicyEngine } from "../policy/policy-engine.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type {
   ApprovalRecord,
+  ClarifyPromptRecord,
   ArtifactRepository,
   JsonObject,
   ProviderToolDescriptor,
@@ -21,11 +25,14 @@ import type {
   ToolExecutionContext,
   ToolExecutionSuccess
 } from "../types/index.js";
+import type { PreparedAskUserInput } from "./ask-user-tool.js";
 
 export interface ToolOrchestratorDependencies {
   approvalService: ApprovalService;
+  approvalRuleStore: ApprovalRuleStore;
   artifactRepository: ArtifactRepository;
   auditService: AuditService;
+  clarifyService: ClarifyService;
   contextPolicy: ContextPolicy;
   policyEngine: PolicyEngine;
   toolCallRepository: ToolCallRepository;
@@ -45,9 +52,16 @@ export interface ToolExecutionApprovalRequiredOutcome {
   toolCall: ToolCallRecord;
 }
 
+export interface ToolExecutionClarifyRequiredOutcome {
+  kind: "clarify_required";
+  prompt: ClarifyPromptRecord;
+  toolCall: ToolCallRecord;
+}
+
 export type ToolExecutionOutcome =
   | ToolExecutionCompletedOutcome
-  | ToolExecutionApprovalRequiredOutcome;
+  | ToolExecutionApprovalRequiredOutcome
+  | ToolExecutionClarifyRequiredOutcome;
 
 export class ToolOrchestrator {
   private readonly tools = new Map<string, ToolDefinition>();
@@ -248,90 +262,116 @@ export class ToolOrchestrator {
     }
 
     if (policyDecision.effect === "allow_with_approval") {
-      const approvalRequest = this.dependencies.approvalService.ensureApprovalRequest({
-        policyDecisionId: policyDecision.decisionId,
-        reason: formatApprovalReason(request.reason, prepared.sandbox),
-        requesterUserId: context.userId,
-        taskId: request.taskId,
-        toolCallId: toolCall.toolCallId,
-        toolName: tool.name
-      });
+      const fingerprint = buildApprovalFingerprint(tool.name, prepared.sandbox);
+      const sessionApprovalFingerprints = readSessionApprovalFingerprints(context.taskMetadata);
+      const autoApproved =
+        sessionApprovalFingerprints.includes(fingerprint.fingerprint) ||
+        this.dependencies.approvalRuleStore.hasFingerprint(fingerprint.fingerprint);
 
-      const approval = approvalRequest.approval;
-      if (approval.status === "pending") {
-        toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
-          status: toolCall.status === "approved" ? "approved" : "awaiting_approval"
+      if (!autoApproved) {
+        const approvalRequest = this.dependencies.approvalService.ensureApprovalRequest({
+          fingerprint: fingerprint.fingerprint,
+          policyDecisionId: policyDecision.decisionId,
+          reason: formatApprovalReason(request.reason, prepared.sandbox),
+          requesterUserId: context.userId,
+          taskId: request.taskId,
+          toolCallId: toolCall.toolCallId,
+          toolName: tool.name
         });
 
-        if (approvalRequest.created) {
-          this.dependencies.traceService.record({
-            actor: "approval.service",
-            eventType: "approval_requested",
-            payload: {
-              approvalId: approval.approvalId,
-              expiresAt: approval.expiresAt,
-              toolCallId: toolCall.toolCallId,
-              toolName: tool.name
-            },
-            stage: "governance",
-            summary: `Approval requested for ${tool.name}`,
-            taskId: request.taskId
+        const approval = approvalRequest.approval;
+        if (approval.status === "pending") {
+          toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
+            status: toolCall.status === "approved" ? "approved" : "awaiting_approval"
           });
 
-          this.dependencies.auditService.record({
-            action: "approval_requested",
-            actor: "approval.service",
-            approvalId: approval.approvalId,
-            outcome: "pending",
-            payload: {
-              expiresAt: approval.expiresAt,
-              reason: approval.reason,
-              toolName: approval.toolName
-            },
-            summary: `Approval requested for ${tool.name}`,
-            taskId: request.taskId,
-            toolCallId: toolCall.toolCallId
-          });
+          if (approvalRequest.created) {
+            this.dependencies.traceService.record({
+              actor: "approval.service",
+              eventType: "approval_requested",
+              payload: {
+                approvalId: approval.approvalId,
+                expiresAt: approval.expiresAt,
+                toolCallId: toolCall.toolCallId,
+                toolName: tool.name
+              },
+              stage: "governance",
+              summary: `Approval requested for ${tool.name}`,
+              taskId: request.taskId
+            });
+
+            this.dependencies.auditService.record({
+              action: "approval_requested",
+              actor: "approval.service",
+              approvalId: approval.approvalId,
+              outcome: "pending",
+              payload: {
+                expiresAt: approval.expiresAt,
+                fingerprint: approval.fingerprint,
+                reason: approval.reason,
+                toolName: approval.toolName
+              },
+              summary: `Approval requested for ${tool.name}`,
+              taskId: request.taskId,
+              toolCallId: toolCall.toolCallId
+            });
+          }
+
+          return {
+            approval,
+            kind: "approval_required",
+            toolCall
+          };
         }
 
-        return {
-          approval,
-          kind: "approval_required",
-          toolCall
-        };
-      }
+        if (approval.status === "denied") {
+          return this.failToolCall(
+            toolCall,
+            new AppError({
+              code: "approval_denied",
+              details: {
+                approvalId: approval.approvalId
+              },
+              message: `Approval ${approval.approvalId} was denied for ${tool.name}.`
+            }),
+            "denied"
+          );
+        }
 
-      if (approval.status === "denied") {
-        return this.failToolCall(
-          toolCall,
-          new AppError({
-            code: "approval_denied",
-            details: {
-              approvalId: approval.approvalId
-            },
-            message: `Approval ${approval.approvalId} was denied for ${tool.name}.`
-          }),
-          "denied"
-        );
-      }
-
-      if (approval.status === "timed_out") {
-        return this.failToolCall(
-          toolCall,
-          new AppError({
-            code: "approval_timeout",
-            details: {
-              approvalId: approval.approvalId
-            },
-            message: `Approval ${approval.approvalId} timed out for ${tool.name}.`
-          }),
-          "timed_out"
-        );
+        if (approval.status === "timed_out") {
+          return this.failToolCall(
+            toolCall,
+            new AppError({
+              code: "approval_timeout",
+              details: {
+                approvalId: approval.approvalId
+              },
+              message: `Approval ${approval.approvalId} timed out for ${tool.name}.`
+            }),
+            "timed_out"
+          );
+        }
       }
 
       toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
         status: "approved"
       });
+    }
+
+    if (tool.capability === "interaction.ask_user") {
+      if (toolCall.status === "requested") {
+        toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
+          startedAt: new Date().toISOString(),
+          status: "started"
+        });
+      }
+
+      return this.resolveClarifyPrompt(
+        toolCall,
+        request,
+        context,
+        prepared.preparedInput as PreparedAskUserInput
+      );
     }
 
     toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
@@ -647,6 +687,98 @@ export class ToolOrchestrator {
     throw error;
   }
 
+  private resolveClarifyPrompt(
+    toolCall: ToolCallRecord,
+    request: ToolCallRequest,
+    context: ToolExecutionContext,
+    preparedInput: PreparedAskUserInput
+  ): ToolExecutionOutcome {
+    const promptRequest = this.dependencies.clarifyService.ensurePrompt({
+      allowCustomAnswer: preparedInput.allowCustomAnswer,
+      options: preparedInput.options,
+      placeholder: preparedInput.placeholder,
+      question: preparedInput.question,
+      reason: preparedInput.reason,
+      requesterUserId: context.userId,
+      taskId: request.taskId,
+      toolCallId: toolCall.toolCallId
+    });
+
+    const prompt = promptRequest.prompt;
+    if (prompt.status === "pending") {
+      if (promptRequest.created) {
+        this.dependencies.traceService.record({
+          actor: "clarify.service",
+          eventType: "clarify_requested",
+          payload: {
+            promptId: prompt.promptId,
+            question: prompt.question,
+            toolCallId: toolCall.toolCallId
+          },
+          stage: "governance",
+          summary: `Clarification requested: ${prompt.question}`,
+          taskId: request.taskId
+        });
+      }
+
+      return {
+        kind: "clarify_required",
+        prompt,
+        toolCall
+      };
+    }
+
+    if (prompt.status === "cancelled") {
+      return this.failToolCall(
+        toolCall,
+        new AppError({
+          code: "clarification_cancelled",
+          details: {
+            promptId: prompt.promptId
+          },
+          message: `Clarification prompt ${prompt.promptId} was cancelled.`
+        })
+      );
+    }
+
+    if (prompt.status === "timed_out") {
+      return this.failToolCall(
+        toolCall,
+        new AppError({
+          code: "approval_timeout",
+          details: {
+            promptId: prompt.promptId
+          },
+          message: `Clarification prompt ${prompt.promptId} timed out.`
+        }),
+        "timed_out"
+      );
+    }
+
+    const output = {
+      answerOptionId: prompt.answerOptionId,
+      answerText: prompt.answerText,
+      promptId: prompt.promptId
+    };
+    const summary = `User answered clarify prompt "${prompt.question}"`;
+    const finishedCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
+      finishedAt: new Date().toISOString(),
+      output,
+      status: "finished",
+      summary
+    });
+
+    return {
+      kind: "completed",
+      result: {
+        output,
+        success: true,
+        summary
+      },
+      toolCall: finishedCall
+    };
+  }
+
   private replayTerminalOutcome(toolCall: ToolCallRecord): ToolExecutionCompletedOutcome | null {
     if (toolCall.status === "failed") {
       throw new AppError({
@@ -710,14 +842,16 @@ function getSandboxTarget(sandboxPlan: SandboxExecutionPlan): string {
       return sandboxPlan.cwd;
     case "mcp":
       return sandboxPlan.target;
+    case "prompt":
+      return sandboxPlan.target;
     default:
       return "unknown";
   }
 }
 
-function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "network" | "shell" | "mcp" {
+function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "network" | "shell" | "mcp" | "prompt" {
   const kind = sandboxDetails.kind;
-  return kind === "file" || kind === "network" || kind === "shell" || kind === "mcp"
+  return kind === "file" || kind === "network" || kind === "shell" || kind === "mcp" || kind === "prompt"
     ? kind
     : "shell";
 }
@@ -740,6 +874,14 @@ function extractSandboxTarget(sandboxDetails: Record<string, unknown>): string {
   }
 
   return "unknown";
+}
+
+function readSessionApprovalFingerprints(metadata: ToolExecutionContext["taskMetadata"]): string[] {
+  const fingerprints = metadata?.["sessionApprovalFingerprints"];
+  if (!Array.isArray(fingerprints)) {
+    return [];
+  }
+  return fingerprints.filter((value): value is string => typeof value === "string");
 }
 
 function sanitizePersistedOutput(

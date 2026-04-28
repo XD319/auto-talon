@@ -84,6 +84,11 @@ const DEFAULT_SKILL_OVERRIDES: JsonObject = {
   disabledSkillIds: []
 };
 
+const DEFAULT_APPROVAL_RULES: JsonObject = {
+  version: CONFIG_VERSION,
+  rules: []
+};
+
 export interface InitWorkspaceResult {
   createdFiles: string[];
   workspaceConfigDir: string;
@@ -106,7 +111,8 @@ export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceRe
     ...writeConfigIfMissing(workspaceRoot, "feishu.config.json", DEFAULT_FEISHU_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "mcp.config.json", DEFAULT_MCP_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "mcp-server.config.json", DEFAULT_MCP_SERVER_CONFIG),
-    ...writeConfigIfMissing(workspaceRoot, "skill-overrides.json", DEFAULT_SKILL_OVERRIDES)
+    ...writeConfigIfMissing(workspaceRoot, "skill-overrides.json", DEFAULT_SKILL_OVERRIDES),
+    ...writeConfigIfMissing(workspaceRoot, "approval-rules.json", DEFAULT_APPROVAL_RULES)
   );
 
   return {

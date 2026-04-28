@@ -108,7 +108,13 @@ function activityPrefix(eventType: TraceEvent["eventType"]): string {
   if (eventType === "tool_call_failed" || eventType === "provider_request_failed") {
     return "x";
   }
-  if (eventType === "approval_requested" || eventType === "approval_resolved") {
+  if (
+    eventType === "approval_requested" ||
+    eventType === "approval_resolved" ||
+    eventType === "clarify_requested" ||
+    eventType === "clarify_resolved" ||
+    eventType === "clarify_cancelled"
+  ) {
     return "!";
   }
   return "-";
@@ -118,7 +124,14 @@ function activityColor(eventType: TraceEvent["eventType"]): string {
   if (eventType === "tool_call_failed" || eventType === "provider_request_failed") {
     return theme.danger;
   }
-  if (eventType === "approval_requested" || eventType === "retry" || eventType === "sandbox_enforced") {
+  if (
+    eventType === "approval_requested" ||
+    eventType === "clarify_requested" ||
+    eventType === "clarify_resolved" ||
+    eventType === "clarify_cancelled" ||
+    eventType === "retry" ||
+    eventType === "sandbox_enforced"
+  ) {
     return theme.warn;
   }
   return theme.muted;

@@ -33,7 +33,7 @@ export const TOOL_CALL_STATUS_TRANSITIONS: Record<ToolCallStatus, ToolCallStatus
   failed: [],
   finished: [],
   requested: ["awaiting_approval", "started", "failed"],
-  started: ["finished", "failed"],
+  started: ["finished", "failed", "timed_out"],
   timed_out: []
 };
 
@@ -83,6 +83,7 @@ export interface ToolExecutionContext {
   cwd: string;
   userId: string;
   agentProfileId: AgentProfileId;
+  taskMetadata?: JsonObject;
   signal: AbortSignal;
 }
 

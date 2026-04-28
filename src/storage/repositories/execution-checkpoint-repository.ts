@@ -16,6 +16,7 @@ interface ExecutionCheckpointRow {
   memory_context_json: string;
   messages_json: string;
   pending_tool_calls_json: string;
+  pending_clarify_prompt_id: string | null;
   updated_at: string;
 }
 
@@ -32,13 +33,15 @@ export class SqliteExecutionCheckpointRepository implements ExecutionCheckpointR
             memory_context_json,
             messages_json,
             pending_tool_calls_json,
+            pending_clarify_prompt_id,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(task_id) DO UPDATE SET
             iteration = excluded.iteration,
             memory_context_json = excluded.memory_context_json,
             messages_json = excluded.messages_json,
             pending_tool_calls_json = excluded.pending_tool_calls_json,
+            pending_clarify_prompt_id = excluded.pending_clarify_prompt_id,
             updated_at = excluded.updated_at
         `
       )
@@ -48,6 +51,7 @@ export class SqliteExecutionCheckpointRepository implements ExecutionCheckpointR
         serializeJsonValue(record.memoryContext),
         serializeJsonValue(record.messages),
         serializeJsonValue(record.pendingToolCalls),
+        record.pendingClarifyPromptId ?? null,
         record.updatedAt
       );
 
@@ -73,6 +77,7 @@ export class SqliteExecutionCheckpointRepository implements ExecutionCheckpointR
       memoryContext: parseJsonValue<ContextFragment[]>(row.memory_context_json),
       messages: parseJsonValue<ConversationMessage[]>(row.messages_json),
       pendingToolCalls: parseJsonValue<ProviderToolCall[]>(row.pending_tool_calls_json),
+      pendingClarifyPromptId: row.pending_clarify_prompt_id,
       taskId: row.task_id,
       updatedAt: row.updated_at
     };

@@ -43,6 +43,15 @@ export const DEFAULT_LOCAL_POLICY_CONFIG: LocalPolicyConfig = {
       priority: 89
     },
     {
+      description: "Interactive user clarification prompts are allowed in local chat TUI.",
+      effect: "allow",
+      id: "interactive-prompt-allow",
+      match: {
+        capabilities: ["interaction.ask_user"]
+      },
+      priority: 95
+    },
+    {
       description: "MCP invocation is approval-gated for non-reviewer profiles.",
       effect: "allow_with_approval",
       id: "mcp-invoke-needs-approval",

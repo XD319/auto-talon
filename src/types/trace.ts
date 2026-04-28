@@ -32,6 +32,9 @@ export const TRACE_EVENT_TYPES = [
   "policy_decision",
   "approval_requested",
   "approval_resolved",
+  "clarify_requested",
+  "clarify_resolved",
+  "clarify_cancelled",
   "file_rollback",
   "sandbox_enforced",
   "tool_call_requested",
@@ -238,10 +241,28 @@ export interface ApprovalResolvedPayload extends JsonObject {
   toolName: string;
 }
 
+export interface ClarifyRequestedPayload extends JsonObject {
+  promptId: string;
+  toolCallId: string;
+  question: string;
+}
+
+export interface ClarifyResolvedPayload extends JsonObject {
+  promptId: string;
+  status: "answered" | "timed_out";
+  answerOptionId?: string | null;
+  answerText?: string | null;
+}
+
+export interface ClarifyCancelledPayload extends JsonObject {
+  promptId: string;
+  reviewerId: string | null;
+}
+
 export interface SandboxEnforcedPayload extends JsonObject {
   toolCallId: string;
   toolName: string;
-  sandboxKind: "file" | "network" | "shell" | "mcp";
+  sandboxKind: "file" | "network" | "shell" | "mcp" | "prompt";
   status: "allowed" | "denied";
   target: string;
 }
@@ -759,6 +780,9 @@ export type TraceEvent =
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>
   | TraceEventBase<"approval_requested", ApprovalRequestedPayload>
   | TraceEventBase<"approval_resolved", ApprovalResolvedPayload>
+  | TraceEventBase<"clarify_requested", ClarifyRequestedPayload>
+  | TraceEventBase<"clarify_resolved", ClarifyResolvedPayload>
+  | TraceEventBase<"clarify_cancelled", ClarifyCancelledPayload>
   | TraceEventBase<"file_rollback", FileRollbackPayload>
   | TraceEventBase<"sandbox_enforced", SandboxEnforcedPayload>
   | TraceEventBase<"tool_call_requested", ToolCallRequestedPayload>

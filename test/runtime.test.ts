@@ -332,6 +332,141 @@ describe("Phase 2 governance runtime", () => {
     }
   });
 
+  it("pauses for clarify prompts and resumes with the selected answer", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    let callCount = 0;
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider((input) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            kind: "tool_calls",
+            message: "Need clarification.",
+            toolCalls: [
+              {
+                input: {
+                  allowCustomAnswer: true,
+                  options: [
+                    { id: "yes", label: "Yes" },
+                    { id: "no", label: "No" }
+                  ],
+                  question: "Proceed with the change?"
+                },
+                reason: "Need a clear user decision.",
+                toolCallId: "ask-1",
+                toolName: "ask_user"
+              }
+            ],
+            usage: {
+              inputTokens: 8,
+              outputTokens: 4
+            }
+          };
+        }
+
+        return {
+          kind: "final",
+          message: `Decision: ${input.messages.at(-1)?.content ?? "missing"}`,
+          usage: {
+            inputTokens: 6,
+            outputTokens: 3
+          }
+        };
+      })
+    });
+
+    try {
+      const options = createDefaultRunOptions("ask me first", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(options);
+      expect(initial.task.status).toBe("waiting_clarification");
+      const prompt = handle.service.listPendingClarifyPrompts()[0];
+      expect(prompt?.question).toBe("Proceed with the change?");
+
+      const resumed = await handle.service.answerClarifyPrompt(prompt?.promptId ?? "", "reviewer-clarify", {
+        answerOptionId: "yes"
+      });
+
+      expect(resumed.task.status).toBe("succeeded");
+      expect(resumed.output).toContain("Yes");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("fails the task when a clarify prompt is cancelled", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "tool_calls",
+        message: "Need clarification.",
+        toolCalls: [
+          {
+            input: {
+              allowCustomAnswer: true,
+              question: "Proceed with the change?"
+            },
+            reason: "Need a clear user decision.",
+            toolCallId: "ask-1",
+            toolName: "ask_user"
+          }
+        ],
+        usage: {
+          inputTokens: 8,
+          outputTokens: 4
+        }
+      }))
+    });
+
+    try {
+      const options = createDefaultRunOptions("ask me first", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(options);
+      expect(initial.task.status).toBe("waiting_clarification");
+      const prompt = handle.service.listPendingClarifyPrompts()[0];
+      const cancelled = handle.service.cancelClarifyPrompt(prompt?.promptId ?? "", "reviewer-clarify");
+      expect(cancelled.task.status).toBe("failed");
+      expect(cancelled.task.errorCode).toBe("clarification_cancelled");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("skips a repeated approval after a session-scoped allow fingerprint is reused", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApprovalWriteApplication(workspaceRoot);
+
+    try {
+      const firstOptions = createDefaultRunOptions("create governed file", workspaceRoot, handle.config);
+      firstOptions.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(firstOptions);
+      expect(initial.task.status).toBe("waiting_approval");
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval?.fingerprint).toBeTruthy();
+
+      await handle.service.resolveApproval(approval?.approvalId ?? "", "allow", "reviewer-session", "session");
+
+      const secondOptions = createDefaultRunOptions("create governed file", workspaceRoot, handle.config);
+      secondOptions.metadata = {
+        interactivePromptMode: "tui",
+        sessionApprovalFingerprints:
+          approval?.fingerprint === null || approval?.fingerprint === undefined ? [] : [approval.fingerprint]
+      };
+      const second = await handle.service.runTask(secondOptions);
+
+      expect(second.task.status).toBe("succeeded");
+      expect(handle.service.listPendingApprovals()).toHaveLength(0);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("applies policy denies for the reviewer profile", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApprovalWriteApplication(workspaceRoot);

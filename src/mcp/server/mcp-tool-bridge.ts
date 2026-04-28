@@ -65,6 +65,17 @@ export class McpToolBridge {
       };
     }
 
+    if (outcome.kind === "clarify_required") {
+      return {
+        content: {
+          message: `Interactive clarification required for ${input.name}`,
+          promptId: outcome.prompt.promptId,
+          status: "approval_required"
+        },
+        status: "approval_required"
+      };
+    }
+
     return {
       content: {
         output: outcome.result.output,

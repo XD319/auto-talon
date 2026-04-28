@@ -7,5 +7,6 @@ export interface ExecutionCheckpointRecord {
   memoryContext: ContextFragment[];
   messages: ConversationMessage[];
   pendingToolCalls: ProviderToolCall[];
+  pendingClarifyPromptId?: string | null;
   updatedAt: string;
 }

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { AppError } from "../runtime/app-error.js";
 import type {
+  ApprovalAllowScope,
   ApprovalRecord,
   ApprovalRepository,
   ApprovalStatus,
@@ -19,7 +20,8 @@ const approvalResolutionSchema = z.object({
   action: z.enum(["allow", "deny"]),
   approvalId: z.string().min(1),
   reviewerId: z.string().min(1),
-  reviewerNotes: z.string().optional()
+  reviewerNotes: z.string().optional(),
+  allowScope: z.enum(["once", "session", "always"]).optional()
 });
 
 export interface EnsureApprovalRequestInput {
@@ -29,6 +31,7 @@ export interface EnsureApprovalRequestInput {
   requesterUserId: string;
   reason: string;
   policyDecisionId: string;
+  fingerprint?: string | null;
 }
 
 export interface EnsureApprovalRequestResult {
@@ -41,6 +44,7 @@ export interface ApprovalResolutionInput {
   action: "allow" | "deny";
   reviewerId: string;
   reviewerNotes?: string;
+  allowScope?: ApprovalAllowScope;
 }
 
 export class ApprovalService {
@@ -68,6 +72,7 @@ export class ApprovalService {
       expiresAt: new Date(now.getTime() + this.config.approvalTtlMs).toISOString(),
       policyDecisionId: input.policyDecisionId,
       reason: input.reason,
+      fingerprint: input.fingerprint ?? null,
       requestedAt: now.toISOString(),
       requesterUserId: input.requesterUserId,
       taskId: input.taskId,
@@ -124,6 +129,7 @@ export class ApprovalService {
     return this.approvalRepository.update(parsed.approvalId, {
       decidedAt: this.now().toISOString(),
       errorCode: parsed.action === "allow" ? null : "approval_denied",
+      allowScope: parsed.action === "allow" ? (parsed.allowScope ?? "once") : null,
       reviewerId: parsed.reviewerId,
       reviewerNotes: parsed.reviewerNotes ?? null,
       status: parsed.action === "allow" ? "approved" : "denied"

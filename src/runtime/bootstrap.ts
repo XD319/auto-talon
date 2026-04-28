@@ -2,6 +2,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 
 import { ApprovalService } from "../approvals/approval-service.js";
+import { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
+import { ClarifyService } from "../approvals/clarify-service.js";
 import { AuditService } from "../audit/audit-service.js";
 import { ExperienceCollector } from "../experience/experience-collector.js";
 import { ExperiencePlane } from "../experience/experience-plane.js";
@@ -37,7 +39,7 @@ import type {
   SandboxProfile,
   TokenBudget
 } from "../types/index.js";
-import { FileReadTool, FileWriteTool, ShellTool, SkillViewTool, TestRunTool, ToolOrchestrator, WebFetchTool } from "../tools/index.js";
+import { AskUserTool, FileReadTool, FileWriteTool, ShellTool, SkillViewTool, TestRunTool, ToolOrchestrator, WebFetchTool } from "../tools/index.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
 
@@ -234,6 +236,10 @@ export function createApplication(
   const approvalService = new ApprovalService(storage.approvals, {
     approvalTtlMs: config.approvalTtlMs
   });
+  const clarifyService = new ClarifyService(storage.clarifyPrompts, {
+    clarifyTtlMs: config.approvalTtlMs
+  });
+  const approvalRuleStore = new ApprovalRuleStore(config.workspaceRoot);
   const contextPolicy = new ContextPolicy();
   const policyEngine = new PolicyEngine(options.policyConfig ?? DEFAULT_LOCAL_POLICY_CONFIG);
   const agentProfileRegistry = new AgentProfileRegistry();
@@ -274,12 +280,15 @@ export function createApplication(
   });
   const toolOrchestrator = new ToolOrchestrator({
     approvalService,
+    approvalRuleStore,
     artifactRepository: storage.artifacts,
     auditService,
+    clarifyService,
     contextPolicy,
     policyEngine,
     toolCallRepository: storage.toolCalls,
     tools: [
+      new AskUserTool(),
       new FileReadTool(sandboxService),
       new FileWriteTool(sandboxService),
       new SkillViewTool(skillRegistry),
@@ -485,13 +494,17 @@ export function createApplication(
     findMemory: (memoryId) => storage.memories.findById(memoryId),
     findExperience: (experienceId) => storage.experiences.findById(experienceId),
     listApprovals: (taskId) => storage.approvals.listByTaskId(taskId),
+    listClarifyPrompts: (taskId) => storage.clarifyPrompts.listByTaskId(taskId),
     listArtifacts: (taskId) => storage.artifacts.listByTaskId(taskId),
     listAuditLogs: (taskId) => storage.auditLogs.listByTaskId(taskId),
     listMemories: () => storage.memories.list({ includeExpired: true, includeRejected: true }),
     listExperiences: () => storage.experiences.list(),
     listMemorySnapshots: (scope, scopeKey) => storage.memorySnapshots.listByScope(scope, scopeKey),
     listPendingApprovals: () => approvalService.listPending(),
+    listPendingClarifyPrompts: () => clarifyService.listPending(),
+    approvalRuleStore,
     approvalService,
+    clarifyService,
     findTask: (taskId) => storage.tasks.findById(taskId),
     listTasks: () => storage.tasks.list(),
     findThread: (threadId) => storage.threads.findById(threadId),
@@ -522,6 +535,7 @@ export function createApplication(
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     findExecutionCheckpoint: (taskId) => storage.checkpoints.findByTaskId(taskId),
+    saveExecutionCheckpoint: (record) => storage.checkpoints.save(record),
     updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
     allowedFetchHosts: config.allowedFetchHosts,
     provider,

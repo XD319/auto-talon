@@ -109,7 +109,12 @@ export function toApprovalResultMessage(
 }
 
 export function displayChatMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.filter((message) => message.kind !== "activity" || isHighValueActivity(message.event));
+  return messages.filter((message) => {
+    if (message.kind === "approval" && message.status === "pending") {
+      return false;
+    }
+    return message.kind !== "activity" || isHighValueActivity(message.event);
+  });
 }
 
 function formatTraceEvent(event: TraceEvent): string {
@@ -130,6 +135,12 @@ function formatTraceEvent(event: TraceEvent): string {
       return `Approval requested for ${event.payload.toolName}`;
     case "approval_resolved":
       return `Approval ${event.payload.status} for ${event.payload.toolName}`;
+    case "clarify_requested":
+      return `Clarification requested: ${event.payload.question}`;
+    case "clarify_resolved":
+      return `Clarification ${event.payload.status}`;
+    case "clarify_cancelled":
+      return "Clarification cancelled";
     case "final_outcome":
       return `final_outcome ${event.payload.status}`;
     case "provider_request_failed":
@@ -213,6 +224,9 @@ function isHighValueActivity(event: TraceEvent): boolean {
   return (
     event.eventType === "approval_requested" ||
     event.eventType === "approval_resolved" ||
+    event.eventType === "clarify_requested" ||
+    event.eventType === "clarify_resolved" ||
+    event.eventType === "clarify_cancelled" ||
     event.eventType === "interrupt" ||
     event.eventType === "provider_request_failed" ||
     event.eventType === "retry" ||

@@ -7,6 +7,7 @@ export const TASK_STATUSES = [
   "running",
   "waiting_tool",
   "waiting_approval",
+  "waiting_clarification",
   "succeeded",
   "failed",
   "cancelled"
@@ -18,10 +19,11 @@ export const TASK_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   cancelled: [],
   failed: [],
   pending: ["running", "cancelled"],
-  running: ["waiting_tool", "waiting_approval", "succeeded", "failed", "cancelled"],
+  running: ["waiting_tool", "waiting_approval", "waiting_clarification", "succeeded", "failed", "cancelled"],
   succeeded: [],
   waiting_approval: ["running", "failed", "cancelled"],
-  waiting_tool: ["running", "waiting_approval", "failed", "cancelled"]
+  waiting_clarification: ["running", "failed", "cancelled"],
+  waiting_tool: ["running", "waiting_approval", "waiting_clarification", "failed", "cancelled"]
 };
 
 export interface TaskRecord {

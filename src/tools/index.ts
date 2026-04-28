@@ -1,5 +1,6 @@
 export * from "./file-read-tool.js";
 export * from "./file-write-tool.js";
+export * from "./ask-user-tool.js";
 export * from "./shell-tool.js";
 export * from "./skill-view-tool.js";
 export * from "./test-run-tool.js";

@@ -56,6 +56,11 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "split thread session memory into current state and events",
     up: migrateV10,
     version: 10
+  },
+  {
+    description: "add clarify prompts and approval scope columns",
+    up: migrateV11,
+    version: 11
   }
 ];
 
@@ -729,6 +734,39 @@ function migrateV10(database: DatabaseSync): void {
   `);
 }
 
+function migrateV11(database: DatabaseSync): void {
+  addColumnIfMissing(database, "approvals", "allow_scope", "TEXT");
+  addColumnIfMissing(database, "approvals", "fingerprint", "TEXT");
+  addColumnIfMissing(database, "execution_checkpoints", "pending_clarify_prompt_id", "TEXT");
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS clarify_prompts (
+      prompt_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(task_id),
+      tool_call_id TEXT NOT NULL REFERENCES tool_calls(tool_call_id),
+      requester_user_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      reason TEXT,
+      options_json TEXT NOT NULL,
+      allow_custom_answer INTEGER NOT NULL DEFAULT 0,
+      placeholder TEXT,
+      status TEXT NOT NULL,
+      requested_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      answered_at TEXT,
+      answer_option_id TEXT,
+      answer_text TEXT,
+      reviewer_id TEXT,
+      error_code TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clarify_prompts_task_id
+      ON clarify_prompts(task_id, requested_at);
+    CREATE INDEX IF NOT EXISTS idx_clarify_prompts_pending
+      ON clarify_prompts(status, expires_at);
+  `);
+}
+
 function readUserVersion(database: DatabaseSync): number {
   const row = database.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   return row?.user_version ?? 0;
@@ -740,6 +778,14 @@ function addColumnIfMissing(
   columnName: string,
   definition: string
 ): void {
+  const tableRow = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { name?: string } | undefined;
+
+  if (tableRow?.name !== tableName) {
+    return;
+  }
+
   const rows = database
     .prepare(`PRAGMA table_info(${tableName})`)
     .all() as Array<{ name: string }>;

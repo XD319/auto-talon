@@ -21,6 +21,8 @@ interface ApprovalRow {
   decided_at: string | null;
   reviewer_id: string | null;
   reviewer_notes: string | null;
+  allow_scope: ApprovalRecord["allowScope"];
+  fingerprint: string | null;
   policy_decision_id: string;
   error_code: ApprovalRecord["errorCode"];
 }
@@ -45,9 +47,11 @@ export class SqliteApprovalRepository implements ApprovalRepository {
             decided_at,
             reviewer_id,
             reviewer_notes,
+            allow_scope,
+            fingerprint,
             policy_decision_id,
             error_code
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -63,6 +67,8 @@ export class SqliteApprovalRepository implements ApprovalRepository {
         null,
         null,
         null,
+        null,
+        record.fingerprint ?? null,
         record.policyDecisionId,
         null
       );
@@ -130,6 +136,7 @@ export class SqliteApprovalRepository implements ApprovalRepository {
       reviewerId: patch.reviewerId === undefined ? existing.reviewerId : patch.reviewerId,
       reviewerNotes:
         patch.reviewerNotes === undefined ? existing.reviewerNotes : patch.reviewerNotes,
+      allowScope: patch.allowScope === undefined ? existing.allowScope : patch.allowScope,
       status: patch.status ?? existing.status
     };
 
@@ -150,6 +157,7 @@ export class SqliteApprovalRepository implements ApprovalRepository {
               decided_at = ?,
               reviewer_id = ?,
               reviewer_notes = ?,
+              allow_scope = ?,
               error_code = ?
           WHERE approval_id = ?
         `
@@ -159,6 +167,7 @@ export class SqliteApprovalRepository implements ApprovalRepository {
         nextRecord.decidedAt,
         nextRecord.reviewerId,
         nextRecord.reviewerNotes,
+        nextRecord.allowScope,
         nextRecord.errorCode,
         approvalId
       );
@@ -183,6 +192,8 @@ export class SqliteApprovalRepository implements ApprovalRepository {
       requesterUserId: row.requester_user_id,
       reviewerId: row.reviewer_id,
       reviewerNotes: row.reviewer_notes,
+      allowScope: row.allow_scope,
+      fingerprint: row.fingerprint,
       status: row.status,
       taskId: row.task_id,
       toolCallId: row.tool_call_id,

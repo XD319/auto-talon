@@ -9,6 +9,9 @@ const graphemeSegmenter =
     : null;
 
 export interface UseTextInputOptions {
+  activePrompt?:
+    | { kind: "approval" }
+    | { kind: "clarify"; customActive: boolean; optionCount: number };
   onHistoryNext: () => string | null;
   onHistoryPrevious: () => string | null;
   onImagePasteAttempt?: () => void;
@@ -16,6 +19,11 @@ export interface UseTextInputOptions {
   busy: boolean;
   hasPendingApproval: boolean;
   onApprovalAction: (action: "allow" | "deny") => void;
+  onPromptCtrlC?: () => void;
+  onPromptTab?: () => void;
+  onPromptMove?: (delta: -1 | 1) => void;
+  onPromptSubmit?: (value: string) => void;
+  onPromptShortcut?: (index: number) => void;
   onExit: () => void;
   onSubmit: (text: string) => boolean | Promise<boolean>;
   onSubmitBlockedBusy?: () => void;
@@ -24,8 +32,10 @@ export interface UseTextInputOptions {
 }
 
 export interface TextInputController {
+  clearValue: () => void;
   cursorIndex: number;
   lines: string[];
+  replaceValue: (nextValue: string) => void;
   value: string;
 }
 
@@ -76,8 +86,55 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       }
 
       interruptRequestedAtRef.current = now;
+      if (options.activePrompt !== undefined) {
+        options.onPromptCtrlC?.();
+        return;
+      }
       options.onInterruptRequest();
       return;
+    }
+
+    if (options.activePrompt?.kind === "approval") {
+      if (key.upArrow || key.leftArrow) {
+        options.onPromptMove?.(-1);
+        return;
+      }
+      if (key.downArrow || key.rightArrow) {
+        options.onPromptMove?.(1);
+        return;
+      }
+      if (key.return) {
+        options.onPromptSubmit?.(value);
+        return;
+      }
+      if (/^[1-4]$/u.test(input)) {
+        options.onPromptShortcut?.(Number.parseInt(input, 10) - 1);
+        return;
+      }
+      return;
+    }
+
+    const clarifyPrompt = options.activePrompt?.kind === "clarify" ? options.activePrompt : null;
+    if (clarifyPrompt !== null) {
+      if (key.tab) {
+        options.onPromptTab?.();
+        return;
+      }
+      if (!clarifyPrompt.customActive && (key.upArrow || key.leftArrow)) {
+        options.onPromptMove?.(-1);
+        return;
+      }
+      if (!clarifyPrompt.customActive && (key.downArrow || key.rightArrow)) {
+        options.onPromptMove?.(1);
+        return;
+      }
+      if (key.return) {
+        options.onPromptSubmit?.(value);
+        return;
+      }
+      if (!clarifyPrompt.customActive) {
+        return;
+      }
     }
 
     if (key.tab) {
@@ -274,8 +331,18 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
   });
 
   return {
+    clearValue: () => {
+      setValue("");
+      setCursorIndex(0);
+      preferredColumnRef.current = null;
+    },
     cursorIndex,
     lines: buildLinesWithCursor(value, cursorIndex),
+    replaceValue: (nextValue: string) => {
+      setValue(nextValue);
+      setCursorIndex(nextValue.length);
+      preferredColumnRef.current = null;
+    },
     value
   };
 }

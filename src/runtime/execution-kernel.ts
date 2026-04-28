@@ -301,10 +301,10 @@ export class ExecutionKernel {
       });
     }
 
-    if (task.status !== "waiting_approval") {
+    if (task.status !== "waiting_approval" && task.status !== "waiting_clarification") {
       throw new AppError({
         code: "task_not_resumable",
-        message: `Task ${taskId} is not waiting for approval.`
+        message: `Task ${taskId} is not waiting for approval or clarification.`
       });
     }
 
@@ -385,6 +385,44 @@ export class ExecutionKernel {
       },
       stage: "completion",
       summary: "Task finished with an approval failure",
+      taskId
+    });
+
+    return failedTask;
+  }
+
+  public failWaitingClarificationTask(taskId: string, error: AppError): TaskRecord {
+    const task = this.dependencies.taskRepository.findById(taskId);
+    if (task === null) {
+      throw new AppError({
+        code: "task_not_found",
+        message: `Task ${taskId} was not found.`
+      });
+    }
+
+    if (task.status !== "waiting_clarification") {
+      return task;
+    }
+
+    this.dependencies.executionCheckpointRepository.delete(taskId);
+    const failedTask = this.dependencies.taskRepository.update(taskId, {
+      errorCode: error.code,
+      errorMessage: error.message,
+      finishedAt: new Date().toISOString(),
+      status: "failed"
+    });
+
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "final_outcome",
+      payload: {
+        errorCode: error.code,
+        errorMessage: error.message,
+        output: null,
+        status: "failed"
+      },
+      stage: "completion",
+      summary: "Task finished with a clarification failure",
       taskId
     });
 
@@ -786,6 +824,7 @@ export class ExecutionKernel {
             iteration,
             signal: state.managedAbortController.abortController.signal,
             taskId: task.taskId,
+            taskMetadata: task.metadata,
             userId: task.requesterUserId,
             workspaceRoot: this.dependencies.workspaceRoot
           }
@@ -809,6 +848,36 @@ export class ExecutionKernel {
             memoryContext: state.memoryContext,
             messages,
             pendingToolCalls: pendingToolCalls.slice(toolIndex),
+            pendingClarifyPromptId: null,
+            taskId: task.taskId,
+            updatedAt: new Date().toISOString()
+          });
+
+          return {
+            output: null,
+            task
+          };
+        }
+
+        if (outcome.kind === "clarify_required") {
+          task = this.dependencies.taskRepository.update(task.taskId, {
+            status: "waiting_clarification"
+          });
+
+          emitTaskEvent(state.onTaskEvent, {
+            iteration,
+            kind: "tool",
+            status: "clarify_required",
+            taskId: task.taskId,
+            toolCallId: toolCall.toolCallId,
+            toolName: toolCall.toolName
+          });
+          this.dependencies.executionCheckpointRepository.save({
+            iteration,
+            memoryContext: state.memoryContext,
+            messages,
+            pendingClarifyPromptId: outcome.prompt.promptId,
+            pendingToolCalls: pendingToolCalls.slice(toolIndex),
             taskId: task.taskId,
             updatedAt: new Date().toISOString()
           });
@@ -824,9 +893,11 @@ export class ExecutionKernel {
         const structuredOutputSummary = summarizeToolOutput(outcome.result.output);
         const toolSummary = `${outcome.result.summary} | ${structuredOutputSummary}`;
         if (toolDescriptor !== null) {
-          messages.push(
-            createToolFeedbackMessage(outcome.result.output, toolCall, toolDescriptor.privacyLevel)
-          );
+          if (toolDescriptor.capability !== "interaction.ask_user") {
+            messages.push(
+              createToolFeedbackMessage(outcome.result.output, toolCall, toolDescriptor.privacyLevel)
+            );
+          }
           emitTaskEvent(state.onTaskEvent, {
             iteration,
             kind: "tool",
