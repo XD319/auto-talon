@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SLASH_COMMANDS, completeSlashCommand } from "../src/tui/slash-commands.js";
 import { buildTodaySummary } from "../src/tui/view-models/today-summary.js";
@@ -8,17 +8,18 @@ import type {
   CommitmentRecord,
   InboxItem,
   NextActionRecord,
+  ScheduleRecord,
   ThreadRecord
 } from "../src/types/index.js";
 
 type TodayServiceStub = Pick<
   AgentApplicationService,
-  "listCommitments" | "listInbox" | "listNextActions" | "listPendingApprovals" | "listThreads"
+  "listCommitments" | "listInbox" | "listNextActions" | "listPendingApprovals" | "listSchedules" | "listThreads"
 >;
 
 describe("personal assistant slash commands", () => {
   it("publishes the new command order and hides dashboard", () => {
-    expect(SLASH_COMMANDS.slice(0, 8)).toEqual([
+    expect(SLASH_COMMANDS.slice(0, 11)).toEqual([
       "/today",
       "/inbox",
       "/thread",
@@ -26,9 +27,16 @@ describe("personal assistant slash commands", () => {
       "/thread list",
       "/thread switch ",
       "/thread summary ",
-      "/next"
+      "/next",
+      "/next list",
+      "/next done ",
+      "/next block "
     ]);
     expect(SLASH_COMMANDS).not.toContain("/dashboard");
+    expect(SLASH_COMMANDS).toContain("/schedule create ");
+    expect(SLASH_COMMANDS).toContain("/schedule list ");
+    expect(SLASH_COMMANDS).toContain("/schedule pause ");
+    expect(SLASH_COMMANDS).toContain("/schedule resume ");
   });
 
   it("completes personal workflow commands by prefix", () => {
@@ -38,11 +46,14 @@ describe("personal assistant slash commands", () => {
     expect(completeSlashCommand("/thread s")).toBe("/thread switch ");
     expect(completeSlashCommand("/next d")).toBe("/next done ");
     expect(completeSlashCommand("/commitments b")).toBe("/commitments block ");
+    expect(completeSlashCommand("/schedule c")).toBe("/schedule create ");
   });
 });
 
 describe("today summary view model", () => {
   it("aggregates user-scoped sections and prioritizes active thread", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T08:00:00.000Z"));
     process.env.USERNAME = "local-user";
     const summary = buildTodaySummary(createServiceStub(), { activeThreadId: "thread-a" });
 
@@ -51,10 +62,16 @@ describe("today summary view model", () => {
     expect(summary.commitments.total).toBe(2);
     expect(summary.nextActions.total).toBe(2);
     expect(summary.pendingApprovals.total).toBe(2);
+    expect(summary.dueRoutines.total).toBe(2);
     expect(summary.threads.items[0]?.threadId).toBe("thread-a");
     expect(summary.commitments.items[0]?.threadId).toBe("thread-a");
     expect(summary.nextActions.items[0]?.threadId).toBe("thread-a");
+    expect(summary.dueRoutines.items[0]?.scheduleId).toBe("schedule-overdue");
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 function createServiceStub(): TodayServiceStub {
@@ -80,6 +97,15 @@ function createServiceStub(): TodayServiceStub {
     createNextAction("next-ignore", "thread-z", 0)
   ];
   const approvals: ApprovalRecord[] = [createApproval("approval-2"), createApproval("approval-1")];
+  const schedules: ScheduleRecord[] = [
+    createSchedule("schedule-today", "2026-01-01T10:00:00.000Z"),
+    createSchedule("schedule-overdue", "2025-12-31T23:00:00.000Z"),
+    createSchedule("schedule-later", "2026-01-02T10:00:00.000Z"),
+    {
+      ...createSchedule("schedule-paused", "2026-01-01T11:00:00.000Z"),
+      status: "paused"
+    }
+  ];
 
   return {
     listCommitments() {
@@ -93,6 +119,13 @@ function createServiceStub(): TodayServiceStub {
     },
     listPendingApprovals() {
       return approvals;
+    },
+    listSchedules(query?: { ownerUserId?: string; status?: "active" | "paused" | "completed" | "archived" }) {
+      return schedules.filter(
+        (item) =>
+          (query?.ownerUserId === undefined || item.ownerUserId === query.ownerUserId) &&
+          (query?.status === undefined || item.status === query.status)
+      );
     },
     listThreads() {
       return threads;
@@ -200,5 +233,31 @@ function createApproval(approvalId: string): ApprovalRecord {
     taskId: "task",
     toolCallId: "call",
     toolName: "file_write"
+  };
+}
+
+function createSchedule(scheduleId: string, nextFireAt: string): ScheduleRecord {
+  return {
+    agentProfileId: "executor",
+    backoffBaseMs: 5_000,
+    backoffMaxMs: 300_000,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    cron: null,
+    cwd: process.cwd(),
+    input: "scheduled prompt",
+    intervalMs: 60_000,
+    lastFireAt: null,
+    maxAttempts: 3,
+    metadata: {},
+    name: scheduleId,
+    nextFireAt,
+    ownerUserId: "local-user",
+    providerName: "mock",
+    runAt: null,
+    scheduleId,
+    status: "active",
+    threadId: null,
+    timezone: null,
+    updatedAt: "2026-01-01T00:00:00.000Z"
   };
 }

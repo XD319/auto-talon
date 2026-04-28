@@ -3,6 +3,7 @@ import React from "react";
 import { Box, Text, useApp } from "ink";
 
 import type { AgentApplicationService, AppConfig } from "../runtime/index.js";
+import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
 import type { ApprovalAllowScope } from "../types/index.js";
 import { formatMemoryGuide, formatMemoryList, formatMemoryRecallExplanation, formatMemorySuggestionQueue } from "../cli/formatters.js";
 import { Banner } from "./components/banner.js";
@@ -32,6 +33,16 @@ export interface ChatTuiAppProps {
   initialThreadId?: string;
   reviewerId: string;
   service: AgentApplicationService;
+}
+
+interface ScheduleCommandController {
+  activeThreadId: string | null;
+  addSystemMessage: (text: string) => void;
+}
+
+interface ScheduleCommandOptions {
+  cwd: string;
+  providerName: string;
 }
 
 export function ChatTuiApp({
@@ -209,19 +220,17 @@ export function ChatTuiApp({
       }
 
       if (text === "/schedule") {
-        const userId = resolveRuntimeUserId();
-        const schedules = service
-          .listSchedules({ ownerUserId: userId, status: "active" })
-          .sort((left, right) => (left.nextFireAt ?? "9999").localeCompare(right.nextFireAt ?? "9999"))
-          .slice(0, 20);
-        controller.addSystemMessage(
-          schedules.length === 0
-            ? `Schedules (user=${userId}): none`
-            : `Schedules (user=${userId}, showing ${schedules.length}):\n${schedules
-                .map((item) => `- ${item.scheduleId.slice(0, 8)} | ${item.name} | next=${item.nextFireAt ?? "none"}`)
-                .join("\n")}`
-        );
-        return true;
+        return handleScheduleCommand(text, controller, service, {
+          cwd,
+          providerName: config.provider.name
+        });
+      }
+
+      if (text.startsWith("/schedule")) {
+        return handleScheduleCommand(text, controller, service, {
+          cwd,
+          providerName: config.provider.name
+        });
       }
 
       if (text === "/ops") {
@@ -834,6 +843,110 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
   return true;
 }
 
+export function handleScheduleCommand(
+  text: string,
+  controller: ScheduleCommandController,
+  service: Pick<
+    AgentApplicationService,
+    "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule"
+  >,
+  options: ScheduleCommandOptions
+): boolean {
+  const { args, command, rest } = parseSlashInput(text);
+  if (command !== "/schedule") {
+    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
+    return true;
+  }
+  const sub = args[0] ?? "list";
+  if (sub === "list") {
+    const filter = args[1] ?? "active";
+    if (filter !== "active" && filter !== "paused" && filter !== "all") {
+      controller.addSystemMessage("Usage: /schedule list [active|paused|all]");
+      return true;
+    }
+    const userId = resolveRuntimeUserId();
+    const schedules = service
+      .listSchedules({
+        ownerUserId: userId,
+        ...(filter === "all" ? {} : { status: filter })
+      })
+      .sort((left, right) => (left.nextFireAt ?? "9999-12-31T23:59:59.999Z").localeCompare(right.nextFireAt ?? "9999-12-31T23:59:59.999Z"))
+      .slice(0, 20);
+    controller.addSystemMessage(
+      schedules.length === 0
+        ? `Schedules (${filter}, user=${userId}): none`
+        : `Schedules (${filter}, user=${userId}, showing ${schedules.length}):\n${schedules
+            .map((item) => `- ${item.scheduleId.slice(0, 8)} | ${item.name} [${item.status}] | next=${item.nextFireAt ?? "none"}`)
+            .join("\n")}`
+    );
+    return true;
+  }
+  if (sub === "create") {
+    const payload = rest.slice("create".length).trim();
+    const separatorIndex = payload.indexOf("|");
+    if (separatorIndex <= 0 || separatorIndex === payload.length - 1) {
+      controller.addSystemMessage(
+        "Usage: /schedule create <when> | <prompt>\nExample: /schedule create 每天 | review inbox"
+      );
+      return true;
+    }
+    const whenText = payload.slice(0, separatorIndex).trim();
+    const prompt = payload.slice(separatorIndex + 1).trim();
+    if (whenText.length === 0 || prompt.length === 0) {
+      controller.addSystemMessage(
+        "Usage: /schedule create <when> | <prompt>\nExample: /schedule create 今天 18:30 | summarize today"
+      );
+      return true;
+    }
+    try {
+      const parsed = parseNaturalLanguageScheduleWhen(whenText);
+      const schedule = service.createSchedule({
+        agentProfileId: "executor",
+        cwd: options.cwd,
+        input: prompt,
+        name: deriveScheduleName(prompt),
+        ownerUserId: resolveRuntimeUserId(),
+        providerName: options.providerName,
+        ...(controller.activeThreadId !== null ? { threadId: controller.activeThreadId } : {}),
+        ...(parsed.every !== undefined ? { every: parsed.every } : {}),
+        ...(parsed.runAt !== undefined ? { runAt: parsed.runAt } : {})
+      });
+      controller.addSystemMessage(
+        `Scheduled ${schedule.scheduleId.slice(0, 8)} | ${schedule.name} [${schedule.status}] | next=${schedule.nextFireAt ?? "none"}`
+      );
+    } catch (error) {
+      controller.addSystemMessage(
+        `${error instanceof Error ? error.message : String(error)}\nExample: /schedule create 每周 | prepare weekly review`
+      );
+    }
+    return true;
+  }
+  if (sub === "pause" || sub === "resume") {
+    const prefix = args[1] ?? "";
+    if (prefix.length === 0) {
+      controller.addSystemMessage(`Usage: /schedule ${sub} <schedule-id-prefix>`);
+      return true;
+    }
+    const matches = resolveScheduleByPrefix(prefix, service);
+    if (matches.kind !== "one") {
+      controller.addSystemMessage(matches.message);
+      return true;
+    }
+    const updated =
+      sub === "pause"
+        ? service.pauseSchedule(matches.item.scheduleId)
+        : service.resumeSchedule(matches.item.scheduleId);
+    controller.addSystemMessage(
+      `Schedule ${sub}d: ${updated.scheduleId.slice(0, 8)} | ${updated.name} [${updated.status}] | next=${updated.nextFireAt ?? "none"}`
+    );
+    return true;
+  }
+  controller.addSystemMessage(
+    "Usage: /schedule | /schedule list [active|paused|all] | /schedule create <when> | <prompt> | /schedule pause <schedule-id-prefix> | /schedule resume <schedule-id-prefix>"
+  );
+  return true;
+}
+
 function resolveMemoryByPrefix(
   prefix: string,
   service: AgentApplicationService
@@ -851,6 +964,34 @@ function resolveMemoryByPrefix(
         ? `No memory matched prefix '${prefix}'.`
         : `Ambiguous memory prefix '${prefix}':\n${matches.map((item) => `- ${item.memoryId} | ${item.title}`).join("\n")}`
   };
+}
+
+function resolveScheduleByPrefix(
+  prefix: string,
+  service: Pick<AgentApplicationService, "listSchedules">
+):
+  | { item: ReturnType<AgentApplicationService["listSchedules"]>[number]; kind: "one" }
+  | { kind: "error"; message: string } {
+  const userId = resolveRuntimeUserId();
+  const matches = service
+    .listSchedules({ ownerUserId: userId })
+    .filter((item) => item.scheduleId.startsWith(prefix));
+  if (matches.length === 1) {
+    return { item: matches[0]!, kind: "one" };
+  }
+  return {
+    kind: "error",
+    message:
+      matches.length === 0
+        ? `No schedule matched prefix '${prefix}'.`
+        : `Ambiguous schedule prefix '${prefix}':\n${matches.map((item) => `- ${item.scheduleId.slice(0, 8)} | ${item.name}`).join("\n")}`
+  };
+}
+
+function deriveScheduleName(prompt: string): string {
+  const firstLine = prompt.split(/\r?\n/u)[0]?.trim() ?? "";
+  const normalized = firstLine.length > 0 ? firstLine : "Scheduled routine";
+  return normalized.slice(0, 80);
 }
 
 function handleNextActionCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {

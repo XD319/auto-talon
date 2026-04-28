@@ -11,6 +11,7 @@ import {
   useChatController,
   type ChatController
 } from "../src/tui/hooks/use-chat-controller.js";
+import { handleScheduleCommand } from "../src/tui/chat-app.js";
 import {
   canSubmitTextInput,
   deleteCharacterAfter,
@@ -29,7 +30,8 @@ import {
 } from "../src/tui/view-models/chat-messages.js";
 import type { AgentApplicationService, AppConfig } from "../src/runtime/index.js";
 import { createDefaultRunOptions } from "../src/runtime/index.js";
-import type { ApprovalRecord, RuntimeRunOptions, TaskRecord, ToolCallRecord, TraceEvent } from "../src/types/index.js";
+import type { ApprovalRecord, RuntimeRunOptions, ScheduleRecord, TaskRecord, ToolCallRecord, TraceEvent } from "../src/types/index.js";
+import type { CreateScheduleInput } from "../src/runtime/scheduler/index.js";
 
 type ControllerServiceStub = Pick<
   AgentApplicationService,
@@ -496,6 +498,155 @@ describe("use-text-input helpers", () => {
   });
 });
 
+describe("schedule slash command helper", () => {
+  it("creates schedules with the active thread", () => {
+    const messages: string[] = [];
+    const createSchedule = vi.fn((input: CreateScheduleInput) => ({
+      ...createScheduleRecord("schedule-1"),
+      name: input.name,
+      nextFireAt: input.runAt ?? "2026-01-01T10:00:00.000Z",
+      threadId: input.threadId ?? null
+    }));
+    const handled = handleScheduleCommand(
+      "/schedule create 每天 | review inbox",
+      {
+        activeThreadId: "thread-123",
+        addSystemMessage: (text) => messages.push(text)
+      },
+      {
+        createSchedule,
+        listSchedules: () => [],
+        pauseSchedule: vi.fn(),
+        resumeSchedule: vi.fn()
+      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      {
+        cwd: process.cwd(),
+        providerName: "mock"
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(createSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        every: "1d",
+        input: "review inbox",
+        threadId: "thread-123"
+      })
+    );
+    expect(messages[0]).toContain("Scheduled");
+  });
+
+  it("lists schedules with status filters and resolves pause/resume by prefix", () => {
+    const messages: string[] = [];
+    const schedules = [
+      createScheduleRecord("schedule-12345678"),
+      {
+        ...createScheduleRecord("schedule-abcdef12"),
+        status: "paused" as const
+      }
+    ];
+    const pauseSchedule = vi.fn(() => ({ ...schedules[0]!, status: "paused" as const }));
+    const resumeSchedule = vi.fn(() => ({ ...schedules[1]!, status: "active" as const }));
+    handleScheduleCommand(
+      "/schedule list all",
+      {
+        activeThreadId: null,
+        addSystemMessage: (text) => messages.push(text)
+      },
+      {
+        createSchedule: vi.fn(),
+        listSchedules: () => schedules,
+        pauseSchedule,
+        resumeSchedule
+      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      {
+        cwd: process.cwd(),
+        providerName: "mock"
+      }
+    );
+    handleScheduleCommand(
+      "/schedule pause schedule-12",
+      {
+        activeThreadId: null,
+        addSystemMessage: (text) => messages.push(text)
+      },
+      {
+        createSchedule: vi.fn(),
+        listSchedules: () => schedules,
+        pauseSchedule,
+        resumeSchedule
+      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      {
+        cwd: process.cwd(),
+        providerName: "mock"
+      }
+    );
+    handleScheduleCommand(
+      "/schedule resume schedule-ab",
+      {
+        activeThreadId: null,
+        addSystemMessage: (text) => messages.push(text)
+      },
+      {
+        createSchedule: vi.fn(),
+        listSchedules: () => schedules,
+        pauseSchedule,
+        resumeSchedule
+      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      {
+        cwd: process.cwd(),
+        providerName: "mock"
+      }
+    );
+
+    expect(messages[0]).toContain("Schedules (all");
+    expect(pauseSchedule).toHaveBeenCalledWith("schedule-12345678");
+    expect(resumeSchedule).toHaveBeenCalledWith("schedule-abcdef12");
+  });
+
+  it("reports usage and ambiguity errors", () => {
+    const messages: string[] = [];
+    const schedules = [createScheduleRecord("schedule-1111"), createScheduleRecord("schedule-1122")];
+    handleScheduleCommand(
+      "/schedule create invalid",
+      {
+        activeThreadId: null,
+        addSystemMessage: (text) => messages.push(text)
+      },
+      {
+        createSchedule: vi.fn(),
+        listSchedules: () => schedules,
+        pauseSchedule: vi.fn(),
+        resumeSchedule: vi.fn()
+      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      {
+        cwd: process.cwd(),
+        providerName: "mock"
+      }
+    );
+    handleScheduleCommand(
+      "/schedule pause schedule-11",
+      {
+        activeThreadId: null,
+        addSystemMessage: (text) => messages.push(text)
+      },
+      {
+        createSchedule: vi.fn(),
+        listSchedules: () => schedules,
+        pauseSchedule: vi.fn(),
+        resumeSchedule: vi.fn()
+      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      {
+        cwd: process.cwd(),
+        providerName: "mock"
+      }
+    );
+
+    expect(messages[0]).toContain("Usage: /schedule create");
+    expect(messages[1]).toContain("Ambiguous schedule prefix");
+  });
+});
+
 function createTraceEvent(
   eventType: TraceEvent["eventType"],
   payload: Record<string, unknown>
@@ -560,6 +711,32 @@ function createApprovalLookupService() {
       toolCalls: [createToolCallRecord()],
       trace: []
     })
+  };
+}
+
+function createScheduleRecord(scheduleId: string): ScheduleRecord {
+  return {
+    agentProfileId: "executor",
+    backoffBaseMs: 5_000,
+    backoffMaxMs: 300_000,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    cron: null,
+    cwd: process.cwd(),
+    input: "scheduled prompt",
+    intervalMs: 60_000,
+    lastFireAt: null,
+    maxAttempts: 3,
+    metadata: {},
+    name: scheduleId,
+    nextFireAt: "2026-01-01T10:00:00.000Z",
+    ownerUserId: "local-user",
+    providerName: "mock",
+    runAt: null,
+    scheduleId,
+    status: "active",
+    threadId: null,
+    timezone: null,
+    updatedAt: "2026-01-01T00:00:00.000Z"
   };
 }
 

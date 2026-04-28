@@ -4,6 +4,7 @@ import type {
   CommitmentRecord,
   InboxItem,
   NextActionRecord,
+  ScheduleRecord,
   ThreadRecord
 } from "../../types/index.js";
 
@@ -14,6 +15,7 @@ export interface TodaySummarySection<TItem> {
 
 export interface TodaySummaryViewModel {
   commitments: TodaySummarySection<CommitmentRecord>;
+  dueRoutines: TodaySummarySection<ScheduleRecord>;
   inbox: TodaySummarySection<InboxItem>;
   nextActions: TodaySummarySection<NextActionRecord>;
   pendingApprovals: TodaySummarySection<ApprovalRecord>;
@@ -65,9 +67,14 @@ export function buildTodaySummary(
   const pendingApprovalsAll = service
     .listPendingApprovals()
     .sort((left, right) => byIsoAsc(left.expiresAt, right.expiresAt));
+  const dueRoutinesAll = service
+    .listSchedules({ ownerUserId: userId, status: "active" })
+    .filter((item) => isDueTodayOrOverdue(item, new Date()))
+    .sort(compareDueRoutine);
 
   return {
     commitments: { items: prioritizeByThread(commitmentsAll, activeThreadId).slice(0, limit), total: commitmentsAll.length },
+    dueRoutines: { items: dueRoutinesAll.slice(0, limit), total: dueRoutinesAll.length },
     inbox: { items: inboxAll.slice(0, limit), total: inboxAll.length },
     nextActions: { items: nextActionsAll.slice(0, limit), total: nextActionsAll.length },
     pendingApprovals: { items: pendingApprovalsAll.slice(0, limit), total: pendingApprovalsAll.length },
@@ -79,6 +86,12 @@ export function buildTodaySummary(
 export function formatTodaySummary(summary: TodaySummaryViewModel): string {
   return [
     `Today summary (user=${summary.userId})`,
+    formatSection(
+      "Due Routines",
+      summary.dueRoutines.total,
+      summary.dueRoutines.items,
+      (item) => `${item.scheduleId.slice(0, 8)} | ${item.name} [${formatRoutineStatus(item)}]`
+    ),
     formatSection(
       "Inbox",
       summary.inbox.total,
@@ -184,4 +197,45 @@ function byIsoDesc(left: string, right: string): number {
 
 function byIsoAsc(left: string, right: string): number {
   return left.localeCompare(right);
+}
+
+function isDueTodayOrOverdue(schedule: ScheduleRecord, now: Date): boolean {
+  if (schedule.nextFireAt === null) {
+    return false;
+  }
+  const nextFire = new Date(schedule.nextFireAt);
+  if (Number.isNaN(nextFire.getTime())) {
+    return false;
+  }
+  return nextFire.getTime() < startOfTomorrowLocal(now).getTime();
+}
+
+function compareDueRoutine(left: ScheduleRecord, right: ScheduleRecord): number {
+  const leftFire = left.nextFireAt;
+  const rightFire = right.nextFireAt;
+  if (leftFire === null && rightFire === null) {
+    return left.name.localeCompare(right.name);
+  }
+  if (leftFire === null) {
+    return 1;
+  }
+  if (rightFire === null) {
+    return -1;
+  }
+  return leftFire.localeCompare(rightFire);
+}
+
+function formatRoutineStatus(schedule: ScheduleRecord): string {
+  if (schedule.nextFireAt === null) {
+    return schedule.status;
+  }
+  const due = new Date(schedule.nextFireAt);
+  if (!Number.isNaN(due.getTime()) && due.getTime() <= Date.now()) {
+    return `overdue @ ${schedule.nextFireAt}`;
+  }
+  return `due @ ${schedule.nextFireAt}`;
+}
+
+function startOfTomorrowLocal(now: Date): Date {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
 }

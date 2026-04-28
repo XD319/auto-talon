@@ -371,14 +371,6 @@ export function createApplication(
     inboxRepository: storage.inbox,
     traceService
   });
-  const inboxCollector = new InboxCollector({
-    findSchedule: (scheduleId) => storage.schedules.findById(scheduleId),
-    findTask: (taskId) => storage.tasks.findById(taskId),
-    inboxService,
-    listScheduleRunsByTask: (taskId) => storage.scheduleRuns.listByTaskId(taskId),
-    traceService
-  });
-  inboxCollector.start();
   const commitmentService = new CommitmentService({
     commitmentRepository: storage.commitments,
     traceService
@@ -387,6 +379,15 @@ export function createApplication(
     nextActionRepository: storage.nextActions,
     traceService
   });
+  const inboxCollector = new InboxCollector({
+    findSchedule: (scheduleId) => storage.schedules.findById(scheduleId),
+    findTask: (taskId) => storage.tasks.findById(taskId),
+    inboxService,
+    listScheduleRunsByTask: (taskId) => storage.scheduleRuns.listByTaskId(taskId),
+    nextActionService,
+    traceService
+  });
+  inboxCollector.start();
   const threadCommitmentProjector = new ThreadCommitmentProjector({
     commitmentService,
     nextActionService,

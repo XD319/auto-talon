@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DeliveryService } from "../src/runtime/delivery/delivery-service.js";
 import { InboxCollector } from "../src/runtime/inbox/inbox-collector.js";
 import { InboxService } from "../src/runtime/inbox/inbox-service.js";
+import { NextActionService } from "../src/runtime/commitments/next-action-service.js";
 import { StorageManager } from "../src/storage/database.js";
 import { TraceService } from "../src/tracing/trace-service.js";
 
@@ -19,11 +20,16 @@ describe("inbox collector", () => {
         inboxRepository: storage.inbox,
         traceService
       });
+      const nextActionService = new NextActionService({
+        nextActionRepository: storage.nextActions,
+        traceService
+      });
       const collector = new InboxCollector({
         findSchedule: () => null,
         findTask: (taskId) => storage.tasks.findById(taskId),
         inboxService,
         listScheduleRunsByTask: () => [],
+        nextActionService,
         traceService
       });
 
@@ -224,6 +230,261 @@ describe("inbox collector", () => {
       const memorySuggestion = items.find((item) => item.category === "memory_suggestion");
       expect(memorySuggestion?.severity).toBe("action_required");
       expect(memorySuggestion?.metadata.promotedMemoryId).toBe("mem-1");
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("routes scheduled success and failures without duplicate generic inbox items", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    try {
+      const traceService = new TraceService(storage.traces);
+      const deliveryService = new DeliveryService();
+      const inboxService = new InboxService({
+        deliveryProducer: deliveryService.createProducer(),
+        deliveryProducerKey: deliveryService.producerKey(),
+        deliveryService,
+        inboxRepository: storage.inbox,
+        traceService
+      });
+      const nextActionService = new NextActionService({
+        nextActionRepository: storage.nextActions,
+        traceService
+      });
+
+      storage.threads.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        ownerUserId: "u1",
+        providerName: "test-provider",
+        threadId: "thread-routine",
+        title: "Routine thread"
+      });
+      storage.tasks.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        input: "scheduled success",
+        maxIterations: 2,
+        metadata: {},
+        providerName: "test-provider",
+        requesterUserId: "u1",
+        status: "succeeded",
+        taskId: "task-success",
+        threadId: "thread-routine",
+        tokenBudget: {
+          inputLimit: 1000,
+          outputLimit: 1000,
+          reservedOutput: 100,
+          usedInput: 0,
+          usedOutput: 0,
+          usedCostUsd: 0
+        }
+      });
+      storage.tasks.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        input: "scheduled fail standalone",
+        maxIterations: 2,
+        metadata: {},
+        providerName: "test-provider",
+        requesterUserId: "u1",
+        status: "failed",
+        taskId: "task-fail-standalone",
+        threadId: null,
+        tokenBudget: {
+          inputLimit: 1000,
+          outputLimit: 1000,
+          reservedOutput: 100,
+          usedInput: 0,
+          usedOutput: 0,
+          usedCostUsd: 0
+        }
+      });
+      storage.tasks.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        input: "scheduled fail threaded",
+        maxIterations: 2,
+        metadata: {},
+        providerName: "test-provider",
+        requesterUserId: "u1",
+        status: "failed",
+        taskId: "task-fail-threaded",
+        threadId: "thread-routine",
+        tokenBudget: {
+          inputLimit: 1000,
+          outputLimit: 1000,
+          reservedOutput: 100,
+          usedInput: 0,
+          usedOutput: 0,
+          usedCostUsd: 0
+        }
+      });
+      storage.schedules.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        input: "success prompt",
+        name: "Daily review",
+        nextFireAt: "2026-01-01T10:00:00.000Z",
+        ownerUserId: "u1",
+        providerName: "test-provider",
+        scheduleId: "schedule-success",
+        threadId: "thread-routine"
+      });
+      storage.schedules.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        input: "standalone prompt",
+        name: "Standalone routine",
+        nextFireAt: "2026-01-01T10:00:00.000Z",
+        ownerUserId: "u1",
+        providerName: "test-provider",
+        scheduleId: "schedule-standalone",
+        threadId: null
+      });
+      storage.schedules.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        input: "threaded prompt",
+        name: "Threaded routine",
+        nextFireAt: "2026-01-01T10:00:00.000Z",
+        ownerUserId: "u1",
+        providerName: "test-provider",
+        scheduleId: "schedule-threaded",
+        threadId: "thread-routine"
+      });
+      storage.scheduleRuns.create({
+        attemptNumber: 1,
+        runId: "run-success",
+        scheduleId: "schedule-success",
+        scheduledAt: "2026-01-01T10:00:00.000Z",
+        status: "completed",
+        taskId: "task-success",
+        threadId: "thread-routine",
+        trigger: "manual"
+      });
+      storage.scheduleRuns.create({
+        attemptNumber: 1,
+        runId: "run-standalone",
+        scheduleId: "schedule-standalone",
+        scheduledAt: "2026-01-01T10:00:00.000Z",
+        status: "failed",
+        taskId: "task-fail-standalone",
+        trigger: "manual"
+      });
+      storage.scheduleRuns.create({
+        attemptNumber: 1,
+        runId: "run-threaded",
+        scheduleId: "schedule-threaded",
+        scheduledAt: "2026-01-01T10:00:00.000Z",
+        status: "failed",
+        taskId: "task-fail-threaded",
+        threadId: "thread-routine",
+        trigger: "manual"
+      });
+
+      const collector = new InboxCollector({
+        findSchedule: (scheduleId) => storage.schedules.findById(scheduleId),
+        findTask: (taskId) => storage.tasks.findById(taskId),
+        inboxService,
+        listScheduleRunsByTask: (taskId) => storage.scheduleRuns.listByTaskId(taskId),
+        nextActionService,
+        traceService
+      });
+
+      collector.start();
+      traceService.record({
+        actor: "runtime",
+        eventType: "task_success",
+        payload: {
+          cwd: process.cwd(),
+          outputSummary: "done",
+          status: "succeeded"
+        },
+        stage: "completion",
+        summary: "task success",
+        taskId: "task-success"
+      });
+      traceService.record({
+        actor: "scheduler",
+        eventType: "schedule_run_finished",
+        payload: {
+          attemptNumber: 1,
+          runId: "run-success",
+          scheduleId: "schedule-success",
+          status: "completed",
+          taskId: "task-success",
+          threadId: "thread-routine"
+        },
+        stage: "completion",
+        summary: "routine success",
+        taskId: "task-success"
+      });
+      traceService.record({
+        actor: "runtime",
+        eventType: "task_failure",
+        payload: {
+          errorCode: "provider_error",
+          errorMessage: "boom"
+        },
+        stage: "completion",
+        summary: "task fail standalone",
+        taskId: "task-fail-standalone"
+      });
+      traceService.record({
+        actor: "scheduler",
+        eventType: "schedule_run_failed",
+        payload: {
+          attemptNumber: 1,
+          errorCode: "provider_error",
+          errorMessage: "boom",
+          runId: "run-standalone",
+          scheduleId: "schedule-standalone",
+          taskId: "task-fail-standalone"
+        },
+        stage: "completion",
+        summary: "routine fail standalone",
+        taskId: "task-fail-standalone"
+      });
+      traceService.record({
+        actor: "runtime",
+        eventType: "task_failure",
+        payload: {
+          errorCode: "provider_error",
+          errorMessage: "blocked"
+        },
+        stage: "completion",
+        summary: "task fail threaded",
+        taskId: "task-fail-threaded"
+      });
+      traceService.record({
+        actor: "scheduler",
+        eventType: "schedule_run_failed",
+        payload: {
+          attemptNumber: 1,
+          errorCode: "provider_error",
+          errorMessage: "blocked",
+          runId: "run-threaded",
+          scheduleId: "schedule-threaded",
+          taskId: "task-fail-threaded"
+        },
+        stage: "completion",
+        summary: "routine fail threaded",
+        taskId: "task-fail-threaded"
+      });
+      collector.stop();
+
+      const successItems = storage.inbox.list({ taskId: "task-success", userId: "u1" });
+      expect(successItems.filter((item) => item.category === "task_completed")).toHaveLength(1);
+
+      const standaloneItems = storage.inbox.list({ taskId: "task-fail-standalone", userId: "u1" });
+      expect(standaloneItems.filter((item) => item.category === "task_failed")).toHaveLength(1);
+
+      const threadedItems = storage.inbox.list({ taskId: "task-fail-threaded", userId: "u1" });
+      expect(threadedItems.some((item) => item.category === "task_failed")).toBe(false);
+      expect(threadedItems.some((item) => item.category === "task_blocked")).toBe(true);
+      const blockedActions = storage.nextActions.list({ threadId: "thread-routine" });
+      expect(blockedActions.some((item) => item.title === "Follow up failed routine: Threaded routine")).toBe(true);
     } finally {
       storage.close();
     }

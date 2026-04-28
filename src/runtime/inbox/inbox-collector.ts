@@ -1,17 +1,20 @@
 import type { InboxService } from "./inbox-service.js";
 import type {
+  NextActionRecord,
   ScheduleRecord,
   ScheduleRunRecord,
   TaskRecord,
   TraceEvent
 } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
+import type { NextActionService } from "../commitments/index.js";
 
 export interface InboxCollectorDependencies {
   findSchedule: (scheduleId: string) => ScheduleRecord | null;
   findTask: (taskId: string) => TaskRecord | null;
   inboxService: InboxService;
   listScheduleRunsByTask: (taskId: string) => ScheduleRunRecord[];
+  nextActionService: NextActionService;
   traceService: TraceService;
 }
 
@@ -37,6 +40,9 @@ export class InboxCollector {
   private handleTrace(event: TraceEvent): void {
     switch (event.eventType) {
       case "task_success":
+        if (this.findRelatedScheduleRun(event.taskId) !== null) {
+          return;
+        }
         this.dependencies.inboxService.append({
           category: "task_completed",
           dedupKey: `task_success:${event.taskId}`,
@@ -50,6 +56,9 @@ export class InboxCollector {
         });
         return;
       case "task_failure":
+        if (this.findRelatedScheduleRun(event.taskId) !== null) {
+          return;
+        }
         this.dependencies.inboxService.append({
           category: "task_failed",
           dedupKey: `task_failure:${event.taskId}`,
@@ -168,19 +177,46 @@ export class InboxCollector {
         if (event.payload.status !== "completed") {
           return;
         }
+        {
+          const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
+          const scheduleLabel = schedule?.name ?? event.payload.runId;
+          this.dependencies.inboxService.append({
+            category: "task_completed",
+            dedupKey: `schedule_run_finished:${event.payload.runId}`,
+            scheduleRunId: event.payload.runId,
+            severity: "info",
+            sourceTraceId: event.eventId,
+            summary: `Routine completed: ${scheduleLabel}.`,
+            taskId: event.payload.taskId ?? event.taskId,
+            threadId: event.payload.threadId,
+            title: `Routine completed: ${scheduleLabel}`,
+            userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
+          });
+        }
+        return;
+      case "schedule_run_failed": {
+        const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
+        const scheduleRun = this.findScheduleRunByRunId(event.payload.taskId, event.payload.runId);
+        const scheduleName = schedule?.name ?? event.payload.runId;
+        const failureReason = [event.payload.errorCode, event.payload.errorMessage].filter(Boolean).join(": ") || "Scheduled routine failed";
+        if (schedule?.threadId !== null && schedule?.threadId !== undefined) {
+          this.createFailedRoutineFollowUp(schedule, event.payload.runId, event.payload.taskId, failureReason);
+          return;
+        }
         this.dependencies.inboxService.append({
-          category: "task_completed",
-          dedupKey: `schedule_run_finished:${event.payload.runId}`,
-          scheduleRunId: event.payload.runId,
-          severity: "info",
+          category: "task_failed",
+          dedupKey: `schedule_run_failed:${event.payload.runId}`,
+          scheduleRunId: scheduleRun?.runId ?? event.payload.runId,
+          severity: "warning",
           sourceTraceId: event.eventId,
-          summary: `Background schedule run ${event.payload.runId} completed.`,
+          summary: failureReason,
           taskId: event.payload.taskId ?? event.taskId,
-          threadId: event.payload.threadId,
-          title: "Background task completed",
+          threadId: schedule?.threadId ?? null,
+          title: `Routine failed: ${scheduleName}`,
           userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
         });
         return;
+      }
       case "commitment_blocked":
         this.dependencies.inboxService.append({
           category: "task_blocked",
@@ -249,5 +285,37 @@ export class InboxCollector {
       return schedule.ownerUserId;
     }
     return this.resolveUserId(fallbackTaskId);
+  }
+
+  private findRelatedScheduleRun(taskId: string): ScheduleRunRecord | null {
+    return this.dependencies.listScheduleRunsByTask(taskId)[0] ?? null;
+  }
+
+  private findScheduleRunByRunId(taskId: string | null, runId: string): ScheduleRunRecord | null {
+    if (taskId === null) {
+      return null;
+    }
+    return this.dependencies.listScheduleRunsByTask(taskId).find((item) => item.runId === runId) ?? null;
+  }
+
+  private createFailedRoutineFollowUp(
+    schedule: ScheduleRecord,
+    runId: string,
+    taskId: string | null,
+    reason: string
+  ): NextActionRecord {
+    const created = this.dependencies.nextActionService.create({
+      metadata: {
+        runId,
+        scheduleId: schedule.scheduleId,
+        ...(taskId !== null ? { taskId } : {})
+      },
+      source: "manual",
+      status: "blocked",
+      taskId,
+      threadId: schedule.threadId!,
+      title: `Follow up failed routine: ${schedule.name}`
+    });
+    return this.dependencies.nextActionService.block(created.nextActionId, reason);
   }
 }
