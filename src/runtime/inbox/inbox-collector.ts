@@ -89,14 +89,19 @@ export class InboxCollector {
         return;
       }
       case "experience_promoted":
-        if (event.payload.target === "project_memory") {
+        if (event.payload.target === "project_memory" || event.payload.target === "profile_memory") {
           this.dependencies.inboxService.append({
+            actionHint: "talon memory review-queue accept <inbox-id> | talon memory review-queue dismiss <inbox-id>",
             category: "memory_suggestion",
             dedupKey: `memory_suggestion:${event.payload.experienceId}`,
             experienceId: event.payload.experienceId,
-            severity: "info",
+            metadata: {
+              promotedMemoryId: event.payload.promotedMemoryId,
+              target: event.payload.target
+            },
+            severity: "action_required",
             sourceTraceId: event.eventId,
-            summary: "A new memory candidate has been promoted.",
+            summary: `A ${event.payload.target === "project_memory" ? "project" : "profile"} memory suggestion is ready for review.`,
             taskId: event.taskId,
             title: "Memory suggestion",
             userId: this.resolveUserId(event.taskId)

@@ -31,7 +31,7 @@ Subsystems:
 
 - `talon provider list|current|test|stats|route`
 - `talon budget show --task <id>|--thread <id>`
-- `talon memory list|show|search|snapshot|review`
+- `talon memory list|show|search|snapshot|review|guide|add|forget|why|review-queue`
 - `talon experience list|show|review|promote|search`
 - `talon skills list|view|enable|disable|draft|promote|rollback`
 - `talon gateway serve-webhook|serve-feishu|list-adapters`
@@ -61,3 +61,8 @@ TUI slash commands (chat mode):
 - `/commitments list [thread-id-prefix]`
 - `/commitments done <commitment-id-prefix>`
 - `/commitments block <commitment-id-prefix> <reason...>`
+- `/memory`
+- `/memory review`
+- `/memory add <profile|project> <text>`
+- `/memory forget <memory-id-prefix>`
+- `/memory why [memory-id-prefix]`

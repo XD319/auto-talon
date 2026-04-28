@@ -55,6 +55,51 @@ describe("inbox collector", () => {
           usedCostUsd: 0
         }
       });
+      const now = new Date().toISOString();
+      const experience = storage.experiences.create({
+        confidence: 0.9,
+        content: "Remember the promoted guidance.",
+        createdAt: now,
+        indexSignals: {
+          errorCodes: [],
+          paths: [],
+          phrases: [],
+          reviewers: [],
+          scopes: ["project:workspace"],
+          sourceTypes: ["task"],
+          statuses: ["accepted"],
+          taskStatuses: ["succeeded"],
+          tokens: ["remember", "guidance"],
+          types: ["task_outcome"],
+          valueScore: 0.9
+        },
+        keywordPhrases: [],
+        keywords: ["remember", "guidance"],
+        metadata: {},
+        promotedAt: null,
+        promotedMemoryId: null,
+        promotionTarget: "project_memory",
+        provenance: {
+          reviewerId: null,
+          sourceLabel: "task",
+          taskId: "task-1",
+          toolCallId: null,
+          traceEventId: null
+        },
+        reviewedAt: null,
+        scope: {
+          paths: [],
+          scope: "project",
+          scopeKey: process.cwd()
+        },
+        sourceType: "task",
+        status: "accepted",
+        summary: "Remember the promoted guidance.",
+        title: "Promoted guidance",
+        type: "task_outcome",
+        updatedAt: now,
+        valueScore: 0.9
+      });
 
       collector.start();
       traceService.record({
@@ -151,6 +196,18 @@ describe("inbox collector", () => {
         summary: "skill promotion suggested",
         taskId: "task-1"
       });
+      traceService.record({
+        actor: "reviewer.test",
+        eventType: "experience_promoted",
+        payload: {
+          experienceId: experience.experienceId,
+          promotedMemoryId: "mem-1",
+          target: "project_memory"
+        },
+        stage: "memory",
+        summary: "experience promoted to project memory",
+        taskId: "task-1"
+      });
       collector.stop();
 
       const items = storage.inbox.list({ userId: "u1" });
@@ -164,6 +221,9 @@ describe("inbox collector", () => {
       ).toBe(true);
       expect(items.some((item) => item.category === "budget_warning")).toBe(true);
       expect(items.some((item) => item.category === "budget_exceeded")).toBe(true);
+      const memorySuggestion = items.find((item) => item.category === "memory_suggestion");
+      expect(memorySuggestion?.severity).toBe("action_required");
+      expect(memorySuggestion?.metadata.promotedMemoryId).toBe("mem-1");
     } finally {
       storage.close();
     }

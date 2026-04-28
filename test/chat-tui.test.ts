@@ -19,6 +19,7 @@ import {
   moveCursorVertical,
   resolveApprovalShortcut
 } from "../src/tui/hooks/use-text-input.js";
+import { completeSlashCommand } from "../src/tui/slash-commands.js";
 import {
   displayChatMessages,
   resolveApprovalMessage,
@@ -487,6 +488,11 @@ describe("use-text-input helpers", () => {
     expect(canSubmitTextInput("hello", true)).toBe(false);
     expect(canSubmitTextInput("hello", false)).toBe(true);
     expect(canSubmitTextInput("   ", false)).toBe(false);
+  });
+
+  it("completes new memory slash commands", () => {
+    expect(completeSlashCommand("/mem")).toBe("/memory ");
+    expect(completeSlashCommand("/memory a")).toBe("/memory add ");
   });
 });
 

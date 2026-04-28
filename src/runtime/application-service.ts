@@ -33,6 +33,7 @@ import type {
   ExperienceRecord,
   InboxDeliveryEvent,
   InboxItem,
+  JsonValue,
   InboxListQuery,
   JsonObject,
   MemoryRecord,
@@ -612,6 +613,159 @@ export class AgentApplicationService {
     });
   }
 
+  public addMemory(input: {
+    content: string;
+    cwd: string;
+    profileId: string;
+    reviewerId: string;
+    scope: "profile" | "project";
+    userId: string;
+  }): MemoryRecord {
+    const content = input.content.trim();
+    if (content.length === 0) {
+      throw new Error("Memory content must not be empty.");
+    }
+
+    const scopeKey =
+      input.scope === "project" ? input.cwd : `${input.userId}:${input.profileId}`;
+    const summary = summarizeText(content, 160);
+    const title = summarizeText(content, 80);
+    const keywords = extractMemoryKeywords(content);
+    const memory = this.dependencies.memoryPlane.writeMemory({
+      confidence: 0.95,
+      content,
+      expiresAt: null,
+      keywords,
+      metadata: {
+        createdBy: input.reviewerId,
+        creationSurface: "manual_add"
+      },
+      privacyLevel: "internal",
+      retentionPolicy: {
+        kind: input.scope,
+        reason: `Manual memory added by ${input.reviewerId}.`,
+        ttlDays: 90
+      },
+      scope: input.scope,
+      scopeKey,
+      source: {
+        label: `Manual memory added by ${input.reviewerId}`,
+        sourceType: "manual_review",
+        taskId: null,
+        toolCallId: null,
+        traceEventId: null
+      },
+      status: "verified",
+      summary,
+      title
+    });
+
+    if (memory === null) {
+      throw new Error("Memory write was rejected by policy.");
+    }
+
+    return memory;
+  }
+
+  public forgetMemory(memoryId: string, reviewerId: string, note: string): MemoryRecord {
+    return this.reviewMemory(memoryId, "stale", reviewerId, note);
+  }
+
+  public explainMemoryRecall(taskId: string, memoryId?: string): {
+    entries: Array<{
+      blocked: boolean;
+      confidence: number;
+      downrankReasons: string[];
+      explanation: string;
+      filterReason: string | null;
+      filterReasonCode: string | null;
+      memoryId: string;
+      selected: boolean;
+      status: string;
+      title: string;
+    }>;
+    query: string;
+    selectedMemoryIds: string[];
+    taskId: string;
+  } | null {
+    const payload = this.traceTaskContext(taskId).memoryRecall;
+    if (payload === null) {
+      return null;
+    }
+
+    const entries =
+      memoryId === undefined
+        ? payload.entries
+        : payload.entries.filter((entry) => entry.memoryId === memoryId);
+    return {
+      entries: entries.map((entry) => ({
+        blocked: entry.blocked,
+        confidence: entry.confidence,
+        downrankReasons: entry.downrankReasons,
+        explanation: entry.explanation,
+        filterReason: entry.filterReason,
+        filterReasonCode: entry.filterReasonCode,
+        memoryId: entry.memoryId,
+        selected: entry.selected,
+        status: entry.status,
+        title: entry.title
+      })),
+      query: payload.query,
+      selectedMemoryIds: payload.selectedMemoryIds,
+      taskId
+    };
+  }
+
+  public listMemorySuggestions(query: {
+    limit?: number;
+    status?: InboxItem["status"];
+    userId?: string;
+  } = {}): InboxItem[] {
+    return this.dependencies.listInboxItems({
+      category: "memory_suggestion",
+      ...(query.limit !== undefined ? { limit: query.limit } : {}),
+      ...(query.status !== undefined ? { status: query.status } : {}),
+      ...(query.userId !== undefined ? { userId: query.userId } : {})
+    });
+  }
+
+  public acceptMemorySuggestion(inboxId: string, reviewerId: string): {
+    inboxItem: InboxItem;
+    memory: MemoryRecord | null;
+  } {
+    const item = this.requireMemorySuggestion(inboxId);
+    const draft = parseMemorySuggestionDraft(item.metadata);
+    const memory =
+      draft === null
+        ? this.restoreExistingSuggestedMemory(item)
+        : this.dependencies.memoryPlane.writeMemory({
+            confidence: draft.confidence,
+            content: draft.content,
+            expiresAt: null,
+            keywords: draft.keywords,
+            metadata: {
+              ...draft.metadata,
+              acceptedFromInboxId: item.inboxId,
+              acceptedBy: reviewerId
+            },
+            privacyLevel: draft.privacyLevel,
+            retentionPolicy: draft.retentionPolicy,
+            scope: draft.scope,
+            scopeKey: draft.scopeKey,
+            source: draft.source,
+            status: "verified",
+            summary: draft.summary,
+            title: draft.title
+          });
+    const done = this.dependencies.inboxService.markDone(inboxId, reviewerId);
+    return { inboxItem: done, memory };
+  }
+
+  public dismissMemorySuggestion(inboxId: string): InboxItem {
+    this.requireMemorySuggestion(inboxId);
+    return this.dependencies.inboxService.markDismissed(inboxId);
+  }
+
   public listPendingApprovals(): ApprovalRecord[] {
     this.reconcileExpiredApprovals();
     return this.dependencies.listPendingApprovals();
@@ -1067,6 +1221,29 @@ export class AgentApplicationService {
     });
   }
 
+  private requireMemorySuggestion(inboxId: string): InboxItem {
+    const item = this.dependencies.findInboxItem(inboxId);
+    if (item === null) {
+      throw new Error(`Inbox item ${inboxId} was not found.`);
+    }
+    if (item.category !== "memory_suggestion") {
+      throw new Error(`Inbox item ${inboxId} is not a memory suggestion.`);
+    }
+    return item;
+  }
+
+  private restoreExistingSuggestedMemory(item: InboxItem): MemoryRecord | null {
+    const promotedMemoryId = typeof item.metadata.promotedMemoryId === "string" ? item.metadata.promotedMemoryId : null;
+    if (promotedMemoryId === null) {
+      return null;
+    }
+    const existing = this.dependencies.findMemory(promotedMemoryId);
+    if (existing === null) {
+      throw new Error(`Suggested memory ${promotedMemoryId} was not found.`);
+    }
+    return existing;
+  }
+
   private providerStatsBy(groupBy: "thread" | "task" | "mode"): JsonObject {
     const events = this.dependencies
       .listTasks()
@@ -1361,6 +1538,20 @@ function readGroupingKey(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
+interface MemorySuggestionDraftShape {
+  confidence: number;
+  content: string;
+  keywords: string[];
+  metadata: JsonObject;
+  privacyLevel: "public" | "internal" | "restricted";
+  retentionPolicy: MemoryRecord["retentionPolicy"];
+  scope: "profile" | "project";
+  scopeKey: string;
+  source: MemoryRecord["source"];
+  summary: string;
+  title: string;
+}
+
 interface RollbackArtifactContent extends JsonObject {
   createdAt: string;
   operation: string;
@@ -1587,6 +1778,90 @@ function extractTimelineIteration(event: TraceEvent): number | null {
 
 function readNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function summarizeText(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3)}...`;
+}
+
+function extractMemoryKeywords(content: string): string[] {
+  const matches = content.toLowerCase().match(/[a-z0-9_./:-]{3,}/gu) ?? [];
+  return [...new Set(matches)].slice(0, 16);
+}
+
+function isJsonObject(value: JsonValue | undefined): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseMemorySuggestionDraft(metadata: JsonObject): MemorySuggestionDraftShape | null {
+  const raw = metadata.memorySuggestionDraft;
+  if (!isJsonObject(raw)) {
+    return null;
+  }
+  if (
+    typeof raw.content !== "string" ||
+    typeof raw.scope !== "string" ||
+    typeof raw.scopeKey !== "string" ||
+    typeof raw.title !== "string" ||
+    typeof raw.summary !== "string" ||
+    typeof raw.confidence !== "number" ||
+    !Array.isArray(raw.keywords) ||
+    typeof raw.privacyLevel !== "string" ||
+    !isJsonObject(raw.source) ||
+    !isJsonObject(raw.retentionPolicy)
+  ) {
+    return null;
+  }
+  return {
+    confidence: raw.confidence,
+    content: raw.content,
+    keywords: raw.keywords.filter((entry): entry is string => typeof entry === "string"),
+    metadata: isJsonObject(raw.metadata) ? raw.metadata : {},
+    privacyLevel:
+      raw.privacyLevel === "public" || raw.privacyLevel === "restricted"
+        ? raw.privacyLevel
+        : "internal",
+    retentionPolicy: {
+      kind:
+        raw.retentionPolicy.kind === "profile" || raw.retentionPolicy.kind === "project"
+          ? raw.retentionPolicy.kind
+          : "project",
+      reason:
+        typeof raw.retentionPolicy.reason === "string"
+          ? raw.retentionPolicy.reason
+          : "Accepted from memory suggestion inbox item.",
+      ttlDays:
+        typeof raw.retentionPolicy.ttlDays === "number" || raw.retentionPolicy.ttlDays === null
+          ? raw.retentionPolicy.ttlDays
+          : 90
+    },
+    scope: raw.scope === "profile" ? "profile" : "project",
+    scopeKey: raw.scopeKey,
+    source: {
+      label: typeof raw.source.label === "string" ? raw.source.label : "Memory suggestion inbox draft",
+      sourceType:
+        raw.source.sourceType === "manual_review" ||
+        raw.source.sourceType === "tool_output" ||
+        raw.source.sourceType === "system" ||
+        raw.source.sourceType === "user_input" ||
+        raw.source.sourceType === "final_output" ||
+        raw.source.sourceType === "session_compact"
+          ? raw.source.sourceType
+          : "manual_review",
+      taskId: typeof raw.source.taskId === "string" || raw.source.taskId === null ? raw.source.taskId : null,
+      toolCallId:
+        typeof raw.source.toolCallId === "string" || raw.source.toolCallId === null
+          ? raw.source.toolCallId
+          : null,
+      traceEventId:
+        typeof raw.source.traceEventId === "string" || raw.source.traceEventId === null
+          ? raw.source.traceEventId
+          : null
+    },
+    summary: raw.summary,
+    title: raw.title
+  };
 }
 
 function contextFragmentToMemoryRecord(

@@ -13,6 +13,7 @@ skills, gateway adapters, and evaluation surfaces.
 - Runs agent tasks from the terminal with configurable provider profiles.
 - Opens a personal assistant workspace in `talon tui` with today/inbox/thread
   oriented workflows.
+- Surfaces memory review in both CLI and TUI, including used-memory feedback and inbox-driven suggestions.
 - Records task state, trace events, tool calls, approvals, and audit logs in a
   local SQLite workspace.
 - Gates risky tool use with policy and explicit approval flows.

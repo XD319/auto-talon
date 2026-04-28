@@ -78,6 +78,7 @@ export interface ChatController {
   };
   tokenHud: TokenHud;
   uiStatus: UiStatus;
+  usedMemoryCount: number;
 }
 
 const welcomeMessage: ChatMessage = {
@@ -122,6 +123,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     runState: "idle",
     taskLabel: null
   });
+  const [usedMemoryCount, setUsedMemoryCount] = React.useState(0);
 
   const startedAtRef = React.useRef(Date.now());
   const activeAbortControllerRef = React.useRef<AbortController | null>(null);
@@ -224,6 +226,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           event.sequence
         );
         setMessages((current) => mergeTraceMessages(current, [event]));
+        if (event.eventType === "memory_recalled") {
+          setUsedMemoryCount(event.payload.selectedMemoryIds.length);
+        }
         if (event.eventType === "tool_call_finished" && event.payload.toolName === "file_write") {
           recordFileWrite(event.taskId, event.payload.toolCallId, event.timestamp);
         }
@@ -262,6 +267,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     seenApprovalMessageIdsRef.current.clear();
     setSessionApprovalFingerprints([]);
     setFileEdits([]);
+    setUsedMemoryCount(0);
     setActiveThreadId(null);
     stopTraceSubscription();
   }, [stopTraceSubscription]);
@@ -282,6 +288,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     activeTaskIdRef.current = null;
     seenApprovalMessageIdsRef.current.clear();
     setFileEdits([]);
+    setUsedMemoryCount(0);
     stopTraceSubscription();
   }, [stopTraceSubscription]);
 
@@ -420,6 +427,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       lastSequenceByTaskRef.current[taskId] = unseen.at(-1)?.sequence ?? lastSeen;
       setMessages((current) => mergeTraceMessages(current, unseen));
       for (const event of unseen) {
+        if (event.eventType === "memory_recalled") {
+          setUsedMemoryCount(event.payload.selectedMemoryIds.length);
+        }
         if (event.eventType === "tool_call_finished" && event.payload.toolName === "file_write") {
           recordFileWrite(event.taskId, event.payload.toolCallId, event.timestamp);
         }
@@ -962,7 +972,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     switchActiveThread,
     summary,
     tokenHud,
-    uiStatus
+    uiStatus,
+    usedMemoryCount
   };
 }
 

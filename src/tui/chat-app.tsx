@@ -4,6 +4,7 @@ import { Box, Text, useApp } from "ink";
 
 import type { AgentApplicationService, AppConfig } from "../runtime/index.js";
 import type { ApprovalAllowScope } from "../types/index.js";
+import { formatMemoryGuide, formatMemoryList, formatMemoryRecallExplanation, formatMemorySuggestionQueue } from "../cli/formatters.js";
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
 import { MessageStream, StaticMessageStream } from "./components/message-stream.js";
@@ -158,6 +159,7 @@ export function ChatTuiApp({
         controller.addSystemMessage(
           [
             "Commands: /today /inbox /thread [summary|list|new|switch] /next [list|done|block] /commitments [list|done|block] /schedule /help /ops /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
+            "Memory: /memory /memory review /memory add <profile|project> <text> /memory forget <memory-id-prefix> /memory why [memory-id-prefix]",
             "Compatibility: /dashboard remains available and maps to /ops.",
             "Tip: use `talon ops` or `talon tui --mode ops` for the observability view.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Tab slash-complete | Ctrl+P/N history",
@@ -200,6 +202,10 @@ export function ChatTuiApp({
 
       if (text.startsWith("/commitments")) {
         return handleCommitmentCommand(text, controller, service);
+      }
+
+      if (text.startsWith("/memory")) {
+        return handleMemoryCommand(text, controller, service, cwd, config.defaultProfileId, reviewerId);
       }
 
       if (text === "/schedule") {
@@ -574,6 +580,10 @@ export function ChatTuiApp({
             controller.tokenHud.outputTokens,
             controller.tokenHud.contextPercent,
             controller.tokenHud.estimatedCostUsd
+          ).concat(
+            controller.usedMemoryCount > 0
+              ? [{ label: `Used memory ${controller.usedMemoryCount}`, tone: "accent" as const }]
+              : []
           )}
           primary={{
             label: controller.uiStatus.primaryLabel,
@@ -627,6 +637,108 @@ function parseSlashInput(text: string): { args: string[]; command: string; rest:
   const args = parts.slice(1);
   const rest = command.length >= trimmed.length ? "" : trimmed.slice(command.length).trim();
   return { args, command, rest };
+}
+
+function handleMemoryCommand(
+  text: string,
+  controller: ReturnType<typeof useChatController>,
+  service: AgentApplicationService,
+  cwd: string,
+  profileId: string,
+  reviewerId: string
+): boolean {
+  const parsed = parseSlashInput(text);
+  if (parsed.command !== "/memory") {
+    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
+    return true;
+  }
+  const sub = parsed.args[0] ?? "";
+  if (sub.length === 0) {
+    const guidance = [formatMemoryGuide()];
+    if (controller.activeTaskId !== null) {
+      guidance.push(
+        formatMemoryRecallExplanation(service.explainMemoryRecall(controller.activeTaskId))
+      );
+    }
+    controller.addSystemMessage(guidance.join("\n\n"));
+    return true;
+  }
+  if (sub === "review") {
+    const items = service.listMemorySuggestions({
+      limit: 20,
+      status: "pending",
+      userId: resolveRuntimeUserId()
+    });
+    controller.addSystemMessage(formatMemorySuggestionQueue(items));
+    return true;
+  }
+  if (sub === "add") {
+    const scope = parsed.args[1];
+    const content = parsed.args.slice(2).join(" ").trim();
+    if ((scope !== "profile" && scope !== "project") || content.length === 0) {
+      controller.addSystemMessage("Usage: /memory add <profile|project> <text>");
+      return true;
+    }
+    try {
+      const memory = service.addMemory({
+        content,
+        cwd,
+        profileId,
+        reviewerId,
+        scope,
+        userId: resolveRuntimeUserId()
+      });
+      controller.addSystemMessage(formatMemoryList([memory]));
+    } catch (error) {
+      controller.addSystemMessage(error instanceof Error ? error.message : String(error));
+    }
+    return true;
+  }
+  if (sub === "forget") {
+    const prefix = parsed.args[1] ?? "";
+    if (prefix.length === 0) {
+      controller.addSystemMessage("Usage: /memory forget <memory-id-prefix>");
+      return true;
+    }
+    const matches = resolveMemoryByPrefix(prefix, service);
+    if (matches.kind !== "one") {
+      controller.addSystemMessage(matches.message);
+      return true;
+    }
+    try {
+      const memory = service.forgetMemory(matches.item.memoryId, reviewerId, "manual memory forget from TUI");
+      controller.addSystemMessage(formatMemoryList([memory]));
+    } catch (error) {
+      controller.addSystemMessage(error instanceof Error ? error.message : String(error));
+    }
+    return true;
+  }
+  if (sub === "why") {
+    if (controller.activeTaskId === null) {
+      controller.addSystemMessage("No active task is available for memory recall explanation.");
+      return true;
+    }
+    const prefix = parsed.args[1];
+    if (prefix === undefined) {
+      controller.addSystemMessage(
+        formatMemoryRecallExplanation(service.explainMemoryRecall(controller.activeTaskId))
+      );
+      return true;
+    }
+    const matches = resolveMemoryByPrefix(prefix, service);
+    if (matches.kind !== "one") {
+      controller.addSystemMessage(matches.message);
+      return true;
+    }
+    controller.addSystemMessage(
+      formatMemoryRecallExplanation(
+        service.explainMemoryRecall(controller.activeTaskId, matches.item.memoryId)
+      )
+    );
+    return true;
+  }
+  controller.addSystemMessage("Usage: /memory | /memory review | /memory add <profile|project> <text> | /memory forget <memory-id-prefix> | /memory why [memory-id-prefix]");
+  return true;
 }
 
 function handleThreadCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {
@@ -720,6 +832,25 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
 
   controller.addSystemMessage("Usage: /thread [new [title]|list|switch <thread-id-prefix>|summary [thread-id-prefix]]");
   return true;
+}
+
+function resolveMemoryByPrefix(
+  prefix: string,
+  service: AgentApplicationService
+):
+  | { item: ReturnType<AgentApplicationService["listMemories"]>[number]; kind: "one" }
+  | { kind: "error"; message: string } {
+  const matches = service.listMemories().filter((item) => item.memoryId.startsWith(prefix));
+  if (matches.length === 1) {
+    return { item: matches[0]!, kind: "one" };
+  }
+  return {
+    kind: "error",
+    message:
+      matches.length === 0
+        ? `No memory matched prefix '${prefix}'.`
+        : `Ambiguous memory prefix '${prefix}':\n${matches.map((item) => `- ${item.memoryId} | ${item.title}`).join("\n")}`
+  };
 }
 
 function handleNextActionCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {

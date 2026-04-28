@@ -64,6 +64,10 @@ Minimal review flow:
 - `talon memory review <memory_id> verified`
 - `talon memory review <memory_id> stale`
 - `talon memory review <memory_id> rejected`
+- `talon memory add <profile|project> <text>`
+- `talon memory forget <memory_id>`
+- `talon memory why --task <task_id> [--memory <memory_id>]`
+- `talon memory review-queue list|accept|dismiss`
 
 ## Selective Recall
 
@@ -177,8 +181,13 @@ Boundary rules:
 
 - `talon memory list`
 - `talon memory show <scope>`
+- `talon memory guide`
 - `talon memory snapshot create <scope>`
 - `talon memory review <memory_id> <verified|rejected|stale>`
+- `talon memory add <profile|project> <text>`
+- `talon memory forget <memory_id>`
+- `talon memory why --task <task_id> [--memory <memory_id>]`
+- `talon memory review-queue list|accept|dismiss`
 
 ## Trace And Audit Samples
 

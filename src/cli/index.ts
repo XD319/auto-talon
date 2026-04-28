@@ -45,7 +45,10 @@ import {
   formatInboxDetail,
   formatInboxList,
   formatMemoryList,
+  formatMemoryGuide,
+  formatMemoryRecallExplanation,
   formatMemoryScope,
+  formatMemorySuggestionQueue,
   formatNextActionList,
   formatProviderCatalog,
   formatProviderHealth,
@@ -1192,6 +1195,83 @@ export async function main(argv = process.argv): Promise<void> {
       }
     });
 
+  memoryCommand.command("guide").description("Explain memory layer semantics").action(() => {
+    console.log(formatMemoryGuide());
+  });
+
+  memoryCommand
+    .command("add")
+    .argument("<scope>", "Memory scope: profile | project")
+    .argument("<text>", "Memory text")
+    .option("--cwd <path>", "Workspace path for project scope", process.cwd())
+    .option("--profile <profile>", "Agent profile for profile scope", "executor")
+    .option("--user <user>", "User id for profile scope")
+    .option("--reviewer <reviewer>", "Reviewer id")
+    .action(
+      (
+        scope: "profile" | "project" | "working",
+        text: string,
+        commandOptions: { cwd: string; profile: string; reviewer?: string; user?: string }
+      ) => {
+        const handle = createApplication(commandOptions.cwd);
+        try {
+          if (scope !== "profile" && scope !== "project") {
+            throw new Error("Memory add only supports profile and project scopes.");
+          }
+          const reviewer =
+            commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+          const userId = commandOptions.user ?? process.env.USERNAME ?? process.env.USER ?? "local-user";
+          const memory = handle.service.addMemory({
+            content: text,
+            cwd: commandOptions.cwd,
+            profileId: commandOptions.profile,
+            reviewerId: reviewer,
+            scope,
+            userId
+          });
+          console.log(formatMemoryList([memory]));
+        } finally {
+          handle.close();
+        }
+      }
+    );
+
+  memoryCommand
+    .command("forget")
+    .argument("<memory_id>", "Memory identifier")
+    .option("--reviewer <reviewer>", "Reviewer id")
+    .option("--note <note>", "Forget note", "manual memory forget")
+    .action((memoryId: string, commandOptions: { note: string; reviewer?: string }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const reviewer =
+          commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+        console.log(formatMemoryList([handle.service.forgetMemory(memoryId, reviewer, commandOptions.note)]));
+      } finally {
+        handle.close();
+      }
+    });
+
+  memoryCommand
+    .command("why")
+    .option("--task <taskId>", "Task id to inspect")
+    .option("--memory <memoryId>", "Filter to one memory id")
+    .action((commandOptions: { memory?: string; task?: string }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        if (commandOptions.task === undefined) {
+          throw new Error("Provide --task <taskId>.");
+        }
+        console.log(
+          formatMemoryRecallExplanation(
+            handle.service.explainMemoryRecall(commandOptions.task, commandOptions.memory)
+          )
+        );
+      } finally {
+        handle.close();
+      }
+    });
+
   memoryCommand
     .command("search")
     .argument("<query>", "Session memory search query")
@@ -1372,6 +1452,58 @@ export async function main(argv = process.argv): Promise<void> {
         }
       }
     );
+
+  const memoryReviewCommand = memoryCommand.command("review-queue").description("Review memory suggestions in inbox");
+
+  memoryReviewCommand
+    .command("list")
+    .option("--user <user>", "Filter by runtime user id")
+    .option("--status <status>", "Filter status: pending | seen | done | dismissed", "pending")
+    .option("--limit <count>", "Limit entries", "20")
+    .action((commandOptions: { limit?: string; status?: InboxListOptions["status"]; user?: string }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        console.log(
+          formatMemorySuggestionQueue(
+            handle.service.listMemorySuggestions({
+              ...(commandOptions.limit !== undefined
+                ? { limit: Number.parseInt(commandOptions.limit, 10) }
+                : {}),
+              ...(commandOptions.status !== undefined ? { status: commandOptions.status } : {}),
+              ...(commandOptions.user !== undefined ? { userId: commandOptions.user } : {})
+            })
+          )
+        );
+      } finally {
+        handle.close();
+      }
+    });
+
+  memoryReviewCommand.command("accept").argument("<inbox_id>").option("--reviewer <reviewer>", "Reviewer id").action(
+    (inboxId: string, commandOptions: { reviewer?: string }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const reviewer =
+          commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+        const accepted = handle.service.acceptMemorySuggestion(inboxId, reviewer);
+        console.log(formatInboxDetail(accepted.inboxItem));
+        if (accepted.memory !== null) {
+          console.log(formatMemoryList([accepted.memory]));
+        }
+      } finally {
+        handle.close();
+      }
+    }
+  );
+
+  memoryReviewCommand.command("dismiss").argument("<inbox_id>").action((inboxId: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatInboxDetail(handle.service.dismissMemorySuggestion(inboxId)));
+    } finally {
+      handle.close();
+    }
+  });
 
   const experienceCommand = program.command("experience").description("Inspect and review experience assets");
 
