@@ -171,6 +171,7 @@ export interface ProviderStatsSnapshot {
   lastRequestAt: string | null;
   providerName: string;
   retryCount: number;
+  source?: "live" | "trace";
   successfulRequests: number;
   tokenUsage: ProviderUsage;
   totalRequests: number;

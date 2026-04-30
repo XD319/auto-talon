@@ -2,13 +2,16 @@ import React from "react";
 import { Box, Text } from "ink";
 
 import { theme } from "../theme.js";
-import type { HomeSummaryViewModel } from "../view-models/home-summary.js";
+import { listHomeSummaryEntries, type HomeSummaryViewModel } from "../view-models/home-summary.js";
 
 export interface HomeSummaryProps {
+  selectedIndex?: number;
   summary: HomeSummaryViewModel;
 }
 
-function HomeSummaryBase({ summary }: HomeSummaryProps): React.ReactElement {
+function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): React.ReactElement {
+  const entries = listHomeSummaryEntries(summary);
+
   return (
     <Box borderStyle="classic" borderColor={theme.border} flexDirection="column" paddingX={1}>
       <Text color={theme.panelTitle}>{summary.title}</Text>
@@ -18,31 +21,32 @@ function HomeSummaryBase({ summary }: HomeSummaryProps): React.ReactElement {
           {item}
         </Text>
       ))}
-      {summary.recommendedThread !== null ? (
+      {entries.length > 0 ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color={theme.selection}>Continue recent thread</Text>
-          <Text color={theme.fg} wrap="wrap">
-            {summary.recommendedThread.label}
-          </Text>
-          <Text color={theme.muted} wrap="wrap">
-            {summary.recommendedThread.headline}
-          </Text>
-          <Text color={theme.muted} wrap="wrap">
-            {summary.recommendedThread.detail}
-          </Text>
+          <Text color={theme.selection}>Recommended next steps</Text>
+          {entries.map((entry, index) => (
+            <Box key={entry.key} flexDirection="column">
+              <Text color={index === selectedIndex ? theme.emphasis : theme.fg}>
+                {index === selectedIndex ? "> " : "  "}
+                {entry.label}
+              </Text>
+              {entry.kind === "thread" && entry.headline !== entry.label ? (
+                <Text color={index === selectedIndex ? theme.fg : theme.muted} wrap="wrap">
+                  {entry.headline}
+                </Text>
+              ) : null}
+              {entry.kind !== "thread" && entry.headline !== undefined ? (
+                <Text color={theme.muted} wrap="wrap">
+                  {entry.headline}
+                </Text>
+              ) : null}
+              <Text color={theme.muted} wrap="wrap">
+                {entry.detail}
+              </Text>
+            </Box>
+          ))}
         </Box>
       ) : null}
-      <Box marginTop={1} flexDirection="column">
-        <Text color={theme.selection}>Recommended actions</Text>
-        {summary.actions.map((action) => (
-          <Box key={action.key} flexDirection="column">
-            <Text color={theme.fg}>{action.label}</Text>
-            <Text color={theme.muted} wrap="wrap">
-              {action.detail}
-            </Text>
-          </Box>
-        ))}
-      </Box>
       <Text color={theme.muted} wrap="wrap">
         {summary.assistantHint}
       </Text>

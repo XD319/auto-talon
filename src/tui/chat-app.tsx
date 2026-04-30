@@ -27,6 +27,8 @@ import { theme } from "./theme.js";
 import { displayChatMessages, type ChatMessage } from "./view-models/chat-messages.js";
 import {
   buildHomeSummary,
+  listHomeSummaryEntries,
+  type HomeSummaryEntry
 } from "./view-models/home-summary.js";
 import {
   buildTodaySummary,
@@ -72,6 +74,7 @@ export function ChatTuiApp({
   const [approvalSelectionIndex, setApprovalSelectionIndex] = React.useState(0);
   const [clarifySelectionIndex, setClarifySelectionIndex] = React.useState(0);
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
+  const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
   const [liveScrollOffset, setLiveScrollOffset] = React.useState(0);
   const historyRef = React.useRef<string[]>([]);
   const historyIndexRef = React.useRef<number | null>(null);
@@ -124,6 +127,10 @@ export function ChatTuiApp({
     () => isEmptyConversation(controller.messages),
     [controller.messages]
   );
+  const homeEntries = React.useMemo(
+    () => listHomeSummaryEntries(homeSummary),
+    [homeSummary]
+  );
 
   React.useEffect(() => {
     if (saveTimerRef.current !== null) {
@@ -164,6 +171,10 @@ export function ChatTuiApp({
   React.useEffect(() => {
     setLiveScrollOffset(0);
   }, [liveMessages.length]);
+
+  React.useEffect(() => {
+    setHomeSelectionIndex((current) => clampSelection(current, homeEntries.length));
+  }, [homeEntries.length]);
 
   const navigateHistoryPrevious = React.useCallback((): string | null => {
     const history = historyRef.current;
@@ -256,6 +267,54 @@ export function ChatTuiApp({
     [slashSuggestions]
   );
 
+  const openHomeSummaryThread = React.useCallback(
+    (threadId: string) => {
+      const detail = service.showThread(threadId);
+      if (detail.thread === null) {
+        controller.addSystemMessage(`Thread ${threadId} not found.`);
+        return;
+      }
+      controller.switchActiveThread(threadId);
+      controller.resetVisibleChatPreserveActiveThread();
+      controller.addSystemMessage(
+        `Switched active thread to ${detail.thread.threadId.slice(0, 8)} | ${detail.thread.title}`
+      );
+      controller.addSystemMessage(formatThreadDetailForTui(service, threadId));
+    },
+    [controller, service]
+  );
+
+  const runHomeSummaryEntry = React.useCallback(
+    (entry: HomeSummaryEntry) => {
+      if (entry.kind === "thread" && typeof entry.threadId === "string" && entry.threadId.length > 0) {
+        openHomeSummaryThread(entry.threadId);
+        return;
+      }
+
+      if (entry.key === "approval" || entry.key === "inbox") {
+        if (typeof entry.threadId === "string" && entry.threadId.length > 0) {
+          openHomeSummaryThread(entry.threadId);
+          return;
+        }
+        controller.addSystemMessage(`No thread is linked to ${entry.label.toLowerCase()} yet.`);
+        return;
+      }
+
+      if (entry.key === "routine") {
+        handleScheduleCommand("/schedule list active", controller, service, {
+          cwd,
+          providerName: config.provider.name
+        });
+        return;
+      }
+
+      if (entry.key === "start") {
+        controller.addSystemMessage("Type a request in plain language to start a new task.");
+      }
+    },
+    [config.provider.name, controller, cwd, openHomeSummaryThread, service]
+  );
+
   const handleSlashCommand = React.useCallback(
     (text: string): boolean => {
       if (!text.startsWith("/")) {
@@ -342,7 +401,7 @@ export function ChatTuiApp({
       }
 
       if (text === "/clear") {
-        controller.clearConversation();
+        controller.resetVisibleChatPreserveActiveThread();
         return true;
       }
 
@@ -521,8 +580,24 @@ export function ChatTuiApp({
     ...(activePrompt !== undefined ? { activePrompt } : {}),
     busy: controller.busy,
     hasPendingApproval: controller.hasPendingApproval,
+    homeSummaryNavigation: {
+      enabled:
+        showTodaySummary &&
+        controller.pendingApproval === null &&
+        controller.pendingClarifyPrompt === null &&
+        homeEntries.length > 0
+    },
     onHistoryNext: navigateHistoryNext,
     onHistoryPrevious: navigateHistoryPrevious,
+    onHomeSummaryMove: (delta) => {
+      setHomeSelectionIndex((current) => clampSelection(current + delta, homeEntries.length));
+    },
+    onHomeSummarySubmit: () => {
+      const entry = homeEntries[homeSelectionIndex];
+      if (entry !== undefined) {
+        runHomeSummaryEntry(entry);
+      }
+    },
     onImagePasteAttempt: () => {
       controller.addSystemMessage(
         "Image paste (Alt+V): multimodal clipboard is not wired to providers in this build. Add an image path or use a vision-capable flow outside the TUI."
@@ -646,7 +721,7 @@ export function ChatTuiApp({
         {liveMessages.length > 0 ? (
           <MessageStream messages={visibleLiveMessages} />
         ) : showTodaySummary ? (
-          <HomeSummary summary={homeSummary} />
+          <HomeSummary selectedIndex={homeSelectionIndex} summary={homeSummary} />
         ) : staticMessages.length === 0 ? (
           <Text color={theme.muted}>No conversation yet.</Text>
         ) : null}
@@ -695,6 +770,8 @@ export function ChatTuiApp({
           hints={[
             controller.pendingClarifyPrompt !== null
               ? "Arrows choose, Tab custom, Enter submit"
+              : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
+                ? "Arrows choose, Enter open, or start typing"
               : controller.hasPendingApproval
                 ? "1 once, 2 session, 3 always, 4 deny"
                 : "Enter send"
@@ -982,7 +1059,7 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
     }
     controller.switchActiveThread(match.threadId);
     controller.resetVisibleChatPreserveActiveThread();
-    controller.addSystemMessage(`Switched to thread ${match.threadId.slice(0, 8)} | ${match.title}`);
+    controller.addSystemMessage(`Switched active thread to ${match.threadId.slice(0, 8)} | ${match.title}`);
     controller.addSystemMessage(formatThreadDetailForTui(service, match.threadId));
     return true;
   }

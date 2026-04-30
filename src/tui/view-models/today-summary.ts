@@ -133,10 +133,44 @@ export function formatThreadDetailForTui(
   if (detail.thread === null) {
     return `Thread ${threadId} not found.`;
   }
-  return [
+  const recentRuns = [...detail.runs].sort((left, right) => byIsoDesc(left.createdAt, right.createdAt)).slice(0, 3);
+  const recentScheduleRuns = [...detail.scheduleRuns]
+    .sort((left, right) => byIsoDesc(left.scheduledAt, right.scheduledAt))
+    .slice(0, 2);
+  const lines = [
     `Thread ${detail.thread.threadId} | ${detail.thread.title}`,
     `status=${detail.thread.status} updatedAt=${detail.thread.updatedAt}`,
-    `runs=${detail.runs.length} commitments=${detail.commitments.length} next_actions=${detail.nextActions.length} inbox=${detail.inboxItems.length}`
+    `counts: runs=${detail.runs.length} commitments=${detail.commitments.length} next_actions=${detail.nextActions.length} inbox=${detail.inboxItems.length} schedules=${detail.scheduleRuns.length}`
+  ];
+  if (detail.state.currentObjective !== null) {
+    lines.push(`objective: ${detail.state.currentObjective.title} [${detail.state.currentObjective.status}]`);
+  }
+  if (detail.state.nextAction !== null) {
+    lines.push(`next: ${detail.state.nextAction.title} [${detail.state.nextAction.status}]`);
+  }
+  if (detail.state.blockedReason !== null) {
+    lines.push(`blocked: ${detail.state.blockedReason}`);
+  }
+  if (detail.state.pendingDecision !== null) {
+    lines.push(`decision: ${detail.state.pendingDecision}`);
+  }
+  if (detail.inboxItems.length > 0) {
+    lines.push(formatPreviewSection("recent inbox", detail.inboxItems.slice(0, 2), (item) => `${item.title} [${item.status}]`));
+  }
+  if (recentRuns.length > 0) {
+    lines.push(formatPreviewSection("recent runs", recentRuns, (run) => `#${run.runNumber} ${run.status} | ${summarizeText(run.input)}`));
+  }
+  if (recentScheduleRuns.length > 0) {
+    lines.push(
+      formatPreviewSection(
+        "recent schedules",
+        recentScheduleRuns,
+        (run) => `${run.scheduleId.slice(0, 8)} ${run.status} (${run.trigger})`
+      )
+    );
+  }
+  return [
+    ...lines
   ].join("\n");
 }
 
@@ -151,6 +185,22 @@ function formatSection<TItem>(
     return `${head}\n- none`;
   }
   return `${head}\n${items.map((item) => `- ${toLine(item)}`).join("\n")}`;
+}
+
+function formatPreviewSection<TItem>(
+  title: string,
+  items: TItem[],
+  toLine: (item: TItem) => string
+): string {
+  return `${title}:\n${items.map((item) => `- ${toLine(item)}`).join("\n")}`;
+}
+
+function summarizeText(value: string, maxLength = 72): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
 function compareNextAction(

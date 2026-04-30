@@ -1122,14 +1122,22 @@ export class AgentApplicationService {
       return this.providerStatsBy(groupBy);
     }
     if (liveStats !== null && liveStats.totalRequests > 0) {
-      return liveStats;
+      return {
+        ...liveStats,
+        source: "live"
+      };
     }
 
     const traceStats = buildProviderStatsFromTrace(
       this.dependencies.provider.name,
       this.dependencies.listTasks().flatMap((task) => this.dependencies.listTrace(task.taskId))
     );
-    return traceStats.totalRequests > 0 ? traceStats : liveStats;
+    return traceStats.totalRequests > 0
+      ? {
+          ...traceStats,
+          source: "trace"
+        }
+      : liveStats;
   }
 
   public budgetReport(scope: "task" | "thread", id: string): Record<string, unknown> {

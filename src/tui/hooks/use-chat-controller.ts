@@ -40,6 +40,12 @@ export interface TokenHud {
   outputTokens: number;
 }
 
+interface TokenUsageSnapshot {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens?: number;
+}
+
 export interface FileEditEntry {
   at: string;
   path: string;
@@ -148,6 +154,13 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const submitInFlightRef = React.useRef(false);
   const queuedPromptsRef = React.useRef<QueuedPromptEntry[]>([]);
   const seenApprovalMessageIdsRef = React.useRef<Set<string>>(collectApprovalMessageIds(messages));
+  const tokenHudBaselineRef = React.useRef<{
+    source: "live" | "trace" | null;
+    usage: TokenUsageSnapshot | null;
+  }>({
+    source: null,
+    usage: null
+  });
   const busy = busyCount > 0;
 
   React.useEffect(() => {
@@ -359,8 +372,14 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const refresh = React.useCallback(() => {
     try {
       const tasks = input.service.listTasks();
-      const approvals = input.service.listPendingApprovals();
-      const clarifyPrompts = input.service.listPendingClarifyPrompts();
+      const approvals = visiblePendingRecords(input.service.listPendingApprovals(), input.service, {
+        activeTaskId: activeTaskIdRef.current,
+        activeThreadId: activeThreadIdRef.current
+      });
+      const clarifyPrompts = visiblePendingRecords(input.service.listPendingClarifyPrompts(), input.service, {
+        activeTaskId: activeTaskIdRef.current,
+        activeThreadId: activeThreadIdRef.current
+      });
       const runningTasks = tasks.filter((task) => task.status === "running").length;
       const nextSummary = {
         pendingApprovals: approvals.length,
@@ -417,9 +436,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       ) {
         const typedStats = stats as {
           providerName: string;
+          source?: "live" | "trace";
           tokenUsage: { inputTokens: number; outputTokens: number; totalTokens?: number };
         };
-        const usage = typedStats.tokenUsage;
+        const usage = usageSinceSessionStart(typedStats, tokenHudBaselineRef.current);
         const pct = contextWindowPercent(
           usage,
           input.config.tokenBudget.inputLimit,
@@ -924,6 +944,29 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         appendNewTraceEvents(result.task.taskId);
         activeTaskIdRef.current = result.task.taskId;
         setActiveTaskId(result.task.taskId);
+        const resultError = result.error;
+        if (resultError !== undefined) {
+          setMessages((current) => [
+            ...current,
+            {
+              code: resultError.code,
+              id: `error:clarify-resume:${result.task.taskId}:${Date.now()}`,
+              kind: "error",
+              message: resultError.message,
+              source: "runtime",
+              timestamp: new Date().toISOString()
+            }
+          ]);
+          setStatusLine(`failed after clarification: ${resultError.code}`);
+          setUiStatus({
+            approvalLabel: null,
+            primaryLabel: "failed after clarification",
+            primaryTone: "danger",
+            runState: "failed",
+            taskLabel: result.task.taskId.slice(0, 8)
+          });
+          return;
+        }
         const promptOutput = result.output;
         if (promptOutput !== null) {
           setMessages((current) => [
@@ -937,6 +980,33 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           ]);
         }
         setStatusLine("clarification answered");
+        setUiStatus({
+          approvalLabel: null,
+          primaryLabel: "clarification answered",
+          primaryTone: "success",
+          runState: result.task.status === "succeeded" ? "succeeded" : "idle",
+          taskLabel: result.task.taskId.slice(0, 8)
+        });
+      } catch (error) {
+        setMessages((current) => [
+          ...current,
+          {
+            code: "clarify_failed",
+            id: `error:clarify:${Date.now()}`,
+            kind: "error",
+            message: error instanceof Error ? error.message : String(error),
+            source: "approval",
+            timestamp: new Date().toISOString()
+          }
+        ]);
+        setStatusLine("clarification failed");
+        setUiStatus({
+          approvalLabel: null,
+          primaryLabel: "clarification failed",
+          primaryTone: "danger",
+          runState: "failed",
+          taskLabel: prompt.taskId.slice(0, 8)
+        });
       } finally {
         approvalInFlightRef.current = false;
         endBusy();
@@ -963,15 +1033,46 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     }
     approvalInFlightRef.current = true;
     beginBusy();
+    const prompt = pendingClarifyPrompt;
     try {
-      input.service.cancelClarifyPrompt(pendingClarifyPrompt.promptId, input.reviewerId);
+      const result = input.service.cancelClarifyPrompt(prompt.promptId, input.reviewerId);
+      appendNewTraceEvents(result.task.taskId);
+      activeTaskIdRef.current = result.task.taskId;
+      setActiveTaskId(result.task.taskId);
       setStatusLine("clarification cancelled");
+      setUiStatus({
+        approvalLabel: null,
+        primaryLabel: "clarification cancelled",
+        primaryTone: "warn",
+        runState: "idle",
+        taskLabel: result.task.taskId.slice(0, 8)
+      });
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          code: "clarify_cancel_failed",
+          id: `error:clarify-cancel:${Date.now()}`,
+          kind: "error",
+          message: error instanceof Error ? error.message : String(error),
+          source: "approval",
+          timestamp: new Date().toISOString()
+        }
+      ]);
+      setStatusLine("clarification cancel failed");
+      setUiStatus({
+        approvalLabel: null,
+        primaryLabel: "clarification cancel failed",
+        primaryTone: "danger",
+        runState: "failed",
+        taskLabel: prompt.taskId.slice(0, 8)
+      });
     } finally {
       approvalInFlightRef.current = false;
       endBusy();
       refresh();
     }
-  }, [beginBusy, endBusy, input.reviewerId, input.service, pendingClarifyPrompt, refresh]);
+  }, [appendNewTraceEvents, beginBusy, endBusy, input.reviewerId, input.service, pendingClarifyPrompt, refresh]);
 
   const requestInterrupt = React.useCallback((): boolean => {
     const controller = activeAbortControllerRef.current;
@@ -1154,6 +1255,71 @@ function tokenHudEquals(left: TokenHud, right: TokenHud): boolean {
     left.inputTokens === right.inputTokens &&
     left.outputTokens === right.outputTokens
   );
+}
+
+function visiblePendingRecords<T extends ApprovalRecord | ClarifyPromptRecord>(
+  records: T[],
+  service: Pick<AgentApplicationService, "showTask">,
+  state: { activeTaskId: string | null; activeThreadId: string | null }
+): T[] {
+  if (state.activeThreadId !== null) {
+    return records.filter((record) => taskThreadId(service, record.taskId) === state.activeThreadId);
+  }
+  if (state.activeTaskId !== null) {
+    return records.filter((record) => record.taskId === state.activeTaskId);
+  }
+  return [];
+}
+
+function taskThreadId(
+  service: Pick<AgentApplicationService, "showTask">,
+  taskId: string
+): string | null {
+  return service.showTask(taskId).task?.threadId ?? null;
+}
+
+function usageSinceSessionStart(
+  stats: {
+    source?: "live" | "trace";
+    tokenUsage: TokenUsageSnapshot;
+  },
+  baselineState: { source: "live" | "trace" | null; usage: TokenUsageSnapshot | null }
+): TokenUsageSnapshot {
+  const source = stats.source ?? "live";
+  if (source === "trace") {
+    baselineState.source = "trace";
+    baselineState.usage = null;
+    return {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0
+    };
+  }
+
+  if (baselineState.source === null) {
+    baselineState.source = "live";
+    baselineState.usage = { ...stats.tokenUsage };
+  } else if (baselineState.source === "trace") {
+    baselineState.source = "live";
+    baselineState.usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0
+    };
+  }
+
+  const baseline = baselineState.usage ?? {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0
+  };
+  const currentTotal = stats.tokenUsage.totalTokens ?? stats.tokenUsage.inputTokens + stats.tokenUsage.outputTokens;
+  const baselineTotal = baseline.totalTokens ?? baseline.inputTokens + baseline.outputTokens;
+  return {
+    inputTokens: Math.max(0, stats.tokenUsage.inputTokens - baseline.inputTokens),
+    outputTokens: Math.max(0, stats.tokenUsage.outputTokens - baseline.outputTokens),
+    totalTokens: Math.max(0, currentTotal - baselineTotal)
+  };
 }
 
 function updateUiStatus(

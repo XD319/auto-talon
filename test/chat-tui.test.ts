@@ -30,13 +30,24 @@ import {
 } from "../src/tui/view-models/chat-messages.js";
 import type { AgentApplicationService, AppConfig } from "../src/runtime/index.js";
 import { createDefaultRunOptions } from "../src/runtime/index.js";
-import type { ApprovalRecord, RuntimeRunOptions, ScheduleRecord, TaskRecord, ToolCallRecord, TraceEvent } from "../src/types/index.js";
+import type {
+  ApprovalRecord,
+  ClarifyPromptRecord,
+  RuntimeRunOptions,
+  ScheduleRecord,
+  TaskRecord,
+  ToolCallRecord,
+  TraceEvent
+} from "../src/types/index.js";
 import type { ThreadRecord } from "../src/types/index.js";
 import type { CreateScheduleInput } from "../src/runtime/scheduler/index.js";
 
 type ControllerServiceStub = Pick<
   AgentApplicationService,
+  | "answerClarifyPrompt"
+  | "cancelClarifyPrompt"
   | "listPendingApprovals"
+  | "listPendingClarifyPrompts"
   | "listTasks"
   | "continueThread"
   | "providerStats"
@@ -232,11 +243,20 @@ describe("use-chat-controller helpers", () => {
       });
     });
     const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
       continueThread,
       createThread() {
         throw new Error("createThread should not be called in this test.");
       },
       listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
         return [];
       },
       listTasks() {
@@ -353,9 +373,18 @@ describe("use-chat-controller helpers", () => {
       });
     });
     const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
       continueThread,
       createThread,
       listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
         return [];
       },
       listTasks() {
@@ -407,6 +436,408 @@ describe("use-chat-controller helpers", () => {
       expect(createThread).toHaveBeenCalledTimes(1);
       expect(runTask).toHaveBeenCalledTimes(0);
       expect(continueThread.mock.calls[0]?.[0]).toBe("thread-new");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("scopes pending approvals and clarify prompts to the active thread", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const taskById = new Map<string, TaskRecord>([
+      [
+        "task-visible",
+        createControllerTask({
+          ...createDefaultRunOptions("visible", process.cwd(), config),
+          taskId: "task-visible",
+          threadId: "thread-visible"
+        })
+      ],
+      [
+        "task-hidden",
+        createControllerTask({
+          ...createDefaultRunOptions("hidden", process.cwd(), config),
+          taskId: "task-hidden",
+          threadId: "thread-hidden"
+        })
+      ]
+    ]);
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueThread() {
+        return Promise.reject(new Error("continueThread should not be called in this test."));
+      },
+      createThread() {
+        throw new Error("createThread should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [
+          {
+            ...createApprovalRecord(),
+            approvalId: "approval-hidden",
+            taskId: "task-hidden"
+          }
+        ];
+      },
+      listPendingClarifyPrompts() {
+        return [
+          {
+            ...createClarifyPromptRecord(),
+            promptId: "prompt-hidden",
+            taskId: "task-hidden"
+          }
+        ];
+      },
+      listTasks() {
+        return [...taskById.values()];
+      },
+      providerStats() {
+        return null;
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask() {
+        return Promise.reject(new Error("runTask should not be called in this test."));
+      },
+      showTask(taskId: string) {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: taskById.get(taskId) ?? null,
+          toolCalls: [],
+          trace: []
+        };
+      },
+      subscribeToTaskTrace() {
+        return () => {};
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialThreadId: "thread-visible",
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      await delay(20);
+      expect(controller?.pendingApproval).toBeNull();
+      expect(controller?.pendingClarifyPrompt).toBeNull();
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("resets the visible transcript without abandoning the active thread", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createIdleControllerService();
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionApprovalFingerprints: ["fingerprint-1"],
+        initialThreadId: "thread-active",
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      if (controller === null) {
+        throw new Error("Controller did not initialize.");
+      }
+      const activeController: {
+        activeThreadId: string | null;
+        addSystemMessage: (text: string) => void;
+        messages: ChatMessage[];
+        resetVisibleChatPreserveActiveThread: () => void;
+        sessionApprovalFingerprints: string[];
+      } = controller;
+      activeController.addSystemMessage("before clear");
+      await delay(20);
+      activeController.resetVisibleChatPreserveActiveThread();
+      await delay(20);
+
+      expect(activeController.activeThreadId).toBe("thread-active");
+      expect(activeController.sessionApprovalFingerprints).toEqual(["fingerprint-1"]);
+      expect(activeController.messages).toHaveLength(1);
+      expect(activeController.messages[0]?.id).toBe("system:welcome");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("surfaces clarify answer failures in the transcript", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const prompt = {
+      ...createClarifyPromptRecord(),
+      taskId: "task-visible"
+    };
+    const task = createControllerTask({
+      ...createDefaultRunOptions("clarify", process.cwd(), config),
+      taskId: "task-visible",
+      threadId: "thread-visible"
+    });
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        return Promise.reject(new Error("clarify failed"));
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueThread() {
+        return Promise.reject(new Error("continueThread should not be called in this test."));
+      },
+      createThread() {
+        throw new Error("createThread should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
+        return [prompt];
+      },
+      listTasks() {
+        return [task];
+      },
+      providerStats() {
+        return null;
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask() {
+        return Promise.reject(new Error("runTask should not be called in this test."));
+      },
+      showTask() {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task,
+          toolCalls: [],
+          trace: []
+        };
+      },
+      subscribeToTaskTrace() {
+        return () => {};
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialThreadId: "thread-visible",
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller?.pendingClarifyPrompt?.promptId === "prompt-1");
+      if (controller === null) {
+        throw new Error("Controller did not initialize.");
+      }
+      const getController = (): {
+        answerPendingClarifyPrompt: (payload: { answerText: string }) => Promise<void>;
+        messages: ChatMessage[];
+      } => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      await getController().answerPendingClarifyPrompt({ answerText: "hello" });
+      await waitFor(() =>
+        getController().messages.some(
+          (message) => message.kind === "error" && message.message.includes("clarify failed")
+        )
+      );
+
+      const errorMessage = [...getController().messages]
+        .reverse()
+        .find((message) => message.kind === "error");
+      expect(errorMessage?.kind).toBe("error");
+      expect(errorMessage?.message).toContain("clarify failed");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("starts token HUD at zero when only historical provider stats are available", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueThread() {
+        return Promise.reject(new Error("continueThread should not be called in this test."));
+      },
+      createThread() {
+        throw new Error("createThread should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
+        return [];
+      },
+      listTasks() {
+        return [];
+      },
+      providerStats() {
+        return {
+          averageLatencyMs: 42,
+          failedRequests: 0,
+          lastErrorCategory: null,
+          lastRequestAt: "2026-01-01T00:00:00.000Z",
+          providerName: "mock",
+          retryCount: 0,
+          source: "trace" as const,
+          successfulRequests: 12,
+          tokenUsage: {
+            inputTokens: 50_000,
+            outputTokens: 25_000,
+            totalTokens: 75_000
+          },
+          totalRequests: 12
+        };
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask() {
+        return Promise.reject(new Error("runTask should not be called in this test."));
+      },
+      showTask() {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: null,
+          toolCalls: [],
+          trace: []
+        };
+      },
+      subscribeToTaskTrace() {
+        return () => {};
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      await delay(20);
+      if (controller === null) {
+        throw new Error("Controller did not initialize.");
+      }
+      const activeController: {
+        tokenHud: {
+          contextPercent: number;
+          inputTokens: number;
+          outputTokens: number;
+        };
+      } = controller;
+      expect(activeController.tokenHud.inputTokens).toBe(0);
+      expect(activeController.tokenHud.outputTokens).toBe(0);
+      expect(activeController.tokenHud.contextPercent).toBe(0);
     } finally {
       app.unmount();
       await app.waitUntilExit();
@@ -760,6 +1191,33 @@ function createApprovalLookupService() {
   };
 }
 
+function createClarifyPromptRecord(): ClarifyPromptRecord {
+  return {
+    allowCustomAnswer: true,
+    answerOptionId: null,
+    answerText: null,
+    answeredAt: null,
+    errorCode: null,
+    expiresAt: "2026-01-01T01:00:00.000Z",
+    options: [
+      {
+        id: "option-1",
+        label: "Option 1"
+      }
+    ],
+    placeholder: "Type your answer",
+    promptId: "prompt-1",
+    question: "Need clarification?",
+    reason: "Missing detail",
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    requesterUserId: "user-1",
+    reviewerId: null,
+    status: "pending",
+    taskId: "task-001",
+    toolCallId: "call-clarify"
+  };
+}
+
 function createScheduleRecord(scheduleId: string): ScheduleRecord {
   return {
     agentProfileId: "executor",
@@ -938,7 +1396,13 @@ function createStreamingControllerService(): ControllerServiceStub {
   };
 
   return {
-    async continueThread(threadId: string, text: string, overrides?: Partial<RuntimeRunOptions>) {
+    answerClarifyPrompt() {
+      return Promise.reject(new Error("answerClarifyPrompt should not be called in this test."));
+    },
+    cancelClarifyPrompt() {
+      throw new Error("cancelClarifyPrompt should not be called in this test.");
+    },
+    continueThread(threadId: string, text: string, overrides?: Partial<RuntimeRunOptions>) {
       const options = {
         ...createDefaultRunOptions(text, process.cwd(), createControllerConfig()),
         ...overrides,
@@ -966,6 +1430,9 @@ function createStreamingControllerService(): ControllerServiceStub {
     listPendingApprovals() {
       return [];
     },
+    listPendingClarifyPrompts() {
+      return [];
+    },
     listTasks() {
       return [...tasks.values()];
     },
@@ -982,6 +1449,58 @@ function createStreamingControllerService(): ControllerServiceStub {
         inboxItems: [],
         scheduleRuns: [],
         task: tasks.get(taskId) ?? null,
+        toolCalls: [],
+        trace: []
+      };
+    },
+    subscribeToTaskTrace() {
+      return () => {};
+    },
+    traceTask() {
+      return [];
+    }
+  };
+}
+
+function createIdleControllerService(): ControllerServiceStub {
+  return {
+    answerClarifyPrompt() {
+      return Promise.reject(new Error("answerClarifyPrompt should not be called in this test."));
+    },
+    cancelClarifyPrompt() {
+      throw new Error("cancelClarifyPrompt should not be called in this test.");
+    },
+    continueThread() {
+      return Promise.reject(new Error("continueThread should not be called in this test."));
+    },
+    createThread() {
+      throw new Error("createThread should not be called in this test.");
+    },
+    listPendingApprovals() {
+      return [];
+    },
+    listPendingClarifyPrompts() {
+      return [];
+    },
+    listTasks() {
+      return [];
+    },
+    providerStats() {
+      return null;
+    },
+    resolveApproval() {
+      throw new Error("resolveApproval should not be called in this test.");
+    },
+    runTask() {
+      return Promise.reject(new Error("runTask should not be called in this test."));
+    },
+    showTask() {
+      return {
+        approvals: [],
+        artifacts: [],
+        inboxItems: [],
+        scheduleRuns: [],
+        task: null,
         toolCalls: [],
         trace: []
       };

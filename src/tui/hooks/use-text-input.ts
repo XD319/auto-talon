@@ -14,11 +14,14 @@ export interface UseTextInputOptions {
     | { kind: "clarify"; customActive: boolean; optionCount: number };
   onHistoryNext: () => string | null;
   onHistoryPrevious: () => string | null;
+  homeSummaryNavigation?: { enabled: boolean };
   onImagePasteAttempt?: () => void;
   onInterruptRequest: () => void;
   busy: boolean;
   hasPendingApproval: boolean;
   onApprovalAction: (action: "allow" | "deny") => void;
+  onHomeSummaryMove?: (delta: -1 | 1) => void;
+  onHomeSummarySubmit?: () => void;
   onPromptCtrlC?: () => void;
   onPromptTab?: () => void;
   onPromptMove?: (delta: -1 | 1) => void;
@@ -178,6 +181,21 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         return;
       }
       if (!clarifyPrompt.customActive) {
+        return;
+      }
+    }
+
+    if (options.homeSummaryNavigation?.enabled === true && value.trim().length === 0) {
+      if (key.upArrow || key.leftArrow) {
+        options.onHomeSummaryMove?.(-1);
+        return;
+      }
+      if (key.downArrow || key.rightArrow) {
+        options.onHomeSummaryMove?.(1);
+        return;
+      }
+      if (key.return) {
+        options.onHomeSummarySubmit?.();
         return;
       }
     }
