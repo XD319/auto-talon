@@ -146,7 +146,7 @@ function buildRecommendedThreadCard(
     detail.state.blockedReason ??
     detail.state.pendingDecision ??
     detail.state.nextAction?.title ??
-    (detail.runs[0] !== undefined ? `recent run ${detail.runs[0]!.status}` : "ready to continue");
+    (detail.runs[0]?.status !== undefined ? `recent run ${detail.runs[0].status}` : "ready to continue");
 
   return {
     detail: suffix,
