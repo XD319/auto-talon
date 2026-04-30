@@ -28,6 +28,7 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/schedule pause ", "schedule-pause", "Pause a schedule"),
   suggestion("/schedule resume ", "schedule-resume", "Resume a schedule"),
   suggestion("/help", "help", "Show help"),
+  suggestion("/resume", "resume", "Resume the latest active thread"),
   suggestion("/ops", "ops", "Open ops guidance"),
   suggestion("/status", "status", "Show TUI status"),
   suggestion("/clear", "clear", "Clear the visible conversation"),

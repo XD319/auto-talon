@@ -11,7 +11,7 @@ import {
   useChatController,
   type ChatController
 } from "../src/tui/hooks/use-chat-controller.js";
-import { handleScheduleCommand } from "../src/tui/chat-app.js";
+import { handleResumeCommand, handleScheduleCommand } from "../src/tui/chat-app.js";
 import {
   canSubmitTextInput,
   deleteCharacterAfter,
@@ -31,6 +31,7 @@ import {
 import type { AgentApplicationService, AppConfig } from "../src/runtime/index.js";
 import { createDefaultRunOptions } from "../src/runtime/index.js";
 import type { ApprovalRecord, RuntimeRunOptions, ScheduleRecord, TaskRecord, ToolCallRecord, TraceEvent } from "../src/types/index.js";
+import type { ThreadRecord } from "../src/types/index.js";
 import type { CreateScheduleInput } from "../src/runtime/scheduler/index.js";
 
 type ControllerServiceStub = Pick<
@@ -647,6 +648,51 @@ describe("schedule slash command helper", () => {
   });
 });
 
+describe("resume slash command helper", () => {
+  it("resumes the most recent active thread when no prefix is provided", () => {
+    process.env.USERNAME = "local-user";
+    const messages: string[] = [];
+    const switched: string[] = [];
+    const handled = handleResumeCommand(
+      "/resume",
+      {
+        activeThreadId: null,
+        addSystemMessage: (text: string) => messages.push(text),
+        resetVisibleChatPreserveActiveThread: () => messages.push("reset"),
+        switchActiveThread: (threadId: string) => switched.push(threadId)
+      } as unknown as ReturnType<typeof useChatController>,
+      {
+        listThreads: () => [
+          createThreadRecord("thread-old", "Older thread", "2026-01-01T00:00:00.000Z"),
+          createThreadRecord("thread-new", "Newest thread", "2026-01-01T02:00:00.000Z")
+        ],
+        showThread: (threadId: string) => ({
+          commitments: [],
+          inboxItems: [],
+          lineage: [],
+          nextActions: [],
+          runs: [],
+          scheduleRuns: [],
+          state: {
+            activeNextActions: [],
+            blockedReason: null,
+            currentObjective: null,
+            nextAction: null,
+            openCommitments: [],
+            pendingDecision: null
+          },
+          thread: createThreadRecord(threadId, threadId, "2026-01-01T02:00:00.000Z")
+        })
+      } as unknown as AgentApplicationService
+    );
+
+    expect(handled).toBe(true);
+    expect(switched).toEqual(["thread-new"]);
+    expect(messages[0]).toBe("reset");
+    expect(messages[1]).toContain("Resumed thread thread-n");
+  });
+});
+
 function createTraceEvent(
   eventType: TraceEvent["eventType"],
   payload: Record<string, unknown>
@@ -737,6 +783,22 @@ function createScheduleRecord(scheduleId: string): ScheduleRecord {
     threadId: null,
     timezone: null,
     updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+}
+
+function createThreadRecord(threadId: string, title: string, updatedAt: string): ThreadRecord {
+  return {
+    agentProfileId: "executor",
+    archivedAt: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    cwd: process.cwd(),
+    metadata: {},
+    ownerUserId: "local-user",
+    providerName: "mock",
+    status: "active",
+    threadId,
+    title,
+    updatedAt
   };
 }
 

@@ -265,17 +265,20 @@ export function ChatTuiApp({
       if (text === "/help") {
         controller.addSystemMessage(
           [
-            "Commands: /today /inbox /thread [summary|list|new|switch] /next [list|done|block] /commitments [list|done|block] /schedule /edit /help /ops /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
-            "Memory: /memory /memory review /memory add <profile|project> <text> /memory forget <memory-id-prefix> /memory why [memory-id-prefix]",
-            "Compatibility: /dashboard remains available and maps to /ops.",
-            "Tip: use `talon ops` or `talon tui --mode ops` for the observability view.",
+            "Most used: /resume /today /inbox /thread new <title> /schedule create <when> | <prompt>",
+            "Workflow: /thread [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
+            "Session: /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
+            "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | PgUp/PgDn live scroll",
-            "Session files: .auto-talon/sessions/<id>.json | resume: talon tui --resume <id>",
-            "Token pricing estimate: AGENT_TOKEN_PRICE_IN_PER_M / AGENT_TOKEN_PRICE_OUT_PER_M (optional)",
+            "Saved sessions: use `talon tui --resume <id>` to restore transcript files from .auto-talon/sessions.",
             "Transcript keeps terminal scrollback for native copy/mouse wheel; PgUp/PgDn accelerates the live area."
           ].join("\n")
         );
         return true;
+      }
+
+      if (text === "/resume" || text.startsWith("/resume ")) {
+        return handleResumeCommand(text, controller, service);
       }
 
       if (text === "/today") {
@@ -1028,6 +1031,54 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
   }
 
   controller.addSystemMessage("Usage: /thread [new [title]|list|switch <thread-id-prefix>|summary [thread-id-prefix]]");
+  return true;
+}
+
+export function handleResumeCommand(
+  text: string,
+  controller: ReturnType<typeof useChatController>,
+  service: AgentApplicationService
+): boolean {
+  const parsed = parseSlashInput(text);
+  if (parsed.command !== "/resume") {
+    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
+    return true;
+  }
+  const prefix = parsed.args[0] ?? "";
+  const userId = resolveRuntimeUserId();
+  const threads = service
+    .listThreads("active")
+    .filter((item) => item.ownerUserId === userId)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+  if (threads.length === 0) {
+    controller.addSystemMessage("No active threads to resume. Start with a plain-language request.");
+    return true;
+  }
+
+  let target = threads[0] ?? null;
+  if (prefix.length > 0) {
+    const matches = threads.filter((item) => item.threadId.startsWith(prefix));
+    if (matches.length !== 1) {
+      controller.addSystemMessage(
+        matches.length === 0
+          ? `No thread matched prefix '${prefix}'.`
+          : `Ambiguous thread prefix '${prefix}':\n${matches.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
+      );
+      return true;
+    }
+    target = matches[0] ?? null;
+  }
+
+  if (target === null) {
+    controller.addSystemMessage("No active threads to resume.");
+    return true;
+  }
+
+  controller.switchActiveThread(target.threadId);
+  controller.resetVisibleChatPreserveActiveThread();
+  controller.addSystemMessage(`Resumed thread ${target.threadId.slice(0, 8)} | ${target.title}`);
+  controller.addSystemMessage(formatThreadDetailForTui(service, target.threadId));
   return true;
 }
 

@@ -41,6 +41,7 @@ describe("personal assistant slash commands", () => {
 
   it("completes personal workflow commands by prefix", () => {
     expect(completeSlashCommand("/t")).toBe("/today ");
+    expect(completeSlashCommand("/r")).toBe("/resume ");
     expect(completeSlashCommand("/th")).toBe("/thread ");
     expect(completeSlashCommand("/co")).toBe("/commitments ");
     expect(completeSlashCommand("/thread s")).toBe("/thread switch ");
