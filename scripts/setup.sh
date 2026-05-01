@@ -12,7 +12,10 @@ fi
 
 NODE_VERSION="$(node -p 'process.versions.node')"
 echo "[auto-talon] Node version: ${NODE_VERSION}"
-node -e 'const [maj,min]=process.versions.node.split(".").map(Number); if(maj<22||(maj===22&&min<5)){process.exit(1)}'
+node -e 'const [maj,min,patch]=process.versions.node.split(".").map(Number); if(maj<22||(maj===22&&(min<13||(min===13&&patch<0)))){process.exit(1)}' || {
+  echo "Error: Node.js >= 22.13.0 is required." >&2
+  exit 1
+}
 
 echo "[auto-talon] Enabling corepack..."
 corepack enable

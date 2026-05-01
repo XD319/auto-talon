@@ -48,6 +48,7 @@ export async function runReleaseChecklist(
   const test = runCommand("corepack", ["pnpm", "test"], cwd);
   const build = runCommand("corepack", ["pnpm", "build"], cwd);
   const packageMetadata = validatePackageMetadata(cwd);
+  const nodeVersion = validateNodeVersionPolicy(cwd);
   const lockfiles = validateLockfilePolicy(cwd);
   const pack = runPackDryRun(cwd);
   const packContents = pack.ok
@@ -85,6 +86,7 @@ export async function runReleaseChecklist(
       existsSync(join(cwd, "scripts", "setup.sh")) && existsSync(join(cwd, "scripts", "setup.ps1")),
       "scripts/setup.sh and scripts/setup.ps1"
     ),
+    toItem("node-version", "Node.js minimum version is consistent", nodeVersion.ok, nodeVersion.details),
     toItem("lockfiles", "pnpm is the only repository lockfile", lockfiles.ok, lockfiles.details),
     toItem("package-metadata", "Public npm package metadata is complete", packageMetadata.ok, packageMetadata.details),
     toItem("pack-contents", "npm package includes only release assets", packContents.ok, packContents.details)
@@ -177,6 +179,43 @@ export function validateLockfilePolicy(cwd: string): { details: string; ok: bool
 
   return {
     details: issues.length === 0 ? "pnpm-lock.yaml is the only lockfile" : issues.join("; "),
+    ok: issues.length === 0
+  };
+}
+
+export function validateNodeVersionPolicy(cwd: string): { details: string; ok: boolean } {
+  const expectedVersion = "22.13.0";
+  const expectedRange = `>=${expectedVersion}`;
+  const packageJson = readPackageJson(cwd);
+  const issues: string[] = [];
+
+  const engines = packageJson?.engines;
+  const nodeRange = typeof engines === "object" && engines !== null
+    ? (engines as Record<string, unknown>).node
+    : undefined;
+  if (nodeRange !== expectedRange) {
+    issues.push(`package.json engines.node must be ${expectedRange}`);
+  }
+
+  const files = [
+    "src/cli/bin.ts",
+    "scripts/setup.sh",
+    "scripts/setup.ps1"
+  ];
+  for (const file of files) {
+    const path = join(cwd, file);
+    if (!existsSync(path)) {
+      issues.push(`${file} was not found`);
+      continue;
+    }
+    const contents = readFileSync(path, "utf8");
+    if (!contents.includes(expectedVersion)) {
+      issues.push(`${file} must reference ${expectedVersion}`);
+    }
+  }
+
+  return {
+    details: issues.length === 0 ? `Node.js ${expectedRange} policy is consistent` : issues.join("; "),
     ok: issues.length === 0
   };
 }

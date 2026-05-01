@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   validateLockfilePolicy,
+  validateNodeVersionPolicy,
   validatePackageMetadata,
   validatePackContents,
   validateReleaseRepository
@@ -56,6 +57,33 @@ describe("release checklist helpers", () => {
       details: "pnpm-lock.yaml is the only lockfile",
       ok: true
     });
+  });
+
+  it("requires Node.js minimum version policy to stay aligned", () => {
+    expect(validateNodeVersionPolicy(process.cwd())).toEqual({
+      details: "Node.js >=22.13.0 policy is consistent",
+      ok: true
+    });
+  });
+
+  it("rejects setup script Node.js version drift", () => {
+    const workspace = createTempDir("auto-talon-release-node-");
+    mkdirSync(join(workspace, "scripts"), { recursive: true });
+    mkdirSync(join(workspace, "src", "cli"), { recursive: true });
+    writeFileSync(
+      join(workspace, "package.json"),
+      JSON.stringify({ engines: { node: ">=22.13.0" } }, null, 2),
+      "utf8"
+    );
+    writeFileSync(join(workspace, "src", "cli", "bin.ts"), "const MINIMUM = '22.13.0';\n", "utf8");
+    writeFileSync(join(workspace, "scripts", "setup.sh"), "echo 'Node.js >= 22.5.0 is required.'\n", "utf8");
+    writeFileSync(join(workspace, "scripts", "setup.ps1"), "throw 'Node.js >= 22.5.0 is required.'\n", "utf8");
+
+    const result = validateNodeVersionPolicy(workspace);
+
+    expect(result.ok).toBe(false);
+    expect(result.details).toContain("scripts/setup.sh must reference 22.13.0");
+    expect(result.details).toContain("scripts/setup.ps1 must reference 22.13.0");
   });
 
   it("rejects npm lockfiles in pnpm repositories", () => {

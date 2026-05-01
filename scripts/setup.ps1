@@ -10,9 +10,9 @@ try {
   throw "node is not installed."
 }
 Write-Host "[auto-talon] Node version: $nodeVersion"
-node -e "const [maj,min]=process.versions.node.split('.').map(Number); if(maj<22||(maj===22&&min<5)){process.exit(1)}"
+node -e "const [maj,min,patch]=process.versions.node.split('.').map(Number); if(maj<22||(maj===22&&(min<13||(min===13&&patch<0)))){process.exit(1)}"
 if ($LASTEXITCODE -ne 0) {
-  throw "Node.js >= 22.5.0 is required."
+  throw "Node.js >= 22.13.0 is required."
 }
 
 Write-Host "[auto-talon] Enabling corepack..."
