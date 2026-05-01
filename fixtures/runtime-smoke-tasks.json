@@ -383,5 +383,33 @@
       "expectPolicyTrace": false,
       "expectSessionCompact": false
     }
+  },
+  {
+    "taskId": "rc_scheduled_web_summary",
+    "scriptId": "rc_scheduled_web_summary",
+    "title": "Scheduled web summary regression",
+    "category": "multi_turn_execution",
+    "rcVersion": "0.1.0",
+    "input": "Describe the daily AI news scheduled summary flow using web_search, web_fetch, and inbox delivery.",
+    "profile": "reviewer",
+    "expectedBehavior": [
+      "Reference schedule lifecycle",
+      "Reference web_search and web_fetch",
+      "Reference inbox or origin delivery"
+    ],
+    "acceptableResult": [
+      "Task succeeds",
+      "Output mentions scheduled web summary delivery"
+    ],
+    "traceExpectations": {
+      "mustExplainGoal": true,
+      "mustExplainToolReason": false,
+      "mustSummarizeToolResults": false,
+      "mustExplainContinuation": false,
+      "expectApproval": false,
+      "expectMemoryRecall": false,
+      "expectPolicyTrace": false,
+      "expectSessionCompact": false
+    }
   }
 ]

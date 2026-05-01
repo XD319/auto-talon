@@ -1164,7 +1164,7 @@ export function handleScheduleCommand(
   controller: ScheduleCommandController,
   service: Pick<
     AgentApplicationService,
-    "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule"
+    "archiveSchedule" | "createSchedule" | "listScheduleRuns" | "listSchedules" | "pauseSchedule" | "resumeSchedule" | "runScheduleNow"
   >,
   options: ScheduleCommandOptions
 ): boolean {
@@ -1176,8 +1176,8 @@ export function handleScheduleCommand(
   const sub = args[0] ?? "list";
   if (sub === "list") {
     const filter = args[1] ?? "active";
-    if (filter !== "active" && filter !== "paused" && filter !== "all") {
-      controller.addSystemMessage("Usage: /schedule list [active|paused|all]");
+    if (filter !== "active" && filter !== "paused" && filter !== "completed" && filter !== "archived" && filter !== "all") {
+      controller.addSystemMessage("Usage: /schedule list [active|paused|completed|archived|all]");
       return true;
     }
     const userId = resolveRuntimeUserId();
@@ -1238,7 +1238,7 @@ export function handleScheduleCommand(
     }
     return true;
   }
-  if (sub === "pause" || sub === "resume") {
+  if (sub === "pause" || sub === "resume" || sub === "run-now" || sub === "runs" || sub === "remove") {
     const prefix = args[1] ?? "";
     if (prefix.length === 0) {
       controller.addSystemMessage(`Usage: /schedule ${sub} <schedule-id-prefix>`);
@@ -1247,6 +1247,23 @@ export function handleScheduleCommand(
     const matches = resolveScheduleByPrefix(prefix, service);
     if (matches.kind !== "one") {
       controller.addSystemMessage(matches.message);
+      return true;
+    }
+    if (sub === "runs") {
+      const runs = service.listScheduleRuns(matches.item.scheduleId, { tail: 5 });
+      controller.addSystemMessage(formatScheduleRunsForTui(runs));
+      return true;
+    }
+    if (sub === "run-now") {
+      const run = service.runScheduleNow(matches.item.scheduleId);
+      controller.addSystemMessage(formatScheduleRunsForTui([run]));
+      return true;
+    }
+    if (sub === "remove") {
+      const archived = service.archiveSchedule(matches.item.scheduleId);
+      controller.addSystemMessage(
+        `Schedule archived: ${archived.scheduleId.slice(0, 8)} | ${archived.name} [${archived.status}]`
+      );
       return true;
     }
     const updated =
@@ -1259,9 +1276,18 @@ export function handleScheduleCommand(
     return true;
   }
   controller.addSystemMessage(
-    "Usage: /schedule | /schedule list [active|paused|all] | /schedule create <when> | <prompt> | /schedule pause <schedule-id-prefix> | /schedule resume <schedule-id-prefix>"
+    "Usage: /schedule | /schedule list [active|paused|completed|archived|all] | /schedule create <when> | <prompt> | /schedule pause/resume/run-now/runs/remove <schedule-id-prefix>"
   );
   return true;
+}
+
+function formatScheduleRunsForTui(runs: ReturnType<AgentApplicationService["listScheduleRuns"]>): string {
+  if (runs.length === 0) {
+    return "Schedule runs: none";
+  }
+  return `Schedule runs:\n${runs
+    .map((run) => `- ${run.runId.slice(0, 8)} | ${run.status} | attempt=${run.attemptNumber} | task=${run.taskId?.slice(0, 8) ?? "-"}`)
+    .join("\n")}`;
 }
 
 function resolveMemoryByPrefix(

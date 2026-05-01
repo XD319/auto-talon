@@ -496,6 +496,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
         case "resume":
         case "run-now":
         case "runs":
+        case "remove":
           await this.handleScheduleManagementCommand(event, command.subcommand, command.args);
           return;
         default:
@@ -559,7 +560,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
       messageId: string | null;
       openId: string | null;
     },
-    subcommand: "pause" | "resume" | "run-now" | "runs",
+    subcommand: "pause" | "resume" | "run-now" | "runs" | "remove",
     args: string[]
   ): Promise<void> {
     if (this.runtimeApi === null) {
@@ -589,6 +590,16 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     if (subcommand === "run-now") {
       const run = this.runtimeApi.runScheduleNow(resolved.item.scheduleId);
       await this.sendTextToChat(event.chatId, formatScheduleRunsForFeishu([run]), createScheduleCommandUuid(event.messageId, "run-now"));
+      return;
+    }
+
+    if (subcommand === "remove") {
+      const archived = this.runtimeApi.archiveSchedule(resolved.item.scheduleId);
+      await this.sendTextToChat(
+        event.chatId,
+        `Schedule archived: ${archived.scheduleId.slice(0, 8)} | ${archived.name} [${archived.status}]`,
+        createScheduleCommandUuid(event.messageId, "remove")
+      );
       return;
     }
 
@@ -1025,6 +1036,8 @@ function statusCode(status: string): string {
       return "rn";
     case "runs":
       return "rh";
+    case "remove":
+      return "rm";
     default:
       return valueToCode(status);
   }
@@ -1061,7 +1074,8 @@ function formatScheduleCommandUsage(): string {
     "/schedule pause <schedule-id-prefix>",
     "/schedule resume <schedule-id-prefix>",
     "/schedule run-now <schedule-id-prefix>",
-    "/schedule runs <schedule-id-prefix>"
+    "/schedule runs <schedule-id-prefix>",
+    "/schedule remove <schedule-id-prefix>"
   ].join("\n");
 }
 

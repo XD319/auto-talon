@@ -62,6 +62,8 @@ export const TRACE_EVENT_TYPES = [
   "session_compacted",
   "thread_session_memory_written",
   "schedule_created",
+  "schedule_updated",
+  "schedule_archived",
   "schedule_paused",
   "schedule_resumed",
   "schedule_run_enqueued",
@@ -457,6 +459,17 @@ export interface ScheduleCreatedPayload extends JsonObject {
   nextFireAt: string | null;
 }
 
+export interface ScheduleUpdatedPayload extends JsonObject {
+  scheduleId: string;
+  status: "active" | "paused" | "completed" | "archived";
+  nextFireAt: string | null;
+}
+
+export interface ScheduleArchivedPayload extends JsonObject {
+  scheduleId: string;
+  status: "archived";
+}
+
 export interface SchedulePausedPayload extends JsonObject {
   scheduleId: string;
   status: "paused";
@@ -810,6 +823,8 @@ export type TraceEvent =
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
   | TraceEventBase<"thread_session_memory_written", ThreadSessionMemoryWrittenPayload>
   | TraceEventBase<"schedule_created", ScheduleCreatedPayload>
+  | TraceEventBase<"schedule_updated", ScheduleUpdatedPayload>
+  | TraceEventBase<"schedule_archived", ScheduleArchivedPayload>
   | TraceEventBase<"schedule_paused", SchedulePausedPayload>
   | TraceEventBase<"schedule_resumed", ScheduleResumedPayload>
   | TraceEventBase<"schedule_run_enqueued", ScheduleRunEnqueuedPayload>

@@ -21,6 +21,10 @@ export const SCHEDULE_RUN_TRIGGERS = ["scheduled", "manual", "retry"] as const;
 
 export type ScheduleRunTrigger = (typeof SCHEDULE_RUN_TRIGGERS)[number];
 
+export const SCHEDULE_DELIVERY_TARGETS = ["inbox", "origin"] as const;
+
+export type ScheduleDeliveryTarget = (typeof SCHEDULE_DELIVERY_TARGETS)[number];
+
 export const SCHEDULE_RUN_STATUS_TRANSITIONS: Record<ScheduleRunStatus, ScheduleRunStatus[]> = {
   blocked: ["running", "failed", "cancelled"],
   cancelled: [],
@@ -80,6 +84,7 @@ export interface ScheduleUpdatePatch {
   name?: string;
   status?: ScheduleStatus;
   threadId?: string | null;
+  agentProfileId?: AgentProfileId;
   input?: string;
   runAt?: string | null;
   intervalMs?: number | null;
@@ -149,4 +154,12 @@ export interface ScheduleRunUpdatePatch {
 export interface ScheduleRunListQuery {
   status?: ScheduleRunStatus;
   tail?: number;
+}
+
+export interface ScheduleStatusSummary {
+  dueCount: number;
+  lastRunAt: string | null;
+  nextFireAt: string | null;
+  runs: Record<ScheduleRunStatus, number>;
+  schedules: Record<ScheduleStatus, number>;
 }

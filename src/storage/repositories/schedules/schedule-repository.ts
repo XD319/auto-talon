@@ -115,6 +115,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.status !== undefined ? { status: patch.status } : {}),
       ...(patch.threadId !== undefined ? { threadId: patch.threadId } : {}),
+      ...(patch.agentProfileId !== undefined ? { agentProfileId: patch.agentProfileId } : {}),
       ...(patch.input !== undefined ? { input: patch.input } : {}),
       ...(patch.runAt !== undefined ? { runAt: patch.runAt } : {}),
       ...(patch.intervalMs !== undefined ? { intervalMs: patch.intervalMs } : {}),
@@ -132,7 +133,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
     this.database
       .prepare(
         `UPDATE schedules
-         SET name = ?, status = ?, thread_id = ?, input = ?, run_at = ?, interval_ms = ?, cron = ?,
+         SET name = ?, status = ?, thread_id = ?, agent_profile_id = ?, input = ?, run_at = ?, interval_ms = ?, cron = ?,
              timezone = ?, max_attempts = ?, backoff_base_ms = ?, backoff_max_ms = ?, next_fire_at = ?,
              last_fire_at = ?, updated_at = ?, metadata_json = ?
          WHERE schedule_id = ?`
@@ -141,6 +142,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
         next.name,
         next.status,
         next.threadId,
+        next.agentProfileId,
         next.input,
         next.runAt,
         next.intervalMs,

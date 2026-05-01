@@ -69,6 +69,26 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
     return row === undefined ? null : this.mapRow(row);
   }
 
+  public list(query?: ScheduleRunListQuery): ScheduleRunRecord[] {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (query?.status !== undefined) {
+      where.push("status = ?");
+      params.push(query.status);
+    }
+    const tail = query?.tail ?? 500;
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM schedule_runs
+         ${whereSql}
+         ORDER BY scheduled_at DESC, run_id DESC
+         LIMIT ?`
+      )
+      .all(...params, tail) as unknown as ScheduleRunRow[];
+    return rows.map((row) => this.mapRow(row));
+  }
+
   public listByScheduleId(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[] {
     const where: string[] = ["schedule_id = ?"];
     const params: string[] = [scheduleId];

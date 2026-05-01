@@ -35,6 +35,7 @@ import type {
   ClarifyPromptRecord,
   RuntimeRunOptions,
   ScheduleRecord,
+  ScheduleRunRecord,
   TaskRecord,
   ToolCallRecord,
   TraceEvent
@@ -931,6 +932,8 @@ describe("use-text-input helpers", () => {
 });
 
 describe("schedule slash command helper", () => {
+  type ScheduleCommandService = Parameters<typeof handleScheduleCommand>[2];
+
   it("creates schedules with the active thread", () => {
     const messages: string[] = [];
     const createSchedule = vi.fn((input: CreateScheduleInput) => ({
@@ -950,7 +953,7 @@ describe("schedule slash command helper", () => {
         listSchedules: () => [],
         pauseSchedule: vi.fn(),
         resumeSchedule: vi.fn()
-      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      } as unknown as ScheduleCommandService,
       {
         cwd: process.cwd(),
         providerName: "mock"
@@ -990,7 +993,7 @@ describe("schedule slash command helper", () => {
         listSchedules: () => schedules,
         pauseSchedule,
         resumeSchedule
-      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      } as unknown as ScheduleCommandService,
       {
         cwd: process.cwd(),
         providerName: "mock"
@@ -1007,7 +1010,7 @@ describe("schedule slash command helper", () => {
         listSchedules: () => schedules,
         pauseSchedule,
         resumeSchedule
-      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      } as unknown as ScheduleCommandService,
       {
         cwd: process.cwd(),
         providerName: "mock"
@@ -1024,7 +1027,7 @@ describe("schedule slash command helper", () => {
         listSchedules: () => schedules,
         pauseSchedule,
         resumeSchedule
-      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      } as unknown as ScheduleCommandService,
       {
         cwd: process.cwd(),
         providerName: "mock"
@@ -1034,6 +1037,48 @@ describe("schedule slash command helper", () => {
     expect(messages[0]).toContain("Schedules (all");
     expect(pauseSchedule).toHaveBeenCalledWith("schedule-12345678");
     expect(resumeSchedule).toHaveBeenCalledWith("schedule-abcdef12");
+  });
+
+  it("supports run-now, runs, and remove lifecycle commands", () => {
+    const messages: string[] = [];
+    const schedules = [createScheduleRecord("schedule-12345678")];
+    const runScheduleNow = vi.fn(() => createScheduleRunRecord("run-now-1", schedules[0]!.scheduleId));
+    const listScheduleRuns = vi.fn(() => [createScheduleRunRecord("run-old-1", schedules[0]!.scheduleId)]);
+    const archiveSchedule = vi.fn(() => ({ ...schedules[0]!, status: "archived" as const }));
+    const service = {
+      archiveSchedule,
+      createSchedule: vi.fn(),
+      listScheduleRuns,
+      listSchedules: () => schedules,
+      pauseSchedule: vi.fn(),
+      resumeSchedule: vi.fn(),
+      runScheduleNow
+    } as unknown as ScheduleCommandService;
+
+    for (const command of [
+      "/schedule run-now schedule-12",
+      "/schedule runs schedule-12",
+      "/schedule remove schedule-12"
+    ]) {
+      handleScheduleCommand(
+        command,
+        {
+          activeThreadId: null,
+          addSystemMessage: (text) => messages.push(text)
+        },
+        service,
+        {
+          cwd: process.cwd(),
+          providerName: "mock"
+        }
+      );
+    }
+
+    expect(runScheduleNow).toHaveBeenCalledWith("schedule-12345678");
+    expect(listScheduleRuns).toHaveBeenCalledWith("schedule-12345678", { tail: 5 });
+    expect(archiveSchedule).toHaveBeenCalledWith("schedule-12345678");
+    expect(messages.join("\n")).toContain("Schedule runs:");
+    expect(messages.join("\n")).toContain("Schedule archived");
   });
 
   it("reports usage and ambiguity errors", () => {
@@ -1050,7 +1095,7 @@ describe("schedule slash command helper", () => {
         listSchedules: () => schedules,
         pauseSchedule: vi.fn(),
         resumeSchedule: vi.fn()
-      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      } as unknown as ScheduleCommandService,
       {
         cwd: process.cwd(),
         providerName: "mock"
@@ -1067,7 +1112,7 @@ describe("schedule slash command helper", () => {
         listSchedules: () => schedules,
         pauseSchedule: vi.fn(),
         resumeSchedule: vi.fn()
-      } as unknown as Pick<AgentApplicationService, "createSchedule" | "listSchedules" | "pauseSchedule" | "resumeSchedule">,
+      } as unknown as ScheduleCommandService,
       {
         cwd: process.cwd(),
         providerName: "mock"
@@ -1241,6 +1286,24 @@ function createScheduleRecord(scheduleId: string): ScheduleRecord {
     threadId: null,
     timezone: null,
     updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+}
+
+function createScheduleRunRecord(runId: string, scheduleId: string): ScheduleRunRecord {
+  return {
+    attemptNumber: 1,
+    errorCode: null,
+    errorMessage: null,
+    finishedAt: null,
+    metadata: {},
+    runId,
+    scheduleId,
+    scheduledAt: "2026-01-01T00:00:00.000Z",
+    startedAt: null,
+    status: "queued",
+    taskId: "task-run",
+    threadId: null,
+    trigger: "manual"
   };
 }
 

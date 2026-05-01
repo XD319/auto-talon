@@ -61,7 +61,7 @@ export class ExecutionContextAssembler {
       "Use tools only when needed.",
       "Visible tools may still be denied by policy, sandbox checks, or approval requirements at execution time.",
       publicWebFetchAvailable
-        ? "When web_fetch is available, you may use it to read public web pages for current documentation or realtime public information. It is a sandboxed, read-only network tool and must not be used for private, internal, or authenticated resources."
+        ? "When web_fetch is available, you may use it to read public web pages for current documentation or realtime public information. When web_search is available, you may use it to find public web pages before fetching them. These are sandboxed, read-only network tools and must not be used for private, internal, or authenticated resources."
         : null,
       `Available tools: ${toolNames}.`
     ]

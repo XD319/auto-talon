@@ -20,6 +20,12 @@ const DEFAULT_RUNTIME_CONFIG: JsonObject = {
   defaultMaxIterations: 12,
   defaultTimeoutMs: 120000,
   allowedFetchHosts: ["*"],
+  webSearch: {
+    backend: "disabled",
+    apiKeyEnv: "FIRECRAWL_API_KEY",
+    apiUrl: "https://api.firecrawl.dev/v1/search",
+    maxResults: 5
+  },
   tokenBudget: {
     inputLimit: 64000,
     outputLimit: 8000,

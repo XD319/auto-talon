@@ -253,6 +253,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       runAt?: string | null;
       threadId?: string | null;
       timezone?: string | null;
+      deliveryTargets?: Array<"inbox" | "origin">;
     }
   ): ScheduleRecord {
     const identityBinding = this.dependencies.identityMapper.bind(adapter.adapterId, request.requester);
@@ -290,6 +291,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     const schedule = this.dependencies.applicationService.createSchedule({
       agentProfileId: request.agentProfileId ?? runOptions.agentProfileId,
       cwd,
+      deliveryTargets: request.deliveryTargets ?? ["inbox", "origin"],
       input: request.input,
       metadata,
       name: request.name,
@@ -349,6 +351,10 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
 
   public pauseSchedule(scheduleId: string): ScheduleRecord {
     return this.dependencies.applicationService.pauseSchedule(scheduleId);
+  }
+
+  public archiveSchedule(scheduleId: string): ScheduleRecord {
+    return this.dependencies.applicationService.archiveSchedule(scheduleId);
   }
 
   public resumeSchedule(scheduleId: string): ScheduleRecord {

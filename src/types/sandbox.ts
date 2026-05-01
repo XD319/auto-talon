@@ -23,7 +23,7 @@ export interface SandboxShellPlan extends JsonObject {
 
 export interface SandboxWebPlan extends JsonObject {
   kind: "network";
-  method: "GET";
+  method: "GET" | "POST";
   url: string;
   host: string;
   pathScope: "network";

@@ -338,7 +338,7 @@ function buildScheduleInboxMetadata(schedule: ScheduleRecord | null): JsonObject
     scheduleId: schedule.scheduleId
   };
   const origin = readJsonObject(schedule.metadata.origin);
-  if (origin !== null) {
+  if (origin !== null && shouldDeliverToOrigin(schedule)) {
     metadata.origin = origin;
   }
   return metadata;
@@ -353,6 +353,15 @@ function buildApprovalInboxMetadata(schedule: ScheduleRecord | null, approvalId:
 
 function hasExternalScheduleOrigin(metadata: JsonObject): boolean {
   return readJsonObject(metadata.origin) !== null;
+}
+
+function shouldDeliverToOrigin(schedule: ScheduleRecord): boolean {
+  const delivery = readJsonObject(schedule.metadata.delivery);
+  const targets = delivery?.targets;
+  if (!Array.isArray(targets)) {
+    return readJsonObject(schedule.metadata.origin) !== null;
+  }
+  return targets.includes("origin");
 }
 
 function readJsonObject(value: unknown): JsonObject | null {

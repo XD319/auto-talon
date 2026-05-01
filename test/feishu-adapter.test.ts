@@ -1011,6 +1011,41 @@ describe("feishu adapter", () => {
     });
   });
 
+  it("archives schedules from /schedule remove", async () => {
+    const create = vi.fn(() => Promise.resolve({ data: { message_id: "schedule-reply" } }));
+    const patch = vi.fn(() => Promise.resolve({}));
+    const archiveSchedule = vi.fn((scheduleId: string) => ({
+      ...createScheduleRecord({ scheduleId }),
+      status: "archived" as const
+    }));
+    const runtimeApi = createRuntimeApi({
+      archiveSchedule,
+      listSchedules: vi.fn(() => [createScheduleRecord({ scheduleId: "schedule-12345678" })])
+    });
+    let handlers: Record<string, (data: unknown) => Promise<void> | void> = {};
+    const adapter = new FeishuAdapter(
+      { appId: "app", appSecret: "secret", domain: "feishu" },
+      {
+        createClients: () => Promise.resolve({
+          client: { im: { message: { create, patch } } },
+          createEventDispatcher: () => ({
+            register: (registeredHandlers) => {
+              handlers = registeredHandlers;
+              return { handlers: registeredHandlers };
+            }
+          }),
+          wsClient: { start: vi.fn() }
+        })
+      }
+    );
+    await adapter.start({ runtimeApi });
+
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule remove schedule-12"));
+
+    expect(archiveSchedule).toHaveBeenCalledWith("schedule-12345678");
+    expect(createPayloads(create)[0]?.data.content).toContain("Schedule archived");
+  });
+
   it("confirms natural language schedule creation only once", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 3, 28, 9, 15, 0, 0));
@@ -1340,6 +1375,7 @@ function createRuntimeApi(overrides: Partial<GatewayRuntimeApi> = {}): GatewayRu
     listScheduleRuns: vi.fn(() => []),
     listSchedules: vi.fn(() => []),
     markInboxDone: vi.fn(),
+    archiveSchedule: vi.fn((scheduleId: string) => ({ ...createScheduleRecord({ scheduleId }), status: "archived" })),
     pauseSchedule: vi.fn((scheduleId: string) => ({ ...createScheduleRecord({ scheduleId }), status: "paused" })),
     registerOutboundAdapter: () => undefined,
     resolveApproval: vi.fn(() => Promise.resolve(null)),

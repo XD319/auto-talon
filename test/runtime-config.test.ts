@@ -143,6 +143,35 @@ describe("runtime config", () => {
     const config = resolveRuntimeConfig(workspaceRoot);
     expect(config.workflow.testCommands).toEqual(["npm test", "npm run build"]);
   });
+
+  it("resolves web search backend and Firecrawl key from runtime config and env", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        webSearch: {
+          apiUrl: "https://firecrawl.example/v1/search",
+          backend: "firecrawl",
+          maxResults: 8
+        }
+      }),
+      "utf8"
+    );
+    vi.stubEnv("FIRECRAWL_API_KEY", "fire-key");
+    const fileConfig = resolveRuntimeConfig(workspaceRoot);
+    expect(fileConfig.webSearch).toMatchObject({
+      apiKey: "fire-key",
+      apiUrl: "https://firecrawl.example/v1/search",
+      backend: "firecrawl",
+      maxResults: 8
+    });
+
+    vi.stubEnv("AGENT_WEB_SEARCH_BACKEND", "disabled");
+    const envConfig = resolveRuntimeConfig(workspaceRoot);
+    expect(envConfig.configSource).toBe("env");
+    expect(envConfig.webSearch.backend).toBe("disabled");
+  });
 });
 
 async function createTempWorkspace(): Promise<string> {

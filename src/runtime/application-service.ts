@@ -67,7 +67,7 @@ import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import type { ExecutionKernel } from "./execution-kernel.js";
 import type { ResumePacketBuilder, ThreadService } from "./threads/index.js";
-import type { CreateScheduleInput, SchedulerService } from "./scheduler/index.js";
+import type { CreateScheduleInput, SchedulerService, UpdateScheduleInput } from "./scheduler/index.js";
 import type { InboxService } from "./inbox/index.js";
 import type {
   AssistantThreadProjectionService,
@@ -1106,6 +1106,10 @@ export class AgentApplicationService {
     return this.dependencies.schedulerService.createSchedule(input);
   }
 
+  public updateSchedule(scheduleId: string, input: UpdateScheduleInput): ScheduleRecord {
+    return this.dependencies.schedulerService.updateSchedule(scheduleId, input);
+  }
+
   public listSchedules(query?: ScheduleListQuery): ScheduleRecord[] {
     return this.dependencies.schedulerService.listSchedules(query);
   }
@@ -1116,6 +1120,18 @@ export class AgentApplicationService {
 
   public listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[] {
     return this.dependencies.schedulerService.listScheduleRuns(scheduleId, query);
+  }
+
+  public scheduleStatus(): ReturnType<SchedulerService["status"]> {
+    return this.dependencies.schedulerService.status();
+  }
+
+  public async tickScheduleOnce(): Promise<void> {
+    await this.dependencies.schedulerService.tickOnce();
+  }
+
+  public archiveSchedule(scheduleId: string): ScheduleRecord {
+    return this.dependencies.schedulerService.archiveSchedule(scheduleId);
   }
 
   public pauseSchedule(scheduleId: string): ScheduleRecord {

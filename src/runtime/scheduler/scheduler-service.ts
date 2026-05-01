@@ -4,15 +4,18 @@ import { computeNextFireAt, parseEveryExpression } from "./next-fire.js";
 
 import type { JobRunner } from "../jobs/job-runner.js";
 import type { TraceService } from "../../tracing/trace-service.js";
+import { SCHEDULE_DELIVERY_TARGETS, SCHEDULE_RUN_STATUSES, SCHEDULE_STATUSES } from "../../types/index.js";
 import type {
   JsonObject,
+  ScheduleDeliveryTarget,
   ScheduleDraft,
   ScheduleListQuery,
   ScheduleRecord,
   ScheduleRepository,
   ScheduleRunListQuery,
   ScheduleRunRecord,
-  ScheduleRunRepository
+  ScheduleRunRepository,
+  ScheduleStatusSummary
 } from "../../types/index.js";
 
 export interface CreateScheduleInput {
@@ -31,6 +34,23 @@ export interface CreateScheduleInput {
   backoffBaseMs?: number;
   backoffMaxMs?: number;
   metadata?: JsonObject;
+  deliveryTargets?: ScheduleDeliveryTarget[];
+}
+
+export interface UpdateScheduleInput {
+  agentProfileId?: ScheduleRecord["agentProfileId"];
+  backoffBaseMs?: number;
+  backoffMaxMs?: number;
+  cron?: string | null;
+  deliveryTargets?: ScheduleDeliveryTarget[];
+  every?: string | null;
+  input?: string;
+  maxAttempts?: number;
+  metadata?: JsonObject;
+  name?: string;
+  runAt?: string | null;
+  threadId?: string | null;
+  timezone?: string | null;
 }
 
 export interface SchedulerServiceDependencies {
@@ -98,6 +118,10 @@ export class SchedulerService {
     }
   }
 
+  public async tickOnce(now = new Date()): Promise<void> {
+    await this.tick(now);
+  }
+
   public createSchedule(input: CreateScheduleInput): ScheduleRecord {
     const draft = this.buildScheduleDraft(input);
     const schedule = this.dependencies.scheduleRepository.create(draft);
@@ -128,7 +152,86 @@ export class SchedulerService {
     return this.dependencies.scheduleRunRepository.listByScheduleId(scheduleId, query);
   }
 
+  public updateSchedule(scheduleId: string, input: UpdateScheduleInput): ScheduleRecord {
+    const existing = this.dependencies.scheduleRepository.findById(scheduleId);
+    if (existing === null) {
+      throw new Error(`Schedule ${scheduleId} was not found.`);
+    }
+    if (existing.status === "archived") {
+      throw new Error(`Schedule ${scheduleId} is archived and cannot be edited.`);
+    }
+
+    const patch = this.buildScheduleUpdatePatch(existing, input);
+    const updated = this.dependencies.scheduleRepository.update(scheduleId, patch);
+    this.dependencies.traceService.record({
+      actor: "scheduler",
+      eventType: "schedule_updated",
+      payload: {
+        nextFireAt: updated.nextFireAt,
+        scheduleId: updated.scheduleId,
+        status: updated.status
+      },
+      stage: "control",
+      summary: `Schedule ${updated.scheduleId} updated`,
+      taskId: `schedule:${updated.scheduleId}`
+    });
+    return updated;
+  }
+
+  public archiveSchedule(scheduleId: string): ScheduleRecord {
+    const existing = this.dependencies.scheduleRepository.findById(scheduleId);
+    if (existing === null) {
+      throw new Error(`Schedule ${scheduleId} was not found.`);
+    }
+    const archived = this.dependencies.scheduleRepository.update(scheduleId, {
+      nextFireAt: null,
+      status: "archived"
+    });
+    this.dependencies.traceService.record({
+      actor: "scheduler",
+      eventType: "schedule_archived",
+      payload: {
+        scheduleId: archived.scheduleId,
+        status: "archived"
+      },
+      stage: "control",
+      summary: `Schedule ${archived.scheduleId} archived`,
+      taskId: `schedule:${archived.scheduleId}`
+    });
+    return archived;
+  }
+
+  public status(now = new Date()): ScheduleStatusSummary {
+    const nowIso = now.toISOString();
+    const schedules = this.dependencies.scheduleRepository.list();
+    const runs = this.dependencies.scheduleRunRepository.list({ tail: 10_000 });
+    const scheduleCounts = Object.fromEntries(SCHEDULE_STATUSES.map((status) => [status, 0])) as ScheduleStatusSummary["schedules"];
+    const runCounts = Object.fromEntries(SCHEDULE_RUN_STATUSES.map((status) => [status, 0])) as ScheduleStatusSummary["runs"];
+    for (const schedule of schedules) {
+      scheduleCounts[schedule.status] += 1;
+    }
+    for (const run of runs) {
+      runCounts[run.status] += 1;
+    }
+    const activeSchedules = schedules.filter((schedule) => schedule.status === "active");
+    const nextFireAt = activeSchedules
+      .map((schedule) => schedule.nextFireAt)
+      .filter((value): value is string => value !== null)
+      .sort()[0] ?? null;
+    return {
+      dueCount: activeSchedules.filter((schedule) => schedule.nextFireAt !== null && schedule.nextFireAt <= nowIso).length,
+      lastRunAt: runs[0]?.scheduledAt ?? null,
+      nextFireAt,
+      runs: runCounts,
+      schedules: scheduleCounts
+    };
+  }
+
   public pauseSchedule(scheduleId: string): ScheduleRecord {
+    const existing = this.dependencies.scheduleRepository.findById(scheduleId);
+    if (existing?.status === "archived") {
+      throw new Error(`Schedule ${scheduleId} is archived and cannot be paused.`);
+    }
     const schedule = this.dependencies.scheduleRepository.update(scheduleId, { status: "paused" });
     this.dependencies.traceService.record({
       actor: "scheduler",
@@ -148,6 +251,9 @@ export class SchedulerService {
     const existing = this.dependencies.scheduleRepository.findById(scheduleId);
     if (existing === null) {
       throw new Error(`Schedule ${scheduleId} was not found.`);
+    }
+    if (existing.status === "archived") {
+      throw new Error(`Schedule ${scheduleId} is archived and cannot be resumed.`);
     }
     const resumed = this.dependencies.scheduleRepository.update(scheduleId, {
       nextFireAt: this.computeResumeFireAt(existing),
@@ -172,6 +278,9 @@ export class SchedulerService {
     const schedule = this.dependencies.scheduleRepository.findById(scheduleId);
     if (schedule === null) {
       throw new Error(`Schedule ${scheduleId} was not found.`);
+    }
+    if (schedule.status === "archived") {
+      throw new Error(`Schedule ${scheduleId} is archived and cannot be run.`);
     }
     const latest = this.dependencies.scheduleRunRepository.listByScheduleId(scheduleId, { tail: 1 });
     const run = this.dependencies.scheduleRunRepository.create({
@@ -250,7 +359,7 @@ export class SchedulerService {
       input: input.input,
       intervalMs,
       maxAttempts: input.maxAttempts ?? 3,
-      metadata: input.metadata ?? {},
+      metadata: withDeliveryMetadata(input.metadata ?? {}, input.deliveryTargets ?? ["inbox"]),
       name: input.name,
       nextFireAt,
       ownerUserId: input.ownerUserId,
@@ -268,4 +377,116 @@ export class SchedulerService {
     }
     return computeNextFireAt(schedule, new Date())?.toISOString() ?? null;
   }
+
+  private buildScheduleUpdatePatch(existing: ScheduleRecord, input: UpdateScheduleInput): Parameters<ScheduleRepository["update"]>[1] {
+    const patch: Parameters<ScheduleRepository["update"]>[1] = {
+      ...(input.agentProfileId !== undefined ? { agentProfileId: input.agentProfileId } : {}),
+      ...(input.backoffBaseMs !== undefined ? { backoffBaseMs: input.backoffBaseMs } : {}),
+      ...(input.backoffMaxMs !== undefined ? { backoffMaxMs: input.backoffMaxMs } : {}),
+      ...(input.input !== undefined ? { input: input.input } : {}),
+      ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+      ...(input.timezone !== undefined ? { timezone: input.timezone } : {})
+    };
+
+    const metadataBase =
+      input.metadata === undefined
+        ? existing.metadata
+        : {
+            ...existing.metadata,
+            ...input.metadata
+          };
+    const nextMetadata =
+      input.metadata !== undefined || input.deliveryTargets !== undefined
+        ? withDeliveryMetadata(metadataBase, input.deliveryTargets)
+        : undefined;
+    if (nextMetadata !== undefined) {
+      patch.metadata = nextMetadata;
+    }
+
+    const timingTouched = hasOwn(input, "runAt") || hasOwn(input, "every") || hasOwn(input, "cron");
+    if (timingTouched) {
+      const requestedModes = [
+        input.runAt !== undefined && input.runAt !== null ? "runAt" : null,
+        input.every !== undefined && input.every !== null ? "every" : null,
+        input.cron !== undefined && input.cron !== null ? "cron" : null
+      ].filter((mode): mode is "runAt" | "every" | "cron" => mode !== null);
+      if (requestedModes.length !== 1) {
+        throw new Error("Schedule edit must define exactly one of runAt, every, or cron when changing time.");
+      }
+      const timezone = input.timezone ?? existing.timezone;
+      if (requestedModes[0] === "runAt") {
+        patch.runAt = input.runAt ?? null;
+        patch.intervalMs = null;
+        patch.cron = null;
+        patch.nextFireAt = input.runAt ?? null;
+      } else if (requestedModes[0] === "every") {
+        const intervalMs = parseEveryExpression(input.every ?? "");
+        patch.runAt = null;
+        patch.intervalMs = intervalMs;
+        patch.cron = null;
+        patch.nextFireAt = computeNextFireAt({ intervalMs, cron: null, timezone }, new Date())?.toISOString() ?? null;
+      } else {
+        const cron = input.cron ?? null;
+        patch.runAt = null;
+        patch.intervalMs = null;
+        patch.cron = cron;
+        patch.nextFireAt = computeNextFireAt({ intervalMs: null, cron, timezone }, new Date())?.toISOString() ?? null;
+      }
+      if (existing.status === "completed" && patch.nextFireAt !== null) {
+        patch.status = "active";
+      }
+      return patch;
+    }
+
+    if (input.timezone !== undefined && existing.runAt === null) {
+      patch.nextFireAt = computeNextFireAt(
+        {
+          cron: existing.cron,
+          intervalMs: existing.intervalMs,
+          timezone: input.timezone
+        },
+        new Date()
+      )?.toISOString() ?? null;
+    }
+
+    return patch;
+  }
+}
+
+function hasOwn<T extends object>(value: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function withDeliveryMetadata(metadata: JsonObject, targets?: ScheduleDeliveryTarget[]): JsonObject {
+  if (targets === undefined) {
+    return metadata;
+  }
+  const normalizedTargets = normalizeDeliveryTargets(targets);
+  const currentDelivery = metadata.delivery;
+  const delivery =
+    currentDelivery !== null && typeof currentDelivery === "object" && !Array.isArray(currentDelivery)
+      ? currentDelivery
+      : {};
+  return {
+    ...metadata,
+    delivery: {
+      ...delivery,
+      targets: normalizedTargets
+    }
+  };
+}
+
+function normalizeDeliveryTargets(targets: ScheduleDeliveryTarget[]): ScheduleDeliveryTarget[] {
+  const normalized = [...new Set(targets)];
+  if (normalized.length === 0) {
+    throw new Error("Schedule delivery targets must include at least one target.");
+  }
+  for (const target of normalized) {
+    if (!SCHEDULE_DELIVERY_TARGETS.includes(target)) {
+      throw new Error(`Unsupported schedule delivery target: ${target}`);
+    }
+  }
+  return normalized;
 }

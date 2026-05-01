@@ -12,6 +12,7 @@ import type {
   ProviderStatsSnapshot,
   ScheduleRecord,
   ScheduleRunRecord,
+  ScheduleStatusSummary,
   SessionSearchHit,
   SkillDraftRecord,
   SkillListResult,
@@ -236,6 +237,18 @@ export function formatScheduleRunList(runs: ScheduleRunRecord[]): string {
         `${run.runId} | attempt=${run.attemptNumber} | ${run.status} | trigger=${run.trigger} | task=${run.taskId ?? "-"} | thread=${run.threadId ?? "-"}`
     )
     .join("\n");
+}
+
+export function formatScheduleStatus(summary: ScheduleStatusSummary): string {
+  return [
+    "Schedules:",
+    `  active=${summary.schedules.active} paused=${summary.schedules.paused} completed=${summary.schedules.completed} archived=${summary.schedules.archived}`,
+    "Runs:",
+    `  queued=${summary.runs.queued} running=${summary.runs.running} waiting_approval=${summary.runs.waiting_approval} blocked=${summary.runs.blocked} completed=${summary.runs.completed} failed=${summary.runs.failed} cancelled=${summary.runs.cancelled}`,
+    `Due Now: ${summary.dueCount}`,
+    `Next Fire: ${summary.nextFireAt ?? "-"}`,
+    `Last Run: ${summary.lastRunAt ?? "-"}`
+  ].join("\n");
 }
 
 export function formatTask(

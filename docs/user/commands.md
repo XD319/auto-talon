@@ -15,7 +15,7 @@ Operational:
 
 - `talon task list|show|timeline`
 - `talon thread list|show|archive|snapshots <thread_id>|snapshot <snapshot_id>`
-- `talon schedule create|list|show|pause|resume|run-now|runs|run`
+- `talon schedule create|list|show|edit|pause|resume|run-now|runs|remove|status|tick|run`
 - `talon inbox [--status <status>]`
 - `talon inbox list|show|done|dismiss`
 - `talon commitments list|show|create|block|unblock|complete|cancel`
@@ -61,6 +61,9 @@ TUI slash commands (chat mode):
 - `/commitments list [thread-id-prefix]`
 - `/commitments done <commitment-id-prefix>`
 - `/commitments block <commitment-id-prefix> <reason...>`
+- `/schedule list [active|paused|completed|archived|all]`
+- `/schedule create <when> | <prompt>`
+- `/schedule pause|resume|run-now|runs|remove <schedule-id-prefix>`
 - `/memory`
 - `/memory review`
 - `/memory add <profile|project> <text>`

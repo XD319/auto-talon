@@ -57,6 +57,7 @@ import {
   formatScheduleDetail,
   formatScheduleList,
   formatScheduleRunList,
+  formatScheduleStatus,
   formatReplayReport,
   formatRunError,
   formatSkillDraft,
@@ -375,6 +376,49 @@ export async function main(argv = process.argv): Promise<void> {
       handle.close();
     }
   });
+  scheduleCommand
+    .command("edit")
+    .argument("<schedule_id>")
+    .option("--name <name>", "Schedule display name")
+    .option("--input <input>", "Scheduled task prompt")
+    .option("--every <duration>", "Recurring interval, e.g. 5m, 1h, 1d")
+    .option("--at <iso>", "One-shot run time in ISO-8601")
+    .option("--cron <expression>", "Cron expression")
+    .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
+    .option("--thread <thread_id>", "Continue an existing thread; use none to clear")
+    .option("--profile <profile>", "Agent profile id")
+    .option("--max-attempts <num>", "Max retry attempts")
+    .option("--backoff-base <ms>", "Backoff base milliseconds")
+    .option("--backoff-max <ms>", "Backoff max milliseconds")
+    .action((scheduleId: string, commandOptions: Record<string, string | undefined>) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const updated = handle.service.updateSchedule(scheduleId, {
+          ...(commandOptions.backoffBase !== undefined
+            ? { backoffBaseMs: Number.parseInt(commandOptions.backoffBase, 10) }
+            : {}),
+          ...(commandOptions.backoffMax !== undefined
+            ? { backoffMaxMs: Number.parseInt(commandOptions.backoffMax, 10) }
+            : {}),
+          ...(commandOptions.cron !== undefined ? { cron: commandOptions.cron } : {}),
+          ...(commandOptions.every !== undefined ? { every: commandOptions.every } : {}),
+          ...(commandOptions.at !== undefined ? { runAt: commandOptions.at } : {}),
+          ...(commandOptions.input !== undefined ? { input: commandOptions.input } : {}),
+          ...(commandOptions.maxAttempts !== undefined
+            ? { maxAttempts: Number.parseInt(commandOptions.maxAttempts, 10) }
+            : {}),
+          ...(commandOptions.name !== undefined ? { name: commandOptions.name } : {}),
+          ...(commandOptions.profile !== undefined
+            ? { agentProfileId: commandOptions.profile as "executor" | "planner" | "reviewer" }
+            : {}),
+          ...(commandOptions.thread !== undefined ? { threadId: parseNullableOption(commandOptions.thread) } : {}),
+          ...(commandOptions.timezone !== undefined ? { timezone: commandOptions.timezone } : {})
+        });
+        console.log(formatScheduleDetail(updated));
+      } finally {
+        handle.close();
+      }
+    });
   scheduleCommand.command("pause").argument("<schedule_id>").action((scheduleId: string) => {
     const handle = createApplication(process.cwd());
     try {
@@ -427,6 +471,31 @@ export async function main(argv = process.argv): Promise<void> {
         handle.close();
       }
     });
+  scheduleCommand.command("remove").argument("<schedule_id>").description("Archive a schedule").action((scheduleId: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatScheduleDetail(handle.service.archiveSchedule(scheduleId)));
+    } finally {
+      handle.close();
+    }
+  });
+  scheduleCommand.command("status").description("Summarize schedules and queued runs").action(() => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatScheduleStatus(handle.service.scheduleStatus()));
+    } finally {
+      handle.close();
+    }
+  });
+  scheduleCommand.command("tick").description("Run one scheduler tick and exit").action(async () => {
+    const handle = createApplication(process.cwd());
+    try {
+      await handle.service.tickScheduleOnce();
+      console.log(formatScheduleStatus(handle.service.scheduleStatus()));
+    } finally {
+      handle.close();
+    }
+  });
   scheduleCommand.command("run").description("Run scheduler daemon").action(async () => {
     const handle = createApplication(process.cwd(), {
       scheduler: { autoStart: true }
@@ -1908,6 +1977,11 @@ interface SmokeCommandOptions {
 
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function parseNullableOption(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "none" || normalized === "null" || normalized === "-" ? null : value;
 }
 
 async function runSmokeCommand(commandOptions: SmokeCommandOptions): Promise<void> {

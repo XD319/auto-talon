@@ -241,6 +241,11 @@ export class ScriptedSmokeProvider implements Provider {
           "Use pnpm and vitest for smoke verification, and keep trace summaries readable for regression review."
         ));
 
+      case "rc_scheduled_web_summary":
+        return Promise.resolve(finalResponse(
+          "Scheduled web summary regression: schedule lifecycle queues the run, web_search finds public results, web_fetch expands selected URLs, and inbox/origin delivery records the summary."
+        ));
+
       default:
         return Promise.resolve(finalResponse(`No scripted smoke scenario matched ${smokeTaskId}.`));
     }

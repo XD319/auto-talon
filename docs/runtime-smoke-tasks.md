@@ -1,5 +1,7 @@
 # Runtime Smoke Tasks
 
+v0.1.0 adds an RC smoke scenario for scheduled web summaries. It keeps the scripted provider deterministic while documenting the expected `schedule -> web_search -> web_fetch -> inbox/origin delivery` flow.
+
 本阶段固定了一组真实任务样例，用于验证 runtime 在真实任务下是否成立，而不是只验证 provider 能否被调用。
 
 任务样例定义文件：

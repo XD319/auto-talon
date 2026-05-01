@@ -39,7 +39,17 @@ import type {
   SandboxProfile,
   TokenBudget
 } from "../types/index.js";
-import { AskUserTool, FileReadTool, FileWriteTool, ShellTool, SkillViewTool, TestRunTool, ToolOrchestrator, WebFetchTool } from "../tools/index.js";
+import {
+  AskUserTool,
+  FileReadTool,
+  FileWriteTool,
+  ShellTool,
+  SkillViewTool,
+  TestRunTool,
+  ToolOrchestrator,
+  WebFetchTool,
+  WebSearchTool
+} from "../tools/index.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
 
@@ -61,7 +71,7 @@ import { JobRunner } from "./jobs/index.js";
 import { SchedulerService } from "./scheduler/index.js";
 import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./threads/index.js";
 import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
-import { resolveRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
+import { resolveRuntimeConfig, type WebSearchRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles } from "./workspace-setup.js";
 
@@ -118,6 +128,7 @@ export interface AppConfig {
   runtimeConfigSource: "defaults" | "env" | "file";
   sandbox: SandboxProfile;
   tokenBudget: TokenBudget;
+  webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
   workspaceRoot: string;
 }
@@ -157,6 +168,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     runtimeConfigSource: runtimeConfig.configSource,
     sandbox,
     tokenBudget: runtimeConfig.tokenBudget,
+    webSearch: runtimeConfig.webSearch,
     workflow: runtimeConfig.workflow,
     workspaceRoot
   };
@@ -300,6 +312,7 @@ export function createApplication(
         config.workflow.failureGuidedRetry.maxRepairAttempts
       ),
       new WebFetchTool(sandboxService),
+      new WebSearchTool(sandboxService, config.webSearch),
       ...mcpTools
     ],
     traceService

@@ -142,6 +142,7 @@ export interface ScheduleRepository {
 export interface ScheduleRunRepository {
   create(record: ScheduleRunDraft): ScheduleRunRecord;
   findById(runId: string): ScheduleRunRecord | null;
+  list(query?: ScheduleRunListQuery): ScheduleRunRecord[];
   listByScheduleId(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[];
   listByTaskId(taskId: string): ScheduleRunRecord[];
   listByThreadId(threadId: string): ScheduleRunRecord[];

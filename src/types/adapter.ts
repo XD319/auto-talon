@@ -3,6 +3,7 @@ import type { AuditLogRecord } from "./audit.js";
 import type { TraceEvent } from "./trace.js";
 import type { InboxDeliveryEvent, InboxItem, InboxListQuery } from "./inbox.js";
 import type {
+  ScheduleDeliveryTarget,
   ScheduleListQuery,
   ScheduleRecord,
   ScheduleRunListQuery,
@@ -151,6 +152,7 @@ export interface GatewayScheduleCreateRequest {
   runAt?: string | null;
   threadId?: string | null;
   timezone?: string | null;
+  deliveryTargets?: ScheduleDeliveryTarget[];
 }
 
 export interface GatewayTaskSnapshot {
@@ -173,6 +175,7 @@ export interface GatewayRuntimeApi {
   listSchedules(query?: ScheduleListQuery): ScheduleRecord[];
   listInbox(filter?: GatewayInboxFilter): InboxItem[];
   markInboxDone(inboxId: string, reviewerRuntimeUserId: string): InboxItem;
+  archiveSchedule(scheduleId: string): ScheduleRecord;
   pauseSchedule(scheduleId: string): ScheduleRecord;
   registerOutboundAdapter(adapterId: string, adapter: OutboundResponseAdapter): void;
   resolveApproval(params: {

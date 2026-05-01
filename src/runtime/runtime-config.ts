@@ -15,6 +15,14 @@ const runtimeConfigFileSchema = z.object({
   allowedFetchHosts: z.array(z.string().min(1)).optional(),
   defaultMaxIterations: z.number().int().positive().optional(),
   defaultTimeoutMs: z.number().int().positive().optional(),
+  webSearch: z
+    .object({
+      apiKeyEnv: z.string().min(1).optional(),
+      apiUrl: z.string().url().optional(),
+      backend: z.enum(["disabled", "firecrawl"]).optional(),
+      maxResults: z.number().int().positive().max(50).optional()
+    })
+    .optional(),
   compact: z
     .object({
       messageThreshold: z.number().int().positive().optional(),
@@ -123,6 +131,14 @@ export interface WorkflowRuntimeConfig {
   testCommands: string[];
 }
 
+export interface WebSearchRuntimeConfig {
+  apiKey: string | null;
+  apiKeyEnv: string;
+  apiUrl: string;
+  backend: "disabled" | "firecrawl";
+  maxResults: number;
+}
+
 export interface RuntimeConfig {
   allowedFetchHosts: string[];
   configPath: string;
@@ -167,6 +183,7 @@ export interface RuntimeConfig {
     pricing: Record<string, BudgetPricingEntry>;
   };
   tokenBudget: TokenBudget;
+  webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
 }
 
@@ -174,6 +191,13 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
   allowedFetchHosts: ["*"],
   defaultMaxIterations: 12,
   defaultTimeoutMs: 120_000,
+  webSearch: {
+    apiKey: null,
+    apiKeyEnv: "FIRECRAWL_API_KEY",
+    apiUrl: "https://api.firecrawl.dev/v1/search",
+    backend: "disabled",
+    maxResults: 5
+  },
   compact: {
     messageThreshold: 8,
     summarizer: "deterministic",
@@ -276,6 +300,26 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       envConfig.workflow?.testCommands ??
       fileConfig?.workflow?.testCommands ??
       DEFAULT_RUNTIME_CONFIG.workflow.testCommands
+  };
+  const webSearchApiKeyEnv =
+    envConfig.webSearch?.apiKeyEnv ??
+    fileConfig?.webSearch?.apiKeyEnv ??
+    DEFAULT_RUNTIME_CONFIG.webSearch.apiKeyEnv;
+  const webSearch: WebSearchRuntimeConfig = {
+    apiKey: process.env[webSearchApiKeyEnv]?.trim() || null,
+    apiKeyEnv: webSearchApiKeyEnv,
+    apiUrl:
+      envConfig.webSearch?.apiUrl ??
+      fileConfig?.webSearch?.apiUrl ??
+      DEFAULT_RUNTIME_CONFIG.webSearch.apiUrl,
+    backend:
+      envConfig.webSearch?.backend ??
+      fileConfig?.webSearch?.backend ??
+      DEFAULT_RUNTIME_CONFIG.webSearch.backend,
+    maxResults:
+      envConfig.webSearch?.maxResults ??
+      fileConfig?.webSearch?.maxResults ??
+      DEFAULT_RUNTIME_CONFIG.webSearch.maxResults
   };
   const merged = {
     allowedFetchHosts:
@@ -388,6 +432,7 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         )
     },
     tokenBudget,
+    webSearch,
     workflow
   };
 
@@ -443,6 +488,32 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
   const defaultTimeoutMs = readPositiveIntegerEnv("AGENT_DEFAULT_TIMEOUT_MS");
   if (defaultTimeoutMs !== undefined) {
     config.defaultTimeoutMs = defaultTimeoutMs;
+  }
+
+  const webSearchBackend = process.env.AGENT_WEB_SEARCH_BACKEND?.trim();
+  if (webSearchBackend === "disabled" || webSearchBackend === "firecrawl") {
+    config.webSearch = {
+      ...(config.webSearch ?? {}),
+      backend: webSearchBackend
+    };
+  } else if (webSearchBackend !== undefined && webSearchBackend.length > 0) {
+    throw new Error("AGENT_WEB_SEARCH_BACKEND must be disabled or firecrawl.");
+  }
+
+  const firecrawlApiUrl = process.env.FIRECRAWL_API_URL?.trim();
+  if (firecrawlApiUrl !== undefined && firecrawlApiUrl.length > 0) {
+    config.webSearch = {
+      ...(config.webSearch ?? {}),
+      apiUrl: firecrawlApiUrl
+    };
+  }
+
+  const webSearchMaxResults = readPositiveIntegerEnv("AGENT_WEB_SEARCH_MAX_RESULTS");
+  if (webSearchMaxResults !== undefined) {
+    config.webSearch = {
+      ...(config.webSearch ?? {}),
+      maxResults: webSearchMaxResults
+    };
   }
 
   const tokenBudget: RuntimeConfigFile["tokenBudget"] = {};

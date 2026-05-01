@@ -37,6 +37,9 @@ describe("personal assistant slash commands", () => {
     expect(SLASH_COMMANDS).toContain("/schedule list ");
     expect(SLASH_COMMANDS).toContain("/schedule pause ");
     expect(SLASH_COMMANDS).toContain("/schedule resume ");
+    expect(SLASH_COMMANDS).toContain("/schedule run-now ");
+    expect(SLASH_COMMANDS).toContain("/schedule runs ");
+    expect(SLASH_COMMANDS).toContain("/schedule remove ");
   });
 
   it("completes personal workflow commands by prefix", () => {
