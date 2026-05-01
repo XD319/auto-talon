@@ -2,6 +2,12 @@ import type { JsonObject } from "./common.js";
 import type { AuditLogRecord } from "./audit.js";
 import type { TraceEvent } from "./trace.js";
 import type { InboxDeliveryEvent, InboxItem, InboxListQuery } from "./inbox.js";
+import type {
+  ScheduleListQuery,
+  ScheduleRecord,
+  ScheduleRunListQuery,
+  ScheduleRunRecord
+} from "./schedule.js";
 
 export type AdapterCapabilityName =
   | "textInteraction"
@@ -132,6 +138,21 @@ export interface GatewayTaskLaunchResult {
   sessionBinding: GatewaySessionBinding;
 }
 
+export interface GatewayScheduleCreateRequest {
+  agentProfileId?: "executor" | "planner" | "reviewer";
+  cron?: string | null;
+  cwd?: string;
+  every?: string | null;
+  input: string;
+  messageId?: string | null;
+  metadata?: JsonObject;
+  name: string;
+  requester: GatewayRequesterIdentity;
+  runAt?: string | null;
+  threadId?: string | null;
+  timezone?: string | null;
+}
+
 export interface GatewayTaskSnapshot {
   adapterSource: {
     adapterId: string;
@@ -146,9 +167,13 @@ export interface GatewayTaskSnapshot {
 }
 
 export interface GatewayRuntimeApi {
+  createSchedule(adapter: AdapterDescriptor, request: GatewayScheduleCreateRequest): ScheduleRecord;
   getTaskSnapshot(taskId: string): GatewayTaskSnapshot | null;
+  listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[];
+  listSchedules(query?: ScheduleListQuery): ScheduleRecord[];
   listInbox(filter?: GatewayInboxFilter): InboxItem[];
   markInboxDone(inboxId: string, reviewerRuntimeUserId: string): InboxItem;
+  pauseSchedule(scheduleId: string): ScheduleRecord;
   registerOutboundAdapter(adapterId: string, adapter: OutboundResponseAdapter): void;
   resolveApproval(params: {
     adapterId: string;
@@ -157,6 +182,9 @@ export interface GatewayRuntimeApi {
     reviewerExternalUserId: string | null;
     reviewerRuntimeUserId: string;
   }): Promise<GatewayTaskLaunchResult | null>;
+  resumeSchedule(scheduleId: string): ScheduleRecord;
+  runScheduleNow(scheduleId: string): ScheduleRunRecord;
+  showSchedule(scheduleId: string): ScheduleRecord | null;
   submitTask(adapter: AdapterDescriptor, request: GatewayTaskRequest): Promise<GatewayTaskLaunchResult>;
   subscribeToCompletion(taskId: string, listener: (event: GatewayTaskEvent) => void): () => void;
   subscribeToInbox(filter: GatewayInboxFilter, listener: (event: InboxDeliveryEvent) => void): () => void;

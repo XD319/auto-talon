@@ -13,7 +13,12 @@ import type {
   GatewayTaskRequest,
   GatewayTaskSnapshot,
   GatewayTaskResultView,
-  RuntimeRunOptions
+  JsonObject,
+  RuntimeRunOptions,
+  ScheduleListQuery,
+  ScheduleRecord,
+  ScheduleRunListQuery,
+  ScheduleRunRecord
 } from "../types/index.js";
 
 import { collectCapabilityNotices } from "./capability-policy.js";
@@ -28,12 +33,14 @@ export interface GatewayRuntimeFacadeDependencies {
   defaultCwd: string;
   guard?: GatewayGuard;
   identityMapper: GatewayIdentityMapper;
+  providerName: string;
   sessionMapper: GatewaySessionMapper;
   traceService: TraceService;
 }
 
 export class GatewayRuntimeFacade implements GatewayRuntimeApi {
   private readonly completionListeners = new Map<string, Set<(event: GatewayTaskEvent) => void>>();
+  private inboxOutboundUnsubscribe: (() => void) | null = null;
   private readonly outboundAdapters = new Map<
     string,
     {
@@ -222,6 +229,134 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     }
   ): void {
     this.outboundAdapters.set(adapterId, adapter);
+    if (typeof adapter.sendInboxEvent === "function") {
+      this.ensureInboxOutboundSubscription();
+    }
+  }
+
+  public createSchedule(
+    adapter: AdapterDescriptor,
+    request: {
+      agentProfileId?: "executor" | "planner" | "reviewer";
+      cron?: string | null;
+      cwd?: string;
+      every?: string | null;
+      input: string;
+      messageId?: string | null;
+      metadata?: JsonObject;
+      name: string;
+      requester: {
+        externalSessionId: string;
+        externalUserId: string | null;
+        externalUserLabel: string | null;
+      };
+      runAt?: string | null;
+      threadId?: string | null;
+      timezone?: string | null;
+    }
+  ): ScheduleRecord {
+    const identityBinding = this.dependencies.identityMapper.bind(adapter.adapterId, request.requester);
+    const continuation = this.dependencies.sessionMapper.resolveContinuation({
+      adapterId: adapter.adapterId,
+      externalSessionId: request.requester.externalSessionId
+    });
+    const ownerUserId = continuation?.runtimeUserId ?? identityBinding.runtimeUserId;
+    const cwd = request.cwd ?? this.dependencies.defaultCwd;
+    const runOptions = this.dependencies.createRunOptions(request.input, cwd);
+    const threadId =
+      request.threadId === undefined
+        ? continuation === null
+          ? null
+          : this.dependencies.applicationService.showTask(continuation.previousTaskId).task?.threadId ?? null
+        : request.threadId;
+    const metadata: JsonObject = {
+      ...(request.metadata ?? {}),
+      gateway: {
+        adapterId: adapter.adapterId,
+        adapterKind: adapter.kind,
+        externalSessionId: request.requester.externalSessionId,
+        externalUserId: request.requester.externalUserId,
+        runtimeUserId: ownerUserId
+      },
+      origin: {
+        adapter: adapter.adapterId,
+        chatId: request.requester.externalSessionId,
+        messageId: request.messageId ?? null,
+        sessionId: request.requester.externalSessionId,
+        userId: request.requester.externalUserId
+      }
+    };
+
+    const schedule = this.dependencies.applicationService.createSchedule({
+      agentProfileId: request.agentProfileId ?? runOptions.agentProfileId,
+      cwd,
+      input: request.input,
+      metadata,
+      name: request.name,
+      ownerUserId,
+      providerName: this.dependencies.providerName,
+      ...(request.cron !== undefined ? { cron: request.cron } : {}),
+      ...(request.every !== undefined ? { every: request.every } : {}),
+      ...(request.runAt !== undefined ? { runAt: request.runAt } : {}),
+      ...(threadId !== null ? { threadId } : {}),
+      ...(request.timezone !== undefined ? { timezone: request.timezone } : {})
+    });
+
+    this.dependencies.traceService.record({
+      actor: `gateway.${adapter.adapterId}`,
+      eventType: "schedule_created",
+      payload: {
+        adapterId: adapter.adapterId,
+        externalSessionId: request.requester.externalSessionId,
+        nextFireAt: schedule.nextFireAt,
+        scheduleId: schedule.scheduleId,
+        status: schedule.status === "paused" ? "paused" : "active"
+      },
+      stage: "gateway",
+      summary: `Gateway schedule created from ${adapter.adapterId}`,
+      taskId: `schedule:${schedule.scheduleId}`
+    });
+
+    this.dependencies.auditService.record({
+      action: "gateway_schedule_created",
+      actor: `gateway.${adapter.adapterId}`,
+      approvalId: null,
+      outcome: "succeeded",
+      payload: {
+        adapterId: adapter.adapterId,
+        externalSessionId: request.requester.externalSessionId,
+        scheduleId: schedule.scheduleId
+      },
+      summary: `Gateway schedule created from ${adapter.adapterId}`,
+      taskId: null,
+      toolCallId: null
+    });
+
+    return schedule;
+  }
+
+  public listSchedules(query?: ScheduleListQuery): ScheduleRecord[] {
+    return this.dependencies.applicationService.listSchedules(query);
+  }
+
+  public showSchedule(scheduleId: string): ScheduleRecord | null {
+    return this.dependencies.applicationService.showSchedule(scheduleId);
+  }
+
+  public listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[] {
+    return this.dependencies.applicationService.listScheduleRuns(scheduleId, query);
+  }
+
+  public pauseSchedule(scheduleId: string): ScheduleRecord {
+    return this.dependencies.applicationService.pauseSchedule(scheduleId);
+  }
+
+  public resumeSchedule(scheduleId: string): ScheduleRecord {
+    return this.dependencies.applicationService.resumeSchedule(scheduleId);
+  }
+
+  public runScheduleNow(scheduleId: string): ScheduleRunRecord {
+    return this.dependencies.applicationService.runScheduleNow(scheduleId);
   }
 
   public async resolveApproval(params: {
@@ -379,12 +514,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     filter: GatewayInboxFilter,
     listener: (event: InboxDeliveryEvent) => void
   ): () => void {
-    return this.dependencies.applicationService.subscribeInbox(filter, (event) => {
-      listener(event);
-      for (const outbound of this.outboundAdapters.values()) {
-        void outbound.sendInboxEvent?.(event);
-      }
-    });
+    return this.dependencies.applicationService.subscribeInbox(filter, listener);
   }
 
   public subscribeToTaskEvents(taskId: string, listener: (event: GatewayTaskEvent) => void): () => void {
@@ -457,6 +587,17 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     for (const listener of listeners) {
       listener(event);
     }
+  }
+
+  private ensureInboxOutboundSubscription(): void {
+    if (this.inboxOutboundUnsubscribe !== null) {
+      return;
+    }
+    this.inboxOutboundUnsubscribe = this.dependencies.applicationService.subscribeInbox({}, (event) => {
+      for (const outbound of this.outboundAdapters.values()) {
+        void outbound.sendInboxEvent?.(event);
+      }
+    });
   }
 
   private findPendingApprovalId(taskId: string): string | null {

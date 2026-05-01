@@ -39,6 +39,7 @@ export class GatewayManager {
         adapter.descriptor.adapterId.length > 0 &&
         (typeof (adapter as { sendEvent?: unknown }).sendEvent === "function" ||
           typeof (adapter as { sendResult?: unknown }).sendResult === "function" ||
+          typeof (adapter as { sendInboxEvent?: unknown }).sendInboxEvent === "function" ||
           typeof (adapter as { sendCapabilityNotice?: unknown }).sendCapabilityNotice === "function")
       ) {
         this.runtimeApi.registerOutboundAdapter(

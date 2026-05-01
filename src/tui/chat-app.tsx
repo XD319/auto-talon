@@ -1223,6 +1223,7 @@ export function handleScheduleCommand(
         name: deriveScheduleName(prompt),
         ownerUserId: resolveRuntimeUserId(),
         providerName: options.providerName,
+        ...(parsed.cron !== undefined ? { cron: parsed.cron } : {}),
         ...(controller.activeThreadId !== null ? { threadId: controller.activeThreadId } : {}),
         ...(parsed.every !== undefined ? { every: parsed.every } : {}),
         ...(parsed.runAt !== undefined ? { runAt: parsed.runAt } : {})

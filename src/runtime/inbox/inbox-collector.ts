@@ -4,7 +4,8 @@ import type {
   ScheduleRecord,
   ScheduleRunRecord,
   TaskRecord,
-  TraceEvent
+  TraceEvent,
+  JsonObject
 } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type { NextActionService } from "../commitments/index.js";
@@ -72,18 +73,24 @@ export class InboxCollector {
         });
         return;
       case "approval_requested":
-        this.dependencies.inboxService.append({
-          actionHint: "talon approve resolve <approval-id> --action allow --reviewer <user>",
-          category: "approval_requested",
-          dedupKey: `approval_requested:${event.payload.approvalId}`,
-          severity: "action_required",
-          sourceTraceId: event.eventId,
-          summary: `${event.payload.toolName} requires approval`,
-          taskId: event.taskId,
-          threadId: this.dependencies.findTask(event.taskId)?.threadId ?? null,
-          title: "Approval requested",
-          userId: this.resolveUserId(event.taskId)
-        });
+        {
+          const scheduleRun = this.findRelatedScheduleRun(event.taskId);
+          const schedule = scheduleRun === null ? null : this.dependencies.findSchedule(scheduleRun.scheduleId);
+          this.dependencies.inboxService.append({
+            actionHint: "talon approve resolve <approval-id> --action allow --reviewer <user>",
+            category: "approval_requested",
+            dedupKey: `approval_requested:${event.payload.approvalId}`,
+            metadata: buildApprovalInboxMetadata(schedule, event.payload.approvalId),
+            scheduleRunId: scheduleRun?.runId ?? null,
+            severity: "action_required",
+            sourceTraceId: event.eventId,
+            summary: `${event.payload.toolName} requires approval`,
+            taskId: event.taskId,
+            threadId: this.dependencies.findTask(event.taskId)?.threadId ?? null,
+            title: "Approval requested",
+            userId: this.resolveUserId(event.taskId)
+          });
+        }
         return;
       case "approval_resolved": {
         const pending = this.dependencies.inboxService
@@ -183,6 +190,7 @@ export class InboxCollector {
           this.dependencies.inboxService.append({
             category: "task_completed",
             dedupKey: `schedule_run_finished:${event.payload.runId}`,
+            metadata: buildScheduleInboxMetadata(schedule),
             scheduleRunId: event.payload.runId,
             severity: "info",
             sourceTraceId: event.eventId,
@@ -199,13 +207,15 @@ export class InboxCollector {
         const scheduleRun = this.findScheduleRunByRunId(event.payload.taskId, event.payload.runId);
         const scheduleName = schedule?.name ?? event.payload.runId;
         const failureReason = [event.payload.errorCode, event.payload.errorMessage].filter(Boolean).join(": ") || "Scheduled routine failed";
-        if (schedule?.threadId !== null && schedule?.threadId !== undefined) {
+        const metadata = buildScheduleInboxMetadata(schedule);
+        if (schedule?.threadId !== null && schedule?.threadId !== undefined && !hasExternalScheduleOrigin(metadata)) {
           this.createFailedRoutineFollowUp(schedule, event.payload.runId, event.payload.taskId, failureReason);
           return;
         }
         this.dependencies.inboxService.append({
           category: "task_failed",
           dedupKey: `schedule_run_failed:${event.payload.runId}`,
+          metadata,
           scheduleRunId: scheduleRun?.runId ?? event.payload.runId,
           severity: "warning",
           sourceTraceId: event.eventId,
@@ -318,4 +328,36 @@ export class InboxCollector {
     });
     return this.dependencies.nextActionService.block(created.nextActionId, reason);
   }
+}
+
+function buildScheduleInboxMetadata(schedule: ScheduleRecord | null): JsonObject {
+  if (schedule === null) {
+    return {};
+  }
+  const metadata: JsonObject = {
+    scheduleId: schedule.scheduleId
+  };
+  const origin = readJsonObject(schedule.metadata.origin);
+  if (origin !== null) {
+    metadata.origin = origin;
+  }
+  return metadata;
+}
+
+function buildApprovalInboxMetadata(schedule: ScheduleRecord | null, approvalId: string): JsonObject {
+  return {
+    ...buildScheduleInboxMetadata(schedule),
+    approvalId
+  };
+}
+
+function hasExternalScheduleOrigin(metadata: JsonObject): boolean {
+  return readJsonObject(metadata.origin) !== null;
+}
+
+function readJsonObject(value: unknown): JsonObject | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as JsonObject;
 }

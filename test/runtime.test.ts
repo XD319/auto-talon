@@ -274,6 +274,42 @@ describe("Phase 2 governance runtime", () => {
     }
   });
 
+  it("treats repeated approval resolution as idempotent", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApprovalWriteApplication(workspaceRoot);
+
+    try {
+      const initial = await handle.service.runTask(
+        createDefaultRunOptions("create governed file", workspaceRoot, handle.config)
+      );
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval).toBeDefined();
+
+      const first = await handle.service.resolveApproval(
+        approval?.approvalId ?? "",
+        "allow",
+        "reviewer-1"
+      );
+      const second = await handle.service.resolveApproval(
+        approval?.approvalId ?? "",
+        "allow",
+        "reviewer-1"
+      );
+
+      expect(first.task.status).toBe("succeeded");
+      expect(second.task.status).toBe("succeeded");
+      expect(second.output).toBe("governed.txt created after approval");
+      expect(second.error).toBeUndefined();
+      expect(
+        handle.service
+          .traceTask(initial.task.taskId)
+          .filter((event) => event.eventType === "approval_resolved")
+      ).toHaveLength(1);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("returns an approved result when the resumed task fails after approval", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApprovalShellFailureApplication(workspaceRoot);

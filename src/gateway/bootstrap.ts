@@ -20,6 +20,7 @@ export function createGatewayRuntime(runtimeHandle: AppRuntimeHandle): GatewayRu
       cwd: runtimeHandle.config.workspaceRoot
     }),
     identityMapper: new DefaultGatewayIdentityMapper(),
+    providerName: runtimeHandle.config.provider.name,
     sessionMapper: new RepositoryBackedGatewaySessionMapper(
       runtimeHandle.infrastructure.storage.gatewaySessions
     ),

@@ -5,6 +5,7 @@ import { computeNextFireAt, parseEveryExpression } from "./next-fire.js";
 import type { JobRunner } from "../jobs/job-runner.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type {
+  JsonObject,
   ScheduleDraft,
   ScheduleListQuery,
   ScheduleRecord,
@@ -29,6 +30,7 @@ export interface CreateScheduleInput {
   maxAttempts?: number;
   backoffBaseMs?: number;
   backoffMaxMs?: number;
+  metadata?: JsonObject;
 }
 
 export interface SchedulerServiceDependencies {
@@ -248,6 +250,7 @@ export class SchedulerService {
       input: input.input,
       intervalMs,
       maxAttempts: input.maxAttempts ?? 3,
+      metadata: input.metadata ?? {},
       name: input.name,
       nextFireAt,
       ownerUserId: input.ownerUserId,

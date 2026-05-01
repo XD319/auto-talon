@@ -53,6 +53,7 @@
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.62.1",
     "clipboardy": "^3.0.0",
     "commander": "^14.0.0",
     "cron-parser": "^5.5.0",

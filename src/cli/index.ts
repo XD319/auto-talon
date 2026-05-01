@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { Command } from "commander";
 
 import {
+  createGatewayApplication,
   createGatewayRuntime,
   createFeishuGatewayPlugin,
   startFeishuGateway,
@@ -1761,10 +1762,11 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--host <host>", "Host to bind", "127.0.0.1")
     .option("--port <port>", "Port to bind", "7070")
     .action(async (commandOptions: SandboxCommandOptions & { host: string; port: string }) => {
-      const handle = createApplication(commandOptions.cwd, {
+      const gatewayApp = createGatewayApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
       });
-      const gatewayRuntime = createGatewayRuntime(handle);
+      const handle = gatewayApp.runtime;
+      const gatewayRuntime = gatewayApp.gateway;
       const gatewayHandle = await startLocalWebhookGateway(handle, {
         host: commandOptions.host,
         port: Number(commandOptions.port)
@@ -1777,7 +1779,7 @@ export async function main(argv = process.argv): Promise<void> {
 
       const shutdown = async (): Promise<void> => {
         await gatewayHandle.manager.stopAll();
-        handle.close();
+        gatewayApp.close();
         process.exit(0);
       };
 
@@ -1797,10 +1799,11 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--local-webhook-port <port>", "Also start local webhook on this port")
     .action(async (commandOptions: SandboxCommandOptions & { localWebhookPort?: string }) => {
-      const handle = createApplication(commandOptions.cwd, {
+      const gatewayApp = createGatewayApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
       });
-      const gatewayRuntime = createGatewayRuntime(handle);
+      const handle = gatewayApp.runtime;
+      const gatewayRuntime = gatewayApp.gateway;
       const feishu = await startFeishuGateway(handle, gatewayRuntime);
       const extraManagers: GatewayManager[] = [feishu.manager];
       if (commandOptions.localWebhookPort !== undefined) {
@@ -1816,7 +1819,7 @@ export async function main(argv = process.argv): Promise<void> {
         for (const manager of extraManagers) {
           await manager.stopAll();
         }
-        handle.close();
+        gatewayApp.close();
         process.exit(0);
       };
       process.once("SIGINT", () => void shutdown());

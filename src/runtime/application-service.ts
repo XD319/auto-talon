@@ -789,6 +789,10 @@ export class AgentApplicationService {
       approvalId,
       reviewerId
     });
+    const existingApproval = this.dependencies.approvalService.findById(parsed.approvalId);
+    if (existingApproval !== null && existingApproval.status !== "pending") {
+      return this.toCompletedApprovalActionResult(existingApproval);
+    }
 
     const approval = this.dependencies.approvalService.resolve({
       action: parsed.action,
@@ -907,6 +911,28 @@ export class AgentApplicationService {
       output: null,
       task: failedTask
     };
+  }
+
+  private toCompletedApprovalActionResult(approval: ApprovalRecord): ApprovalActionResult {
+    const task = this.dependencies.findTask(approval.taskId);
+    if (task === null) {
+      throw new AppError({
+        code: "task_not_found",
+        message: `Task ${approval.taskId} was not found.`
+      });
+    }
+    const result: ApprovalActionResult = {
+      approval,
+      output: task.finalOutput,
+      task
+    };
+    if (task.errorCode !== null) {
+      result.error = new AppError({
+        code: task.errorCode,
+        message: task.errorMessage ?? task.errorCode
+      });
+    }
+    return result;
   }
 
   public async answerClarifyPrompt(

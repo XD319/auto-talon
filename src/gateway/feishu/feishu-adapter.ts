@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   AdapterDescriptor,
   GatewayCapabilityNotice,
@@ -5,11 +7,28 @@ import type {
   GatewayTaskEvent,
   GatewayTaskLaunchResult,
   GatewayTaskResultView,
+  InboxDeliveryEvent,
+  JsonObject,
   InboundMessageAdapter,
-  OutboundResponseAdapter
+  OutboundResponseAdapter,
+  ScheduleRecord,
+  ScheduleRunRecord
 } from "../../types/index.js";
 import {
+  parseNaturalLanguageScheduleIntent,
+  parseNaturalLanguageScheduleWhen,
+  type ParsedNaturalLanguageSchedule
+} from "../../runtime/scheduler/natural-language-schedule.js";
+import {
   renderApprovalCard,
+  renderApprovalFailedCard,
+  renderApprovalProcessingCard,
+  renderApprovalResolvedCard,
+  renderScheduleCancelledCard,
+  renderScheduleConfirmationCard,
+  renderScheduleConfirmationProcessingCard,
+  renderScheduleCreatedCard,
+  renderScheduleFailedCard,
   renderTaskProgressCard,
   renderTaskResultCard
 } from "./feishu-card.js";
@@ -31,6 +50,7 @@ interface FeishuCreateInteractiveMessagePayload {
     content: string;
     msg_type: "interactive";
     receive_id: string;
+    uuid: string;
   };
   params: {
     receive_id_type: "chat_id";
@@ -42,6 +62,7 @@ interface FeishuCreateTextMessagePayload {
     content: string;
     msg_type: "text";
     receive_id: string;
+    uuid: string;
   };
   params: {
     receive_id_type: "chat_id";
@@ -75,6 +96,34 @@ interface FeishuEventDispatcherLike {
   register: (handlers: Record<string, (data: unknown) => Promise<void> | void>) => unknown;
 }
 
+type FeishuCardActionEvent =
+  | {
+      actionType: "approval";
+      approvalId: string;
+      chatId: string;
+      decision: "allow" | "deny";
+      messageId: string | null;
+      openId: string | null;
+      taskId: string;
+    }
+  | {
+      actionType: "schedule_confirmation";
+      chatId: string;
+      confirmationId: string;
+      decision: "confirm" | "cancel";
+      messageId: string | null;
+      openId: string | null;
+    };
+
+interface FeishuScheduleDraft {
+  chatId: string;
+  messageId: string | null;
+  openId: string | null;
+  prompt: string;
+  schedule: ParsedNaturalLanguageSchedule;
+  whenText: string;
+}
+
 export interface FeishuAdapterOptions {
   adapterId?: string;
   createClients?: (config: FeishuGatewayConfig) => Promise<{
@@ -99,6 +148,15 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
   private readonly handledInboundKeys: string[] = [];
   private readonly handledInboundKeySet = new Set<string>();
   private readonly inFlightInboundKeySet = new Set<string>();
+  private readonly handledApprovalActionSet = new Set<string>();
+  private readonly inFlightApprovalActionSet = new Set<string>();
+  private readonly approvalMessageIds = new Map<string, { chatId: string; messageId: string }>();
+  private readonly inFlightApprovalCardIds = new Set<string>();
+  private readonly sentApprovalCardIds = new Set<string>();
+  private readonly handledScheduleConfirmationIds = new Set<string>();
+  private readonly inFlightScheduleConfirmationIds = new Set<string>();
+  private readonly scheduleConfirmationDrafts = new Map<string, FeishuScheduleDraft>();
+  private readonly scheduleConfirmationMessageIds = new Map<string, { chatId: string; messageId: string }>();
   private readonly taskMessageIds = new Map<string, { chatId: string; messageId: string }>();
 
   public constructor(
@@ -213,6 +271,40 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     }
   }
 
+  private beginApprovalActionHandling(approvalId: string): boolean {
+    if (this.handledApprovalActionSet.has(approvalId) || this.inFlightApprovalActionSet.has(approvalId)) {
+      return false;
+    }
+    this.inFlightApprovalActionSet.add(approvalId);
+    return true;
+  }
+
+  private completeApprovalActionHandling(approvalId: string, handledSuccessfully: boolean): void {
+    this.inFlightApprovalActionSet.delete(approvalId);
+    if (handledSuccessfully) {
+      this.handledApprovalActionSet.add(approvalId);
+    }
+  }
+
+  private beginScheduleConfirmationHandling(confirmationId: string): boolean {
+    if (
+      this.handledScheduleConfirmationIds.has(confirmationId) ||
+      this.inFlightScheduleConfirmationIds.has(confirmationId)
+    ) {
+      return false;
+    }
+    this.inFlightScheduleConfirmationIds.add(confirmationId);
+    return true;
+  }
+
+  private completeScheduleConfirmationHandling(confirmationId: string, handledSuccessfully: boolean): void {
+    this.inFlightScheduleConfirmationIds.delete(confirmationId);
+    if (handledSuccessfully) {
+      this.handledScheduleConfirmationIds.add(confirmationId);
+      this.scheduleConfirmationDrafts.delete(confirmationId);
+    }
+  }
+
   public async handleMessageEvent(event: {
     chatId: string;
     eventId: string | null;
@@ -225,6 +317,31 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     }
     const trimmed = event.text.trim();
     if (trimmed.length === 0) {
+      return;
+    }
+
+    if (trimmed.startsWith("/schedule")) {
+      await this.handleScheduleCommand(event, trimmed);
+      return;
+    }
+
+    let scheduleIntent: ReturnType<typeof parseNaturalLanguageScheduleIntent>;
+    try {
+      scheduleIntent = parseNaturalLanguageScheduleIntent(trimmed);
+    } catch (error) {
+      await this.sendTextToChat(
+        event.chatId,
+        error instanceof Error ? error.message : String(error),
+        createScheduleCommandUuid(event.messageId, "natural-language-error")
+      );
+      return;
+    }
+    if (scheduleIntent !== null) {
+      await this.sendScheduleConfirmation(event, {
+        prompt: scheduleIntent.taskInput,
+        schedule: scheduleIntent.schedule,
+        whenText: scheduleIntent.whenText
+      });
       return;
     }
 
@@ -241,32 +358,348 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     await this.sendTaskResultToChat(event.chatId, result);
   }
 
-  public async handleCardActionEvent(event: {
-    approvalId: string;
-    chatId: string;
-    decision: "allow" | "deny";
-    openId: string | null;
-    taskId: string;
-  }): Promise<void> {
+  public async handleCardActionEvent(event: FeishuCardActionEvent): Promise<void> {
     if (this.runtimeApi === null) {
       return;
     }
-    const result = await this.runtimeApi.resolveApproval({
-      adapterId: this.descriptor.adapterId,
-      approvalId: event.approvalId,
-      decision: event.decision,
-      reviewerExternalUserId: event.openId,
-      reviewerRuntimeUserId:
-        event.openId === null
-          ? `${this.descriptor.adapterId}:session:${event.chatId}`
-          : `${this.descriptor.adapterId}:${event.openId}`
-    });
-    if (result !== null) {
-      await this.sendTaskResultToChat(
-        event.chatId.length > 0 ? event.chatId : result.sessionBinding.externalSessionId,
-        result
+    if (event.actionType === "schedule_confirmation") {
+      await this.handleScheduleConfirmationAction(event);
+      return;
+    }
+    if (!this.beginApprovalActionHandling(event.approvalId)) {
+      this.logInfo("[feishu-adapter] ignored duplicate approval action", {
+        approvalId: event.approvalId,
+        taskId: event.taskId
+      });
+      return;
+    }
+
+    let handledSuccessfully = false;
+    try {
+      await this.patchApprovalCard(event, renderApprovalProcessingCard(event.taskId, event.approvalId, event.decision));
+      const result = await this.runtimeApi.resolveApproval({
+        adapterId: this.descriptor.adapterId,
+        approvalId: event.approvalId,
+        decision: event.decision,
+        reviewerExternalUserId: event.openId,
+        reviewerRuntimeUserId:
+          event.openId === null
+            ? `${this.descriptor.adapterId}:session:${event.chatId}`
+            : `${this.descriptor.adapterId}:${event.openId}`
+      });
+      await this.patchApprovalCard(event, renderApprovalResolvedCard(event.taskId, event.approvalId, event.decision));
+      if (result !== null) {
+        await this.sendTaskResultToChat(
+          event.chatId.length > 0 ? event.chatId : result.sessionBinding.externalSessionId,
+          result
+        );
+      }
+      handledSuccessfully = true;
+    } catch (error) {
+      await this.patchApprovalCard(
+        event,
+        renderApprovalFailedCard(event.taskId, event.approvalId, error instanceof Error ? error.message : String(error))
+      );
+      throw error;
+    } finally {
+      this.completeApprovalActionHandling(event.approvalId, handledSuccessfully);
+    }
+  }
+
+  private async handleScheduleConfirmationAction(
+    event: Extract<FeishuCardActionEvent, { actionType: "schedule_confirmation" }>
+  ): Promise<void> {
+    if (this.runtimeApi === null) {
+      return;
+    }
+    if (!this.beginScheduleConfirmationHandling(event.confirmationId)) {
+      this.logInfo("[feishu-adapter] ignored duplicate schedule confirmation action", {
+        confirmationId: event.confirmationId
+      });
+      return;
+    }
+
+    let handledSuccessfully = false;
+    try {
+      const draft = this.scheduleConfirmationDrafts.get(event.confirmationId);
+      if (draft === undefined) {
+        await this.patchScheduleConfirmationCard(
+          event,
+          renderScheduleFailedCard(`Schedule confirmation ${event.confirmationId} was not found or already handled.`)
+        );
+        handledSuccessfully = true;
+        return;
+      }
+
+      if (event.decision === "cancel") {
+        await this.patchScheduleConfirmationCard(event, renderScheduleCancelledCard(draft.whenText, draft.prompt));
+        handledSuccessfully = true;
+        return;
+      }
+
+      await this.patchScheduleConfirmationCard(
+        event,
+        renderScheduleConfirmationProcessingCard(draft.whenText, draft.prompt)
+      );
+      const schedule = this.createScheduleFromDraft({
+        ...draft,
+        openId: event.openId ?? draft.openId
+      });
+      await this.patchScheduleConfirmationCard(
+        event,
+        renderScheduleCreatedCard({
+          name: schedule.name,
+          nextFireAt: schedule.nextFireAt,
+          scheduleId: schedule.scheduleId
+        })
+      );
+      handledSuccessfully = true;
+    } catch (error) {
+      await this.patchScheduleConfirmationCard(
+        event,
+        renderScheduleFailedCard(error instanceof Error ? error.message : String(error))
+      );
+      throw error;
+    } finally {
+      this.completeScheduleConfirmationHandling(event.confirmationId, handledSuccessfully);
+    }
+  }
+
+  private async handleScheduleCommand(
+    event: {
+      chatId: string;
+      messageId: string | null;
+      openId: string | null;
+    },
+    text: string
+  ): Promise<void> {
+    if (this.runtimeApi === null) {
+      return;
+    }
+    const command = parseScheduleCommandText(text);
+    try {
+      switch (command.subcommand) {
+        case "list":
+          await this.sendTextToChat(
+            event.chatId,
+            formatScheduleListForFeishu(
+              this.listSchedulesForRequester(event, command.args[0] ?? "active"),
+              command.args[0] ?? "active"
+            ),
+            createScheduleCommandUuid(event.messageId, "list")
+          );
+          return;
+        case "create":
+          await this.handleScheduleCreateCommand(event, command.rest);
+          return;
+        case "pause":
+        case "resume":
+        case "run-now":
+        case "runs":
+          await this.handleScheduleManagementCommand(event, command.subcommand, command.args);
+          return;
+        default:
+          await this.sendTextToChat(event.chatId, formatScheduleCommandUsage(), createScheduleCommandUuid(event.messageId, "usage"));
+          return;
+      }
+    } catch (error) {
+      await this.sendTextToChat(
+        event.chatId,
+        error instanceof Error ? error.message : String(error),
+        createScheduleCommandUuid(event.messageId, "error")
       );
     }
+  }
+
+  private async handleScheduleCreateCommand(
+    event: {
+      chatId: string;
+      messageId: string | null;
+      openId: string | null;
+    },
+    payload: string
+  ): Promise<void> {
+    const separatorIndex = payload.indexOf("|");
+    if (separatorIndex <= 0 || separatorIndex === payload.length - 1) {
+      await this.sendTextToChat(
+        event.chatId,
+        "Usage: /schedule create <when> | <prompt>\nExample: /schedule create 1分钟后 | say hello",
+        createScheduleCommandUuid(event.messageId, "create-usage")
+      );
+      return;
+    }
+    const whenText = payload.slice(0, separatorIndex).trim();
+    const prompt = payload.slice(separatorIndex + 1).trim();
+    if (whenText.length === 0 || prompt.length === 0) {
+      await this.sendTextToChat(
+        event.chatId,
+        "Usage: /schedule create <when> | <prompt>",
+        createScheduleCommandUuid(event.messageId, "create-empty")
+      );
+      return;
+    }
+    const schedule = this.createScheduleFromDraft({
+      chatId: event.chatId,
+      messageId: event.messageId,
+      openId: event.openId,
+      prompt,
+      schedule: parseNaturalLanguageScheduleWhen(whenText),
+      whenText
+    });
+    await this.sendTextToChat(
+      event.chatId,
+      `Scheduled ${schedule.scheduleId.slice(0, 8)} | ${schedule.name} [${schedule.status}] | next=${schedule.nextFireAt ?? "none"}`,
+      createScheduleCommandUuid(event.messageId, "create")
+    );
+  }
+
+  private async handleScheduleManagementCommand(
+    event: {
+      chatId: string;
+      messageId: string | null;
+      openId: string | null;
+    },
+    subcommand: "pause" | "resume" | "run-now" | "runs",
+    args: string[]
+  ): Promise<void> {
+    if (this.runtimeApi === null) {
+      return;
+    }
+    const prefix = args[0] ?? "";
+    if (prefix.length === 0) {
+      await this.sendTextToChat(
+        event.chatId,
+        `Usage: /schedule ${subcommand} <schedule-id-prefix>`,
+        createScheduleCommandUuid(event.messageId, `${subcommand}-usage`)
+      );
+      return;
+    }
+    const resolved = this.resolveScheduleByPrefix(event, prefix);
+    if (resolved.kind !== "one") {
+      await this.sendTextToChat(event.chatId, resolved.message, createScheduleCommandUuid(event.messageId, `${subcommand}-resolve`));
+      return;
+    }
+
+    if (subcommand === "runs") {
+      const runs = this.runtimeApi.listScheduleRuns(resolved.item.scheduleId, { tail: 5 });
+      await this.sendTextToChat(event.chatId, formatScheduleRunsForFeishu(runs), createScheduleCommandUuid(event.messageId, "runs"));
+      return;
+    }
+
+    if (subcommand === "run-now") {
+      const run = this.runtimeApi.runScheduleNow(resolved.item.scheduleId);
+      await this.sendTextToChat(event.chatId, formatScheduleRunsForFeishu([run]), createScheduleCommandUuid(event.messageId, "run-now"));
+      return;
+    }
+
+    const updated =
+      subcommand === "pause"
+        ? this.runtimeApi.pauseSchedule(resolved.item.scheduleId)
+        : this.runtimeApi.resumeSchedule(resolved.item.scheduleId);
+    await this.sendTextToChat(
+      event.chatId,
+      `Schedule ${subcommand}d: ${updated.scheduleId.slice(0, 8)} | ${updated.name} [${updated.status}] | next=${updated.nextFireAt ?? "none"}`,
+      createScheduleCommandUuid(event.messageId, subcommand)
+    );
+  }
+
+  private async sendScheduleConfirmation(
+    event: {
+      chatId: string;
+      messageId: string | null;
+      openId: string | null;
+    },
+    draft: Pick<FeishuScheduleDraft, "prompt" | "schedule" | "whenText">
+  ): Promise<void> {
+    if (this.client === null) {
+      return;
+    }
+    const confirmationId = randomUUID();
+    this.scheduleConfirmationDrafts.set(confirmationId, {
+      chatId: event.chatId,
+      messageId: event.messageId,
+      openId: event.openId,
+      prompt: draft.prompt,
+      schedule: draft.schedule,
+      whenText: draft.whenText
+    });
+    const sent = await this.createMessageWithRetry(
+      createInteractiveMessagePayload(
+        event.chatId,
+        renderScheduleConfirmationCard({
+          confirmationId,
+          prompt: draft.prompt,
+          whenText: draft.whenText
+        }),
+        createScheduleConfirmationUuid(confirmationId)
+      )
+    );
+    const messageId = sent.data?.message_id ?? null;
+    if (messageId !== null) {
+      this.scheduleConfirmationMessageIds.set(confirmationId, { chatId: event.chatId, messageId });
+    }
+  }
+
+  private createScheduleFromDraft(draft: FeishuScheduleDraft): ScheduleRecord {
+    if (this.runtimeApi === null) {
+      throw new Error("Feishu runtime API is not available.");
+    }
+    return this.runtimeApi.createSchedule(this.descriptor, {
+      agentProfileId: "executor",
+      input: draft.prompt,
+      messageId: draft.messageId,
+      metadata: {
+        source: "feishu_schedule"
+      },
+      name: deriveScheduleName(draft.prompt),
+      requester: {
+        externalSessionId: draft.chatId,
+        externalUserId: draft.openId,
+        externalUserLabel: null
+      },
+      ...(draft.schedule.cron !== undefined
+        ? { cron: draft.schedule.cron, timezone: resolveLocalTimezone() }
+        : {}),
+      ...(draft.schedule.every !== undefined ? { every: draft.schedule.every } : {}),
+      ...(draft.schedule.runAt !== undefined ? { runAt: draft.schedule.runAt } : {})
+    });
+  }
+
+  private listSchedulesForRequester(
+    event: { chatId: string; openId: string | null },
+    filter: string
+  ): ScheduleRecord[] {
+    if (this.runtimeApi === null) {
+      return [];
+    }
+    if (filter !== "active" && filter !== "paused" && filter !== "completed" && filter !== "archived" && filter !== "all") {
+      throw new Error("Usage: /schedule list [active|paused|completed|archived|all]");
+    }
+    const ownerUserId = resolveFeishuRuntimeUserId(this.descriptor.adapterId, event.chatId, event.openId);
+    return this.runtimeApi
+      .listSchedules({
+        ownerUserId,
+        ...(filter === "all" ? {} : { status: filter })
+      })
+      .sort((left, right) => (left.nextFireAt ?? "9999-12-31T23:59:59.999Z").localeCompare(right.nextFireAt ?? "9999-12-31T23:59:59.999Z"))
+      .slice(0, 20);
+  }
+
+  private resolveScheduleByPrefix(
+    event: { chatId: string; openId: string | null },
+    prefix: string
+  ): { item: ScheduleRecord; kind: "one" } | { kind: "error"; message: string } {
+    const matches = this.listSchedulesForRequester(event, "all").filter((item) => item.scheduleId.startsWith(prefix));
+    if (matches.length === 1) {
+      return { item: matches[0]!, kind: "one" };
+    }
+    return {
+      kind: "error",
+      message:
+        matches.length === 0
+          ? `No schedule matched prefix '${prefix}'.`
+          : `Ambiguous schedule prefix '${prefix}':\n${matches.map((item) => `- ${item.scheduleId.slice(0, 8)} | ${item.name}`).join("\n")}`
+    };
   }
 
   public async sendCapabilityNotice(taskId: string, notice: GatewayCapabilityNotice): Promise<void> {
@@ -321,12 +754,75 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     }
   }
 
+  public async sendInboxEvent(event: InboxDeliveryEvent): Promise<void> {
+    if (this.client === null || this.runtimeApi === null || event.kind !== "created") {
+      return;
+    }
+    const origin = readFeishuScheduleOrigin(event.item.metadata);
+    if (origin === null || origin.adapter !== this.descriptor.adapterId) {
+      return;
+    }
+
+    if (event.item.category === "approval_requested") {
+      const snapshot = event.item.taskId === null ? null : this.runtimeApi.getTaskSnapshot(event.item.taskId);
+      const approvalId =
+        event.item.approvalId ??
+        readString(event.item.metadata, "approvalId") ??
+        snapshot?.task.pendingApprovalId ??
+        null;
+      if (approvalId === null) {
+        await this.sendTextToChat(
+          origin.chatId,
+          `Approval requested, but no approval id was available.\n${event.item.summary}`,
+          createInboxUuid(event.item.inboxId)
+        );
+        return;
+      }
+      await this.sendApprovalCard(origin.chatId, {
+        errorCode: null,
+        errorMessage: null,
+        output: null,
+        pendingApprovalId: approvalId,
+        status: "waiting_approval",
+        taskId: event.item.taskId ?? `schedule:${event.item.scheduleRunId ?? event.item.inboxId}`
+      });
+      return;
+    }
+
+    if (event.item.category !== "task_completed" && event.item.category !== "task_failed") {
+      return;
+    }
+
+    const snapshot = event.item.taskId === null ? null : this.runtimeApi.getTaskSnapshot(event.item.taskId);
+    const detail =
+      event.item.category === "task_completed"
+        ? snapshot?.task.output ?? event.item.summary
+        : snapshot?.task.errorMessage ?? event.item.summary;
+    const title = event.item.category === "task_completed" ? "Routine completed" : "Routine failed";
+    await this.sendTextToChat(
+      origin.chatId,
+      `${title}: ${event.item.title}\n${detail}`,
+      createInboxUuid(event.item.inboxId)
+    );
+  }
+
+  private async sendTextToChat(chatId: string, text: string, uuid: string): Promise<void> {
+    if (this.client === null) {
+      return;
+    }
+    await this.createMessageWithRetry(createTextMessagePayload(chatId, text, uuid));
+  }
+
   private async sendTaskResultToChat(chatId: string, result: GatewayTaskLaunchResult): Promise<void> {
     if (this.client === null) {
       return;
     }
     const sent = await this.createMessageWithRetry(
-      createTextMessagePayload(chatId, formatTaskResultText(result.result))
+      createTextMessagePayload(
+        chatId,
+        formatTaskResultText(result.result),
+        createTaskResultUuid(result.result.taskId, result.result.status)
+      )
     );
     const messageId = sent.data?.message_id ?? null;
     this.logInfo("[feishu-adapter] sent task result text", {
@@ -342,9 +838,75 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     if (this.client === null || result.pendingApprovalId === null) {
       return;
     }
-    await this.createMessageWithRetry(
-      createInteractiveMessagePayload(chatId, renderApprovalCard(result.taskId, result.pendingApprovalId))
-    );
+    const approvalId = result.pendingApprovalId;
+    if (this.sentApprovalCardIds.has(approvalId) || this.inFlightApprovalCardIds.has(approvalId)) {
+      return;
+    }
+
+    this.inFlightApprovalCardIds.add(approvalId);
+    try {
+      const sent = await this.createMessageWithRetry(
+        createInteractiveMessagePayload(chatId, renderApprovalCard(result.taskId, approvalId), createApprovalCardUuid(approvalId))
+      );
+      const messageId = sent.data?.message_id ?? null;
+      this.sentApprovalCardIds.add(approvalId);
+      if (messageId !== null) {
+        this.approvalMessageIds.set(approvalId, { chatId, messageId });
+      }
+    } finally {
+      this.inFlightApprovalCardIds.delete(approvalId);
+    }
+  }
+
+  private async patchApprovalCard(event: { approvalId: string; messageId: string | null }, content: string): Promise<void> {
+    if (this.client === null) {
+      return;
+    }
+    const messageId = event.messageId ?? this.approvalMessageIds.get(event.approvalId)?.messageId ?? null;
+    if (messageId === null) {
+      return;
+    }
+    try {
+      await this.patchMessageWithRetry({
+        data: {
+          content
+      },
+      path: {
+          message_id: messageId
+      }
+    });
+    } catch (error) {
+      this.logWarn("[feishu-adapter] failed to patch approval card", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async patchScheduleConfirmationCard(
+    event: { confirmationId: string; messageId: string | null },
+    content: string
+  ): Promise<void> {
+    if (this.client === null) {
+      return;
+    }
+    const messageId = event.messageId ?? this.scheduleConfirmationMessageIds.get(event.confirmationId)?.messageId ?? null;
+    if (messageId === null) {
+      return;
+    }
+    try {
+      await this.patchMessageWithRetry({
+        data: {
+          content
+        },
+        path: {
+          message_id: messageId
+        }
+      });
+    } catch (error) {
+      this.logWarn("[feishu-adapter] failed to patch schedule confirmation card", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private async createMessageWithRetry(
@@ -393,12 +955,13 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
   }
 }
 
-function createInteractiveMessagePayload(chatId: string, content: string): FeishuCreateMessagePayload {
+function createInteractiveMessagePayload(chatId: string, content: string, uuid: string): FeishuCreateMessagePayload {
   return {
     data: {
       content,
       msg_type: "interactive",
-      receive_id: chatId
+      receive_id: chatId,
+      uuid
     },
     params: {
       receive_id_type: "chat_id"
@@ -406,17 +969,150 @@ function createInteractiveMessagePayload(chatId: string, content: string): Feish
   };
 }
 
-function createTextMessagePayload(chatId: string, text: string): FeishuCreateMessagePayload {
+function createTextMessagePayload(chatId: string, text: string, uuid: string): FeishuCreateMessagePayload {
   return {
     data: {
       content: JSON.stringify({ text: text.slice(0, 4000) }),
       msg_type: "text",
-      receive_id: chatId
+      receive_id: chatId,
+      uuid
     },
     params: {
       receive_id_type: "chat_id"
     }
   };
+}
+
+function createTaskResultUuid(taskId: string, status: string): string {
+  return `tr-${statusCode(status)}-${taskId}`.slice(0, 50);
+}
+
+function createApprovalCardUuid(approvalId: string): string {
+  return `ta-${approvalId}`.slice(0, 50);
+}
+
+function createScheduleConfirmationUuid(confirmationId: string): string {
+  return `tsc-${confirmationId}`.slice(0, 50);
+}
+
+function createScheduleCommandUuid(messageId: string | null, action: string): string {
+  return `ts-${statusCode(action)}-${messageId ?? randomUUID()}`.slice(0, 50);
+}
+
+function createInboxUuid(inboxId: string): string {
+  return `ti-${inboxId}`.slice(0, 50);
+}
+
+function statusCode(status: string): string {
+  switch (status) {
+    case "waiting_approval":
+      return "wa";
+    case "succeeded":
+      return "ok";
+    case "failed":
+      return "fail";
+    case "cancelled":
+      return "cn";
+    case "create":
+      return "cr";
+    case "list":
+      return "ls";
+    case "pause":
+      return "ps";
+    case "resume":
+      return "rs";
+    case "run-now":
+      return "rn";
+    case "runs":
+      return "rh";
+    default:
+      return valueToCode(status);
+  }
+}
+
+function valueToCode(value: string): string {
+  return value.replace(/[^a-z0-9]/giu, "").slice(0, 8) || "x";
+}
+
+function parseScheduleCommandText(text: string): {
+  args: string[];
+  rest: string;
+  subcommand: string;
+} {
+  const body = text.replace(/^\/schedule\b/u, "").trim();
+  if (body.length === 0) {
+    return { args: [], rest: "", subcommand: "list" };
+  }
+  const firstSpace = body.search(/\s/u);
+  const subcommand = firstSpace === -1 ? body : body.slice(0, firstSpace);
+  const rest = firstSpace === -1 ? "" : body.slice(firstSpace + 1).trim();
+  return {
+    args: rest.length === 0 ? [] : rest.split(/\s+/u),
+    rest,
+    subcommand
+  };
+}
+
+function formatScheduleCommandUsage(): string {
+  return [
+    "Usage:",
+    "/schedule list [active|paused|completed|archived|all]",
+    "/schedule create <when> | <prompt>",
+    "/schedule pause <schedule-id-prefix>",
+    "/schedule resume <schedule-id-prefix>",
+    "/schedule run-now <schedule-id-prefix>",
+    "/schedule runs <schedule-id-prefix>"
+  ].join("\n");
+}
+
+function formatScheduleListForFeishu(schedules: ScheduleRecord[], filter: string): string {
+  if (schedules.length === 0) {
+    return `Schedules (${filter}): none`;
+  }
+  return `Schedules (${filter}, showing ${schedules.length}):\n${schedules
+    .map((item) => `- ${item.scheduleId.slice(0, 8)} | ${item.name} [${item.status}] | next=${item.nextFireAt ?? "none"}`)
+    .join("\n")}`;
+}
+
+function formatScheduleRunsForFeishu(runs: ScheduleRunRecord[]): string {
+  if (runs.length === 0) {
+    return "Schedule runs: none";
+  }
+  return `Schedule runs:\n${runs
+    .map((run) => `- ${run.runId.slice(0, 8)} | ${run.status} | attempt=${run.attemptNumber} | task=${run.taskId?.slice(0, 8) ?? "-"}`)
+    .join("\n")}`;
+}
+
+function deriveScheduleName(prompt: string): string {
+  const firstLine = prompt.split(/\r?\n/u)[0]?.trim() ?? "";
+  const normalized = firstLine.length > 0 ? firstLine : "Scheduled routine";
+  return normalized.slice(0, 80);
+}
+
+function resolveFeishuRuntimeUserId(adapterId: string, chatId: string, openId: string | null): string {
+  return openId === null || openId.trim().length === 0 ? `${adapterId}:session:${chatId}` : `${adapterId}:${openId.trim()}`;
+}
+
+function resolveLocalTimezone(): string | null {
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof timezone === "string" && timezone.length > 0 ? timezone : null;
+  } catch {
+    return null;
+  }
+}
+
+function readFeishuScheduleOrigin(metadata: JsonObject): { adapter: string; chatId: string } | null {
+  const origin = readJsonObject(metadata.origin);
+  if (origin === null) {
+    return null;
+  }
+  const adapter = readString(origin, "adapter");
+  const chatId = readString(origin, "chatId");
+  if (adapter === null || chatId === null) {
+    return null;
+  }
+  return { adapter, chatId };
 }
 
 function formatTaskResultText(result: GatewayTaskResultView): string {
@@ -544,29 +1240,47 @@ function parseMessageEvent(payload: unknown): {
   };
 }
 
-function parseCardActionEvent(payload: unknown): {
-  approvalId: string;
-  chatId: string;
-  decision: "allow" | "deny";
-  openId: string | null;
-  taskId: string;
-} {
+function parseCardActionEvent(payload: unknown): FeishuCardActionEvent {
   const event = getEventBody(payload);
   const context = getRecord(event, "context");
-  const openMessageId = readString(context, "open_message_id") ?? readString(event, "open_message_id") ?? "";
+  const openMessageId =
+    readString(context, "open_message_id") ??
+    readString(context, "message_id") ??
+    readString(event, "open_message_id") ??
+    readString(event, "message_id") ??
+    "";
   const action = getRecord(event, "action");
   const value = getRecord(action, "value") ?? action ?? getRecord(event, "value");
-  const approvalId = readString(value, "approvalId") ?? "";
-  const decisionRaw = readString(value, "decision");
-  const taskId = readString(value, "taskId") ?? "";
+  const actionType = readString(value, "actionType");
   const operator = getRecord(event, "operator");
   const operatorId = operator === null ? null : getRecord(operator, "operator_id");
   const openId = readString(operatorId, "open_id") ?? readString(event, "open_id");
+  const chatId = readString(context, "open_chat_id") ?? readString(event, "open_chat_id") ?? openMessageId;
+  const messageId = openMessageId.length > 0 ? openMessageId : null;
+
+  if (actionType === "schedule_confirmation") {
+    const confirmationId = readString(value, "confirmationId") ?? "";
+    const decisionRaw = readString(value, "decision");
+    return {
+      actionType: "schedule_confirmation",
+      chatId,
+      confirmationId,
+      decision: decisionRaw === "cancel" ? "cancel" : "confirm",
+      messageId,
+      openId
+    };
+  }
+
+  const approvalId = readString(value, "approvalId") ?? "";
+  const decisionRaw = readString(value, "decision");
+  const taskId = readString(value, "taskId") ?? "";
 
   return {
+    actionType: "approval",
     approvalId,
-    chatId: readString(context, "open_chat_id") ?? readString(event, "open_chat_id") ?? openMessageId,
+    chatId,
     decision: decisionRaw === "deny" ? "deny" : "allow",
+    messageId,
     openId,
     taskId
   };
@@ -600,6 +1314,13 @@ function readString(record: Record<string, unknown> | null, key: string): string
 function getRecord(input: unknown, key?: string): Record<string, unknown> | null {
   const target = key === undefined ? input : (input as Record<string, unknown> | null)?.[key];
   return typeof target === "object" && target !== null ? (target as Record<string, unknown>) : null;
+}
+
+function readJsonObject(value: unknown): JsonObject | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as JsonObject;
 }
 
 function getEventBody(payload: unknown): Record<string, unknown> | null {

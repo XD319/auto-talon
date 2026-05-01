@@ -7,6 +7,7 @@ export const AUDIT_ACTIONS = [
   "gateway_denied",
   "gateway_auth_failed",
   "gateway_approval_resolved",
+  "gateway_schedule_created",
   "approval_requested",
   "approval_resolved",
   "file_rollback",
