@@ -34,7 +34,7 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/resume", "resume", "Resume the latest active thread"),
   suggestion("/ops", "ops", "Open ops guidance"),
   suggestion("/status", "status", "Show TUI status"),
-  suggestion("/clear", "clear", "Clear the visible conversation"),
+  suggestion("/clear", "clear", "Clear conversation and exit active thread"),
   suggestion("/new", "new", "Start a fresh assistant session"),
   suggestion("/stop", "stop", "Interrupt the current task"),
   suggestion("/history", "history", "Show recent prompts"),

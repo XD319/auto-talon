@@ -9,12 +9,15 @@ export interface HomeSummaryProps {
   summary: HomeSummaryViewModel;
 }
 
-function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): React.ReactElement {
+function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): React.ReactElement | null {
   const entries = listHomeSummaryEntries(summary);
+  if (summary.title.length === 0 && summary.agenda.length === 0 && entries.length === 0) {
+    return null;
+  }
 
   return (
     <Box borderStyle="classic" borderColor={theme.border} flexDirection="column" paddingX={1}>
-      <Text color={theme.panelTitle}>{summary.title}</Text>
+      {summary.title.length > 0 ? <Text color={theme.panelTitle}>{summary.title}</Text> : null}
       {summary.agenda.map((item, index) => (
         <Text key={`agenda:${index}`} color={index === 0 ? theme.fg : theme.muted} wrap="wrap">
           {index === 0 ? "> " : "- "}
@@ -23,7 +26,7 @@ function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): Reac
       ))}
       {entries.length > 0 ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color={theme.selection}>Recommended next steps</Text>
+          <Text color={theme.selection}>Open items</Text>
           {entries.map((entry, index) => (
             <Box key={entry.key} flexDirection="column">
               <Text color={index === selectedIndex ? theme.emphasis : theme.fg}>
@@ -47,9 +50,11 @@ function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): Reac
           ))}
         </Box>
       ) : null}
-      <Text color={theme.muted} wrap="wrap">
-        {summary.assistantHint}
-      </Text>
+      {summary.assistantHint.length > 0 ? (
+        <Text color={theme.muted} wrap="wrap">
+          {summary.assistantHint}
+        </Text>
+      ) : null}
     </Box>
   );
 }

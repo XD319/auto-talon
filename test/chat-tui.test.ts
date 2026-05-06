@@ -616,6 +616,57 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
+  it("clears the visible transcript and abandons the active thread without dropping session approvals", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createIdleControllerService();
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionApprovalFingerprints: ["fingerprint-1"],
+        initialThreadId: "thread-active",
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      getController().addSystemMessage("before clear");
+      await delay(20);
+      getController().resetVisibleChat();
+      await waitFor(() => getController().activeThreadId === null);
+
+      expect(getController().sessionApprovalFingerprints).toEqual(["fingerprint-1"]);
+      expect(getController().messages).toHaveLength(1);
+      expect(getController().messages[0]?.id).toBe("system:welcome");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
   it("surfaces clarify answer failures in the transcript", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();

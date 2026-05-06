@@ -401,7 +401,7 @@ export function ChatTuiApp({
       }
 
       if (text === "/clear") {
-        controller.resetVisibleChatPreserveActiveThread();
+        controller.resetVisibleChat();
         return true;
       }
 
@@ -771,10 +771,10 @@ export function ChatTuiApp({
             controller.pendingClarifyPrompt !== null
               ? "Arrows choose, Tab custom, Enter submit"
               : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
-                ? "Arrows choose, Enter open, or start typing"
+                ? "Type a request, /help commands, Up/Down + Enter open item"
               : controller.hasPendingApproval
                 ? "1 once, 2 session, 3 always, 4 deny"
-                : "Enter send"
+                : "Enter send, /help commands"
           ]}
           metrics={buildTokenMetrics(
             controller.tokenHud.inputTokens,

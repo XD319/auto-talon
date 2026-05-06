@@ -216,6 +216,20 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
     input: Extract<PreparedFileReadInput, { action: "read_file" }>
   ): Promise<ToolExecutionResult> {
     const targetPath = input.plan.resolvedPath;
+    const stat = await fs.stat(targetPath);
+    if (stat.isDirectory()) {
+      return {
+        details: {
+          path: targetPath,
+          requestedAction: "read_file",
+          suggestedAction: "list_dir"
+        },
+        errorCode: "tool_validation_error",
+        errorMessage: `${targetPath} is a directory. Use file_read with action "list_dir" to inspect directories.`,
+        success: false
+      };
+    }
+
     const content = await fs.readFile(targetPath, "utf8");
     const lines = content.split(/\r?\n/u);
     const start = Math.min(input.offset, lines.length);

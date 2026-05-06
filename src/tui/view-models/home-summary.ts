@@ -50,8 +50,8 @@ export function buildHomeSummary(
 ): HomeSummaryViewModel {
   const summary = buildTodaySummary(service as AgentApplicationService, options);
   const recentThreads = buildRecentThreadCards(service, summary);
-  const recommendedThread = recentThreads[0] ?? null;
-  const actions = buildRecommendedActions(service, summary, recommendedThread);
+  const recommendedThread = buildRecommendedThreadCard(service, summary, recentThreads);
+  const actions = buildRecommendedActions(service, summary);
   const primaryEntry = listHomeSummaryEntries({
     actions,
     agenda: [],
@@ -64,28 +64,15 @@ export function buildHomeSummary(
   return {
     actions,
     agenda: buildAgenda(summary, recommendedThread),
-    assistantHint:
-      primaryEntry !== null
-        ? `Use Up/Down to choose ${primaryEntry.label.toLowerCase()}, press Enter to open it, or type a request in plain language.`
-        : "Type a request in plain language to start a new thread.",
+    assistantHint: primaryEntry !== null ? "Use Up/Down and Enter to open an item." : "",
     recentThreads,
     recommendedThread,
-    title: "Today at a glance"
+    title: ""
   };
 }
 
 export function listHomeSummaryEntries(summary: HomeSummaryViewModel): HomeSummaryEntry[] {
   const entries: HomeSummaryEntry[] = [];
-  for (const thread of summary.recentThreads) {
-    entries.push({
-      detail: thread.detail,
-      headline: thread.headline,
-      key: `thread:${thread.threadId}`,
-      kind: "thread",
-      label: thread.label,
-      threadId: thread.threadId
-    });
-  }
   for (const action of summary.actions) {
     entries.push({
       detail: action.detail,
@@ -93,6 +80,16 @@ export function listHomeSummaryEntries(summary: HomeSummaryViewModel): HomeSumma
       kind: "action",
       label: action.label,
       ...(action.threadId !== undefined ? { threadId: action.threadId } : {})
+    });
+  }
+  for (const thread of prioritizeRecommendedThread(summary.recentThreads, summary.recommendedThread)) {
+    entries.push({
+      detail: thread.detail,
+      ...(thread.headline !== thread.label ? { headline: thread.headline } : {}),
+      key: `thread:${thread.threadId}`,
+      kind: "thread",
+      label: `Continue ${thread.label}`,
+      threadId: thread.threadId
     });
   }
   return entries;
@@ -103,31 +100,31 @@ function buildAgenda(
   recommendedThread: HomeSummaryThreadCard | null
 ): string[] {
   const agenda: string[] = [];
-  const overdueRoutine = summary.dueRoutines.items[0];
-  if (overdueRoutine !== undefined) {
-    agenda.push(`Routine due: ${overdueRoutine.name}`);
+  const approval = summary.pendingApprovals.items[0];
+  if (approval !== undefined) {
+    agenda.push(`Approval needed: ${approval.toolName}`);
   }
   const inboxItem = summary.inbox.items[0];
   if (inboxItem !== undefined) {
-    agenda.push(`Inbox waiting: ${inboxItem.title}`);
+    agenda.push(`Review waiting: ${inboxItem.title}`);
   }
-  const approval = summary.pendingApprovals.items[0];
-  if (approval !== undefined) {
-    agenda.push(`Decision needed: ${approval.toolName}`);
+  const overdueRoutine = summary.dueRoutines.items[0];
+  if (overdueRoutine !== undefined) {
+    agenda.push(`Routine ready: ${overdueRoutine.name}`);
+  }
+  const nextAction = summary.nextActions.items[0];
+  if (agenda.length < 3 && nextAction !== undefined) {
+    agenda.push(`Continue: ${nextAction.title}`);
   }
   if (agenda.length === 0 && recommendedThread !== null) {
     agenda.push(recommendedThread.detail);
-  }
-  if (agenda.length === 0) {
-    agenda.push("No urgent items. You can start a new task or continue from history.");
   }
   return agenda.slice(0, 3);
 }
 
 function buildRecommendedActions(
   service: Pick<AgentApplicationService, "showTask">,
-  summary: TodaySummaryViewModel,
-  recommendedThread: HomeSummaryThreadCard | null
+  summary: TodaySummaryViewModel
 ): HomeSummaryAction[] {
   const actions: HomeSummaryAction[] = [];
   const approval = summary.pendingApprovals.items[0];
@@ -135,7 +132,7 @@ function buildRecommendedActions(
     actions.push({
       detail: `Resolve ${approval.toolName} before it expires.`,
       key: "approval",
-      label: "Review pending approval",
+      label: "Respond to approval",
       threadId: service.showTask(approval.taskId).task?.threadId ?? null
     });
   }
@@ -144,7 +141,7 @@ function buildRecommendedActions(
     actions.push({
       detail: `Open ${inboxItem.title}.`,
       key: "inbox",
-      label: "Triage inbox",
+      label: "Open inbox item",
       threadId: inboxItem.threadId
     });
   }
@@ -153,14 +150,7 @@ function buildRecommendedActions(
     actions.push({
       detail: `Run or inspect ${routine.name}.`,
       key: "routine",
-      label: "Check due routine"
-    });
-  }
-  if (actions.length === 0 && recommendedThread === null) {
-    actions.push({
-      detail: "Start with a plain-language goal or ask for today's plan.",
-      key: "start",
-      label: "Start a new task"
+      label: "Open routine"
     });
   }
   return actions.slice(0, 3);
@@ -171,6 +161,51 @@ function buildRecentThreadCards(
   summary: TodaySummaryViewModel
 ): HomeSummaryThreadCard[] {
   return summary.threads.items.slice(0, 3).map((thread) => buildThreadCard(service, thread));
+}
+
+function buildRecommendedThreadCard(
+  service: Pick<AgentApplicationService, "showThread">,
+  summary: TodaySummaryViewModel,
+  recentThreads: HomeSummaryThreadCard[]
+): HomeSummaryThreadCard | null {
+  const recommendedThreadId =
+    summary.nextActions.items[0]?.threadId ??
+    summary.commitments.items[0]?.threadId ??
+    summary.inbox.items[0]?.threadId ??
+    recentThreads[0]?.threadId ??
+    null;
+
+  if (recommendedThreadId === null) {
+    return null;
+  }
+  return (
+    recentThreads.find((thread) => thread.threadId === recommendedThreadId) ??
+    buildThreadCardById(service, recommendedThreadId)
+  );
+}
+
+function buildThreadCardById(
+  service: Pick<AgentApplicationService, "showThread">,
+  threadId: string
+): HomeSummaryThreadCard | null {
+  const detail = service.showThread(threadId);
+  if (detail.thread === null) {
+    return null;
+  }
+  return buildThreadCard(service, detail.thread);
+}
+
+function prioritizeRecommendedThread(
+  recentThreads: HomeSummaryThreadCard[],
+  recommendedThread: HomeSummaryThreadCard | null
+): HomeSummaryThreadCard[] {
+  if (recommendedThread === null) {
+    return recentThreads;
+  }
+  return [
+    recommendedThread,
+    ...recentThreads.filter((thread) => thread.threadId !== recommendedThread.threadId)
+  ];
 }
 
 function buildThreadCard(

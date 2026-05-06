@@ -75,6 +75,7 @@ export interface ChatController {
   queuedPromptCount: number;
   queuedPrompts: QueuedPromptEntry[];
   requestInterrupt: () => boolean;
+  resetVisibleChat: () => void;
   resetVisibleChatPreserveActiveThread: () => void;
   runDurationLabel: string;
   statusLine: string;
@@ -320,6 +321,29 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     activeThreadIdRef.current = null;
     seenApprovalMessageIdsRef.current.clear();
     setSessionApprovalFingerprints([]);
+    setFileEdits([]);
+    setQueuedPrompts([]);
+    setUsedMemoryCount(0);
+    setActiveThreadId(null);
+    stopTraceSubscription();
+  }, [stopTraceSubscription]);
+
+  const resetVisibleChat = React.useCallback(() => {
+    setMessages([welcomeMessage]);
+    setStatusLine("conversation cleared");
+    setUiStatus({
+      approvalLabel: null,
+      primaryLabel: "conversation cleared",
+      primaryTone: "muted",
+      runState: "idle",
+      taskLabel: null
+    });
+    setActiveTaskId(null);
+    setPendingApproval(null);
+    setPendingClarifyPrompt(null);
+    activeTaskIdRef.current = null;
+    activeThreadIdRef.current = null;
+    seenApprovalMessageIdsRef.current.clear();
     setFileEdits([]);
     setQueuedPrompts([]);
     setUsedMemoryCount(0);
@@ -1100,6 +1124,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     queuedPromptCount: queuedPrompts.length,
     queuedPrompts,
     requestInterrupt,
+    resetVisibleChat,
     resetVisibleChatPreserveActiveThread,
     sessionApprovalFingerprints,
     answerPendingClarifyPrompt,

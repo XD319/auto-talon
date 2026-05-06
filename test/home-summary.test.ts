@@ -1,6 +1,11 @@
+import { PassThrough } from "node:stream";
+
+import { render } from "ink";
+import React from "react";
 import { describe, expect, it } from "vitest";
 
 import type { AgentApplicationService } from "../src/runtime/index.js";
+import { HomeSummary } from "../src/tui/components/home-summary.js";
 import { buildHomeSummary, listHomeSummaryEntries } from "../src/tui/view-models/home-summary.js";
 import { formatThreadDetailForTui } from "../src/tui/view-models/today-summary.js";
 import type {
@@ -31,12 +36,16 @@ describe("home summary", () => {
     process.env.USERNAME = "local-user";
     const summary = buildHomeSummary(createServiceStub(), { activeThreadId: "thread-a" });
 
-    expect(summary.title).toBe("Today at a glance");
-    expect(summary.agenda[0]).toContain("Routine due");
+    expect(summary.title).toBe("");
+    expect(summary.agenda).toEqual([
+      "Approval needed: file_write",
+      "Review waiting: Need review",
+      "Routine ready: Morning review"
+    ]);
     expect(summary.actions.map((item) => item.label)).toEqual([
-      "Review pending approval",
-      "Triage inbox",
-      "Check due routine"
+      "Respond to approval",
+      "Open inbox item",
+      "Open routine"
     ]);
     expect(summary.recommendedThread?.label).toBe("Quarterly planning");
     expect(summary.recentThreads.map((item) => item.label)).toEqual([
@@ -44,50 +53,122 @@ describe("home summary", () => {
       "Release checklist",
       "Research notes"
     ]);
-    expect(summary.assistantHint).toContain("Use Up/Down");
+    expect(summary.assistantHint).toBe("Use Up/Down and Enter to open an item.");
   });
 
-  it("falls back to a new-task prompt when nothing is pending", () => {
+  it("does not render a home panel when nothing is open", async () => {
     const summary = buildHomeSummary(createEmptyServiceStub());
 
     expect(summary.recommendedThread).toBeNull();
     expect(summary.recentThreads).toEqual([]);
-    expect(summary.actions).toEqual([
-      {
-        detail: "Start with a plain-language goal or ask for today's plan.",
-        key: "start",
-        label: "Start a new task"
-      }
-    ]);
-    expect(summary.agenda[0]).toContain("No urgent items");
+    expect(summary.actions).toEqual([]);
+    expect(summary.agenda).toEqual([]);
+    expect(listHomeSummaryEntries(summary)).toEqual([]);
+
+    const stdout = new PassThrough();
+    let output = "";
+    stdout.on("data", (chunk: Buffer | string) => {
+      output += chunk.toString();
+    });
+    const app = render(React.createElement(HomeSummary, { summary }), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitForInk();
+      expect(output).not.toContain("Today at a glance");
+      expect(output).not.toContain("Open items");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
   });
 
-  it("builds keyboard-selectable entries with recent threads first", () => {
+  it("uses the top next action as the attention fallback when no urgent items exist", () => {
+    process.env.USERNAME = "local-user";
+    const service = {
+      ...createServiceStub(),
+      listInbox() {
+        return [];
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listSchedules() {
+        return [];
+      }
+    };
+    const summary = buildHomeSummary(service);
+
+    expect(summary.actions).toEqual([]);
+    expect(summary.agenda[0]).toBe("Continue: Draft the plan outline");
+    expect(listHomeSummaryEntries(summary)[0]).toMatchObject({
+      kind: "thread",
+      label: "Continue Quarterly planning",
+      threadId: "thread-a"
+    });
+  });
+
+  it("builds keyboard-selectable entries with actionable items first", () => {
     process.env.USERNAME = "local-user";
     const summary = buildHomeSummary(createServiceStub(), { activeThreadId: "thread-a" });
     const entries = listHomeSummaryEntries(summary);
 
     expect(entries.slice(0, 3)).toMatchObject([
       {
+        key: "approval",
+        kind: "action",
+        label: "Respond to approval",
+        threadId: "thread-a"
+      },
+      {
+        key: "inbox",
+        kind: "action",
+        label: "Open inbox item",
+        threadId: "thread-a"
+      },
+      {
+        key: "routine",
+        kind: "action",
+        label: "Open routine"
+      }
+    ]);
+    expect(entries.slice(3, 6)).toMatchObject([
+      {
         kind: "thread",
-        label: "Quarterly planning",
+        label: "Continue Quarterly planning",
         threadId: "thread-a"
       },
       {
         kind: "thread",
-        label: "Release checklist",
+        label: "Continue Release checklist",
         threadId: "thread-b"
       },
       {
         kind: "thread",
-        label: "Research notes",
+        label: "Continue Research notes",
         threadId: "thread-c"
       }
     ]);
-    expect(entries[3]).toMatchObject({
-      key: "approval",
-      kind: "action",
-      label: "Review pending approval",
+  });
+
+  it("recommends the thread with the highest-priority next action before recent history", () => {
+    process.env.USERNAME = "local-user";
+    const summary = buildHomeSummary(createServiceStub());
+    const entries = listHomeSummaryEntries(summary);
+    const firstThread = entries.find((entry) => entry.kind === "thread");
+
+    expect(summary.recentThreads.map((item) => item.label)).toEqual([
+      "Release checklist",
+      "Research notes",
+      "Quarterly planning"
+    ]);
+    expect(summary.recommendedThread?.label).toBe("Quarterly planning");
+    expect(firstThread).toMatchObject({
+      kind: "thread",
+      label: "Continue Quarterly planning",
       threadId: "thread-a"
     });
   });
@@ -105,6 +186,10 @@ describe("home summary", () => {
     expect(detail).toContain("recent schedules:");
   });
 });
+
+async function waitForInk(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function createServiceStub(): HomeServiceStub {
   const threads = [

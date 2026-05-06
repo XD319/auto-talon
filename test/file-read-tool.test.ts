@@ -46,6 +46,32 @@ describe("FileReadTool", () => {
     expect(output.endLine).toBe(3);
   });
 
+  it("returns a validation error when read_file targets a directory", async () => {
+    const root = await createTempDir("auto-talon-file-read-");
+    const tool = new FileReadTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        action: "read_file",
+        path: root
+      },
+      createContext(root)
+    );
+
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected read_file on a directory to fail validation.");
+    }
+    expect(result.errorCode).toBe("tool_validation_error");
+    expect(result.errorMessage).toContain('action "list_dir"');
+    expect(result.details).toMatchObject({
+      path: root,
+      requestedAction: "read_file",
+      suggestedAction: "list_dir"
+    });
+  });
+
   it("search_text skips ignored folders and includes context lines", async () => {
     const root = await createTempDir("auto-talon-file-read-");
     await fs.mkdir(join(root, "node_modules"), { recursive: true });

@@ -71,9 +71,9 @@ function getPlaceholderText(busy: boolean, hasPendingApproval: boolean): string 
     return "approval pending (a allow, d deny)";
   }
   if (busy) {
-    return "assistant is running... queued messages will auto-send";
+    return "agent is running... keep typing to queue";
   }
-  return "Type a message... (/help)";
+  return "Ask AutoTalon to do something... (/help for commands)";
 }
 
 function buildCollapsedLines(preview: { charCount: number; lineCount: number; previewLines: string[] }): string[] {
