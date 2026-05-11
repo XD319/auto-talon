@@ -6,10 +6,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runBetaReadinessCheck } from "../src/diagnostics/index.js";
 import { verifyOptionalFeishuConfig } from "../src/diagnostics/beta-readiness.js";
+import { hasFeishuGatewayConfig, resolveFeishuGatewayConfig } from "../src/gateway/feishu/index.js";
 
 const tempPaths: string[] = [];
 
 afterEach(async () => {
+  delete process.env.AGENT_FEISHU_APP_ID;
+  delete process.env.AGENT_FEISHU_APP_SECRET;
+  delete process.env.AGENT_FEISHU_DOMAIN;
+
   while (tempPaths.length > 0) {
     const tempPath = tempPaths.pop();
     if (tempPath !== undefined) {
@@ -42,6 +47,42 @@ describe("beta readiness", () => {
     const result = verifyOptionalFeishuConfig(workspaceRoot);
     expect(result.ok).toBe(false);
     expect(result.details).toContain("invalid");
+  });
+
+  it("treats default empty feishu credentials as optional", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "feishu.config.json"),
+      JSON.stringify({ version: 1, appId: "", appSecret: "", domain: "feishu" }, null, 2),
+      "utf8"
+    );
+
+    expect(hasFeishuGatewayConfig(workspaceRoot)).toBe(false);
+    expect(verifyOptionalFeishuConfig(workspaceRoot)).toEqual({
+      details: "feishu credentials not provided; adapter remains optional",
+      ok: true
+    });
+  });
+
+  it("lets environment credentials override empty feishu config files", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "feishu.config.json"),
+      JSON.stringify({ version: 1, appId: "", appSecret: "", domain: "lark" }, null, 2),
+      "utf8"
+    );
+    process.env.AGENT_FEISHU_APP_ID = "env-app";
+    process.env.AGENT_FEISHU_APP_SECRET = "env-secret";
+
+    expect(hasFeishuGatewayConfig(workspaceRoot)).toBe(true);
+    expect(resolveFeishuGatewayConfig(workspaceRoot)).toEqual({
+      appId: "env-app",
+      appSecret: "env-secret",
+      domain: "lark"
+    });
+    expect(verifyOptionalFeishuConfig(workspaceRoot).ok).toBe(true);
   });
 });
 

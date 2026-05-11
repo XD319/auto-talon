@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { ApprovalService } from "../approvals/approval-service.js";
 import { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
@@ -29,6 +30,7 @@ import { SkillContextService, SkillDraftManager, SkillRegistry } from "../skills
 import { SkillVersionRegistry } from "../skills/versioning/index.js";
 import { StorageManager } from "../storage/database.js";
 import { migrateConfigFiles, validateConfigVersions } from "../storage/config-migration.js";
+import { RUNTIME_SCHEMA_VERSION } from "../storage/migrations.js";
 import { TraceService } from "../tracing/trace-service.js";
 import type {
   BudgetLimits,
@@ -74,6 +76,8 @@ import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/i
 import { resolveRuntimeConfig, type WebSearchRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles } from "./workspace-setup.js";
+
+export const RUNTIME_VERSION = "0.1.0";
 
 export interface AppConfig {
   approvalTtlMs: number;
@@ -163,7 +167,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     routing: runtimeConfig.routing,
     budget: runtimeConfig.budget,
     provider,
-    runtimeVersion: "0.1.0",
+    runtimeVersion: RUNTIME_VERSION,
     runtimeConfigPath: runtimeConfig.configPath,
     runtimeConfigSource: runtimeConfig.configSource,
     sandbox,
@@ -207,7 +211,7 @@ export function createApplication(
   options: CreateApplicationOptions = {}
 ): AppRuntimeHandle {
   const resolvedConfig = resolveAppConfig(cwd, options.sandbox);
-  backupDatabaseIfPresent(resolvedConfig.workspaceRoot, resolvedConfig.databasePath);
+  backupDatabaseIfMigrationNeeded(resolvedConfig.workspaceRoot, resolvedConfig.databasePath);
   const configuredWorkspaceRoot = options.config?.workspaceRoot ?? resolvedConfig.workspaceRoot;
   const resolvedSandbox =
     configuredWorkspaceRoot === resolvedConfig.workspaceRoot
@@ -620,8 +624,13 @@ export function createApplication(
   };
 }
 
-function backupDatabaseIfPresent(workspaceRoot: string, databasePath: string): void {
+function backupDatabaseIfMigrationNeeded(workspaceRoot: string, databasePath: string): void {
   if (!existsSync(databasePath) || databasePath === ":memory:") {
+    return;
+  }
+
+  const schemaVersion = readDatabaseSchemaVersion(databasePath);
+  if (schemaVersion === null || schemaVersion >= RUNTIME_SCHEMA_VERSION) {
     return;
   }
 
@@ -630,6 +639,17 @@ function backupDatabaseIfPresent(workspaceRoot: string, databasePath: string): v
   const timestamp = new Date().toISOString().replaceAll(":", "-");
   const backupPath = join(rollbacksDir, `db-backup-${timestamp}.sqlite`);
   copyFileSync(databasePath, backupPath);
+}
+
+function readDatabaseSchemaVersion(databasePath: string): number | null {
+  try {
+    const db = new DatabaseSync(databasePath);
+    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };
+    db.close();
+    return row.user_version ?? 0;
+  } catch {
+    return null;
+  }
 }
 
 interface SandboxConfigFile {

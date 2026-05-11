@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { startLocalWebhookGateway } from "../gateway/index.js";
-import { resolveFeishuGatewayConfig } from "../gateway/feishu/feishu-config.js";
+import { hasFeishuGatewayConfig, resolveFeishuGatewayConfig } from "../gateway/feishu/feishu-config.js";
 import { ProviderError } from "../providers/index.js";
 import { createApplication, createDefaultRunOptions } from "../runtime/index.js";
 import type { SupportedProviderName } from "../providers/index.js";
@@ -96,14 +96,21 @@ export async function runBetaReadinessCheck(
 
 export function verifyOptionalFeishuConfig(cwd = process.cwd()): { details: string; ok: boolean } {
   const hasFileConfig = existsSync(join(cwd, ".auto-talon", "feishu.config.json"));
-  const hasEnvConfig = [
-    process.env.AGENT_FEISHU_APP_ID,
-    process.env.AGENT_FEISHU_APP_SECRET,
-    process.env.AGENT_FEISHU_DOMAIN
-  ].some((value) => value !== undefined && value.trim().length > 0);
-  if (!hasFileConfig && !hasEnvConfig) {
+  let hasCredentials = false;
+  try {
+    hasCredentials = hasFeishuGatewayConfig(cwd);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
     return {
-      details: "feishu config not provided; adapter remains optional",
+      details: `feishu config present but invalid: ${reason}`,
+      ok: false
+    };
+  }
+  if (!hasCredentials) {
+    return {
+      details: hasFileConfig
+        ? "feishu credentials not provided; adapter remains optional"
+        : "feishu config not provided; adapter remains optional",
       ok: true
     };
   }

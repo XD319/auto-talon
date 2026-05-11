@@ -68,8 +68,6 @@ const DEFAULT_GATEWAY_CONFIG: JsonObject = {
 
 const DEFAULT_FEISHU_CONFIG: JsonObject = {
   version: CONFIG_VERSION,
-  appId: "",
-  appSecret: "",
   domain: "feishu"
 };
 
