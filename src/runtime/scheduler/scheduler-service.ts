@@ -123,6 +123,9 @@ export class SchedulerService {
   }
 
   public createSchedule(input: CreateScheduleInput): ScheduleRecord {
+    if (hasScheduleManagementBlocked(input.metadata)) {
+      throw new Error("Schedule creation is not allowed while a scheduled run is executing.");
+    }
     const draft = this.buildScheduleDraft(input);
     const schedule = this.dependencies.scheduleRepository.create(draft);
     this.dependencies.traceService.record({
@@ -457,6 +460,19 @@ export class SchedulerService {
 
 function hasOwn<T extends object>(value: T, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function hasScheduleManagementBlocked(metadata: JsonObject | undefined): boolean {
+  if (metadata === undefined) {
+    return false;
+  }
+  const context = metadata.scheduleRunContext;
+  return (
+    context !== null &&
+    typeof context === "object" &&
+    !Array.isArray(context) &&
+    (context as Record<string, unknown>).disallowScheduleManagement === true
+  );
 }
 
 function withDeliveryMetadata(metadata: JsonObject, targets?: ScheduleDeliveryTarget[]): JsonObject {

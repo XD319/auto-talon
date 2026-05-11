@@ -18,7 +18,8 @@ import type {
   ScheduleListQuery,
   ScheduleRecord,
   ScheduleRunListQuery,
-  ScheduleRunRecord
+  ScheduleRunRecord,
+  ScheduleStatusSummary
 } from "../types/index.js";
 
 import { collectCapabilityNotices } from "./capability-policy.js";
@@ -363,6 +364,17 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
 
   public runScheduleNow(scheduleId: string): ScheduleRunRecord {
     return this.dependencies.applicationService.runScheduleNow(scheduleId);
+  }
+
+  public scheduleStatus(): ScheduleStatusSummary {
+    return this.dependencies.applicationService.scheduleStatus();
+  }
+
+  public updateSchedule(
+    scheduleId: string,
+    request: Parameters<typeof this.dependencies.applicationService.updateSchedule>[1]
+  ): ScheduleRecord {
+    return this.dependencies.applicationService.updateSchedule(scheduleId, request);
   }
 
   public async resolveApproval(params: {

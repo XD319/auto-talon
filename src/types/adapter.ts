@@ -7,7 +7,8 @@ import type {
   ScheduleListQuery,
   ScheduleRecord,
   ScheduleRunListQuery,
-  ScheduleRunRecord
+  ScheduleRunRecord,
+  ScheduleStatusSummary
 } from "./schedule.js";
 
 export type AdapterCapabilityName =
@@ -155,6 +156,22 @@ export interface GatewayScheduleCreateRequest {
   deliveryTargets?: ScheduleDeliveryTarget[];
 }
 
+export interface GatewayScheduleUpdateRequest {
+  agentProfileId?: "executor" | "planner" | "reviewer";
+  backoffBaseMs?: number;
+  backoffMaxMs?: number;
+  cron?: string | null;
+  deliveryTargets?: ScheduleDeliveryTarget[];
+  every?: string | null;
+  input?: string;
+  maxAttempts?: number;
+  metadata?: JsonObject;
+  name?: string;
+  runAt?: string | null;
+  threadId?: string | null;
+  timezone?: string | null;
+}
+
 export interface GatewayTaskSnapshot {
   adapterSource: {
     adapterId: string;
@@ -187,11 +204,13 @@ export interface GatewayRuntimeApi {
   }): Promise<GatewayTaskLaunchResult | null>;
   resumeSchedule(scheduleId: string): ScheduleRecord;
   runScheduleNow(scheduleId: string): ScheduleRunRecord;
+  scheduleStatus(): ScheduleStatusSummary;
   showSchedule(scheduleId: string): ScheduleRecord | null;
   submitTask(adapter: AdapterDescriptor, request: GatewayTaskRequest): Promise<GatewayTaskLaunchResult>;
   subscribeToCompletion(taskId: string, listener: (event: GatewayTaskEvent) => void): () => void;
   subscribeToInbox(filter: GatewayInboxFilter, listener: (event: InboxDeliveryEvent) => void): () => void;
   subscribeToTaskEvents(taskId: string, listener: (event: GatewayTaskEvent) => void): () => void;
+  updateSchedule(scheduleId: string, request: GatewayScheduleUpdateRequest): ScheduleRecord;
 }
 
 export interface AdapterLifecycle {

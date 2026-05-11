@@ -98,4 +98,53 @@ describe("scheduler service", () => {
       storage.close();
     }
   });
+
+  it("rejects schedule creation from blocked scheduled run metadata", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    const traceService = new TraceService(storage.traces);
+    const scheduler = new SchedulerService({
+      jobRunner: {
+        drain: () => Promise.resolve([])
+      },
+      scheduleRepository: storage.schedules,
+      scheduleRunRepository: storage.scheduleRuns,
+      traceService
+    });
+
+    try {
+      expect(() =>
+        scheduler.createSchedule({
+          agentProfileId: "executor",
+          cwd: "/tmp/ws",
+          every: "1m",
+          input: "nested",
+          metadata: {
+            scheduleRunContext: {
+              disallowScheduleManagement: true,
+              runId: "run-1",
+              scheduleId: "schedule-1"
+            }
+          },
+          name: "nested",
+          ownerUserId: "u1",
+          providerName: "mock"
+        })
+      ).toThrow("Schedule creation is not allowed");
+
+      expect(
+        scheduler.createSchedule({
+          agentProfileId: "executor",
+          cwd: "/tmp/ws",
+          every: "1m",
+          input: "normal",
+          name: "normal",
+          ownerUserId: "u1",
+          providerName: "mock"
+        }).status
+      ).toBe("active");
+    } finally {
+      scheduler.stop();
+      storage.close();
+    }
+  });
 });

@@ -471,7 +471,7 @@ export function createApplication(
     scheduleRepository: storage.schedules,
     scheduleRunRepository: storage.scheduleRuns,
     traceService,
-    execute: async ({ schedule }) => {
+    execute: async ({ run, schedule }) => {
       if (service === null) {
         throw new Error("Application service has not been initialized.");
       }
@@ -479,6 +479,13 @@ export function createApplication(
         agentProfileId: schedule.agentProfileId,
         cwd: schedule.cwd,
         maxIterations: config.defaultMaxIterations,
+        metadata: {
+          scheduleRunContext: {
+            disallowScheduleManagement: true,
+            runId: run.runId,
+            scheduleId: schedule.scheduleId
+          }
+        },
         taskInput: schedule.input,
         ...(schedule.threadId !== null ? { threadId: schedule.threadId } : {}),
         timeoutMs: config.defaultTimeoutMs,

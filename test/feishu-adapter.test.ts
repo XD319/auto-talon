@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FeishuAdapter } from "../src/gateway/index.js";
 import type {
   GatewayRuntimeApi,
+  GatewayScheduleUpdateRequest,
   InboxItem,
   ScheduleRecord,
   ScheduleRunRecord
@@ -1046,6 +1047,124 @@ describe("feishu adapter", () => {
     expect(createPayloads(create)[0]?.data.content).toContain("Schedule archived");
   });
 
+  it("edits schedules from /schedule edit by prefix", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-28T01:15:00.000Z"));
+    const create = vi.fn(() => Promise.resolve({ data: { message_id: "schedule-reply" } }));
+    const patch = vi.fn(() => Promise.resolve({}));
+    const updateSchedule = vi.fn((scheduleId: string, input: Record<string, unknown>) =>
+      createScheduleRecord({
+        input: typeof input.input === "string" ? input.input : "scheduled task",
+        name: typeof input.name === "string" ? input.name : "scheduled task",
+        nextFireAt: typeof input.runAt === "string" ? input.runAt : "2026-04-29T01:00:00.000Z",
+        scheduleId
+      })
+    );
+    const runtimeApi = createRuntimeApi({
+      listSchedules: vi.fn(() => [createScheduleRecord({ scheduleId: "schedule-12345678" })]),
+      updateSchedule
+    });
+    let handlers: Record<string, (data: unknown) => Promise<void> | void> = {};
+    const adapter = new FeishuAdapter(
+      { appId: "app", appSecret: "secret", domain: "feishu" },
+      {
+        createClients: () => Promise.resolve({
+          client: { im: { message: { create, patch } } },
+          createEventDispatcher: () => ({
+            register: (registeredHandlers) => {
+              handlers = registeredHandlers;
+              return { handlers: registeredHandlers };
+            }
+          }),
+          wsClient: { start: vi.fn() }
+        })
+      }
+    );
+    await adapter.start({ runtimeApi });
+
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule edit schedule-12 2026-04-29 09:00 | updated prompt"));
+
+    expect(updateSchedule).toHaveBeenCalledWith("schedule-12345678", {
+      input: "updated prompt",
+      name: "updated prompt",
+      runAt: new Date(2026, 3, 29, 9, 0, 0, 0).toISOString()
+    });
+    expect(createPayloads(create)[0]?.data.content).toContain("Schedule updated");
+
+    vi.useRealTimers();
+  });
+
+  it("edits schedule fields and reports schedule status", async () => {
+    const create = vi.fn(() => Promise.resolve({ data: { message_id: "schedule-reply" } }));
+    const patch = vi.fn(() => Promise.resolve({}));
+    const updateSchedule = vi.fn((scheduleId: string, input: Record<string, unknown>) =>
+      createScheduleRecord({
+        input: typeof input.input === "string" ? input.input : "scheduled task",
+        name: typeof input.name === "string" ? input.name : "scheduled task",
+        scheduleId
+      })
+    );
+    const runtimeApi = createRuntimeApi({
+      listSchedules: vi.fn(() => [createScheduleRecord({ scheduleId: "schedule-abcdef12" })]),
+      scheduleStatus: vi.fn(() => ({
+        dueCount: 2,
+        lastRunAt: "2026-04-28T01:00:00.000Z",
+        nextFireAt: "2026-04-28T02:00:00.000Z",
+        runs: {
+          blocked: 0,
+          cancelled: 0,
+          completed: 3,
+          failed: 1,
+          queued: 2,
+          running: 1,
+          waiting_approval: 0
+        },
+        schedules: {
+          active: 4,
+          archived: 1,
+          completed: 0,
+          paused: 2
+        }
+      })),
+      updateSchedule
+    });
+    let handlers: Record<string, (data: unknown) => Promise<void> | void> = {};
+    const adapter = new FeishuAdapter(
+      { appId: "app", appSecret: "secret", domain: "feishu" },
+      {
+        createClients: () => Promise.resolve({
+          client: { im: { message: { create, patch } } },
+          createEventDispatcher: () => ({
+            register: (registeredHandlers) => {
+              handlers = registeredHandlers;
+              return { handlers: registeredHandlers };
+            }
+          }),
+          wsClient: { start: vi.fn() }
+        })
+      }
+    );
+    await adapter.start({ runtimeApi });
+
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule edit schedule-ab prompt revised prompt", "message-edit-1"));
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule edit schedule-ab name morning check", "message-edit-2"));
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule edit schedule-ab when 2026-04-30 09:00", "message-edit-3"));
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule status", "message-status"));
+
+    expect(updateSchedule).toHaveBeenNthCalledWith(1, "schedule-abcdef12", {
+      input: "revised prompt",
+      name: "revised prompt"
+    });
+    expect(updateSchedule).toHaveBeenNthCalledWith(2, "schedule-abcdef12", {
+      name: "morning check"
+    });
+    expect(updateSchedule).toHaveBeenNthCalledWith(3, "schedule-abcdef12", {
+      runAt: new Date(2026, 3, 30, 9, 0, 0, 0).toISOString()
+    });
+    expect(createPayloads(create)[3]?.data.content).toContain("active=4 paused=2 completed=0 archived=1");
+    expect(createPayloads(create)[3]?.data.content).toContain("queued=2 running=1 completed=3 failed=1");
+  });
+
   it("confirms natural language schedule creation only once", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 3, 28, 9, 15, 0, 0));
@@ -1087,11 +1206,11 @@ describe("feishu adapter", () => {
     const action = {
       event: {
         action: {
-          value: {
+          value: JSON.stringify({
             actionType: "schedule_confirmation",
             confirmationId,
             decision: "confirm"
-          }
+          })
         },
         context: {
           open_chat_id: "chat",
@@ -1104,14 +1223,20 @@ describe("feishu adapter", () => {
         }
       }
     };
-    await handlers["card.action.trigger"]?.(action);
-    await handlers["card.action.trigger"]?.(action);
+    const firstResponse = (await handlers["card.action.trigger"]?.(action)) as unknown;
+    const secondResponse = (await handlers["card.action.trigger"]?.(action)) as unknown;
 
     expect(createSchedule).toHaveBeenCalledTimes(1);
-    expect(patch).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(firstResponse)).toContain("Schedule Created");
+    expect(JSON.stringify(firstResponse)).not.toContain("\"button\"");
+    expect(JSON.stringify(secondResponse)).toContain("Schedule Created");
+    expect(JSON.stringify(secondResponse)).not.toContain("\"button\"");
+    expect(patch).toHaveBeenCalledTimes(3);
     expect(patchContentAt(patch, 0)).toContain("Scheduling");
     expect(patchContentAt(patch, 1)).toContain("Schedule Created");
     expect(patchContentAt(patch, 1)).not.toContain("\"button\"");
+    expect(patchContentAt(patch, 2)).toContain("Schedule Created");
+    expect(patchContentAt(patch, 2)).not.toContain("\"button\"");
   });
 
   it("cancels natural language schedule confirmation without creating a schedule", async () => {
@@ -1144,7 +1269,7 @@ describe("feishu adapter", () => {
     };
     const confirmationId = content.elements[2]?.actions?.[1]?.value.confirmationId ?? "";
 
-    await handlers["card.action.trigger"]?.({
+    const response = (await handlers["card.action.trigger"]?.({
       event: {
         action: {
           value: {
@@ -1158,9 +1283,11 @@ describe("feishu adapter", () => {
           open_message_id: "confirmation-message"
         }
       }
-    });
+    })) as unknown;
 
     expect(createSchedule).not.toHaveBeenCalled();
+    expect(JSON.stringify(response)).toContain("Schedule Cancelled");
+    expect(JSON.stringify(response)).not.toContain("\"button\"");
     expect(patchContentAt(patch, 0)).toContain("Schedule Cancelled");
     expect(patchContentAt(patch, 0)).not.toContain("\"button\"");
   });
@@ -1220,6 +1347,109 @@ describe("feishu adapter", () => {
         receive_id: "chat"
       }
     });
+  });
+
+  it("skips Feishu-origin schedule success delivery when output starts with [SILENT]", async () => {
+    const create = vi.fn(() => Promise.resolve({ data: { message_id: "completion-message" } }));
+    const patch = vi.fn(() => Promise.resolve({}));
+    const runtimeApi = createRuntimeApi({
+      getTaskSnapshot: () => ({
+        adapterSource: null,
+        audit: [],
+        notices: [],
+        task: {
+          errorCode: null,
+          errorMessage: null,
+          output: "[SILENT] all good",
+          pendingApprovalId: null,
+          status: "succeeded",
+          taskId: "task-1"
+        },
+        trace: []
+      })
+    });
+    const adapter = new FeishuAdapter(
+      { appId: "app", appSecret: "secret", domain: "feishu" },
+      {
+        createClients: () => Promise.resolve({
+          client: { im: { message: { create, patch } } },
+          createEventDispatcher: () => ({ register: (registeredHandlers) => ({ handlers: registeredHandlers }) }),
+          wsClient: { start: vi.fn() }
+        })
+      }
+    );
+    await adapter.start({ runtimeApi });
+
+    await adapter.sendInboxEvent({
+      kind: "created",
+      item: createInboxItem({
+        category: "task_completed",
+        metadata: {
+          origin: {
+            adapter: "feishu-im",
+            chatId: "chat"
+          },
+          scheduleId: "schedule-1"
+        },
+        summary: "fallback summary",
+        taskId: "task-1",
+        title: "Routine completed: check"
+      })
+    });
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("does not suppress Feishu-origin schedule failure delivery with [SILENT]", async () => {
+    const create = vi.fn(() => Promise.resolve({ data: { message_id: "failure-message" } }));
+    const patch = vi.fn(() => Promise.resolve({}));
+    const runtimeApi = createRuntimeApi({
+      getTaskSnapshot: () => ({
+        adapterSource: null,
+        audit: [],
+        notices: [],
+        task: {
+          errorCode: "provider_error",
+          errorMessage: "[SILENT] failed",
+          output: null,
+          pendingApprovalId: null,
+          status: "failed",
+          taskId: "task-1"
+        },
+        trace: []
+      })
+    });
+    const adapter = new FeishuAdapter(
+      { appId: "app", appSecret: "secret", domain: "feishu" },
+      {
+        createClients: () => Promise.resolve({
+          client: { im: { message: { create, patch } } },
+          createEventDispatcher: () => ({ register: (registeredHandlers) => ({ handlers: registeredHandlers }) }),
+          wsClient: { start: vi.fn() }
+        })
+      }
+    );
+    await adapter.start({ runtimeApi });
+
+    await adapter.sendInboxEvent({
+      kind: "created",
+      item: createInboxItem({
+        category: "task_failed",
+        metadata: {
+          origin: {
+            adapter: "feishu-im",
+            chatId: "chat"
+          },
+          scheduleId: "schedule-1"
+        },
+        summary: "fallback summary",
+        taskId: "task-1",
+        title: "Routine failed: check"
+      })
+    });
+
+    expect(createPayloads(create)[0]?.data.content).toContain("Routine failed");
+    expect(createPayloads(create)[0]?.data.content).toContain("[SILENT] failed");
   });
 
   it("ignores non-Feishu schedule inbox events", async () => {
@@ -1351,13 +1581,13 @@ function patchContentAt(mock: unknown, index: number): string {
   return calls[index]?.[0].data.content ?? "";
 }
 
-function messagePayload(text: string): unknown {
+function messagePayload(text: string, messageId = "message-1"): unknown {
   return {
-    event_id: "event-1",
+    event_id: `event-${messageId}`,
     message: {
       chat_id: "chat",
       content: JSON.stringify({ text }),
-      message_id: "message-1"
+      message_id: messageId
     },
     sender: {
       sender_id: {
@@ -1395,11 +1625,40 @@ function createRuntimeApi(overrides: Partial<GatewayRuntimeApi> = {}): GatewayRu
       threadId: null,
       trigger: "manual"
     })),
+    scheduleStatus: vi.fn(() => ({
+      dueCount: 0,
+      lastRunAt: null,
+      nextFireAt: null,
+      runs: {
+        blocked: 0,
+        cancelled: 0,
+        completed: 0,
+        failed: 0,
+        queued: 0,
+        running: 0,
+        waiting_approval: 0
+      },
+      schedules: {
+        active: 0,
+        archived: 0,
+        completed: 0,
+        paused: 0
+      }
+    })),
     showSchedule: vi.fn(() => createScheduleRecord()),
     submitTask: vi.fn(),
     subscribeToCompletion: () => () => undefined,
     subscribeToInbox: () => () => undefined,
     subscribeToTaskEvents: () => () => undefined,
+    updateSchedule: vi.fn((scheduleId: string, request: GatewayScheduleUpdateRequest) =>
+      createScheduleRecord({
+        scheduleId,
+        ...(request.input !== undefined ? { input: request.input } : {}),
+        ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.runAt !== undefined ? { runAt: request.runAt } : {}),
+        ...(request.timezone !== undefined ? { timezone: request.timezone } : {})
+      })
+    ),
     ...overrides
   };
 }
