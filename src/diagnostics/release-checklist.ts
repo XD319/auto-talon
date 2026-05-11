@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { runEvalReport } from "./eval.js";
 import { runBetaReadinessCheck } from "./beta-readiness.js";
 import type { SupportedProviderName } from "../providers/index.js";
-import { RUNTIME_SCHEMA_VERSION } from "../storage/migrations.js";
+import { RUNTIME_SCHEMA_VERSION, runMigrations } from "../storage/migrations.js";
 
 export interface ReleaseChecklistItem {
   id: string;
@@ -42,7 +42,7 @@ export async function runReleaseChecklist(
   const provider = options.provider ?? "scripted-smoke";
   const evalReport = await runEvalReport({ providerName: provider });
   const beta = await runBetaReadinessCheck({ providerName: provider });
-  const schemaVersion = readSchemaVersion(cwd);
+  const schema = validateMigrationSchemaVersion();
 
   const lint = runCommand("corepack", ["pnpm", "lint"], cwd);
   const test = runCommand("corepack", ["pnpm", "test"], cwd);
@@ -71,8 +71,8 @@ export async function runReleaseChecklist(
     toItem(
       "schema",
       "Schema version matches current runtime baseline",
-      schemaVersion === RUNTIME_SCHEMA_VERSION,
-      `user_version=${schemaVersion}, expected=${RUNTIME_SCHEMA_VERSION}`
+      schema.ok,
+      schema.details
     ),
     toItem(
       "compat-matrix",
@@ -256,7 +256,7 @@ export function validatePackContents(files: string[]): { details: string; ok: bo
 }
 
 function runPackDryRun(cwd: string): { details: string; files: string[]; ok: boolean } {
-  const result = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+  const result = spawnSync("npm", ["pack", "--dry-run", "--json"], {
     cwd,
     encoding: "utf8",
     shell: process.platform === "win32"
@@ -267,7 +267,7 @@ function runPackDryRun(cwd: string): { details: string; files: string[]; ok: boo
   }
 
   try {
-    const parsed = JSON.parse(result.stdout) as Array<{
+    const parsed = JSON.parse(extractPackJson(result.stdout)) as Array<{
       entryCount?: number;
       files?: Array<{ path?: unknown }>;
     }>;
@@ -286,6 +286,34 @@ function runPackDryRun(cwd: string): { details: string; files: string[]; ok: boo
   }
 }
 
+export function validateMigrationSchemaVersion(): { details: string; ok: boolean } {
+  const db = new DatabaseSync(":memory:");
+  try {
+    runMigrations(db);
+    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };
+    const schemaVersion = row.user_version ?? 0;
+    return {
+      details: `user_version=${schemaVersion}, expected=${RUNTIME_SCHEMA_VERSION}`,
+      ok: schemaVersion === RUNTIME_SCHEMA_VERSION
+    };
+  } finally {
+    db.close();
+  }
+}
+
+function extractPackJson(output: string): string {
+  const trimmed = output.trim();
+  const start = trimmed.lastIndexOf("\n[");
+  if (start >= 0) {
+    return trimmed.slice(start + 1);
+  }
+  const directStart = trimmed.indexOf("[");
+  if (directStart >= 0) {
+    return trimmed.slice(directStart);
+  }
+  return trimmed;
+}
+
 function readPackageJson(cwd: string): Record<string, unknown> | null {
   const packageJsonPath = join(cwd, "package.json");
   if (!existsSync(packageJsonPath)) {
@@ -302,19 +330,4 @@ function hasBinTalon(packageJson: Record<string, unknown>): boolean {
     bin !== null &&
     (bin as Record<string, unknown>).talon === "dist/cli/bin.js"
   );
-}
-
-function readSchemaVersion(cwd: string): number {
-  try {
-    const dbPath = join(cwd, ".auto-talon", "agent-runtime.db");
-    if (!existsSync(dbPath)) {
-      return 0;
-    }
-    const db = new DatabaseSync(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };
-    db.close();
-    return row.user_version ?? 0;
-  } catch {
-    return -1;
-  }
 }

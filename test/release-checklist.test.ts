@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -6,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   validateLockfilePolicy,
+  validateMigrationSchemaVersion,
   validateNodeVersionPolicy,
   validatePackageMetadata,
   validatePackContents,
@@ -64,6 +66,26 @@ describe("release checklist helpers", () => {
       details: "Node.js >=22.13.0 policy is consistent",
       ok: true
     });
+  });
+
+  it("validates schema version from migrations instead of local workspace state", () => {
+    expect(validateMigrationSchemaVersion()).toEqual({
+      details: "user_version=11, expected=11",
+      ok: true
+    });
+  });
+
+  it("cleans stale dist files before builds", () => {
+    const stalePath = join(process.cwd(), "dist", "__stale-build-clean-test.txt");
+    mkdirSync(join(process.cwd(), "dist"), { recursive: true });
+    writeFileSync(stalePath, "stale\n", "utf8");
+
+    execFileSync(process.execPath, [join(process.cwd(), "scripts", "clean-dist.mjs")], {
+      cwd: process.cwd(),
+      stdio: "ignore"
+    });
+
+    expect(existsSync(stalePath)).toBe(false);
   });
 
   it("rejects setup script Node.js version drift", () => {

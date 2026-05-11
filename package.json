@@ -39,13 +39,13 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "check": "npm run check:gateway-facade && npm run lint && npm run coverage && npm run build",
     "check:gateway-facade": "node scripts/check-gateway-facade-bypass.mjs",
     "dev": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts",
     "dev:tui": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts tui",
     "dev:dashboard": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts dashboard",
-    "prepack": "pnpm run build",
+    "prepack": "npm run build",
     "release:check": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts release check",
     "setup": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts init --yes",
     "lint": "eslint .",

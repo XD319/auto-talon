@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { runEvalReport } from "../src/diagnostics/index.js";
+import { loadSmokeTaskFixtures } from "../src/testing/index.js";
 
 describe("eval report", () => {
   it("generates the minimal aggregate report for fixed task samples", async () => {
@@ -20,4 +21,10 @@ describe("eval report", () => {
     expect(report.tokenUsage.totalTokens).toBeGreaterThan(0);
     expect(Array.isArray(report.typicalFailures)).toBe(true);
   }, 30000);
+
+  it("explains missing default fixtures for installed-package diagnostics", () => {
+    expect(() => loadSmokeTaskFixtures("missing-fixtures/runtime-smoke-tasks.json")).toThrow(
+      /maintainer validation assets/
+    );
+  });
 });
