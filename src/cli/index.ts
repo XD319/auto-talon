@@ -1,11 +1,12 @@
 import { writeFileSync } from "node:fs";
 
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 
 import {
   createGatewayApplication,
   createGatewayRuntime,
   createFeishuGatewayPlugin,
+  hasFeishuGatewayConfig,
   startFeishuGateway,
   startLocalWebhookGateway,
   GatewayManager,
@@ -25,6 +26,7 @@ import {
   createApplication,
   createDefaultRunOptions,
   initializeWorkspaceFiles,
+  RUNTIME_VERSION,
   type ResolveAppConfigOptions
 } from "../runtime/index.js";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing/index.js";
@@ -92,14 +94,9 @@ export async function main(argv = process.argv): Promise<void> {
   program.name("talon").description("Agent Runtime MVP CLI").version("0.1.0");
 
   program.command("version").description("Show runtime and environment version").action(() => {
-    const handle = createApplication(process.cwd());
-    try {
-      console.log(`auto-talon v${program.version()}`);
-      console.log(`runtimeVersion=${handle.config.runtimeVersion}`);
-      console.log(`node=${process.version}`);
-    } finally {
-      handle.close();
-    }
+    console.log(`auto-talon v${program.version()}`);
+    console.log(`runtimeVersion=${RUNTIME_VERSION}`);
+    console.log(`node=${process.version}`);
   });
 
   program
@@ -111,8 +108,8 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--profile <profile>", "Agent profile", "executor")
     .option("--thread <threadId>", "Reuse an existing thread id")
-    .option("--max-iterations <number>", "Maximum loop iterations")
-    .option("--timeout-ms <number>", "Task timeout in milliseconds")
+    .option("--max-iterations <number>", "Maximum loop iterations", parsePositiveIntegerOption("--max-iterations"))
+    .option("--timeout-ms <number>", "Task timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
     .action(async (task: string, commandOptions: RunCommandOptions) => {
       const handle = createApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
@@ -124,10 +121,10 @@ export async function main(argv = process.argv): Promise<void> {
           runOptions.threadId = commandOptions.thread;
         }
         if (commandOptions.maxIterations !== undefined) {
-          runOptions.maxIterations = Number(commandOptions.maxIterations);
+          runOptions.maxIterations = commandOptions.maxIterations;
         }
         if (commandOptions.timeoutMs !== undefined) {
-          runOptions.timeoutMs = Number(commandOptions.timeoutMs);
+          runOptions.timeoutMs = commandOptions.timeoutMs;
         }
 
         const result = await handle.service.runTask(runOptions);
@@ -319,10 +316,10 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--thread <thread_id>", "Continue an existing thread")
     .option("--profile <profile>", "Agent profile id", "executor")
     .option("--cwd <cwd>", "Working directory", process.cwd())
-    .option("--max-attempts <num>", "Max retry attempts", "3")
-    .option("--backoff-base <ms>", "Backoff base milliseconds", "5000")
-    .option("--backoff-max <ms>", "Backoff max milliseconds", "300000")
-    .action((input: string, commandOptions: Record<string, string | undefined>) => {
+    .option("--max-attempts <num>", "Max retry attempts", parsePositiveIntegerOption("--max-attempts"), 3)
+    .option("--backoff-base <ms>", "Backoff base milliseconds", parsePositiveIntegerOption("--backoff-base"), 5000)
+    .option("--backoff-max <ms>", "Backoff max milliseconds", parsePositiveIntegerOption("--backoff-max"), 300000)
+    .action((input: string, commandOptions: ScheduleCreateOptions) => {
       const handle = createApplication(process.cwd());
       try {
         const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
@@ -331,11 +328,11 @@ export async function main(argv = process.argv): Promise<void> {
         const profile = (commandOptions.profile ?? "executor") as "executor" | "planner" | "reviewer";
         const schedule = handle.service.createSchedule({
           agentProfileId: profile,
-          backoffBaseMs: Number.parseInt(commandOptions.backoffBase ?? "5000", 10),
-          backoffMaxMs: Number.parseInt(commandOptions.backoffMax ?? "300000", 10),
+          backoffBaseMs: commandOptions.backoffBase,
+          backoffMaxMs: commandOptions.backoffMax,
           cwd,
           input,
-          maxAttempts: Number.parseInt(commandOptions.maxAttempts ?? "3", 10),
+          maxAttempts: commandOptions.maxAttempts,
           name,
           ownerUserId,
           providerName: handle.config.provider.name,
@@ -387,25 +384,25 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
     .option("--thread <thread_id>", "Continue an existing thread; use none to clear")
     .option("--profile <profile>", "Agent profile id")
-    .option("--max-attempts <num>", "Max retry attempts")
-    .option("--backoff-base <ms>", "Backoff base milliseconds")
-    .option("--backoff-max <ms>", "Backoff max milliseconds")
-    .action((scheduleId: string, commandOptions: Record<string, string | undefined>) => {
+    .option("--max-attempts <num>", "Max retry attempts", parsePositiveIntegerOption("--max-attempts"))
+    .option("--backoff-base <ms>", "Backoff base milliseconds", parsePositiveIntegerOption("--backoff-base"))
+    .option("--backoff-max <ms>", "Backoff max milliseconds", parsePositiveIntegerOption("--backoff-max"))
+    .action((scheduleId: string, commandOptions: ScheduleEditOptions) => {
       const handle = createApplication(process.cwd());
       try {
         const updated = handle.service.updateSchedule(scheduleId, {
           ...(commandOptions.backoffBase !== undefined
-            ? { backoffBaseMs: Number.parseInt(commandOptions.backoffBase, 10) }
+            ? { backoffBaseMs: commandOptions.backoffBase }
             : {}),
           ...(commandOptions.backoffMax !== undefined
-            ? { backoffMaxMs: Number.parseInt(commandOptions.backoffMax, 10) }
+            ? { backoffMaxMs: commandOptions.backoffMax }
             : {}),
           ...(commandOptions.cron !== undefined ? { cron: commandOptions.cron } : {}),
           ...(commandOptions.every !== undefined ? { every: commandOptions.every } : {}),
           ...(commandOptions.at !== undefined ? { runAt: commandOptions.at } : {}),
           ...(commandOptions.input !== undefined ? { input: commandOptions.input } : {}),
           ...(commandOptions.maxAttempts !== undefined
-            ? { maxAttempts: Number.parseInt(commandOptions.maxAttempts, 10) }
+            ? { maxAttempts: commandOptions.maxAttempts }
             : {}),
           ...(commandOptions.name !== undefined ? { name: commandOptions.name } : {}),
           ...(commandOptions.profile !== undefined
@@ -448,8 +445,8 @@ export async function main(argv = process.argv): Promise<void> {
     .command("runs")
     .argument("<schedule_id>")
     .option("--status <status>", "Filter status")
-    .option("--tail <count>", "Number of latest runs", "20")
-    .action((scheduleId: string, commandOptions: { status?: string; tail: string }) => {
+    .option("--tail <count>", "Number of latest runs", parsePositiveIntegerOption("--tail"), 20)
+    .action((scheduleId: string, commandOptions: { status?: string; tail: number }) => {
       const handle = createApplication(process.cwd());
       try {
         const parsedStatus = commandOptions.status as
@@ -463,8 +460,8 @@ export async function main(argv = process.argv): Promise<void> {
           | undefined;
         const query =
           parsedStatus === undefined
-            ? { tail: Number.parseInt(commandOptions.tail, 10) }
-            : { status: parsedStatus, tail: Number.parseInt(commandOptions.tail, 10) };
+            ? { tail: commandOptions.tail }
+            : { status: parsedStatus, tail: commandOptions.tail };
         const runs = handle.service.listScheduleRuns(scheduleId, query);
         console.log(formatScheduleRunList(runs));
       } finally {
@@ -559,7 +556,7 @@ export async function main(argv = process.argv): Promise<void> {
       "--category <category>",
       "Filter category: task_completed | task_failed | task_blocked | decision_requested | approval_requested | memory_suggestion | skill_promotion"
     )
-    .option("--limit <count>", "Limit entries", "50")
+    .option("--limit <count>", "Limit entries", parsePositiveIntegerOption("--limit"), 50)
     .action((commandOptions: InboxListOptions) => {
       listInboxItems(commandOptions);
     });
@@ -571,7 +568,7 @@ export async function main(argv = process.argv): Promise<void> {
       "--category <category>",
       "Filter category: task_completed | task_failed | task_blocked | decision_requested | approval_requested | memory_suggestion | skill_promotion"
     )
-    .option("--limit <count>", "Limit entries", "50")
+    .option("--limit <count>", "Limit entries", parsePositiveIntegerOption("--limit"), 50)
     .action((commandOptions: InboxListOptions) => {
       listInboxItems(commandOptions);
     });
@@ -1110,7 +1107,7 @@ export async function main(argv = process.argv): Promise<void> {
     .command("replay")
     .argument("<task_id>", "Task identifier")
     .option("--cwd <path>", "Workspace path", process.cwd())
-    .option("--from-iteration <number>", "Replay starting from this iteration", "1")
+    .option("--from-iteration <number>", "Replay starting from this iteration", parsePositiveIntegerOption("--from-iteration"), 1)
     .option("--provider <mode>", "Replay provider mode: current | mock", "current")
     .option("--dry-run", "Show replay parameters without executing")
     .action(
@@ -1119,7 +1116,7 @@ export async function main(argv = process.argv): Promise<void> {
         commandOptions: {
           cwd: string;
           dryRun?: boolean;
-          fromIteration: string;
+          fromIteration: number;
           provider: "current" | "mock";
         }
       ) => {
@@ -1131,7 +1128,7 @@ export async function main(argv = process.argv): Promise<void> {
         }
         const report = await replayTaskById(taskId, {
           cwd: commandOptions.cwd,
-          fromIteration: Number(commandOptions.fromIteration),
+          fromIteration: commandOptions.fromIteration,
           providerMode: commandOptions.provider
         });
         console.log(formatReplayReport(report));
@@ -1217,14 +1214,14 @@ export async function main(argv = process.argv): Promise<void> {
   evalCommand
     .command("beta")
     .option("--provider <provider>", "Provider to use for sample eval: scripted-smoke or any registered provider", "scripted-smoke")
-    .option("--min-success-rate <number>", "Minimum acceptable task success rate", "0.8")
+    .option("--min-success-rate <number>", "Minimum acceptable task success rate", parseRatioOption("--min-success-rate"), 0.8)
     .action(
       async (commandOptions: {
-        minSuccessRate: string;
+        minSuccessRate: number;
         provider: SupportedProviderName | "scripted-smoke";
       }) => {
         const report = await runBetaReadinessCheck({
-          minimumSuccessRate: Number(commandOptions.minSuccessRate),
+          minimumSuccessRate: commandOptions.minSuccessRate,
           providerName: commandOptions.provider
         });
         console.log(formatBetaReadinessReport(report));
@@ -1348,7 +1345,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--thread <threadId>", "Search within specific thread")
     .option("--global", "Search across all threads")
     .option("--exclude-thread <threadId>", "Exclude one thread from global search")
-    .option("--limit <number>", "Max hit count", "5")
+    .option("--limit <number>", "Max hit count", parsePositiveIntegerOption("--limit"), 5)
     .action(
       (
         query: string,
@@ -1356,15 +1353,11 @@ export async function main(argv = process.argv): Promise<void> {
           thread?: string;
           global?: boolean;
           excludeThread?: string;
-          limit?: string;
+          limit: number;
         }
       ) => {
         const handle = createApplication(process.cwd());
         try {
-          const limit = Number.parseInt(commandOptions.limit ?? "5", 10);
-          if (Number.isNaN(limit) || limit <= 0) {
-            throw new Error("Limit must be a positive integer.");
-          }
           if (commandOptions.global !== true && commandOptions.thread === undefined) {
             throw new Error("Provide --thread <threadId> or use --global.");
           }
@@ -1375,11 +1368,11 @@ export async function main(argv = process.argv): Promise<void> {
             commandOptions.global === true
               ? handle.service.searchThreadSnapshots({
                   excludeThreadId: commandOptions.excludeThread ?? null,
-                  limit,
+                  limit: commandOptions.limit,
                   query
                 })
               : handle.service.searchThreadSnapshots({
-                  limit,
+                  limit: commandOptions.limit,
                   query,
                   threadId: commandOptions.thread ?? ""
                 });
@@ -1529,15 +1522,15 @@ export async function main(argv = process.argv): Promise<void> {
     .command("list")
     .option("--user <user>", "Filter by runtime user id")
     .option("--status <status>", "Filter status: pending | seen | done | dismissed", "pending")
-    .option("--limit <count>", "Limit entries", "20")
-    .action((commandOptions: { limit?: string; status?: InboxListOptions["status"]; user?: string }) => {
+    .option("--limit <count>", "Limit entries", parsePositiveIntegerOption("--limit"), 20)
+    .action((commandOptions: { limit?: number; status?: InboxListOptions["status"]; user?: string }) => {
       const handle = createApplication(process.cwd());
       try {
         console.log(
           formatMemorySuggestionQueue(
             handle.service.listMemorySuggestions({
               ...(commandOptions.limit !== undefined
-                ? { limit: Number.parseInt(commandOptions.limit, 10) }
+                ? { limit: commandOptions.limit }
                 : {}),
               ...(commandOptions.status !== undefined ? { status: commandOptions.status } : {}),
               ...(commandOptions.user !== undefined ? { userId: commandOptions.user } : {})
@@ -1582,12 +1575,12 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--type <type>", "Experience type")
     .option("--source <sourceType>", "Experience source type")
     .option("--status <status>", "Experience status")
-    .option("--min-value <score>", "Minimum value score")
+    .option("--min-value <score>", "Minimum value score", parseNonNegativeNumberOption("--min-value"))
     .option("--task-id <taskId>", "Task id filter")
     .option("--reviewer <reviewerId>", "Reviewer id filter")
     .option("--scope <scope>", "Scope filter")
     .option("--scope-key <scopeKey>", "Scope key filter")
-    .option("--limit <number>", "Maximum records")
+    .option("--limit <number>", "Maximum records", parsePositiveIntegerOption("--limit"))
     .action((commandOptions: ExperienceFilterOptions) => {
       const handle = createApplication(process.cwd());
       try {
@@ -1616,12 +1609,12 @@ export async function main(argv = process.argv): Promise<void> {
     .argument("<status>", "accepted | rejected | stale")
     .option("--reviewer <reviewer>", "Reviewer id")
     .option("--note <note>", "Review note", "manual experience review")
-    .option("--value <score>", "Override value score")
+    .option("--value <score>", "Override value score", parseNonNegativeNumberOption("--value"))
     .action(
       (
         experienceId: string,
         status: "accepted" | "rejected" | "stale",
-        commandOptions: { note: string; reviewer?: string; value?: string }
+        commandOptions: { note: string; reviewer?: string; value?: number }
       ) => {
         const handle = createApplication(process.cwd());
         try {
@@ -1632,7 +1625,7 @@ export async function main(argv = process.argv): Promise<void> {
             note: commandOptions.note,
             reviewerId: reviewer,
             status,
-            ...(commandOptions.value !== undefined ? { valueScore: Number(commandOptions.value) } : {})
+            ...(commandOptions.value !== undefined ? { valueScore: commandOptions.value } : {})
           });
           console.log(formatExperienceList([reviewed]));
         } finally {
@@ -1677,12 +1670,12 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--type <type>", "Experience type")
     .option("--source <sourceType>", "Experience source type")
     .option("--status <status>", "Experience status")
-    .option("--min-value <score>", "Minimum value score")
+    .option("--min-value <score>", "Minimum value score", parseNonNegativeNumberOption("--min-value"))
     .option("--task-id <taskId>", "Task id filter")
     .option("--reviewer <reviewerId>", "Reviewer id filter")
     .option("--scope <scope>", "Scope filter")
     .option("--scope-key <scopeKey>", "Scope key filter")
-    .option("--limit <number>", "Maximum records")
+    .option("--limit <number>", "Maximum records", parsePositiveIntegerOption("--limit"))
     .action((query: string, commandOptions: ExperienceFilterOptions) => {
       const handle = createApplication(process.cwd());
       try {
@@ -1829,8 +1822,8 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--host <host>", "Host to bind", "127.0.0.1")
-    .option("--port <port>", "Port to bind", "7070")
-    .action(async (commandOptions: SandboxCommandOptions & { host: string; port: string }) => {
+    .option("--port <port>", "Port to bind", parsePortOption("--port"), 7070)
+    .action(async (commandOptions: SandboxCommandOptions & { host: string; port: number }) => {
       const gatewayApp = createGatewayApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
       });
@@ -1838,7 +1831,7 @@ export async function main(argv = process.argv): Promise<void> {
       const gatewayRuntime = gatewayApp.gateway;
       const gatewayHandle = await startLocalWebhookGateway(handle, {
         host: commandOptions.host,
-        port: Number(commandOptions.port)
+        port: commandOptions.port
       }, gatewayRuntime);
 
       console.log(
@@ -1866,24 +1859,33 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
-    .option("--local-webhook-port <port>", "Also start local webhook on this port")
-    .action(async (commandOptions: SandboxCommandOptions & { localWebhookPort?: string }) => {
+    .option("--local-webhook-port <port>", "Also start local webhook on this port", parsePortOption("--local-webhook-port"))
+    .action(async (commandOptions: SandboxCommandOptions & { localWebhookPort?: number }) => {
       const gatewayApp = createGatewayApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
       });
       const handle = gatewayApp.runtime;
       const gatewayRuntime = gatewayApp.gateway;
-      const feishu = await startFeishuGateway(handle, gatewayRuntime);
-      const extraManagers: GatewayManager[] = [feishu.manager];
-      if (commandOptions.localWebhookPort !== undefined) {
-        const local = await startLocalWebhookGateway(handle, {
-          host: "127.0.0.1",
-          port: Number(commandOptions.localWebhookPort)
-        }, gatewayRuntime);
-        extraManagers.push(local.manager);
-      }
+      let extraManagers: GatewayManager[] = [];
+      try {
+        const feishu = await startFeishuGateway(handle, gatewayRuntime);
+        extraManagers = [feishu.manager];
+        if (commandOptions.localWebhookPort !== undefined) {
+          const local = await startLocalWebhookGateway(handle, {
+            host: "127.0.0.1",
+            port: commandOptions.localWebhookPort
+          }, gatewayRuntime);
+          extraManagers.push(local.manager);
+        }
 
-      console.log(`Feishu adapter ${feishu.adapter.descriptor.adapterId} is running.`);
+        console.log(`Feishu adapter ${feishu.adapter.descriptor.adapterId} is running.`);
+      } catch (error) {
+        for (const manager of extraManagers) {
+          await manager.stopAll();
+        }
+        gatewayApp.close();
+        throw error;
+      }
       const shutdown = async (): Promise<void> => {
         for (const manager of extraManagers) {
           await manager.stopAll();
@@ -1910,7 +1912,9 @@ export async function main(argv = process.argv): Promise<void> {
           new LocalWebhookAdapter({ port: 0, adapterId: "local-webhook" })
         ];
         try {
-          listedAdapters.push(createFeishuGatewayPlugin().createAdapter(handle));
+          if (hasFeishuGatewayConfig(handle.config.workspaceRoot)) {
+            listedAdapters.push(createFeishuGatewayPlugin().createAdapter(handle));
+          }
         } catch {
           // Optional adapter: only listed when config is present.
         }
@@ -1936,15 +1940,43 @@ interface SandboxCommandOptions {
 }
 
 interface RunCommandOptions extends SandboxCommandOptions {
-  maxIterations?: string;
+  maxIterations?: number;
   profile: string;
   thread?: string;
-  timeoutMs?: string;
+  timeoutMs?: number;
+}
+
+interface ScheduleCreateOptions {
+  at?: string;
+  backoffBase: number;
+  backoffMax: number;
+  cron?: string;
+  cwd?: string;
+  every?: string;
+  maxAttempts: number;
+  name?: string;
+  profile?: string;
+  thread?: string;
+  timezone?: string;
+}
+
+interface ScheduleEditOptions {
+  at?: string;
+  backoffBase?: number;
+  backoffMax?: number;
+  cron?: string;
+  every?: string;
+  input?: string;
+  maxAttempts?: number;
+  name?: string;
+  profile?: string;
+  thread?: string;
+  timezone?: string;
 }
 
 interface ExperienceFilterOptions {
-  limit?: string;
-  minValue?: string;
+  limit?: number;
+  minValue?: number;
   reviewer?: string;
   scope?: string;
   scopeKey?: string;
@@ -1963,7 +1995,7 @@ interface InboxListOptions {
     | "approval_requested"
     | "memory_suggestion"
     | "skill_promotion";
-  limit?: string;
+  limit?: number;
   status?: "pending" | "seen" | "done" | "dismissed";
   user?: string;
 }
@@ -1977,6 +2009,46 @@ interface SmokeCommandOptions {
 
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function parsePositiveIntegerOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new InvalidArgumentError(`${optionName} must be a positive integer.`);
+    }
+    return parsed;
+  };
+}
+
+function parsePortOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = parsePositiveIntegerOption(optionName)(value);
+    if (parsed > 65535) {
+      throw new InvalidArgumentError(`${optionName} must be between 1 and 65535.`);
+    }
+    return parsed;
+  };
+}
+
+function parseNonNegativeNumberOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new InvalidArgumentError(`${optionName} must be a non-negative number.`);
+    }
+    return parsed;
+  };
+}
+
+function parseRatioOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      throw new InvalidArgumentError(`${optionName} must be a number between 0 and 1.`);
+    }
+    return parsed;
+  };
 }
 
 function parseNullableOption(value: string): string | null {
@@ -2026,7 +2098,7 @@ function listInboxItems(commandOptions: InboxListOptions): void {
           ...(commandOptions.status !== undefined ? { status: commandOptions.status } : {}),
           ...(commandOptions.category !== undefined ? { category: commandOptions.category } : {}),
           ...(commandOptions.limit !== undefined
-            ? { limit: Number.parseInt(commandOptions.limit, 10) }
+            ? { limit: commandOptions.limit }
             : {})
         })
       )
@@ -2058,7 +2130,7 @@ function toExperienceQuery(options: ExperienceFilterOptions): ExperienceQuery {
     query.status = options.status as ExperienceStatus;
   }
   if (options.minValue !== undefined) {
-    query.minValueScore = Number(options.minValue);
+    query.minValueScore = options.minValue;
   }
   if (options.taskId !== undefined) {
     query.taskId = options.taskId;
@@ -2073,7 +2145,7 @@ function toExperienceQuery(options: ExperienceFilterOptions): ExperienceQuery {
     query.scopeKey = options.scopeKey;
   }
   if (options.limit !== undefined) {
-    query.limit = Number(options.limit);
+    query.limit = options.limit;
   }
   return query;
 }
