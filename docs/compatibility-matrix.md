@@ -4,8 +4,8 @@
 
 - Node.js `>=22.13.0`: supported and covered by CI runtime-minimum and full
   Node 22 verification.
-- Node.js 20: covered by a CI compatibility-floor check. It is not a supported
-  runtime because auto-talon uses the built-in `node:sqlite` storage module.
+- Node.js 20: not supported because auto-talon uses the built-in `node:sqlite`
+  storage module.
 - Package module format: ESM (`"type": "module"`).
 
 ## Terminal UI
@@ -29,7 +29,7 @@
 
 ## Memory / Storage
 
-- Runtime schema baseline: `PRAGMA user_version = 10`.
+- Runtime schema baseline: `PRAGMA user_version = 11`.
 - Schema upgrades from legacy unversioned DB: supported via migration pipeline.
 - Config files without `version`: auto-migrated to `version: 1`.
 - Scope rename compatibility:
@@ -46,6 +46,6 @@
 ## Validation Path
 
 - `talon release check` from the auto-talon repository root
-- `talon eval run`
-- `talon smoke run`
+- `talon eval run --fixture fixtures/runtime-smoke-tasks.json`
+- `talon smoke run --fixture fixtures/runtime-smoke-tasks.json`
 - `talon eval beta`

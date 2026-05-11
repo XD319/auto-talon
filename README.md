@@ -39,7 +39,8 @@ gateways provide formal external chat entry points into the same runtime.
   `experience_ref`/`skill_ref`) for repeatable work.
 - Keeps runtime observation available through `talon ops` and CLI inspection
   commands.
-- Supports replay, smoke tests, eval reports, and maintainer release checks.
+- Supports replay, smoke tests, eval reports, and maintainer release checks in
+  source checkouts.
 
 ## Demo
 
@@ -75,7 +76,6 @@ talon tui
 Optional chat-platform entry:
 
 ```bash
-pnpm add @larksuiteoapi/node-sdk
 talon gateway serve-feishu --cwd .
 ```
 
@@ -120,13 +120,11 @@ Local API or SDK integration:
 talon gateway serve-webhook --port 7070
 ```
 
-Validate providers and release readiness:
+Validate providers:
 
 ```bash
 talon provider list
 talon provider test
-talon eval smoke
-talon release check
 ```
 
 ## When To Use It
@@ -188,5 +186,6 @@ corepack pnpm check
 corepack pnpm dev release check
 ```
 
-`talon release check` is a maintainer release gate for this repository. Use
-`talon doctor` for user workspace health checks.
+`talon eval run`, `talon smoke run`, and `talon release check` are maintainer
+diagnostic commands for source checkouts. Installed-package users should use
+`talon doctor` and `talon provider test` for workspace health checks.

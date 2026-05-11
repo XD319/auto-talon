@@ -10,10 +10,14 @@ talon replay <task_id> --dry-run
 
 ## Eval
 
+Eval and smoke commands are maintainer diagnostics for source checkouts. They
+use fixture files from the repository, or a custom file passed with
+`--fixture`.
+
 ```bash
-talon eval run
+talon eval run --fixture fixtures/runtime-smoke-tasks.json
 talon eval run --provider scripted-smoke --explain
-talon eval smoke
+talon smoke run --fixture fixtures/runtime-smoke-tasks.json
 talon eval beta
 ```
 

@@ -39,12 +39,12 @@ Subsystems:
 - `talon sandbox`
 - `talon config doctor`
 
-Release / diagnostics:
+Maintainer diagnostics for source checkouts:
 
 - `talon replay <task_id> [--dry-run]`
-- `talon eval run [--explain]`
-- `talon eval smoke` (compatibility alias)
-- `talon smoke run`
+- `talon eval run --fixture <path> [--explain]`
+- `talon eval smoke --fixture <path>` (compatibility alias)
+- `talon smoke run --fixture <path>`
 - `talon eval beta`
 - `talon release check` (maintainer-only; run from the auto-talon repository root)
 
