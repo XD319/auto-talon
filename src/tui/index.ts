@@ -3,10 +3,10 @@ import React from "react";
 import { render } from "ink";
 
 import { createApplication } from "../runtime/index.js";
-import type { ResolveAppConfigOptions } from "../runtime/index.js";
 
 import { ChatTuiApp } from "./chat-app.js";
 import { AgentTuiApp } from "./dashboard-app.js";
+import type { TuiResolveAppConfigOptions } from "./runtime-api.js";
 import type { ChatMessage } from "./view-models/chat-messages.js";
 import { loadSession } from "./session-store.js";
 import { RuntimeDashboardQueryService } from "./view-models/runtime-dashboard.js";
@@ -14,7 +14,7 @@ import { RuntimeDashboardQueryService } from "./view-models/runtime-dashboard.js
 export interface StartTuiOptions {
   cwd?: string;
   resumeSessionId?: string;
-  sandbox?: ResolveAppConfigOptions;
+  sandbox?: TuiResolveAppConfigOptions;
 }
 
 export async function startTui(options: StartTuiOptions = {}): Promise<void> {
@@ -69,7 +69,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
 
 export async function startDashboardTui(
   cwd = process.cwd(),
-  sandbox?: ResolveAppConfigOptions
+  sandbox?: TuiResolveAppConfigOptions
 ): Promise<void> {
   const handle = createApplication(cwd, {
     scheduler: { autoStart: true },

@@ -1,4 +1,4 @@
-import type { AgentApplicationService } from "../../runtime/index.js";
+import type { TuiRuntimeService } from "../runtime-api.js";
 import type {
   ApprovalRecord,
   CommitmentRecord,
@@ -35,7 +35,7 @@ export function resolveRuntimeUserId(): string {
 }
 
 export function buildTodaySummary(
-  service: AgentApplicationService,
+  service: TuiRuntimeService,
   options: BuildTodaySummaryOptions = {}
 ): TodaySummaryViewModel {
   const userId = resolveRuntimeUserId();
@@ -126,7 +126,7 @@ export function formatTodaySummary(summary: TodaySummaryViewModel): string {
 }
 
 export function formatThreadDetailForTui(
-  service: AgentApplicationService,
+  service: TuiRuntimeService,
   threadId: string
 ): string {
   const detail = service.showThread(threadId);

@@ -1,5 +1,4 @@
-import type { AgentApplicationService } from "../../runtime/index.js";
-import type { ApprovalActionResult } from "../../runtime/application-service.js";
+import type { TuiApprovalActionResult, TuiRuntimeService } from "../runtime-api.js";
 import type {
   ApprovalRecord,
   ArtifactRecord,
@@ -158,13 +157,13 @@ export interface RuntimeDashboardQueryOptions {
 }
 
 export class RuntimeDashboardQueryService {
-  public constructor(private readonly service: AgentApplicationService) {}
+  public constructor(private readonly service: TuiRuntimeService) {}
 
   public async resolveApproval(
     approvalId: string,
     action: "allow" | "deny",
     reviewerId: string
-  ): Promise<ApprovalActionResult> {
+  ): Promise<TuiApprovalActionResult> {
     return this.service.resolveApproval(approvalId, action, reviewerId);
   }
 
@@ -242,7 +241,7 @@ function selectTaskId(
 
 function toTaskListItem(
   task: TaskRecord,
-  detail: ReturnType<AgentApplicationService["showTask"]>
+  detail: ReturnType<TuiRuntimeService["showTask"]>
 ): TaskListItemViewModel {
   const lastStage = detail.trace.at(-1)?.stage ?? "lifecycle";
   const hasPendingApproval = detail.approvals.some((approval) => approval.status === "pending");
@@ -271,7 +270,7 @@ function toTaskListItem(
 function toApprovalItem(
   approval: ApprovalRecord,
   tasks: TaskRecord[],
-  service: AgentApplicationService
+  service: TuiRuntimeService
 ): ApprovalListItemViewModel {
   const detail = service.showTask(approval.taskId);
   const task = tasks.find((item) => item.taskId === approval.taskId) ?? detail.task;
@@ -360,7 +359,7 @@ function buildExperienceHits(
   }));
 }
 
-function toSkillItem(skill: ReturnType<AgentApplicationService["listSkills"]>["skills"][number]): SkillItemViewModel {
+function toSkillItem(skill: ReturnType<TuiRuntimeService["listSkills"]>["skills"][number]): SkillItemViewModel {
   return {
     category: skill.category,
     experienceIds: skill.sourceExperienceIds.join(",") || "-",

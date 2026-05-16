@@ -1,4 +1,4 @@
-import type { AgentApplicationService } from "../../runtime/index.js";
+import type { TuiRuntimeService } from "../runtime-api.js";
 import type { ThreadRecord } from "../../types/index.js";
 import { buildTodaySummary, type TodaySummaryViewModel } from "./today-summary.js";
 
@@ -36,7 +36,7 @@ export interface HomeSummaryViewModel {
 
 export function buildHomeSummary(
   service: Pick<
-    AgentApplicationService,
+    TuiRuntimeService,
     | "listCommitments"
     | "listInbox"
     | "listNextActions"
@@ -48,7 +48,7 @@ export function buildHomeSummary(
   >,
   options: { activeThreadId?: string | null } = {}
 ): HomeSummaryViewModel {
-  const summary = buildTodaySummary(service as AgentApplicationService, options);
+  const summary = buildTodaySummary(service as TuiRuntimeService, options);
   const recentThreads = buildRecentThreadCards(service, summary);
   const recommendedThread = buildRecommendedThreadCard(service, summary, recentThreads);
   const actions = buildRecommendedActions(service, summary);
@@ -123,7 +123,7 @@ function buildAgenda(
 }
 
 function buildRecommendedActions(
-  service: Pick<AgentApplicationService, "showTask">,
+  service: Pick<TuiRuntimeService, "showTask">,
   summary: TodaySummaryViewModel
 ): HomeSummaryAction[] {
   const actions: HomeSummaryAction[] = [];
@@ -157,14 +157,14 @@ function buildRecommendedActions(
 }
 
 function buildRecentThreadCards(
-  service: Pick<AgentApplicationService, "showThread">,
+  service: Pick<TuiRuntimeService, "showThread">,
   summary: TodaySummaryViewModel
 ): HomeSummaryThreadCard[] {
   return summary.threads.items.slice(0, 3).map((thread) => buildThreadCard(service, thread));
 }
 
 function buildRecommendedThreadCard(
-  service: Pick<AgentApplicationService, "showThread">,
+  service: Pick<TuiRuntimeService, "showThread">,
   summary: TodaySummaryViewModel,
   recentThreads: HomeSummaryThreadCard[]
 ): HomeSummaryThreadCard | null {
@@ -185,7 +185,7 @@ function buildRecommendedThreadCard(
 }
 
 function buildThreadCardById(
-  service: Pick<AgentApplicationService, "showThread">,
+  service: Pick<TuiRuntimeService, "showThread">,
   threadId: string
 ): HomeSummaryThreadCard | null {
   const detail = service.showThread(threadId);
@@ -209,7 +209,7 @@ function prioritizeRecommendedThread(
 }
 
 function buildThreadCard(
-  service: Pick<AgentApplicationService, "showThread">,
+  service: Pick<TuiRuntimeService, "showThread">,
   thread: ThreadRecord
 ): HomeSummaryThreadCard {
   const detail = service.showThread(thread.threadId);

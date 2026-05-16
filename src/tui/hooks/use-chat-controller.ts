@@ -1,8 +1,9 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import React from "react";
 
-import { createDefaultRunOptions, type AgentApplicationService, type AppConfig } from "../../runtime/index.js";
+import { createDefaultRunOptions } from "../../runtime/index.js";
+import type { TuiAppConfig, TuiRuntimeService } from "../runtime-api.js";
 import type {
   ApprovalAllowScope,
   ApprovalRecord,
@@ -24,13 +25,13 @@ import {
 import type { UiStatus } from "../ui-status.js";
 
 export interface UseChatControllerOptions {
-  config: AppConfig;
+  config: TuiAppConfig;
   cwd: string;
   initialMessages?: ChatMessage[];
   initialSessionApprovalFingerprints?: string[];
   initialThreadId?: string;
   reviewerId: string;
-  service: AgentApplicationService;
+  service: TuiRuntimeService;
 }
 
 export interface TokenHud {
@@ -1144,7 +1145,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 export function syncPendingApprovalMessages(
   current: ChatMessage[],
   approvals: ApprovalRecord[],
-  service: Pick<AgentApplicationService, "showTask">,
+  service: Pick<TuiRuntimeService, "showTask">,
   seenIds: Set<string>
 ): ChatMessage[] {
   const approvalsByMessageId = new Map<string, ApprovalRecord>(
@@ -1284,7 +1285,7 @@ function tokenHudEquals(left: TokenHud, right: TokenHud): boolean {
 
 function visiblePendingRecords<T extends ApprovalRecord | ClarifyPromptRecord>(
   records: T[],
-  service: Pick<AgentApplicationService, "showTask">,
+  service: Pick<TuiRuntimeService, "showTask">,
   state: { activeTaskId: string | null; activeThreadId: string | null }
 ): T[] {
   if (state.activeThreadId !== null) {
@@ -1297,7 +1298,7 @@ function visiblePendingRecords<T extends ApprovalRecord | ClarifyPromptRecord>(
 }
 
 function taskThreadId(
-  service: Pick<AgentApplicationService, "showTask">,
+  service: Pick<TuiRuntimeService, "showTask">,
   taskId: string
 ): string | null {
   return service.showTask(taskId).task?.threadId ?? null;
@@ -1365,7 +1366,7 @@ function uiStatusEquals(left: UiStatus, right: UiStatus): boolean {
 }
 
 function findToolCall(
-  service: Pick<AgentApplicationService, "showTask">,
+  service: Pick<TuiRuntimeService, "showTask">,
   approval: ApprovalRecord
 ): ToolCallRecord | null {
   return service.showTask(approval.taskId).toolCalls.find((item) => item.toolCallId === approval.toolCallId) ?? null;

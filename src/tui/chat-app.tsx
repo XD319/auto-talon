@@ -2,10 +2,15 @@ import { randomUUID } from "node:crypto";
 import React from "react";
 import { Box, Text, useApp } from "ink";
 
-import type { AgentApplicationService, AppConfig } from "../runtime/index.js";
+import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
 import type { ApprovalAllowScope } from "../types/index.js";
-import { formatMemoryGuide, formatMemoryList, formatMemoryRecallExplanation, formatMemorySuggestionQueue } from "../cli/formatters.js";
+import {
+  formatMemoryGuide,
+  formatMemoryList,
+  formatMemoryRecallExplanation,
+  formatMemorySuggestionQueue
+} from "../presentation/memory-formatters.js";
 import { Banner } from "./components/banner.js";
 import { HomeSummary } from "./components/home-summary.js";
 import { InputBox } from "./components/input-box.js";
@@ -38,14 +43,14 @@ import {
 } from "./view-models/today-summary.js";
 
 export interface ChatTuiAppProps {
-  config: AppConfig;
+  config: TuiAppConfig;
   cwd: string;
   initialMessages?: ChatMessage[];
   initialSessionApprovalFingerprints?: string[];
   initialSessionId: string;
   initialThreadId?: string;
   reviewerId: string;
-  service: AgentApplicationService;
+  service: TuiRuntimeService;
 }
 
 interface ScheduleCommandController {
@@ -845,7 +850,7 @@ function parseSlashInput(text: string): { args: string[]; command: string; rest:
 function buildDynamicSlashSuggestions(
   value: string,
   activeThreadId: string | null,
-  service: AgentApplicationService
+  service: TuiRuntimeService
 ): SlashSuggestion[] {
   const parsed = parseSlashInput(value);
   const userId = resolveRuntimeUserId();
@@ -919,7 +924,7 @@ function withTrailingSpaceIfExact(prefix: string, candidates: readonly string[])
 function handleMemoryCommand(
   text: string,
   controller: ReturnType<typeof useChatController>,
-  service: AgentApplicationService,
+  service: TuiRuntimeService,
   cwd: string,
   profileId: string,
   reviewerId: string
@@ -1018,7 +1023,7 @@ function handleMemoryCommand(
   return true;
 }
 
-function handleThreadCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {
+function handleThreadCommand(text: string, controller: ReturnType<typeof useChatController>, service: TuiRuntimeService): boolean {
   const parsed = parseSlashInput(text);
   const sub = parsed.args[0] ?? "summary";
   if (parsed.command !== "/thread") {
@@ -1114,7 +1119,7 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
 export function handleResumeCommand(
   text: string,
   controller: ReturnType<typeof useChatController>,
-  service: AgentApplicationService
+  service: TuiRuntimeService
 ): boolean {
   const parsed = parseSlashInput(text);
   if (parsed.command !== "/resume") {
@@ -1163,7 +1168,7 @@ export function handleScheduleCommand(
   text: string,
   controller: ScheduleCommandController,
   service: Pick<
-    AgentApplicationService,
+    TuiRuntimeService,
     "archiveSchedule" | "createSchedule" | "listScheduleRuns" | "listSchedules" | "pauseSchedule" | "resumeSchedule" | "runScheduleNow"
   >,
   options: ScheduleCommandOptions
@@ -1281,7 +1286,7 @@ export function handleScheduleCommand(
   return true;
 }
 
-function formatScheduleRunsForTui(runs: ReturnType<AgentApplicationService["listScheduleRuns"]>): string {
+function formatScheduleRunsForTui(runs: ReturnType<TuiRuntimeService["listScheduleRuns"]>): string {
   if (runs.length === 0) {
     return "Schedule runs: none";
   }
@@ -1292,9 +1297,9 @@ function formatScheduleRunsForTui(runs: ReturnType<AgentApplicationService["list
 
 function resolveMemoryByPrefix(
   prefix: string,
-  service: AgentApplicationService
+  service: TuiRuntimeService
 ):
-  | { item: ReturnType<AgentApplicationService["listMemories"]>[number]; kind: "one" }
+  | { item: ReturnType<TuiRuntimeService["listMemories"]>[number]; kind: "one" }
   | { kind: "error"; message: string } {
   const matches = service.listMemories().filter((item) => item.memoryId.startsWith(prefix));
   if (matches.length === 1) {
@@ -1311,9 +1316,9 @@ function resolveMemoryByPrefix(
 
 function resolveScheduleByPrefix(
   prefix: string,
-  service: Pick<AgentApplicationService, "listSchedules">
+  service: Pick<TuiRuntimeService, "listSchedules">
 ):
-  | { item: ReturnType<AgentApplicationService["listSchedules"]>[number]; kind: "one" }
+  | { item: ReturnType<TuiRuntimeService["listSchedules"]>[number]; kind: "one" }
   | { kind: "error"; message: string } {
   const userId = resolveRuntimeUserId();
   const matches = service
@@ -1337,7 +1342,7 @@ function deriveScheduleName(prompt: string): string {
   return normalized.slice(0, 80);
 }
 
-function handleNextActionCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {
+function handleNextActionCommand(text: string, controller: ReturnType<typeof useChatController>, service: TuiRuntimeService): boolean {
   const { args, command } = parseSlashInput(text);
   if (command !== "/next") {
     controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
@@ -1396,7 +1401,7 @@ function handleNextActionCommand(text: string, controller: ReturnType<typeof use
   return true;
 }
 
-function handleCommitmentCommand(text: string, controller: ReturnType<typeof useChatController>, service: AgentApplicationService): boolean {
+function handleCommitmentCommand(text: string, controller: ReturnType<typeof useChatController>, service: TuiRuntimeService): boolean {
   const { args, command } = parseSlashInput(text);
   if (command !== "/commitments") {
     controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
@@ -1467,7 +1472,7 @@ function handleCommitmentCommand(text: string, controller: ReturnType<typeof use
 function resolveThreadIdForList(
   activeThreadId: string | null,
   prefix: string,
-  service: AgentApplicationService
+  service: TuiRuntimeService
 ): { kind: "ok"; threadId: string | null } | { kind: "error"; message: string } {
   if (prefix.length === 0) {
     return { kind: "ok", threadId: activeThreadId };
@@ -1491,9 +1496,9 @@ function resolveThreadIdForList(
 function resolveNextActionByPrefix(
   prefix: string,
   activeThreadId: string | null,
-  service: AgentApplicationService
+  service: TuiRuntimeService
 ):
-  | { item: ReturnType<AgentApplicationService["listNextActions"]>[number]; kind: "one" }
+  | { item: ReturnType<TuiRuntimeService["listNextActions"]>[number]; kind: "one" }
   | { kind: "error"; message: string } {
   const items = activeThreadId === null ? service.listNextActions() : service.listNextActions({ threadId: activeThreadId });
   const matches = items.filter((item) => item.nextActionId.startsWith(prefix));
@@ -1527,9 +1532,9 @@ function resolveNextActionByPrefix(
 function resolveCommitmentByPrefix(
   prefix: string,
   activeThreadId: string | null,
-  service: AgentApplicationService
+  service: TuiRuntimeService
 ):
-  | { item: ReturnType<AgentApplicationService["listCommitments"]>[number]; kind: "one" }
+  | { item: ReturnType<TuiRuntimeService["listCommitments"]>[number]; kind: "one" }
   | { kind: "error"; message: string } {
   const items = activeThreadId === null ? service.listCommitments() : service.listCommitments({ threadId: activeThreadId });
   const matches = items.filter((item) => item.commitmentId.startsWith(prefix));
