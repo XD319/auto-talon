@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { isIP } from "node:net";
 import { basename, dirname, isAbsolute, parse, relative, resolve } from "node:path";
 
-import { AppError } from "../runtime/app-error.js";
+import { AppError } from "../core/app-error.js";
 import type {
   JsonObject,
   PathScope,

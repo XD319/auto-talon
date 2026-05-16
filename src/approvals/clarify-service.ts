@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
-import { AppError } from "../runtime/app-error.js";
+import { AppError } from "../core/app-error.js";
 import type {
   ClarifyPromptOption,
   ClarifyPromptRecord,

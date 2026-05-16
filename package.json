@@ -40,7 +40,8 @@
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
-    "check": "npm run check:gateway-facade && npm run lint && npm run coverage && npm run build",
+    "check": "npm run check:gateway-facade && npm run check:architecture && npm run lint && npm run coverage && npm run build",
+    "check:architecture": "node scripts/check-architecture-boundaries.mjs",
     "check:gateway-facade": "node scripts/check-gateway-facade-bypass.mjs",
     "dev": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts",
     "dev:tui": "node --disable-warning=ExperimentalWarning --import tsx src/cli/bin.ts tui",

@@ -1,4 +1,4 @@
-import { AppError } from "../runtime/app-error.js";
+import { AppError } from "../core/app-error.js";
 
 export interface ShellPolicyConfig {
   allowedCommands?: string[];

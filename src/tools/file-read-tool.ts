@@ -4,7 +4,7 @@ import { basename, extname, join } from "node:path";
 import { z } from "zod";
 
 import type { SandboxService } from "../sandbox/sandbox-service.js";
-import { AppError } from "../runtime/app-error.js";
+import { AppError } from "../core/app-error.js";
 import type {
   SandboxFileAccessPlan,
   ToolDefinition,

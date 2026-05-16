@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { WebSearchRuntimeConfig } from "../runtime/runtime-config.js";
+import type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
 import type { SandboxService } from "../sandbox/sandbox-service.js";
 import type {
   JsonObject,

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { AppError } from "../runtime/app-error.js";
+import { AppError } from "../core/app-error.js";
 import type { PreparedShellInput, SandboxService } from "../sandbox/sandbox-service.js";
 import type {
   ToolAvailabilityResult,

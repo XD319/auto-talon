@@ -3,7 +3,10 @@ import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
+import type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
 import type { BudgetLimits, BudgetPricingEntry, ProviderTier, RoutingMode, TokenBudget } from "../types/index.js";
+
+export type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
 
 const tokenBudgetConfigSchema = z.object({
   inputLimit: z.number().int().positive().optional(),
@@ -129,14 +132,6 @@ export interface WorkflowRuntimeConfig {
     enabled: boolean;
   };
   testCommands: string[];
-}
-
-export interface WebSearchRuntimeConfig {
-  apiKey: string | null;
-  apiKeyEnv: string;
-  apiUrl: string;
-  backend: "disabled" | "firecrawl";
-  maxResults: number;
 }
 
 export interface RuntimeConfig {

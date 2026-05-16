@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 
-import { AppError } from "../../runtime/app-error.js";
+import { AppError } from "../../core/app-error.js";
 import type {
   JsonObject,
   JsonValue,

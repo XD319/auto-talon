@@ -1,5 +1,4 @@
 import type { AuditService } from "../../audit/audit-service.js";
-import type { BudgetService } from "../../runtime/budget/budget-service.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type { Provider, ProviderTier, RouteKind, RoutingMode } from "../../types/index.js";
 
@@ -34,6 +33,10 @@ export interface SelectProviderResult {
   reason: string;
 }
 
+export interface BudgetDowngradeReader {
+  isDowngradeActive(scope: "task" | "thread", scopeId: string): boolean;
+}
+
 export class ProviderRouter {
   private readonly providers = new Map<string, Provider>();
   private mode: RoutingMode;
@@ -41,7 +44,7 @@ export class ProviderRouter {
   public constructor(
     private readonly config: ProviderRouterConfig,
     private readonly providerFactory: (name: string) => Provider,
-    private readonly budgetService: BudgetService,
+    private readonly budgetService: BudgetDowngradeReader,
     private readonly traceService: TraceService,
     private readonly auditService: AuditService
   ) {
