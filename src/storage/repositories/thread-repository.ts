@@ -12,6 +12,7 @@ import type { AgentProfileId } from "../../types/profile.js";
 import type { ThreadDraft } from "../../types/thread.js";
 
 import { parseJsonValue, serializeJsonValue } from "./json.js";
+import { buildWhereClause, requirePersisted } from "./sqlite-helpers.js";
 
 interface ThreadRow {
   thread_id: string;
@@ -53,11 +54,7 @@ export class SqliteThreadRepository implements ThreadRepository {
         serializeJsonValue(thread.metadata ?? {})
       );
 
-    const created = this.findById(thread.threadId);
-    if (created === null) {
-      throw new Error(`Thread ${thread.threadId} was not persisted.`);
-    }
-    return created;
+    return requirePersisted(this.findById(thread.threadId), `Thread ${thread.threadId} was not persisted.`);
   }
 
   public findById(threadId: string): ThreadRecord | null {
@@ -68,17 +65,10 @@ export class SqliteThreadRepository implements ThreadRepository {
   }
 
   public list(query?: ThreadListQuery): ThreadRecord[] {
-    const where: string[] = [];
-    const params: string[] = [];
-    if (query?.ownerUserId !== undefined) {
-      where.push("owner_user_id = ?");
-      params.push(query.ownerUserId);
-    }
-    if (query?.status !== undefined) {
-      where.push("status = ?");
-      params.push(query.status);
-    }
-    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const { params, whereSql } = buildWhereClause([
+      { sql: "owner_user_id = ?", value: query?.ownerUserId ?? null, when: query?.ownerUserId !== undefined },
+      { sql: "status = ?", value: query?.status ?? null, when: query?.status !== undefined }
+    ]);
     const rows = this.database
       .prepare(`SELECT * FROM threads ${whereSql} ORDER BY updated_at DESC`)
       .all(...params) as unknown as ThreadRow[];

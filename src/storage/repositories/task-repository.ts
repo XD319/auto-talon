@@ -11,6 +11,7 @@ import type {
 import { canTransitionTaskStatus } from "../../types/index.js";
 
 import { parseJsonValue, serializeJsonValue } from "./json.js";
+import { requirePersisted } from "./sqlite-helpers.js";
 
 interface TaskRow {
   task_id: string;
@@ -87,12 +88,7 @@ export class SqliteTaskRepository implements TaskRepository {
         serializeJsonValue(task.metadata ?? {})
       );
 
-    const createdTask = this.findById(task.taskId);
-    if (createdTask === null) {
-      throw new Error(`Task ${task.taskId} was not persisted.`);
-    }
-
-    return createdTask;
+    return requirePersisted(this.findById(task.taskId), `Task ${task.taskId} was not persisted.`);
   }
 
   public findById(taskId: string): TaskRecord | null {

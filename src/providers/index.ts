@@ -6,6 +6,7 @@ export * from "./mock-provider.js";
 export * from "./openai-compatible-provider.js";
 export * from "./provider-error.js";
 export * from "./provider-factory.js";
+export * from "./provider-http.js";
 export * from "./provider-contract.js";
 export * from "./provider-registry.js";
 export * from "./provider-runtime.js";

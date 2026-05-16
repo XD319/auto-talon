@@ -20,6 +20,7 @@ import {
   isRetriableCategory,
   toProviderError
 } from "./provider-runtime.js";
+import { composeAbortSignal, ensureTrailingSlash } from "./provider-http.js";
 
 interface OpenAiCompatibleTool {
   function: {
@@ -680,37 +681,8 @@ function extractErrorMessage(value: unknown): string | null {
   return null;
 }
 
-function ensureTrailingSlash(value: string | null): string {
-  if (value === null) {
-    return "";
-  }
-
-  return value.endsWith("/") ? value : `${value}/`;
-}
-
 function isNonEmptyString(value: string | null | undefined): value is string {
   return typeof value === "string" && value.length > 0;
-}
-
-function composeAbortSignal(
-  parent: AbortSignal | undefined,
-  timeoutSignal: AbortSignal
-): AbortSignal {
-  if (parent === undefined) {
-    return timeoutSignal;
-  }
-
-  if (typeof AbortSignal.any === "function") {
-    return AbortSignal.any([parent, timeoutSignal]);
-  }
-
-  const controller = new AbortController();
-  const abort = (): void => {
-    controller.abort();
-  };
-  parent.addEventListener("abort", abort, { once: true });
-  timeoutSignal.addEventListener("abort", abort, { once: true });
-  return controller.signal;
 }
 
 function summarizeProviderCategory(category: ProviderError["category"]): string {

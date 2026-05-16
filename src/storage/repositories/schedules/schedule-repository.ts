@@ -12,6 +12,7 @@ import type {
 } from "../../../types/index.js";
 
 import { parseJsonValue, serializeJsonValue } from "../json.js";
+import { buildWhereClause, requirePersisted } from "../sqlite-helpers.js";
 
 interface ScheduleRow {
   schedule_id: string;
@@ -73,11 +74,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
         now,
         serializeJsonValue(record.metadata ?? {})
       );
-    const created = this.findById(record.scheduleId);
-    if (created === null) {
-      throw new Error(`Schedule ${record.scheduleId} was not persisted.`);
-    }
-    return created;
+    return requirePersisted(this.findById(record.scheduleId), `Schedule ${record.scheduleId} was not persisted.`);
   }
 
   public findById(scheduleId: string): ScheduleRecord | null {
@@ -88,17 +85,10 @@ export class SqliteScheduleRepository implements ScheduleRepository {
   }
 
   public list(query?: ScheduleListQuery): ScheduleRecord[] {
-    const where: string[] = [];
-    const params: string[] = [];
-    if (query?.ownerUserId !== undefined) {
-      where.push("owner_user_id = ?");
-      params.push(query.ownerUserId);
-    }
-    if (query?.status !== undefined) {
-      where.push("status = ?");
-      params.push(query.status);
-    }
-    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const { params, whereSql } = buildWhereClause([
+      { sql: "owner_user_id = ?", value: query?.ownerUserId ?? null, when: query?.ownerUserId !== undefined },
+      { sql: "status = ?", value: query?.status ?? null, when: query?.status !== undefined }
+    ]);
     const rows = this.database
       .prepare(`SELECT * FROM schedules ${whereSql} ORDER BY updated_at DESC`)
       .all(...params) as unknown as ScheduleRow[];
