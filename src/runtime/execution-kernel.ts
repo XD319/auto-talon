@@ -7,6 +7,23 @@ import {
   buildFilteredContextDebugFragments,
   ExecutionContextAssembler
 } from "./context-assembler.js";
+import {
+  buildFinalSessionCompactInput,
+  buildReviewerTracePayload,
+  createToolFeedbackMessage,
+  emitTaskEvent,
+  estimateTokenCount,
+  injectResumeContextMessages,
+  normalizeProviderFailure,
+  providerUsageToJson,
+  readThreadResumeMemoryContext,
+  readThreadResumeMessages,
+  rebuildTurnProviderMessages,
+  sleepWithAbort,
+  summarizeText,
+  summarizeToolOutput,
+  toConversationRole
+} from "./kernel-support.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
 import type { ContextCompactor, ThreadSessionMemoryService } from "./context/index.js";
@@ -14,7 +31,6 @@ import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
 import type { ToolExposurePlanner } from "./tool-exposure-planner.js";
-import { ProviderError } from "../providers/index.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type {
@@ -27,7 +43,6 @@ import type {
   ProviderToolCall,
   RuntimeTaskEvent,
   RunMetadataRepository,
-  SessionCompactInput,
   RuntimeRunOptions,
   RuntimeRunResult,
   SessionCompactResult,
@@ -1290,326 +1305,4 @@ export class ExecutionKernel {
       threadId: task.threadId
     });
   }
-}
-
-function providerUsageToJson(usage: {
-  cachedInputTokens?: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens?: number;
-}): Record<string, number> {
-  const payload: Record<string, number> = {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens
-  };
-
-  if (usage.totalTokens !== undefined) {
-    payload.totalTokens = usage.totalTokens;
-  }
-
-  if (usage.cachedInputTokens !== undefined) {
-    payload.cachedInputTokens = usage.cachedInputTokens;
-  }
-
-  return payload;
-}
-
-function createToolFeedbackMessage(
-  output: unknown,
-  toolCall: { toolCallId: string; toolName: string },
-  privacyLevel: "public" | "internal" | "restricted"
-): ConversationMessage {
-  const serializedOutput = safeSerializeToolOutput(output);
-  return {
-    content: serializedOutput ?? "null",
-    metadata: {
-      privacyLevel,
-      retentionKind: "session",
-      sourceType: "tool_result"
-    },
-    role: "tool",
-    toolCallId: toolCall.toolCallId,
-    toolName: toolCall.toolName
-  };
-}
-
-function safeSerializeToolOutput(output: unknown): string {
-  try {
-    return JSON.stringify(output, createSafeJsonReplacer(), 2) ?? "null";
-  } catch {
-    return "[unserializable tool output]";
-  }
-}
-
-function createSafeJsonReplacer(): (this: unknown, key: string, value: unknown) => unknown {
-  const seen = new WeakSet<object>();
-  return (_key: string, value: unknown): unknown => {
-    if (typeof value === "bigint") {
-      return value.toString();
-    }
-    if (typeof value === "function") {
-      return `[function:${value.name || "anonymous"}]`;
-    }
-    if (typeof value === "symbol") {
-      return `[symbol:${value.description ?? "symbol"}]`;
-    }
-    if (typeof value === "object" && value !== null) {
-      if (seen.has(value)) {
-        return "[circular]";
-      }
-      seen.add(value);
-    }
-    return value;
-  };
-}
-
-function buildReviewerTracePayload(
-  iteration: number,
-  debug: ContextAssemblyDebugView,
-  providerResponse: { kind: "final" | "retry" | "tool_calls"; message: string }
-): {
-  blockingReason: string | null;
-  continuationBlocked: boolean;
-  iteration: number;
-  reviewerJudgementSummary: string;
-  reviewerSeenSummary: string;
-  riskDetected: boolean;
-} {
-  const reviewerSeenSummary = summarizeText(
-    [
-      debug.originalTaskInput.preview,
-      ...debug.activeContextFragments.map((fragment) => fragment.preview),
-      ...debug.systemPromptFragments.map((fragment) => fragment.preview),
-      ...debug.memoryRecallFragments.map((fragment) => fragment.preview),
-      ...debug.toolResultFragments.map((fragment) => fragment.preview)
-    ]
-      .filter(Boolean)
-      .join(" | "),
-    260
-  );
-  const reviewerJudgementSummary = summarizeText(providerResponse.message, 220);
-  const lowered = providerResponse.message.toLowerCase();
-  const riskDetected =
-    lowered.includes("risk") ||
-    lowered.includes("block") ||
-    lowered.includes("unsafe") ||
-    lowered.includes("deny") ||
-    lowered.includes("stop");
-  const continuationBlocked = providerResponse.kind === "final" && riskDetected;
-
-  return {
-    blockingReason: continuationBlocked ? reviewerJudgementSummary : null,
-    continuationBlocked,
-    iteration,
-    reviewerJudgementSummary,
-    reviewerSeenSummary,
-    riskDetected
-  };
-}
-
-function normalizeProviderFailure(
-  error: unknown,
-  provider: Provider
-): ProviderError {
-  if (error instanceof ProviderError) {
-    return error;
-  }
-
-  if (error instanceof Error) {
-    return new ProviderError({
-      category: "unknown_error",
-      cause: error,
-      message: error.message,
-      modelName: provider.model ?? provider.describe?.().model ?? undefined,
-      providerName: provider.name,
-      summary: "The provider failed with an unexpected error."
-    });
-  }
-
-  return new ProviderError({
-    category: "unknown_error",
-    cause: error,
-    message: "Unknown provider failure.",
-    modelName: provider.model ?? provider.describe?.().model ?? undefined,
-    providerName: provider.name,
-    summary: "The provider failed with an unknown error."
-  });
-}
-
-async function sleepWithAbort(delayMs: number, signal: AbortSignal): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, delayMs);
-
-    const onAbort = (): void => {
-      clearTimeout(timeout);
-      reject(
-        new AppError({
-          code: "interrupt",
-          message: "Retry wait interrupted."
-        })
-      );
-    };
-
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-function summarizeText(value: string, maxLength: number): string {
-  const compact = value.replace(/\s+/gu, " ").trim();
-  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
-}
-
-function emitTaskEvent(
-  callback: ((event: RuntimeTaskEvent) => void) | undefined,
-  event: RuntimeTaskEvent
-): void {
-  if (callback === undefined) {
-    return;
-  }
-  callback(event);
-}
-
-function summarizeToolOutput(output: unknown): string {
-  if (typeof output === "string") {
-    return summarizeText(output, 140);
-  }
-  if (output === null || output === undefined) {
-    return "output=null";
-  }
-  if (Array.isArray(output)) {
-    return `output=array(${output.length})`;
-  }
-  if (typeof output === "object") {
-    const keys = Object.keys(output as Record<string, unknown>);
-    return `output=object{${keys.slice(0, 6).join(",")}${keys.length > 6 ? ",..." : ""}}`;
-  }
-  if (typeof output === "number" || typeof output === "boolean" || typeof output === "bigint") {
-    return `output=${output.toString()}`;
-  }
-  if (typeof output === "symbol") {
-    return `output=${output.description ?? "symbol"}`;
-  }
-  return "output=[unsupported]";
-}
-
-function buildFinalSessionCompactInput(
-  messages: ConversationMessage[],
-  task: TaskRecord
-): SessionCompactInput & { reason: "context_budget" } {
-  return {
-    maxMessagesBeforeCompact: messages.length,
-    messages: messages.map((message) => ({
-      content: message.content,
-      role: message.role,
-      ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
-      ...(message.toolName !== undefined ? { toolName: message.toolName } : {}),
-      ...(message.toolCalls !== undefined
-        ? {
-            toolCalls: message.toolCalls.map((toolCall) => ({
-              toolCallId: toolCall.toolCallId,
-              toolName: toolCall.toolName
-            }))
-          }
-        : {})
-    })),
-    reason: "context_budget",
-    sessionScopeKey: task.threadId ?? task.taskId,
-    taskId: task.taskId
-  };
-}
-
-function readThreadResumeMessages(metadata: RuntimeRunOptions["metadata"]): ConversationMessage[] {
-  if (metadata === undefined || metadata === null) {
-    return [];
-  }
-  const threadResume = (metadata as Record<string, unknown>).threadResume;
-  if (typeof threadResume !== "object" || threadResume === null) {
-    return [];
-  }
-  const contextMessages = (threadResume as Record<string, unknown>).contextMessages;
-  if (!Array.isArray(contextMessages)) {
-    return [];
-  }
-  return contextMessages.filter(
-    (message): message is ConversationMessage =>
-      typeof message === "object" &&
-      message !== null &&
-      typeof (message as { role?: unknown }).role === "string" &&
-      typeof (message as { content?: unknown }).content === "string"
-  );
-}
-
-function readThreadResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]): ContextFragment[] {
-  if (metadata === undefined || metadata === null) {
-    return [];
-  }
-  const threadResume = (metadata as Record<string, unknown>).threadResume;
-  if (typeof threadResume !== "object" || threadResume === null) {
-    return [];
-  }
-  const memoryContext = (threadResume as Record<string, unknown>).memoryContext;
-  if (!Array.isArray(memoryContext)) {
-    return [];
-  }
-  return memoryContext.filter(
-    (fragment): fragment is ContextFragment =>
-      typeof fragment === "object" &&
-      fragment !== null &&
-      typeof (fragment as { memoryId?: unknown }).memoryId === "string" &&
-      typeof (fragment as { text?: unknown }).text === "string"
-  );
-}
-
-function injectResumeContextMessages(
-  messages: ConversationMessage[],
-  resumeMessages: ConversationMessage[]
-): void {
-  if (resumeMessages.length === 0) {
-    return;
-  }
-  const firstSystemIndex = messages.findIndex((message) => message.role === "system");
-  const insertAt = firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0;
-  messages.splice(insertAt, 0, ...resumeMessages);
-}
-
-function rebuildTurnProviderMessages(
-  messages: ConversationMessage[],
-  previousProviderMessages: ConversationMessage[]
-): ConversationMessage[] {
-  void previousProviderMessages;
-  return messages;
-}
-
-function shouldRestrictPublicWebFetch(taskInput: string): boolean {
-  void taskInput;
-  return false;
-}
-/*
-  const localTransformIntent =
-    /\btranslate\b|\brewrite\b|\bpolish\b|\brephrase\b|\bedit\b|\bconvert\b/u.test(normalized) ||
-    /翻译|改写|润色|改成|改为|转成|转换/u.test(taskInput);
-  if (!localTransformIntent) {
-    return false;
-  }
-  const explicitWebIntent =
-    /\bweb\b|\blink\b|\burl\b|\bsource\b|\bcitation\b|\bquote\b|\bsearch\b|\blook up\b|\blatest\b|\btoday\b/u.test(
-      normalized
-    ) || /链接|网址|来源|引用|搜索|联网|最新|今天/u.test(taskInput);
-  return !explicitWebIntent;
-}
-
-*/
-void shouldRestrictPublicWebFetch;
-function estimateTokenCount(messages: ConversationMessage[]): number {
-  const joined = messages.map((message) => message.content).join("\n");
-  return Math.ceil(joined.length / 4);
-}
-
-function toConversationRole(role: string): "assistant" | "system" | "tool" | "user" {
-  return role === "assistant" || role === "system" || role === "tool" || role === "user"
-    ? role
-    : "system";
 }

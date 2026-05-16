@@ -1,8 +1,4 @@
-import { existsSync, readFileSync, statSync, promises as fs } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
 
 import { z } from "zod";
 
@@ -42,7 +38,6 @@ import type {
   Provider,
   ProviderStatsSnapshot,
   ProviderHealthCheck,
-  ProviderUsage,
   RuntimeRunOptions,
   NextActionDraft,
   NextActionRecord,
@@ -75,6 +70,7 @@ import type {
   NextActionService,
   ThreadCommitmentProjector
 } from "./commitments/index.js";
+import { FileRollbackService, ProviderStatsService, RuntimeDoctorService } from "./operations/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
 
@@ -1159,27 +1155,11 @@ export class AgentApplicationService {
   }
 
   public providerStats(groupBy: "provider" | "thread" | "task" | "mode" = "provider"): ProviderStatsSnapshot | null | JsonObject {
-    const liveStats = this.dependencies.provider.getStats?.() ?? null;
-    if (groupBy !== "provider") {
-      return this.providerStatsBy(groupBy);
-    }
-    if (liveStats !== null && liveStats.totalRequests > 0) {
-      return {
-        ...liveStats,
-        source: "live"
-      };
-    }
-
-    const traceStats = buildProviderStatsFromTrace(
-      this.dependencies.provider.name,
-      this.dependencies.listTasks().flatMap((task) => this.dependencies.listTrace(task.taskId))
-    );
-    return traceStats.totalRequests > 0
-      ? {
-          ...traceStats,
-          source: "trace"
-        }
-      : liveStats;
+    return new ProviderStatsService({
+      listTasks: () => this.dependencies.listTasks(),
+      listTrace: (taskId) => this.dependencies.listTrace(taskId),
+      provider: this.dependencies.provider
+    }).providerStats(groupBy);
   }
 
   public budgetReport(scope: "task" | "thread", id: string): Record<string, unknown> {
@@ -1294,30 +1274,6 @@ export class AgentApplicationService {
     return existing;
   }
 
-  private providerStatsBy(groupBy: "thread" | "task" | "mode"): JsonObject {
-    const events = this.dependencies
-      .listTasks()
-      .flatMap((task) => this.dependencies.listTrace(task.taskId))
-      .filter((event) => event.eventType === "cost_report");
-    const grouped: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {};
-    for (const event of events) {
-      const payload = event.payload as Record<string, unknown>;
-      const key =
-        groupBy === "task"
-          ? event.taskId
-          : groupBy === "thread"
-            ? readGroupingKey(payload.threadId, "none")
-            : readGroupingKey(payload.mode, "balanced");
-      const row = grouped[key] ?? { costUsd: 0, count: 0, inputTokens: 0, outputTokens: 0 };
-      row.count += 1;
-      row.inputTokens += Number(payload.inputTokens ?? 0);
-      row.outputTokens += Number(payload.outputTokens ?? 0);
-      row.costUsd += Number(payload.costUsd ?? 0);
-      grouped[key] = row;
-    }
-    return grouped as JsonObject;
-  }
-
   public traceTaskContext(taskId: string): ContextTraceDebugReport {
     const task = this.dependencies.findTask(taskId);
     const trace = task === null ? [] : this.dependencies.listTrace(taskId);
@@ -1362,75 +1318,13 @@ export class AgentApplicationService {
   public async rollbackFileArtifact(
     artifactId: string
   ): Promise<RollbackFileArtifactResult> {
-    const artifact =
-      artifactId === "last"
-        ? this.dependencies.findLatestArtifactByType("file_rollback")
-        : this.dependencies.findArtifact(artifactId);
-
-    if (artifact === null) {
-      throw new AppError({
-        code: "tool_execution_error",
-        message: `Rollback artifact ${artifactId} was not found.`
-      });
-    }
-
-    if (artifact.artifactType !== "file_rollback" || !isRollbackContent(artifact.content)) {
-      throw new AppError({
-        code: "tool_validation_error",
-        message: `Artifact ${artifact.artifactId} is not a file rollback checkpoint.`
-      });
-    }
-
-    const targetPath = artifact.content.path;
-    const originalExists = artifact.content.originalExists;
-    if (originalExists) {
-      const contentToRestore =
-        typeof artifact.content.snapshotPath === "string"
-          ? await fs.readFile(artifact.content.snapshotPath, "utf8")
-          : artifact.content.originalContent;
-      await fs.mkdir(dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, contentToRestore, "utf8");
-    } else {
-      await fs.rm(targetPath, { force: true });
-    }
-
-    this.dependencies.traceService.record({
-      actor: "runtime.rollback",
-      eventType: "file_rollback",
-      payload: {
-        artifactId: artifact.artifactId,
-        operation: artifact.content.operation,
-        originalExists,
-        path: targetPath,
-        restoredHash: artifact.content.sha256
-      },
-      stage: "tooling",
-      summary: originalExists ? `Restored ${targetPath}` : `Removed ${targetPath}`,
-      taskId: artifact.taskId
-    });
-
-    this.dependencies.auditService.record({
-      action: "file_rollback",
-      actor: "runtime.rollback",
-      approvalId: null,
-      outcome: "succeeded",
-      payload: {
-        artifactId: artifact.artifactId,
-        operation: artifact.content.operation,
-        originalExists,
-        path: targetPath
-      },
-      summary: originalExists ? `Restored ${targetPath}` : `Removed ${targetPath}`,
-      taskId: artifact.taskId,
-      toolCallId: artifact.toolCallId
-    });
-
-    return {
-      artifact,
-      deleted: !originalExists,
-      path: targetPath,
-      restored: originalExists
-    };
+    return new FileRollbackService({
+      auditService: this.dependencies.auditService,
+      findArtifact: (id) => this.dependencies.findArtifact(id),
+      findLatestArtifactByType: (artifactType) =>
+        this.dependencies.findLatestArtifactByType(artifactType),
+      traceService: this.dependencies.traceService
+    }).rollbackFileArtifact(artifactId);
   }
 
   public async testCurrentProvider(signal?: AbortSignal): Promise<ProviderHealthCheck> {
@@ -1451,59 +1345,20 @@ export class AgentApplicationService {
   }
 
   public async configDoctor(signal?: AbortSignal): Promise<AgentDoctorReport> {
-    const providerHealth = await this.testCurrentProvider(signal);
-    const issues = collectDoctorIssues(this.dependencies.providerConfig, providerHealth);
-    const experiences = this.dependencies.listExperiences();
-    const skills = this.dependencies.skillRegistry.listSkills();
-    const configFiles = checkWorkspaceConfigFiles(this.dependencies.workspaceRoot);
-    const databaseReachable = canOpenDatabase(this.dependencies.databasePath);
-    const schemaVersion = readSchemaVersion(this.dependencies.databasePath);
-    const distFresh = checkDistFreshness(this.dependencies.workspaceRoot);
-    const corepackAvailable = isCommandAvailable("corepack");
-    const pnpmVersion = resolveCommandVersion("pnpm");
-
-    return {
-      apiKeyConfigured: providerHealth.apiKeyConfigured,
+    return new RuntimeDoctorService({
       allowedFetchHosts: this.dependencies.allowedFetchHosts,
-      configPath: this.dependencies.providerConfig.configPath,
-      configSource: this.dependencies.providerConfig.configSource,
       databasePath: this.dependencies.databasePath,
-      endpointReachable: providerHealth.endpointReachable,
-      experienceStats: {
-        accepted: experiences.filter((experience) => experience.status === "accepted").length,
-        candidate: experiences.filter((experience) => experience.status === "candidate").length,
-        promoted: experiences.filter((experience) => experience.status === "promoted").length,
-        rejected: experiences.filter((experience) => experience.status === "rejected").length,
-        stale: experiences.filter((experience) => experience.status === "stale").length,
-        total: experiences.length
-      },
-      issues,
-      maxRetries: this.dependencies.providerConfig.maxRetries,
-      modelAvailable: providerHealth.modelAvailable,
-      modelConfigured: providerHealth.modelConfigured,
-      modelName: providerHealth.modelName,
-      nodeVersion: process.version,
-      pnpmVersion,
-      corepackAvailable,
-      providerHealthMessage: providerHealth.message,
+      listExperiences: () => this.dependencies.listExperiences(),
+      providerConfig: this.dependencies.providerConfig,
       providerName: this.dependencies.provider.name,
       runtimeConfigPath: this.dependencies.runtimeConfigPath,
       runtimeConfigSource: this.dependencies.runtimeConfigSource,
       runtimeVersion: this.dependencies.runtimeVersion,
-      configFiles,
-      databaseReachable,
-      distFresh,
-      schemaVersion,
-      shell: process.env.ComSpec,
-      skillStats: {
-        enabled: skills.skills.length,
-        issues: skills.issues.length,
-        total: skills.skills.length + skills.issues.length
-      },
+      skillStats: () => this.dependencies.skillRegistry.listSkills(),
+      testCurrentProvider: (providerSignal) => this.testCurrentProvider(providerSignal),
       tokenBudget: this.dependencies.tokenBudget,
-      timeoutMs: this.dependencies.providerConfig.timeoutMs,
       workspaceRoot: this.dependencies.workspaceRoot
-    };
+    }).configDoctor(signal);
   }
 
   private reconcileExpiredApprovals(): void {
@@ -1584,10 +1439,6 @@ export class AgentApplicationService {
   }
 }
 
-function readGroupingKey(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.length > 0 ? value : fallback;
-}
-
 interface MemorySuggestionDraftShape {
   confidence: number;
   content: string;
@@ -1602,232 +1453,9 @@ interface MemorySuggestionDraftShape {
   title: string;
 }
 
-interface RollbackArtifactContent extends JsonObject {
-  createdAt: string;
-  operation: string;
-  originalContent: string;
-  originalExists: true;
-  path: string;
-  snapshotPath?: string;
-  sha256: string;
-}
-
-interface DeleteRollbackArtifactContent extends JsonObject {
-  createdAt: string;
-  operation: string;
-  originalContent: null;
-  originalExists: false;
-  path: string;
-  sha256: null;
-}
-
-function isRollbackContent(
-  value: ArtifactRecord["content"]
-): value is RollbackArtifactContent | DeleteRollbackArtifactContent {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const content = value as Record<string, unknown>;
-  if (typeof content.path !== "string" || typeof content.operation !== "string") {
-    return false;
-  }
-
-  if (content.originalExists === true) {
-    return typeof content.originalContent === "string" && typeof content.sha256 === "string";
-  }
-
-  return content.originalExists === false && content.originalContent === null;
-}
-
-function collectDoctorIssues(
-  providerConfig: ResolvedProviderConfig,
-  providerHealth: ProviderHealthCheck
-): string[] {
-  const issues: string[] = [];
-
-  if (!providerHealth.apiKeyConfigured && providerConfig.name !== "mock") {
-    issues.push("API key is missing.");
-  }
-
-  if (!providerHealth.modelConfigured) {
-    issues.push("Model is not configured.");
-  }
-
-  if (providerHealth.endpointReachable === false) {
-    issues.push("Provider endpoint is not reachable.");
-  }
-
-  if (providerHealth.modelAvailable === false) {
-    issues.push(`Model ${providerHealth.modelName ?? "-"} is not available on the provider endpoint.`);
-  }
-
-  if (!isCommandAvailable("corepack")) {
-    issues.push("corepack is not available.");
-  }
-
-  return issues;
-}
-
-function checkWorkspaceConfigFiles(
-  workspaceRoot: string
-): Array<{ exists: boolean; file: string; parseable: boolean }> {
-  const files = [
-    "provider.config.json",
-    "runtime.config.json",
-    "sandbox.config.json",
-    "gateway.config.json",
-    "feishu.config.json",
-    "mcp.config.json",
-    "mcp-server.config.json"
-  ];
-
-  return files.map((file) => {
-    const path = join(workspaceRoot, ".auto-talon", file);
-    if (!existsSync(path)) {
-      return { exists: false, file, parseable: false };
-    }
-    try {
-      const content = readFileSync(path, "utf8").trim();
-      if (content.length > 0) {
-        JSON.parse(content);
-      }
-      return { exists: true, file, parseable: true };
-    } catch {
-      return { exists: true, file, parseable: false };
-    }
-  });
-}
-
-function canOpenDatabase(databasePath: string): boolean {
-  if (databasePath === ":memory:") {
-    return true;
-  }
-  try {
-    const db = new DatabaseSync(databasePath);
-    db.close();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function readSchemaVersion(databasePath: string): number | null {
-  if (databasePath === ":memory:" || !existsSync(databasePath)) {
-    return null;
-  }
-  try {
-    const db = new DatabaseSync(databasePath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };
-    db.close();
-    return row.user_version ?? 0;
-  } catch {
-    return null;
-  }
-}
-
-function checkDistFreshness(workspaceRoot: string): boolean | null {
-  const cliSource = join(workspaceRoot, "src", "cli", "index.ts");
-  const cliDist = join(workspaceRoot, "dist", "cli", "index.js");
-  if (!existsSync(cliSource) || !existsSync(cliDist)) {
-    return null;
-  }
-  return statSync(cliDist).mtimeMs >= statSync(cliSource).mtimeMs;
-}
-
-function isCommandAvailable(command: string): boolean {
-  return (
-    spawnSync(command, ["--version"], {
-      encoding: "utf8",
-      shell: process.platform === "win32"
-    }).status === 0
-  );
-}
-
-function resolveCommandVersion(command: string): string | null {
-  const result = spawnSync(command, ["--version"], {
-    encoding: "utf8",
-    shell: process.platform === "win32"
-  });
-  if (result.status !== 0) {
-    return null;
-  }
-  return result.stdout.trim().split("\n")[0] ?? null;
-}
-
-function buildProviderStatsFromTrace(
-  providerName: string,
-  trace: TraceEvent[]
-): ProviderStatsSnapshot {
-  const providerEvents = trace.filter(
-    (event) =>
-      event.eventType === "provider_request_succeeded" ||
-      event.eventType === "provider_request_failed"
-  );
-  const successes = providerEvents.filter((event) => event.eventType === "provider_request_succeeded");
-  const failures = providerEvents.filter((event) => event.eventType === "provider_request_failed");
-  const totalLatency = providerEvents.reduce((sum, event) => {
-    if (event.eventType === "provider_request_succeeded" || event.eventType === "provider_request_failed") {
-      return sum + event.payload.latencyMs;
-    }
-    return sum;
-  }, 0);
-  const retryCount = providerEvents.reduce((sum, event) => {
-    if (event.eventType === "provider_request_succeeded" || event.eventType === "provider_request_failed") {
-      return sum + event.payload.retryCount;
-    }
-    return sum;
-  }, 0);
-  const tokenUsage = successes.reduce<ProviderUsage>(
-    (usage, event) => {
-      if (event.eventType !== "provider_request_succeeded") {
-        return usage;
-      }
-      const payload = event.payload.usage;
-      const inputTokens = readNumber(payload?.inputTokens);
-      const outputTokens = readNumber(payload?.outputTokens);
-      const totalTokens = readNumber(payload?.totalTokens);
-      const cachedInputTokens = readNumber(payload?.cachedInputTokens);
-      return {
-        cachedInputTokens: (usage.cachedInputTokens ?? 0) + (cachedInputTokens ?? 0),
-        inputTokens: usage.inputTokens + (inputTokens ?? 0),
-        outputTokens: usage.outputTokens + (outputTokens ?? 0),
-        totalTokens:
-          (usage.totalTokens ?? usage.inputTokens + usage.outputTokens) +
-          (totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0))
-      };
-    },
-    {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0
-    }
-  );
-  const lastRequestAt = providerEvents.at(-1)?.timestamp ?? null;
-  const lastFailure = [...failures].reverse()[0];
-
-  return {
-    averageLatencyMs:
-      providerEvents.length === 0 ? 0 : Number((totalLatency / providerEvents.length).toFixed(2)),
-    failedRequests: failures.length,
-    lastErrorCategory:
-      lastFailure?.eventType === "provider_request_failed" ? lastFailure.payload.errorCategory : null,
-    lastRequestAt,
-    providerName,
-    retryCount,
-    successfulRequests: successes.length,
-    tokenUsage,
-    totalRequests: providerEvents.length
-  };
-}
-
 function extractTimelineIteration(event: TraceEvent): number | null {
   const payload = event.payload as { iteration?: unknown };
   return typeof payload.iteration === "number" ? payload.iteration : null;
-}
-
-function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" ? value : undefined;
 }
 
 function summarizeText(value: string, maxLength: number): string {
