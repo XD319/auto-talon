@@ -19,31 +19,31 @@ function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): Reac
     <Box borderStyle="classic" borderColor={theme.border} flexDirection="column" paddingX={1}>
       {summary.title.length > 0 ? <Text color={theme.panelTitle}>{summary.title}</Text> : null}
       {summary.agenda.map((item, index) => (
-        <Text key={`agenda:${index}`} color={index === 0 ? theme.fg : theme.muted} wrap="wrap">
-          {index === 0 ? "> " : "- "}
+        <Text key={`agenda:${index}`} color={index === 0 ? theme.fg : theme.muted} wrap="truncate-end">
+          {index === 0 ? "! " : "- "}
           {item}
         </Text>
       ))}
       {entries.length > 0 ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color={theme.selection}>Open items</Text>
+          <Text color={theme.selection}>Quick actions</Text>
           {entries.map((entry, index) => (
             <Box key={entry.key} flexDirection="column">
-              <Text color={index === selectedIndex ? theme.emphasis : theme.fg}>
+              <Text color={index === selectedIndex ? theme.emphasis : theme.fg} wrap="truncate-end">
                 {index === selectedIndex ? "> " : "  "}
                 {entry.label}
               </Text>
               {entry.kind === "thread" && entry.headline !== entry.label ? (
-                <Text color={index === selectedIndex ? theme.fg : theme.muted} wrap="wrap">
+                <Text color={index === selectedIndex ? theme.fg : theme.muted} wrap="truncate-end">
                   {entry.headline}
                 </Text>
               ) : null}
               {entry.kind !== "thread" && entry.headline !== undefined ? (
-                <Text color={theme.muted} wrap="wrap">
+                <Text color={theme.muted} wrap="truncate-end">
                   {entry.headline}
                 </Text>
               ) : null}
-              <Text color={theme.muted} wrap="wrap">
+              <Text color={theme.muted} wrap="truncate-end">
                 {entry.detail}
               </Text>
             </Box>

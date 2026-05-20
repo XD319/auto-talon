@@ -9,6 +9,7 @@ import { AgentTuiApp } from "./dashboard-app.js";
 import type { TuiResolveAppConfigOptions } from "./runtime-api.js";
 import type { ChatMessage } from "./view-models/chat-messages.js";
 import { loadSession } from "./session-store.js";
+import { enterTerminalScreen } from "./terminal-screen.js";
 import { RuntimeDashboardQueryService } from "./view-models/runtime-dashboard.js";
 
 export interface StartTuiOptions {
@@ -23,6 +24,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     scheduler: { autoStart: true },
     ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {})
   });
+  const screen = enterTerminalScreen();
   try {
     const sessionId = options.resumeSessionId ?? randomUUID();
     let initialMessages = undefined;
@@ -63,6 +65,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     await app.waitUntilExit();
     app.unmount();
   } finally {
+    screen.release();
     handle.close();
   }
 }
@@ -75,6 +78,7 @@ export async function startDashboardTui(
     scheduler: { autoStart: true },
     ...(sandbox !== undefined ? { sandbox } : {})
   });
+  const screen = enterTerminalScreen();
   try {
     const app = render(
       React.createElement(AgentTuiApp, {
@@ -88,6 +92,7 @@ export async function startDashboardTui(
     await app.waitUntilExit();
     app.unmount();
   } finally {
+    screen.release();
     handle.close();
   }
 }

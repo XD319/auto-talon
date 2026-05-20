@@ -14,7 +14,7 @@ import {
 import { Banner } from "./components/banner.js";
 import { HomeSummary } from "./components/home-summary.js";
 import { InputBox } from "./components/input-box.js";
-import { MessageStream, StaticMessageStream } from "./components/message-stream.js";
+import { MessageStream } from "./components/message-stream.js";
 import { PromptZone } from "./components/prompt-zone.js";
 import { buildTokenMetrics, StatusBar } from "./components/status-bar.js";
 import { editInExternalEditor } from "./external-editor.js";
@@ -102,24 +102,24 @@ export function ChatTuiApp({
     () => displayChatMessages(controller.messages),
     [controller.messages]
   );
-  const staticMessages = React.useMemo(
-    () => displayMessages.filter((message) => !isLiveTranscriptMessage(message)),
-    [displayMessages]
+  const showTodaySummary = React.useMemo(
+    () => shouldShowHomeSummary(controller.messages),
+    [controller.messages]
   );
-  const liveMessages = React.useMemo(
-    () => displayMessages.filter(isLiveTranscriptMessage),
-    [displayMessages]
+  const transcriptMessages = React.useMemo(
+    () => (showTodaySummary ? [] : displayMessages),
+    [displayMessages, showTodaySummary]
   );
-  const visibleLiveMessages = React.useMemo(() => {
-    if (liveMessages.length <= LIVE_TRANSCRIPT_WINDOW_SIZE) {
-      return liveMessages;
+  const visibleTranscriptMessages = React.useMemo(() => {
+    if (transcriptMessages.length <= LIVE_TRANSCRIPT_WINDOW_SIZE) {
+      return transcriptMessages;
     }
-    const maxOffset = Math.max(liveMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0);
+    const maxOffset = Math.max(transcriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0);
     const boundedOffset = Math.min(liveScrollOffset, maxOffset);
-    const end = liveMessages.length - boundedOffset;
+    const end = transcriptMessages.length - boundedOffset;
     const start = Math.max(0, end - LIVE_TRANSCRIPT_WINDOW_SIZE);
-    return liveMessages.slice(start, end);
-  }, [liveMessages, liveScrollOffset]);
+    return transcriptMessages.slice(start, end);
+  }, [liveScrollOffset, transcriptMessages]);
   const todaySummaryText = React.useMemo(
     () => formatTodaySummary(buildTodaySummary(service, { activeThreadId: controller.activeThreadId })),
     [controller.activeThreadId, service]
@@ -127,10 +127,6 @@ export function ChatTuiApp({
   const homeSummary = React.useMemo(
     () => buildHomeSummary(service, { activeThreadId: controller.activeThreadId }),
     [controller.activeThreadId, service]
-  );
-  const showTodaySummary = React.useMemo(
-    () => isEmptyConversation(controller.messages),
-    [controller.messages]
   );
   const homeEntries = React.useMemo(
     () => listHomeSummaryEntries(homeSummary),
@@ -175,7 +171,7 @@ export function ChatTuiApp({
 
   React.useEffect(() => {
     setLiveScrollOffset(0);
-  }, [liveMessages.length]);
+  }, [transcriptMessages.length]);
 
   React.useEffect(() => {
     setHomeSelectionIndex((current) => clampSelection(current, homeEntries.length));
@@ -226,9 +222,9 @@ export function ChatTuiApp({
         setLiveScrollOffset(0);
         return;
       }
-      setLiveScrollOffset(Math.max(liveMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0));
+      setLiveScrollOffset(Math.max(transcriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0));
     },
-    [liveMessages.length]
+    [transcriptMessages.length]
   );
 
   const slashSuggestions = React.useCallback(
@@ -280,7 +276,7 @@ export function ChatTuiApp({
         return;
       }
       controller.switchActiveThread(threadId);
-      controller.resetVisibleChatPreserveActiveThread();
+      controller.resetVisibleChatPreserveActiveThread("thread selected");
       controller.addSystemMessage(
         `Switched active thread to ${detail.thread.threadId.slice(0, 8)} | ${detail.thread.title}`
       );
@@ -494,7 +490,7 @@ export function ChatTuiApp({
           `status_line: ${controller.statusLine}`,
           `ui_status: ${controller.uiStatus.primaryLabel}`,
           `elapsed: ${controller.runDurationLabel}`,
-          `ui_scroll: terminal + live(offset=${liveScrollOffset})`,
+          `ui_scroll: transcript(offset=${liveScrollOffset})`,
           `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
           `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`
@@ -716,20 +712,25 @@ export function ChatTuiApp({
 
   return (
     <Box flexDirection="column">
-      <StaticMessageStream messages={staticMessages} />
       <Banner
         details={[config.provider.model ?? config.provider.name, shortenPath(cwd, 20)]}
         productName="AUTOTALON"
         title={sessionTitle === "assistant" ? "Personal Assistant" : sessionTitle}
       />
       <Box flexDirection="column">
-        {liveMessages.length > 0 ? (
-          <MessageStream messages={visibleLiveMessages} />
-        ) : showTodaySummary ? (
-          <HomeSummary selectedIndex={homeSelectionIndex} summary={homeSummary} />
-        ) : staticMessages.length === 0 ? (
+        {showTodaySummary ? (
+          homeEntries.length > 0 || homeSummary.agenda.length > 0 ? (
+            <HomeSummary selectedIndex={homeSelectionIndex} summary={homeSummary} />
+          ) : (
+            <Text color={theme.muted}>
+              Welcome to your AutoTalon personal assistant. Type a request and press Enter to start.
+            </Text>
+          )
+        ) : visibleTranscriptMessages.length > 0 ? (
+          <MessageStream messages={visibleTranscriptMessages} />
+        ) : (
           <Text color={theme.muted}>No conversation yet.</Text>
-        ) : null}
+        )}
       </Box>
       <PromptZone
         approvalPrompt={
@@ -771,7 +772,10 @@ export function ChatTuiApp({
       </Box>
       <Box>
         <StatusBar
-          details={[`elapsed ${controller.runDurationLabel}`]}
+          details={[
+            ...(controller.activeThreadId !== null ? [`thread ${controller.activeThreadId.slice(0, 8)}`] : []),
+            `elapsed ${controller.runDurationLabel}`
+          ]}
           hints={[
             controller.pendingClarifyPrompt !== null
               ? "Arrows choose, Tab custom, Enter submit"
@@ -827,15 +831,8 @@ function clampSelection(index: number, size: number): number {
   return index;
 }
 
-function isLiveTranscriptMessage(message: ChatMessage): boolean {
-  return (
-    (message.kind === "agent" && message.streaming === true) ||
-    (message.kind === "approval" && message.status === "pending")
-  );
-}
-
-function isEmptyConversation(messages: ChatMessage[]): boolean {
-  return !messages.some((message) => message.kind === "user" || message.kind === "agent");
+function shouldShowHomeSummary(messages: ChatMessage[]): boolean {
+  return messages.every((message) => message.id === "system:welcome");
 }
 
 function parseSlashInput(text: string): { args: string[]; command: string; rest: string } {
@@ -1034,7 +1031,7 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
   if (sub === "new") {
     const title = parsed.rest.slice("new".length).trim() || "Untitled thread";
     const threadId = controller.createAndActivateThread(title);
-    controller.resetVisibleChatPreserveActiveThread();
+    controller.resetVisibleChatPreserveActiveThread("thread created");
     controller.addSystemMessage(`Switched to new thread ${threadId.slice(0, 8)} | ${title}`);
     controller.addSystemMessage(formatThreadDetailForTui(service, threadId));
     return true;
@@ -1063,7 +1060,7 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
       return true;
     }
     controller.switchActiveThread(match.threadId);
-    controller.resetVisibleChatPreserveActiveThread();
+    controller.resetVisibleChatPreserveActiveThread("thread selected");
     controller.addSystemMessage(`Switched active thread to ${match.threadId.slice(0, 8)} | ${match.title}`);
     controller.addSystemMessage(formatThreadDetailForTui(service, match.threadId));
     return true;
@@ -1158,7 +1155,7 @@ export function handleResumeCommand(
   }
 
   controller.switchActiveThread(target.threadId);
-  controller.resetVisibleChatPreserveActiveThread();
+  controller.resetVisibleChatPreserveActiveThread("thread resumed");
   controller.addSystemMessage(`Resumed thread ${target.threadId.slice(0, 8)} | ${target.title}`);
   controller.addSystemMessage(formatThreadDetailForTui(service, target.threadId));
   return true;

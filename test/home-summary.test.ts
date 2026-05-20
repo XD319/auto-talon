@@ -39,12 +39,11 @@ describe("home summary", () => {
     expect(summary.title).toBe("");
     expect(summary.agenda).toEqual([
       "Approval needed: file_write",
-      "Review waiting: Need review",
-      "Routine ready: Morning review"
+      "Routine ready: Morning review",
+      "Continue: Draft the plan outline"
     ]);
     expect(summary.actions.map((item) => item.label)).toEqual([
       "Respond to approval",
-      "Open inbox item",
       "Open routine"
     ]);
     expect(summary.recommendedThread?.label).toBe("Quarterly planning");
@@ -124,34 +123,148 @@ describe("home summary", () => {
         threadId: "thread-a"
       },
       {
-        key: "inbox",
-        kind: "action",
-        label: "Open inbox item",
-        threadId: "thread-a"
-      },
-      {
         key: "routine",
         kind: "action",
         label: "Open routine"
-      }
-    ]);
-    expect(entries.slice(3, 6)).toMatchObject([
+      },
       {
         kind: "thread",
         label: "Continue Quarterly planning",
         threadId: "thread-a"
-      },
+      }
+    ]);
+    expect(entries.slice(3, 4)).toMatchObject([
       {
         kind: "thread",
         label: "Continue Release checklist",
         threadId: "thread-b"
-      },
-      {
-        kind: "thread",
-        label: "Continue Research notes",
-        threadId: "thread-c"
       }
     ]);
+  });
+
+  it("uses specific labels for actionable inbox items", () => {
+    process.env.USERNAME = "local-user";
+    const service = {
+      ...createServiceStub(),
+      listInbox() {
+        return [
+          createInbox("inbox-action", "Decision requested", "thread-a", {
+            category: "decision_requested",
+            severity: "action_required",
+            summary: "Choose whether to publish the draft."
+          })
+        ];
+      }
+    };
+    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+
+    expect(summary.agenda).toContain("Review: Quarterly planning - Decision requested");
+    expect(summary.actions.find((item) => item.key === "inbox")).toMatchObject(
+      {
+        detail: "Decision needed: Choose whether to publish the draft.",
+        key: "inbox",
+        label: "Open inbox: Quarterly planning - Decision requested",
+        threadId: "thread-a"
+      }
+    );
+  });
+
+  it("deduplicates thread suggestions by visible title", () => {
+    process.env.USERNAME = "local-user";
+    const duplicateThreads = [
+      createThread("thread-a", "Repeated reminder", "2026-01-01T03:00:00.000Z"),
+      createThread("thread-b", "Repeated reminder", "2026-01-01T02:00:00.000Z")
+    ];
+    const service = {
+      ...createEmptyServiceStub(),
+      listThreads() {
+        return duplicateThreads;
+      },
+      showThread(threadId: string) {
+        const thread = duplicateThreads.find((item) => item.threadId === threadId) ?? null;
+        return {
+          commitments: [],
+          inboxItems: [],
+          lineage: [],
+          nextActions: [],
+          runs: [createThreadRun(`run-${threadId}`, threadId, 1, "completed", "same prompt")],
+          scheduleRuns: [],
+          state: {
+            activeNextActions: [],
+            blockedReason: null,
+            currentObjective: null,
+            nextAction: createNextAction(`next-${threadId}`, threadId, threadId === "thread-a" ? "first detail" : "second detail"),
+            openCommitments: [],
+            pendingDecision: null
+          },
+          thread
+        };
+      }
+    };
+    const summary = buildHomeSummary(service);
+
+    expect(listHomeSummaryEntries(summary).filter((entry) => entry.kind === "thread")).toHaveLength(1);
+  });
+
+  it("keeps completed inbox noise off the home agenda", () => {
+    process.env.USERNAME = "local-user";
+    const service = {
+      ...createEmptyServiceStub(),
+      listInbox() {
+        return [
+          createInbox("completed-a", "Task completed", "thread-a", {
+            summary: "This is a long completed task summary that should stay out of the home agenda."
+          })
+        ];
+      }
+    };
+    const summary = buildHomeSummary(service);
+
+    expect(summary.agenda).toEqual([]);
+    expect(summary.actions).toEqual([]);
+  });
+
+  it("humanizes provider and path errors in quick actions", () => {
+    process.env.USERNAME = "local-user";
+    const service = {
+      ...createServiceStub(),
+      listInbox() {
+        return [
+          createInbox("blocked-a", "Next action blocked", "thread-a", {
+            category: "task_blocked",
+            severity: "warning",
+            summary:
+              "provider_error: xunfei response error: sid: cht000 msg: EngineInternalError; EISDIR: illegal operation on a directory, read"
+          })
+        ];
+      }
+    };
+    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+    const inboxAction = summary.actions.find((item) => item.key === "inbox");
+
+    expect(summary.agenda).toContain("Review: Quarterly planning - Next action blocked");
+    expect(inboxAction?.detail).toBe("Blocked: A directory was used where a file path was expected.");
+  });
+
+  it("limits the home list to the highest value entries", () => {
+    process.env.USERNAME = "local-user";
+    const service = {
+      ...createServiceStub(),
+      listInbox() {
+        return [
+          createInbox("inbox-action", "Decision requested", "thread-a", {
+            category: "decision_requested",
+            severity: "action_required",
+            summary: "Choose whether to publish the draft."
+          })
+        ];
+      }
+    };
+    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+    const entries = listHomeSummaryEntries(summary);
+
+    expect(entries).toHaveLength(4);
+    expect(entries.map((entry) => entry.kind)).toEqual(["action", "action", "action", "thread"]);
   });
 
   it("recommends the thread with the highest-priority next action before recent history", () => {
@@ -408,12 +521,17 @@ function createThread(threadId: string, title: string, updatedAt: string): Threa
   };
 }
 
-function createInbox(inboxId: string, title: string, threadId: string): InboxItem {
+function createInbox(
+  inboxId: string,
+  title: string,
+  threadId: string,
+  overrides: Partial<Pick<InboxItem, "category" | "severity" | "summary">> = {}
+): InboxItem {
   return {
     actionHint: null,
     approvalId: null,
     bodyMd: null,
-    category: "task_completed",
+    category: overrides.category ?? "task_completed",
     createdAt: "2026-01-01T00:00:00.000Z",
     dedupKey: null,
     doneAt: null,
@@ -421,11 +539,11 @@ function createInbox(inboxId: string, title: string, threadId: string): InboxIte
     inboxId,
     metadata: {},
     scheduleRunId: null,
-    severity: "info",
+    severity: overrides.severity ?? "info",
     skillId: null,
     sourceTraceId: null,
     status: "pending",
-    summary: title,
+    summary: overrides.summary ?? title,
     taskId: null,
     threadId,
     title,

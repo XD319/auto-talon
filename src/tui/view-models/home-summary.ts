@@ -1,5 +1,5 @@
 import type { TuiRuntimeService } from "../runtime-api.js";
-import type { ThreadRecord } from "../../types/index.js";
+import type { InboxItem, ThreadRecord } from "../../types/index.js";
 import { buildTodaySummary, type TodaySummaryViewModel } from "./today-summary.js";
 
 export interface HomeSummaryAction {
@@ -34,6 +34,14 @@ export interface HomeSummaryViewModel {
   title: string;
 }
 
+const MAX_AGENDA_ITEMS = 3;
+const MAX_HOME_ENTRIES = 4;
+const MAX_THREAD_CARDS = 3;
+const AGENDA_LABEL_LENGTH = 96;
+const ENTRY_LABEL_LENGTH = 76;
+const ENTRY_DETAIL_LENGTH = 92;
+const THREAD_HEADLINE_LENGTH = 72;
+
 export function buildHomeSummary(
   service: Pick<
     TuiRuntimeService,
@@ -63,7 +71,7 @@ export function buildHomeSummary(
 
   return {
     actions,
-    agenda: buildAgenda(summary, recommendedThread),
+    agenda: buildAgenda(service, summary, recommendedThread),
     assistantHint: primaryEntry !== null ? "Use Up/Down and Enter to open an item." : "",
     recentThreads,
     recommendedThread,
@@ -83,6 +91,9 @@ export function listHomeSummaryEntries(summary: HomeSummaryViewModel): HomeSumma
     });
   }
   for (const thread of prioritizeRecommendedThread(summary.recentThreads, summary.recommendedThread)) {
+    if (entries.length >= MAX_HOME_ENTRIES) {
+      break;
+    }
     entries.push({
       detail: thread.detail,
       ...(thread.headline !== thread.label ? { headline: thread.headline } : {}),
@@ -96,34 +107,35 @@ export function listHomeSummaryEntries(summary: HomeSummaryViewModel): HomeSumma
 }
 
 function buildAgenda(
+  service: Pick<TuiRuntimeService, "showThread">,
   summary: TodaySummaryViewModel,
   recommendedThread: HomeSummaryThreadCard | null
 ): string[] {
   const agenda: string[] = [];
   const approval = summary.pendingApprovals.items[0];
   if (approval !== undefined) {
-    agenda.push(`Approval needed: ${approval.toolName}`);
+    agenda.push(compactAgendaLine(`Approval needed: ${approval.toolName}`));
   }
-  const inboxItem = summary.inbox.items[0];
-  if (inboxItem !== undefined) {
-    agenda.push(`Review waiting: ${inboxItem.title}`);
+  const actionableInboxItem = summary.inbox.items.find(isActionableInboxItem);
+  if (actionableInboxItem !== undefined) {
+    agenda.push(compactAgendaLine(`Review: ${formatInboxDisplayLabel(service, actionableInboxItem)}`));
   }
   const overdueRoutine = summary.dueRoutines.items[0];
   if (overdueRoutine !== undefined) {
-    agenda.push(`Routine ready: ${overdueRoutine.name}`);
+    agenda.push(compactAgendaLine(`Routine ready: ${overdueRoutine.name}`));
   }
   const nextAction = summary.nextActions.items[0];
   if (agenda.length < 3 && nextAction !== undefined) {
-    agenda.push(`Continue: ${nextAction.title}`);
+    agenda.push(compactAgendaLine(`Continue: ${nextAction.title}`));
   }
   if (agenda.length === 0 && recommendedThread !== null) {
-    agenda.push(recommendedThread.detail);
+    agenda.push(compactAgendaLine(recommendedThread.detail));
   }
-  return agenda.slice(0, 3);
+  return agenda.slice(0, MAX_AGENDA_ITEMS);
 }
 
 function buildRecommendedActions(
-  service: Pick<TuiRuntimeService, "showTask">,
+  service: Pick<TuiRuntimeService, "showTask" | "showThread">,
   summary: TodaySummaryViewModel
 ): HomeSummaryAction[] {
   const actions: HomeSummaryAction[] = [];
@@ -136,12 +148,13 @@ function buildRecommendedActions(
       threadId: service.showTask(approval.taskId).task?.threadId ?? null
     });
   }
-  const inboxItem = summary.inbox.items[0];
+  const inboxItem = summary.inbox.items.find(isActionableInboxItem);
   if (inboxItem !== undefined) {
+    const inboxLabel = formatInboxDisplayLabel(service, inboxItem);
     actions.push({
-      detail: `Open ${inboxItem.title}.`,
+      detail: formatInboxDetail(inboxItem),
       key: "inbox",
-      label: "Open inbox item",
+      label: `Open inbox: ${inboxLabel}`,
       threadId: inboxItem.threadId
     });
   }
@@ -153,14 +166,14 @@ function buildRecommendedActions(
       label: "Open routine"
     });
   }
-  return actions.slice(0, 3);
+  return actions.slice(0, MAX_HOME_ENTRIES);
 }
 
 function buildRecentThreadCards(
   service: Pick<TuiRuntimeService, "showThread">,
   summary: TodaySummaryViewModel
 ): HomeSummaryThreadCard[] {
-  return summary.threads.items.slice(0, 3).map((thread) => buildThreadCard(service, thread));
+  return dedupeThreadCards(summary.threads.items.map((thread) => buildThreadCard(service, thread))).slice(0, MAX_THREAD_CARDS);
 }
 
 function buildRecommendedThreadCard(
@@ -202,10 +215,10 @@ function prioritizeRecommendedThread(
   if (recommendedThread === null) {
     return recentThreads;
   }
-  return [
+  return dedupeThreadCards([
     recommendedThread,
     ...recentThreads.filter((thread) => thread.threadId !== recommendedThread.threadId)
-  ];
+  ]);
 }
 
 function buildThreadCard(
@@ -225,9 +238,106 @@ function buildThreadCard(
     (detail.runs[0]?.status !== undefined ? `recent run ${detail.runs[0].status}` : "ready to continue");
 
   return {
-    detail: suffix,
-    headline,
-    label: thread.title,
+    detail: summarizeText(humanizeRuntimeSummary(suffix), ENTRY_DETAIL_LENGTH),
+    headline: summarizeText(headline, THREAD_HEADLINE_LENGTH),
+    label: summarizeText(thread.title, ENTRY_LABEL_LENGTH),
     threadId: thread.threadId
   };
+}
+
+function dedupeThreadCards(cards: HomeSummaryThreadCard[]): HomeSummaryThreadCard[] {
+  const seen = new Set<string>();
+  const deduped: HomeSummaryThreadCard[] = [];
+  for (const card of cards) {
+    const key = normalizeDedupeText(card.label);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(card);
+  }
+  return deduped;
+}
+
+function isActionableInboxItem(item: InboxItem): boolean {
+  return item.severity === "action_required" || item.severity === "warning" || item.category !== "task_completed";
+}
+
+function formatInboxDisplayLabel(
+  service: Pick<TuiRuntimeService, "showThread">,
+  item: InboxItem
+): string {
+  const subject = isGenericInboxTitle(item.title) ? summarizeText(item.summary, 56) : item.title;
+  const threadTitle = item.threadId === null ? null : service.showThread(item.threadId).thread?.title ?? null;
+  if (threadTitle === null || threadTitle.length === 0) {
+    return subject;
+  }
+  if (subject.length === 0 || subject === threadTitle) {
+    return summarizeText(threadTitle, ENTRY_LABEL_LENGTH);
+  }
+  return summarizeText(`${threadTitle} - ${subject}`, ENTRY_LABEL_LENGTH);
+}
+
+function formatInboxDetail(item: InboxItem): string {
+  const summary = summarizeText(humanizeRuntimeSummary(item.summary), ENTRY_DETAIL_LENGTH);
+  const prefix = formatInboxCategoryLabel(item);
+  return summary.length > 0 ? `${prefix}: ${summary}` : prefix;
+}
+
+function formatInboxCategoryLabel(item: InboxItem): string {
+  switch (item.category) {
+    case "approval_requested":
+      return "Approval needed";
+    case "budget_exceeded":
+      return "Budget exceeded";
+    case "budget_warning":
+      return "Budget warning";
+    case "decision_requested":
+      return "Decision needed";
+    case "memory_suggestion":
+      return "Memory suggestion";
+    case "skill_promotion":
+      return "Skill suggestion";
+    case "task_blocked":
+      return "Blocked";
+    case "task_failed":
+      return "Failed";
+    default:
+      return "Inbox";
+  }
+}
+
+function isGenericInboxTitle(title: string): boolean {
+  return title === "Task completed" || title === "Task failed" || title === "Task blocked";
+}
+
+function summarizeText(value: string, maxLength = 72): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function compactAgendaLine(value: string): string {
+  return summarizeText(humanizeRuntimeSummary(value), AGENDA_LABEL_LENGTH);
+}
+
+function humanizeRuntimeSummary(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  const lower = normalized.toLowerCase();
+  if (lower.includes("eisdir") || lower.includes("illegal operation on a directory")) {
+    return "A directory was used where a file path was expected.";
+  }
+  if (lower.includes("provider_error") || lower.includes("xunfei") || lower.includes("engineinter")) {
+    return "Provider returned an error while handling this task.";
+  }
+  if (lower.startsWith("provider error")) {
+    return "Provider returned an error while handling this task.";
+  }
+  return normalized;
+}
+
+function normalizeDedupeText(value: string): string {
+  return value.replace(/\s+/gu, " ").trim().toLowerCase();
 }

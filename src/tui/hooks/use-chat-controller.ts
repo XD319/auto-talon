@@ -77,7 +77,7 @@ export interface ChatController {
   queuedPrompts: QueuedPromptEntry[];
   requestInterrupt: () => boolean;
   resetVisibleChat: () => void;
-  resetVisibleChatPreserveActiveThread: () => void;
+  resetVisibleChatPreserveActiveThread: (statusLabel?: string) => void;
   runDurationLabel: string;
   statusLine: string;
   submitPrompt: (text: string) => boolean;
@@ -268,7 +268,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   const addSystemMessage = React.useCallback((text: string) => {
     setMessages((current) => [
-      ...current,
+      ...dropOnlyWelcomeMessage(current),
       {
         id: `system:${randomUUID()}`,
         kind: "system",
@@ -352,12 +352,12 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     stopTraceSubscription();
   }, [stopTraceSubscription]);
 
-  const resetVisibleChatPreserveActiveThread = React.useCallback(() => {
+  const resetVisibleChatPreserveActiveThread = React.useCallback((statusLabel = "thread selected") => {
     setMessages([welcomeMessage]);
-    setStatusLine("conversation cleared");
+    setStatusLine(statusLabel);
     setUiStatus({
       approvalLabel: null,
-      primaryLabel: "conversation cleared",
+      primaryLabel: statusLabel,
       primaryTone: "muted",
       runState: "idle",
       taskLabel: null
@@ -586,7 +586,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       streamingAgentIdRef.current = streamId;
 
       setMessages((current) => [
-        ...current,
+        ...dropOnlyWelcomeMessage(current),
         {
           id: `user:${randomUUID()}`,
           kind: "user",
@@ -1281,6 +1281,10 @@ function tokenHudEquals(left: TokenHud, right: TokenHud): boolean {
     left.inputTokens === right.inputTokens &&
     left.outputTokens === right.outputTokens
   );
+}
+
+function dropOnlyWelcomeMessage(messages: ChatMessage[]): ChatMessage[] {
+  return messages.length === 1 && messages[0]?.id === "system:welcome" ? [] : messages;
 }
 
 function visiblePendingRecords<T extends ApprovalRecord | ClarifyPromptRecord>(
