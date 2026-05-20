@@ -37,7 +37,7 @@ export interface HomeSummaryViewModel {
 const MAX_AGENDA_ITEMS = 3;
 const MAX_HOME_ENTRIES = 4;
 const MAX_THREAD_CARDS = 3;
-const AGENDA_LABEL_LENGTH = 96;
+const AGENDA_LABEL_LENGTH = 72;
 const ENTRY_LABEL_LENGTH = 76;
 const ENTRY_DETAIL_LENGTH = 92;
 const THREAD_HEADLINE_LENGTH = 72;
@@ -94,12 +94,12 @@ export function listHomeSummaryEntries(summary: HomeSummaryViewModel): HomeSumma
     if (entries.length >= MAX_HOME_ENTRIES) {
       break;
     }
+    const threadLabel = summarizeText(thread.headline.length > 0 ? thread.headline : thread.label, ENTRY_LABEL_LENGTH);
     entries.push({
       detail: thread.detail,
-      ...(thread.headline !== thread.label ? { headline: thread.headline } : {}),
       key: `thread:${thread.threadId}`,
       kind: "thread",
-      label: `Continue ${thread.label}`,
+      label: `Continue ${threadLabel}`,
       threadId: thread.threadId
     });
   }
@@ -126,10 +126,10 @@ function buildAgenda(
   }
   const nextAction = summary.nextActions.items[0];
   if (agenda.length < 3 && nextAction !== undefined) {
-    agenda.push(compactAgendaLine(`Continue: ${nextAction.title}`));
+    agenda.push(compactAgendaLine(`Continue: ${formatNextActionAgendaLabel(service, nextAction)}`));
   }
   if (agenda.length === 0 && recommendedThread !== null) {
-    agenda.push(compactAgendaLine(recommendedThread.detail));
+    agenda.push(compactAgendaLine(`Continue: ${recommendedThread.label}`));
   }
   return agenda.slice(0, MAX_AGENDA_ITEMS);
 }
@@ -267,15 +267,32 @@ function formatInboxDisplayLabel(
   service: Pick<TuiRuntimeService, "showThread">,
   item: InboxItem
 ): string {
-  const subject = isGenericInboxTitle(item.title) ? summarizeText(item.summary, 56) : item.title;
+  const subject = isGenericInboxTitle(item.title) ? "" : item.title;
   const threadTitle = item.threadId === null ? null : service.showThread(item.threadId).thread?.title ?? null;
   if (threadTitle === null || threadTitle.length === 0) {
-    return subject;
+    return subject.length > 0 ? subject : summarizeText(humanizeRuntimeSummary(item.summary), ENTRY_LABEL_LENGTH);
   }
   if (subject.length === 0 || subject === threadTitle) {
     return summarizeText(threadTitle, ENTRY_LABEL_LENGTH);
   }
   return summarizeText(`${threadTitle} - ${subject}`, ENTRY_LABEL_LENGTH);
+}
+
+function formatNextActionAgendaLabel(
+  service: Pick<TuiRuntimeService, "showThread">,
+  nextAction: TodaySummaryViewModel["nextActions"]["items"][number]
+): string {
+  if (!looksLikeAssistantNarrative(nextAction.title)) {
+    return nextAction.title;
+  }
+  const detail = service.showThread(nextAction.threadId);
+  return (
+    firstUsefulText([
+      detail.state.currentObjective?.title,
+      detail.thread?.title,
+      nextAction.title
+    ]) ?? nextAction.title
+  );
 }
 
 function formatInboxDetail(item: InboxItem): string {
@@ -308,7 +325,25 @@ function formatInboxCategoryLabel(item: InboxItem): string {
 }
 
 function isGenericInboxTitle(title: string): boolean {
-  return title === "Task completed" || title === "Task failed" || title === "Task blocked";
+  return title === "Task completed" || title === "Task failed" || title === "Task blocked" || title === "Next action blocked";
+}
+
+function firstUsefulText(values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    const normalized = value?.replace(/\s+/gu, " ").trim() ?? "";
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function looksLikeAssistantNarrative(value: string): boolean {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length > 120) {
+    return true;
+  }
+  return normalized.includes("\u6211\u5df2\u7ecf") || normalized.includes("\u8ba9\u6211") || normalized.includes("**");
 }
 
 function summarizeText(value: string, maxLength = 72): string {

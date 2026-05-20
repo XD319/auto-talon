@@ -105,7 +105,7 @@ describe("home summary", () => {
     expect(summary.agenda[0]).toBe("Continue: Draft the plan outline");
     expect(listHomeSummaryEntries(summary)[0]).toMatchObject({
       kind: "thread",
-      label: "Continue Quarterly planning",
+      label: "Continue Wrap the planning task",
       threadId: "thread-a"
     });
   });
@@ -129,14 +129,14 @@ describe("home summary", () => {
       },
       {
         kind: "thread",
-        label: "Continue Quarterly planning",
+        label: "Continue Wrap the planning task",
         threadId: "thread-a"
       }
     ]);
     expect(entries.slice(3, 4)).toMatchObject([
       {
         kind: "thread",
-        label: "Continue Release checklist",
+        label: "Continue Check final release blockers",
         threadId: "thread-b"
       }
     ]);
@@ -242,8 +242,42 @@ describe("home summary", () => {
     const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
     const inboxAction = summary.actions.find((item) => item.key === "inbox");
 
-    expect(summary.agenda).toContain("Review: Quarterly planning - Next action blocked");
+    expect(summary.agenda).toContain("Review: Quarterly planning");
+    expect(inboxAction?.label).toBe("Open inbox: Quarterly planning");
     expect(inboxAction?.detail).toBe("Blocked: A directory was used where a file path was expected.");
+  });
+
+  it("keeps assistant narrative out of agenda continuation labels", () => {
+    process.env.USERNAME = "local-user";
+    const service = {
+      ...createServiceStub(),
+      listInbox() {
+        return [];
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listSchedules() {
+        return [];
+      },
+      listNextActions() {
+        return [
+          createNextAction(
+            "next-long",
+            "thread-a",
+            "I found the old notes and can now continue. Let me prepare the full answer with the details you asked for, including the source context and the next concrete step."
+          )
+        ];
+      }
+    };
+    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+
+    expect(summary.agenda[0]).toBe("Continue: Wrap the planning task");
+    expect(listHomeSummaryEntries(summary)[0]).toMatchObject({
+      kind: "thread",
+      label: "Continue Wrap the planning task",
+      threadId: "thread-a"
+    });
   });
 
   it("limits the home list to the highest value entries", () => {
@@ -281,7 +315,7 @@ describe("home summary", () => {
     expect(summary.recommendedThread?.label).toBe("Quarterly planning");
     expect(firstThread).toMatchObject({
       kind: "thread",
-      label: "Continue Quarterly planning",
+      label: "Continue Wrap the planning task",
       threadId: "thread-a"
     });
   });
