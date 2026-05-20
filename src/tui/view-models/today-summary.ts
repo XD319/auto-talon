@@ -137,6 +137,7 @@ export function formatThreadDetailForTui(
   const recentScheduleRuns = [...detail.scheduleRuns]
     .sort((left, right) => byIsoDesc(left.scheduledAt, right.scheduledAt))
     .slice(0, 2);
+  const recentInboxItems = detail.inboxItems.filter(isUsefulThreadInboxItem).slice(0, 2);
   const lines = [
     `Thread ${detail.thread.threadId} | ${detail.thread.title}`,
     `status=${detail.thread.status} updatedAt=${detail.thread.updatedAt}`,
@@ -151,11 +152,18 @@ export function formatThreadDetailForTui(
   if (detail.state.blockedReason !== null) {
     lines.push(`blocked: ${detail.state.blockedReason}`);
   }
-  if (detail.state.pendingDecision !== null) {
+  if (
+    detail.state.pendingDecision !== null &&
+    !matchesThreadStateText(detail.state.pendingDecision, [
+      detail.thread.title,
+      detail.state.currentObjective?.title,
+      detail.state.nextAction?.title
+    ])
+  ) {
     lines.push(`decision: ${detail.state.pendingDecision}`);
   }
-  if (detail.inboxItems.length > 0) {
-    lines.push(formatPreviewSection("recent inbox", detail.inboxItems.slice(0, 2), (item) => `${item.title} [${item.status}]`));
+  if (recentInboxItems.length > 0) {
+    lines.push(formatPreviewSection("recent inbox", recentInboxItems, (item) => `${item.title} [${item.status}]`));
   }
   if (recentRuns.length > 0) {
     lines.push(formatPreviewSection("recent runs", recentRuns, (run) => `#${run.runNumber} ${run.status} | ${summarizeText(run.input)}`));
@@ -201,6 +209,26 @@ function summarizeText(value: string, maxLength = 72): string {
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function isUsefulThreadInboxItem(item: InboxItem): boolean {
+  if (item.category !== "task_completed") {
+    return true;
+  }
+  const title = normalizeForComparison(item.title);
+  return title !== "task completed" && !title.startsWith("routine completed:");
+}
+
+function matchesThreadStateText(value: string, candidates: Array<string | null | undefined>): boolean {
+  const normalized = normalizeForComparison(value);
+  if (normalized.length === 0) {
+    return true;
+  }
+  return candidates.some((candidate) => normalizeForComparison(candidate ?? "") === normalized);
+}
+
+function normalizeForComparison(value: string): string {
+  return value.replace(/\s+/gu, " ").trim().toLowerCase();
 }
 
 function compareNextAction(

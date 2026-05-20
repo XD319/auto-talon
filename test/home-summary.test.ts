@@ -332,6 +332,39 @@ describe("home summary", () => {
     expect(detail).toContain("#2 waiting_approval | Need permission to write release notes");
     expect(detail).toContain("recent schedules:");
   });
+
+  it("keeps completed notification noise and duplicate decisions out of thread details", () => {
+    const baseService = createServiceStub();
+    const service = {
+      ...baseService,
+      showThread(threadId: string) {
+        const detail = baseService.showThread(threadId);
+        return {
+          ...detail,
+          inboxItems: [
+            createInbox("completed-a", "Task completed", "thread-a"),
+            createInbox("routine-a", "Routine completed: 飞书一分钟定时测试", "thread-a"),
+            createInbox("blocked-a", "Need review", "thread-a", {
+              category: "task_blocked",
+              severity: "warning",
+              summary: "Needs review before continuing."
+            })
+          ],
+          state: {
+            ...detail.state,
+            pendingDecision: "Wrap the planning task"
+          }
+        };
+      }
+    };
+    const detail = formatThreadDetailForTui(service as AgentApplicationService, "thread-a");
+
+    expect(detail).not.toContain("decision: Wrap the planning task");
+    expect(detail).not.toContain("Task completed [pending]");
+    expect(detail).not.toContain("Routine completed: 飞书一分钟定时测试");
+    expect(detail).toContain("recent inbox:");
+    expect(detail).toContain("- Need review [pending]");
+  });
 });
 
 async function waitForInk(): Promise<void> {
