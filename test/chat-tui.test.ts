@@ -11,7 +11,7 @@ import {
   useChatController,
   type ChatController
 } from "../src/tui/hooks/use-chat-controller.js";
-import { handleResumeCommand, handleScheduleCommand } from "../src/tui/chat-app.js";
+import { handleInboxCommand, handleResumeCommand, handleScheduleCommand } from "../src/tui/chat-app.js";
 import {
   canSubmitTextInput,
   deleteCharacterAfter,
@@ -33,6 +33,7 @@ import { createDefaultRunOptions } from "../src/runtime/index.js";
 import type {
   ApprovalRecord,
   ClarifyPromptRecord,
+  InboxItem,
   RuntimeRunOptions,
   ScheduleRecord,
   ScheduleRunRecord,
@@ -40,7 +41,6 @@ import type {
   ToolCallRecord,
   TraceEvent
 } from "../src/types/index.js";
-import type { ThreadRecord } from "../src/types/index.js";
 import type { CreateScheduleInput } from "../src/runtime/scheduler/index.js";
 
 type ControllerServiceStub = Pick<
@@ -667,6 +667,58 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
+  it("hydrates a saved session into the active controller", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createIdleControllerService();
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      const activeController = getController();
+      activeController.restoreSession({
+        id: "session-resume",
+        messages: [{ id: "user:resume", kind: "user", text: "Resume me", timestamp: "2026-01-01T00:00:00.000Z" }],
+        sessionApprovalFingerprints: ["resume-fingerprint"],
+        threadId: "thread-resume",
+        updatedAt: "2026-01-01T01:00:00.000Z"
+      });
+      await waitFor(() => getController().activeThreadId === "thread-resume");
+
+      expect(getController().messages).toMatchObject([{ kind: "user", text: "Resume me" }]);
+      expect(getController().sessionApprovalFingerprints).toEqual(["resume-fingerprint"]);
+      expect(getController().uiStatus.primaryLabel).toBe("session resumed");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
   it("surfaces clarify answer failures in the transcript", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
@@ -1176,47 +1228,115 @@ describe("schedule slash command helper", () => {
 });
 
 describe("resume slash command helper", () => {
-  it("resumes the most recent active thread when no prefix is provided", () => {
-    process.env.USERNAME = "local-user";
+  it("returns to the session picker when no prefix is provided", async () => {
     const messages: string[] = [];
-    const switched: string[] = [];
-    const handled = handleResumeCommand(
+    const resets: string[] = [];
+    const handled = await handleResumeCommand(
       "/resume",
       {
-        activeThreadId: null,
         addSystemMessage: (text: string) => messages.push(text),
-        resetVisibleChatPreserveActiveThread: () => messages.push("reset"),
-        switchActiveThread: (threadId: string) => switched.push(threadId)
+        resetVisibleChat: () => resets.push("reset")
       } as unknown as ReturnType<typeof useChatController>,
       {
-        listThreads: () => [
-          createThreadRecord("thread-old", "Older thread", "2026-01-01T00:00:00.000Z"),
-          createThreadRecord("thread-new", "Newest thread", "2026-01-01T02:00:00.000Z")
-        ],
-        showThread: (threadId: string) => ({
-          commitments: [],
-          inboxItems: [],
-          lineage: [],
-          nextActions: [],
-          runs: [],
-          scheduleRuns: [],
-          state: {
-            activeNextActions: [],
-            blockedReason: null,
-            currentObjective: null,
-            nextAction: null,
-            openCommitments: [],
-            pendingDecision: null
-          },
-          thread: createThreadRecord(threadId, threadId, "2026-01-01T02:00:00.000Z")
-        })
-      } as unknown as AgentApplicationService
+        listSessionSummaries: () => Promise.resolve([
+          {
+            id: "session-new",
+            label: "New conversation",
+            preview: null,
+            threadId: null,
+            updatedAt: "2026-01-01T02:00:00.000Z"
+          }
+        ]),
+        loadSession: () => Promise.resolve(null),
+        openPicker: () => resets.push("reset"),
+        restoreSession: () => false
+      }
+    );
+
+    expect(handled).toBe(false);
+    expect(resets).toEqual(["reset"]);
+    expect(messages).toEqual([]);
+  });
+
+  it("restores the selected saved session by prefix", async () => {
+    const messages: string[] = [];
+    const restored: string[] = [];
+    const handled = await handleResumeCommand(
+      "/resume session-ne",
+      {
+        addSystemMessage: (text: string) => messages.push(text)
+      } as unknown as ReturnType<typeof useChatController>,
+      {
+        listSessionSummaries: () => Promise.resolve([
+          {
+            id: "session-new",
+            label: "New conversation",
+            preview: "Fix tests",
+            threadId: "thread-a",
+            updatedAt: "2026-01-01T02:00:00.000Z"
+          }
+        ]),
+        loadSession: () => Promise.resolve({
+          id: "session-new",
+          messages: [{ id: "user:1", kind: "user", text: "Fix tests", timestamp: "2026-01-01T00:00:00.000Z" }],
+          threadId: "thread-a",
+          updatedAt: "2026-01-01T02:00:00.000Z"
+        }),
+        openPicker: () => {},
+        restoreSession: (session) => {
+          restored.push(session.id);
+          return true;
+        }
+      }
     );
 
     expect(handled).toBe(true);
-    expect(switched).toEqual(["thread-new"]);
-    expect(messages[0]).toBe("reset");
-    expect(messages[1]).toContain("Resumed thread thread-n");
+    expect(restored).toEqual(["session-new"]);
+    expect(messages).toEqual([]);
+  });
+});
+
+describe("inbox slash command helper", () => {
+  it("shows the selected pending inbox item by prefix", () => {
+    process.env.USERNAME = "local-user";
+    const messages: string[] = [];
+    const item = createInboxRecord("inbox-12345678", {
+      actionHint: "talon memory review-queue accept inbox-12345678",
+      category: "memory_suggestion",
+      summary: "A project memory suggestion is ready."
+    });
+    const handled = handleInboxCommand(
+      "/inbox show inbox-12",
+      { addSystemMessage: (text) => messages.push(text) },
+      {
+        listInbox: () => [item],
+        showInboxItem: () => item
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(messages[0]).toContain("Inbox inbox-12345678 | Memory suggestion");
+    expect(messages[0]).toContain("memory_suggestion | action_required | pending");
+    expect(messages[0]).toContain("Next: talon memory review-queue accept inbox-12345678");
+  });
+
+  it("reports missing and ambiguous inbox prefixes", () => {
+    process.env.USERNAME = "local-user";
+    const messages: string[] = [];
+    const items = [
+      createInboxRecord("inbox-aaa11111"),
+      createInboxRecord("inbox-aaa22222", { title: "Second inbox" })
+    ];
+    const service = {
+      listInbox: () => items,
+      showInboxItem: () => null
+    };
+
+    handleInboxCommand("/inbox show inbox-missing", { addSystemMessage: (text) => messages.push(text) }, service);
+    handleInboxCommand("/inbox show inbox-aaa", { addSystemMessage: (text) => messages.push(text) }, service);
+
+    expect(messages[0]).toContain("No pending inbox item matched prefix");
+    expect(messages[1]).toContain("Ambiguous inbox prefix");
   });
 });
 
@@ -1253,6 +1373,35 @@ function createApprovalRecord(): ApprovalRecord {
     taskId: "task-001",
     toolCallId: "call-001",
     toolName: "file_write"
+  };
+}
+
+function createInboxRecord(
+  inboxId: string,
+  overrides: Partial<Pick<InboxItem, "actionHint" | "category" | "summary" | "title">> = {}
+): InboxItem {
+  return {
+    actionHint: overrides.actionHint ?? null,
+    approvalId: null,
+    bodyMd: null,
+    category: overrides.category ?? "decision_requested",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    dedupKey: null,
+    doneAt: null,
+    experienceId: null,
+    inboxId,
+    metadata: {},
+    scheduleRunId: null,
+    severity: "action_required",
+    skillId: null,
+    sourceTraceId: null,
+    status: "pending",
+    summary: overrides.summary ?? "Choose a next step.",
+    taskId: null,
+    threadId: null,
+    title: overrides.title ?? "Memory suggestion",
+    updatedAt: "2026-01-01T01:00:00.000Z",
+    userId: "local-user"
   };
 }
 
@@ -1355,22 +1504,6 @@ function createScheduleRunRecord(runId: string, scheduleId: string): ScheduleRun
     taskId: "task-run",
     threadId: null,
     trigger: "manual"
-  };
-}
-
-function createThreadRecord(threadId: string, title: string, updatedAt: string): ThreadRecord {
-  return {
-    agentProfileId: "executor",
-    archivedAt: null,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    cwd: process.cwd(),
-    metadata: {},
-    ownerUserId: "local-user",
-    providerName: "mock",
-    status: "active",
-    threadId,
-    title,
-    updatedAt
   };
 }
 

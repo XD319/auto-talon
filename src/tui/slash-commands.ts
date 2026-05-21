@@ -9,6 +9,7 @@ export interface SlashSuggestion {
 export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/today", "today", "Show today's summary"),
   suggestion("/inbox", "inbox", "List pending inbox items"),
+  suggestion("/inbox show ", "inbox-show", "Show inbox details by prefix"),
   suggestion("/thread", "thread", "Thread commands"),
   suggestion("/thread new ", "thread-new", "Create and switch to a new thread"),
   suggestion("/thread list", "thread-list", "List active threads"),
@@ -31,7 +32,7 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/schedule runs ", "schedule-runs", "List recent schedule runs"),
   suggestion("/schedule remove ", "schedule-remove", "Archive a schedule"),
   suggestion("/help", "help", "Show help"),
-  suggestion("/resume", "resume", "Resume the latest active thread"),
+  suggestion("/resume", "resume", "Resume a saved session"),
   suggestion("/ops", "ops", "Open ops guidance"),
   suggestion("/status", "status", "Show TUI status"),
   suggestion("/clear", "clear", "Clear conversation and exit active thread"),

@@ -4,6 +4,7 @@ import { buildTodaySummary, type TodaySummaryViewModel } from "./today-summary.j
 
 export interface HomeSummaryAction {
   detail: string;
+  inboxId?: string;
   key: string;
   label: string;
   threadId?: string | null;
@@ -19,6 +20,7 @@ export interface HomeSummaryThreadCard {
 export interface HomeSummaryEntry {
   detail: string;
   headline?: string;
+  inboxId?: string;
   key: string;
   kind: "action" | "thread";
   label: string;
@@ -57,9 +59,10 @@ export function buildHomeSummary(
   options: { activeThreadId?: string | null } = {}
 ): HomeSummaryViewModel {
   const summary = buildTodaySummary(service as TuiRuntimeService, options);
+  const actionableInboxItem = findActionableInboxItem(service, summary.userId);
   const recentThreads = buildRecentThreadCards(service, summary);
-  const recommendedThread = buildRecommendedThreadCard(service, summary, recentThreads);
-  const actions = buildRecommendedActions(service, summary);
+  const recommendedThread = buildRecommendedThreadCard(service, summary, recentThreads, actionableInboxItem);
+  const actions = buildRecommendedActions(service, summary, actionableInboxItem);
   const primaryEntry = listHomeSummaryEntries({
     actions,
     agenda: [],
@@ -72,7 +75,7 @@ export function buildHomeSummary(
   return {
     actions,
     agenda: buildAgenda(service, summary, recommendedThread),
-    assistantHint: primaryEntry !== null ? "Use Up/Down and Enter to open an item." : "",
+    assistantHint: primaryEntry !== null ? "Type a request below, or use Up/Down and Enter to open a next step." : "",
     recentThreads,
     recommendedThread,
     title: ""
@@ -87,6 +90,7 @@ export function listHomeSummaryEntries(summary: HomeSummaryViewModel): HomeSumma
       key: action.key,
       kind: "action",
       label: action.label,
+      ...(action.inboxId !== undefined ? { inboxId: action.inboxId } : {}),
       ...(action.threadId !== undefined ? { threadId: action.threadId } : {})
     });
   }
@@ -116,10 +120,6 @@ function buildAgenda(
   if (approval !== undefined) {
     agenda.push(compactAgendaLine(`Approval needed: ${approval.toolName}`));
   }
-  const actionableInboxItem = summary.inbox.items.find(isActionableInboxItem);
-  if (actionableInboxItem !== undefined) {
-    agenda.push(compactAgendaLine(`Review: ${formatInboxDisplayLabel(service, actionableInboxItem)}`));
-  }
   const overdueRoutine = summary.dueRoutines.items[0];
   if (overdueRoutine !== undefined) {
     agenda.push(compactAgendaLine(`Routine ready: ${overdueRoutine.name}`));
@@ -136,7 +136,8 @@ function buildAgenda(
 
 function buildRecommendedActions(
   service: Pick<TuiRuntimeService, "showTask" | "showThread">,
-  summary: TodaySummaryViewModel
+  summary: TodaySummaryViewModel,
+  actionableInboxItem: InboxItem | null
 ): HomeSummaryAction[] {
   const actions: HomeSummaryAction[] = [];
   const approval = summary.pendingApprovals.items[0];
@@ -148,11 +149,12 @@ function buildRecommendedActions(
       threadId: service.showTask(approval.taskId).task?.threadId ?? null
     });
   }
-  const inboxItem = summary.inbox.items.find(isActionableInboxItem);
-  if (inboxItem !== undefined) {
+  const inboxItem = actionableInboxItem;
+  if (inboxItem !== null) {
     const inboxLabel = formatInboxDisplayLabel(service, inboxItem);
     actions.push({
       detail: formatInboxDetail(inboxItem),
+      inboxId: inboxItem.inboxId,
       key: "inbox",
       label: `Open inbox: ${inboxLabel}`,
       threadId: inboxItem.threadId
@@ -164,6 +166,13 @@ function buildRecommendedActions(
       detail: `Run or inspect ${routine.name}.`,
       key: "routine",
       label: "Open routine"
+    });
+  }
+  if (actions.length === 0) {
+    actions.push({
+      detail: "Describe what you want AutoTalon to do in the prompt below.",
+      key: "start",
+      label: "Start a task"
     });
   }
   return actions.slice(0, MAX_HOME_ENTRIES);
@@ -179,12 +188,13 @@ function buildRecentThreadCards(
 function buildRecommendedThreadCard(
   service: Pick<TuiRuntimeService, "showThread">,
   summary: TodaySummaryViewModel,
-  recentThreads: HomeSummaryThreadCard[]
+  recentThreads: HomeSummaryThreadCard[],
+  actionableInboxItem: InboxItem | null
 ): HomeSummaryThreadCard | null {
   const recommendedThreadId =
     summary.nextActions.items[0]?.threadId ??
     summary.commitments.items[0]?.threadId ??
-    summary.inbox.items[0]?.threadId ??
+    actionableInboxItem?.threadId ??
     recentThreads[0]?.threadId ??
     null;
 
@@ -229,13 +239,14 @@ function buildThreadCard(
   const headline =
     detail.state.currentObjective?.title ??
     detail.state.nextAction?.title ??
-    detail.inboxItems[0]?.title ??
+    detail.inboxItems.find(isUsefulThreadCardInboxItem)?.title ??
     thread.title;
+  const latestRun = detail.runs.at(-1);
   const suffix =
     detail.state.blockedReason ??
     detail.state.pendingDecision ??
     detail.state.nextAction?.title ??
-    (detail.runs[0]?.status !== undefined ? `recent run ${detail.runs[0].status}` : "ready to continue");
+    (latestRun !== undefined ? `recent run ${latestRun.status}` : "ready to continue");
 
   return {
     detail: summarizeText(humanizeRuntimeSummary(suffix), ENTRY_DETAIL_LENGTH),
@@ -261,6 +272,22 @@ function dedupeThreadCards(cards: HomeSummaryThreadCard[]): HomeSummaryThreadCar
 
 function isActionableInboxItem(item: InboxItem): boolean {
   return item.severity === "action_required" || item.severity === "warning" || item.category !== "task_completed";
+}
+
+function findActionableInboxItem(
+  service: Pick<TuiRuntimeService, "listInbox">,
+  userId: string
+): InboxItem | null {
+  return (
+    service
+      .listInbox({ status: "pending", userId })
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .find(isActionableInboxItem) ?? null
+  );
+}
+
+function isUsefulThreadCardInboxItem(item: InboxItem): boolean {
+  return isActionableInboxItem(item);
 }
 
 function formatInboxDisplayLabel(

@@ -5,6 +5,7 @@ import type {
   InboxItem,
   NextActionRecord,
   ScheduleRecord,
+  ThreadRunRecord,
   ThreadRecord
 } from "../../types/index.js";
 
@@ -182,6 +183,38 @@ export function formatThreadDetailForTui(
   ].join("\n");
 }
 
+export function formatThreadRecapForTui(
+  service: Pick<TuiRuntimeService, "showThread">,
+  threadId: string
+): string {
+  const detail = service.showThread(threadId);
+  if (detail.thread === null) {
+    return `Thread ${threadId} not found.`;
+  }
+
+  const recentRuns = [...detail.runs]
+    .filter(isConversationRecapRun)
+    .sort((left, right) => byIsoDesc(left.createdAt, right.createdAt))
+    .slice(0, 3)
+    .reverse();
+  const focusLines = formatThreadFocusLines(detail);
+  const lines = [`Thread ${detail.thread.threadId.slice(0, 8)} | ${detail.thread.title}`];
+
+  if (recentRuns.length === 0) {
+    lines.push("No previous conversation yet.");
+  } else {
+    lines.push(
+      formatPreviewSection("Previous conversation", recentRuns, (run) => formatRunRecapLine(run))
+    );
+  }
+
+  if (focusLines.length > 0) {
+    lines.push(`Current focus:\n${focusLines.map((line) => `- ${line}`).join("\n")}`);
+  }
+
+  return lines.join("\n");
+}
+
 function formatSection<TItem>(
   title: string,
   total: number,
@@ -211,6 +244,113 @@ function summarizeText(value: string, maxLength = 72): string {
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
+function formatRunRecapLine(run: ThreadRunRecord): string {
+  const output = threadRunFinalOutput(run);
+  const userLine = `You: ${summarizeText(run.input, 120)}`;
+  if (output !== null) {
+    return `${userLine}\n- AutoTalon: ${summarizeText(output, 160)}`;
+  }
+  return `${userLine}\n- AutoTalon: ${formatRunStatus(run.status)}`;
+}
+
+function threadRunFinalOutput(run: ThreadRunRecord): string | null {
+  const finalOutput = run.summary.finalOutput;
+  return typeof finalOutput === "string" && finalOutput.trim().length > 0 ? finalOutput : null;
+}
+
+function formatRunStatus(status: ThreadRunRecord["status"]): string {
+  switch (status) {
+    case "succeeded":
+      return "Completed.";
+    case "failed":
+      return "Stopped with an error.";
+    case "cancelled":
+      return "Cancelled.";
+    case "waiting_approval":
+      return "Waiting for approval.";
+    case "waiting_clarification":
+      return "Waiting for clarification.";
+    case "waiting_tool":
+      return "Waiting on a tool.";
+    case "running":
+      return "Still running.";
+    default:
+      return "Queued.";
+  }
+}
+
+function formatThreadFocusLines(
+  detail: ReturnType<TuiRuntimeService["showThread"]>
+): string[] {
+  if (detail.thread === null) {
+    return [];
+  }
+  const candidates: string[] = [];
+  if (detail.state.blockedReason !== null) {
+    candidates.push(`Blocked: ${summarizeText(detail.state.blockedReason, 120)}`);
+  }
+  if (
+    detail.state.currentObjective !== null &&
+    shouldShowFocusText(detail.state.currentObjective.title, [detail.thread.title], detail.runs)
+  ) {
+    candidates.push(`Objective: ${summarizeText(detail.state.currentObjective.title, 120)}`);
+  }
+  if (
+    detail.state.nextAction !== null &&
+    shouldShowFocusText(detail.state.nextAction.title, [detail.thread.title, detail.state.currentObjective?.title], detail.runs)
+  ) {
+    candidates.push(`Next: ${summarizeText(detail.state.nextAction.title, 120)}`);
+  }
+  if (
+    detail.state.pendingDecision !== null &&
+    shouldShowFocusText(
+      detail.state.pendingDecision,
+      [detail.thread.title, detail.state.currentObjective?.title, detail.state.nextAction?.title],
+      detail.runs
+    )
+  ) {
+    candidates.push(`Decision needed: ${summarizeText(detail.state.pendingDecision, 120)}`);
+  }
+  return candidates;
+}
+
+function isConversationRecapRun(run: ThreadRunRecord): boolean {
+  if (threadRunFinalOutput(run) !== null) {
+    return true;
+  }
+  return run.status === "failed" || run.status === "cancelled" || run.status === "waiting_approval" || run.status === "waiting_clarification";
+}
+
+function shouldShowFocusText(
+  value: string,
+  duplicateCandidates: Array<string | null | undefined>,
+  runs: ThreadRunRecord[]
+): boolean {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length === 0 || matchesThreadStateText(normalized, duplicateCandidates)) {
+    return false;
+  }
+  if (looksLikeAssistantMarkdownFragment(normalized) || appearsInRunOutput(normalized, runs)) {
+    return false;
+  }
+  return true;
+}
+
+function looksLikeAssistantMarkdownFragment(value: string): boolean {
+  return value.includes("**") || value.includes("##") || value.startsWith("- ") || value.startsWith("* ");
+}
+
+function appearsInRunOutput(value: string, runs: ThreadRunRecord[]): boolean {
+  const needle = normalizeForContentMatch(value);
+  if (needle.length < 12) {
+    return false;
+  }
+  return runs.some((run) => {
+    const output = threadRunFinalOutput(run);
+    return output !== null && normalizeForContentMatch(output).includes(needle);
+  });
+}
+
 function isUsefulThreadInboxItem(item: InboxItem): boolean {
   if (item.category !== "task_completed") {
     return true;
@@ -229,6 +369,14 @@ function matchesThreadStateText(value: string, candidates: Array<string | null |
 
 function normalizeForComparison(value: string): string {
   return value.replace(/\s+/gu, " ").trim().toLowerCase();
+}
+
+function normalizeForContentMatch(value: string): string {
+  return value
+    .replace(/[*_`#>-]+/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function compareNextAction(

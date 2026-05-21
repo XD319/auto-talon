@@ -52,20 +52,9 @@ export function normalizeStatusLabel(label: string, maxLength = 72): string {
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3)}...`;
 }
 
-export function buildTokenMetrics(
-  inputTokens: number,
-  outputTokens: number,
-  contextPercent: number,
-  estimatedCostUsd: number
-): StatusItem[] {
+export function buildContextMetric(contextPercent: number): StatusItem {
   const contextTone = contextPercent < 50 ? "success" : contextPercent < 80 ? "warn" : "danger";
-  const costLabel = estimatedCostUsd < 0.000_5 ? "~$0.00" : `~$${estimatedCostUsd.toFixed(4)}`;
-  return [
-    { label: `in ${inputTokens}`, tone: "muted" },
-    { label: `out ${outputTokens}`, tone: "muted" },
-    { label: `ctx ${contextPercent}%`, tone: contextTone },
-    { label: costLabel, tone: contextPercent >= 80 ? "warn" : "muted" }
-  ];
+  return { label: `ctx ${contextPercent}%`, tone: contextTone };
 }
 
 function statusToneToColor(tone: StatusTone): string {

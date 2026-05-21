@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildStatusSegments, normalizeStatusLabel } from "../src/tui/components/status-bar.js";
+import { buildContextMetric, buildStatusSegments, normalizeStatusLabel } from "../src/tui/components/status-bar.js";
 
 describe("status bar helpers", () => {
   it("prioritizes primary and metrics before details and hints", () => {
@@ -17,5 +17,10 @@ describe("status bar helpers", () => {
   it("truncates overly long labels with ellipsis", () => {
     const label = normalizeStatusLabel("abcdefghijklmnopqrstuvwxyz", 10);
     expect(label).toBe("abcdefg...");
+  });
+
+  it("formats context as the compact token metric", () => {
+    expect(buildContextMetric(42)).toEqual({ label: "ctx 42%", tone: "success" });
+    expect(buildContextMetric(80)).toEqual({ label: "ctx 80%", tone: "danger" });
   });
 });

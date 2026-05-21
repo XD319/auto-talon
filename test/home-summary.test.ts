@@ -1,13 +1,8 @@
-import { PassThrough } from "node:stream";
-
-import { render } from "ink";
-import React from "react";
 import { describe, expect, it } from "vitest";
 
 import type { AgentApplicationService } from "../src/runtime/index.js";
-import { HomeSummary } from "../src/tui/components/home-summary.js";
 import { buildHomeSummary, listHomeSummaryEntries } from "../src/tui/view-models/home-summary.js";
-import { formatThreadDetailForTui } from "../src/tui/view-models/today-summary.js";
+import { formatThreadDetailForTui, formatThreadRecapForTui } from "../src/tui/view-models/today-summary.js";
 import type {
   ApprovalRecord,
   CommitmentRecord,
@@ -52,37 +47,31 @@ describe("home summary", () => {
       "Release checklist",
       "Research notes"
     ]);
-    expect(summary.assistantHint).toBe("Use Up/Down and Enter to open an item.");
+    expect(summary.assistantHint).toBe("Type a request below, or use Up/Down and Enter to open a next step.");
   });
 
-  it("does not render a home panel when nothing is open", async () => {
+  it("builds a start path when nothing is open", () => {
     const summary = buildHomeSummary(createEmptyServiceStub());
 
     expect(summary.recommendedThread).toBeNull();
     expect(summary.recentThreads).toEqual([]);
-    expect(summary.actions).toEqual([]);
+    expect(summary.actions).toEqual([
+      {
+        detail: "Describe what you want AutoTalon to do in the prompt below.",
+        key: "start",
+        label: "Start a task"
+      }
+    ]);
     expect(summary.agenda).toEqual([]);
-    expect(listHomeSummaryEntries(summary)).toEqual([]);
+    expect(listHomeSummaryEntries(summary)).toMatchObject([
+      {
+        detail: "Describe what you want AutoTalon to do in the prompt below.",
+        key: "start",
+        kind: "action",
+        label: "Start a task"
+      }
+    ]);
 
-    const stdout = new PassThrough();
-    let output = "";
-    stdout.on("data", (chunk: Buffer | string) => {
-      output += chunk.toString();
-    });
-    const app = render(React.createElement(HomeSummary, { summary }), {
-      interactive: false,
-      patchConsole: false,
-      stdout: stdout as unknown as NodeJS.WriteStream
-    });
-
-    try {
-      await waitForInk();
-      expect(output).not.toContain("Today at a glance");
-      expect(output).not.toContain("Open items");
-    } finally {
-      app.unmount();
-      await app.waitUntilExit();
-    }
   });
 
   it("uses the top next action as the attention fallback when no urgent items exist", () => {
@@ -101,9 +90,14 @@ describe("home summary", () => {
     };
     const summary = buildHomeSummary(service);
 
-    expect(summary.actions).toEqual([]);
+    expect(summary.actions).toMatchObject([
+      {
+        key: "start",
+        label: "Start a task"
+      }
+    ]);
     expect(summary.agenda[0]).toBe("Continue: Draft the plan outline");
-    expect(listHomeSummaryEntries(summary)[0]).toMatchObject({
+    expect(listHomeSummaryEntries(summary).find((entry) => entry.kind === "thread")).toMatchObject({
       kind: "thread",
       label: "Continue Wrap the planning task",
       threadId: "thread-a"
@@ -158,10 +152,11 @@ describe("home summary", () => {
     };
     const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
 
-    expect(summary.agenda).toContain("Review: Quarterly planning - Decision requested");
+    expect(summary.agenda).not.toContain("Needs attention: Quarterly planning - Decision requested");
     expect(summary.actions.find((item) => item.key === "inbox")).toMatchObject(
       {
         detail: "Decision needed: Choose whether to publish the draft.",
+        inboxId: "inbox-action",
         key: "inbox",
         label: "Open inbox: Quarterly planning - Decision requested",
         threadId: "thread-a"
@@ -221,7 +216,43 @@ describe("home summary", () => {
     const summary = buildHomeSummary(service);
 
     expect(summary.agenda).toEqual([]);
-    expect(summary.actions).toEqual([]);
+    expect(summary.actions).toMatchObject([
+      {
+        key: "start",
+        label: "Start a task"
+      }
+    ]);
+  });
+
+  it("finds actionable inbox items beyond the completed items kept in the today preview", () => {
+    process.env.USERNAME = "local-user";
+    const completedItems = Array.from({ length: 6 }, (_, index) => ({
+      ...createInbox(`completed-${index}`, "Task completed", "thread-a"),
+      updatedAt: `2026-01-01T0${index + 2}:00:00.000Z`
+    }));
+    const service = {
+      ...createServiceStub(),
+      listInbox() {
+        return [
+          ...completedItems,
+          {
+            ...createInbox("blocked-old", "Task blocked", "thread-a", {
+              category: "task_blocked",
+              severity: "warning",
+              summary: "Need a decision before continuing."
+            }),
+            updatedAt: "2026-01-01T01:00:00.000Z"
+          }
+        ];
+      }
+    };
+    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+
+    expect(summary.agenda).not.toContain("Needs attention: Quarterly planning");
+    expect(summary.actions.find((item) => item.key === "inbox")).toMatchObject({
+      inboxId: "blocked-old",
+      label: "Open inbox: Quarterly planning"
+    });
   });
 
   it("humanizes provider and path errors in quick actions", () => {
@@ -242,9 +273,48 @@ describe("home summary", () => {
     const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
     const inboxAction = summary.actions.find((item) => item.key === "inbox");
 
-    expect(summary.agenda).toContain("Review: Quarterly planning");
+    expect(summary.agenda).not.toContain("Needs attention: Quarterly planning");
     expect(inboxAction?.label).toBe("Open inbox: Quarterly planning");
     expect(inboxAction?.detail).toBe("Blocked: A directory was used where a file path was expected.");
+  });
+
+  it("keeps thread cards on the latest run and away from completed inbox headlines", () => {
+    process.env.USERNAME = "local-user";
+    const thread = createThread("thread-card", "Card thread", "2026-01-01T04:00:00.000Z");
+    const service = {
+      ...createEmptyServiceStub(),
+      listThreads() {
+        return [thread];
+      },
+      showThread() {
+        return {
+          commitments: [],
+          inboxItems: [createInbox("completed-card", "Task completed", thread.threadId)],
+          lineage: [],
+          nextActions: [],
+          runs: [
+            createThreadRun("run-old", thread.threadId, 1, "failed", "Old failure"),
+            createThreadRun("run-new", thread.threadId, 2, "waiting_approval", "Latest wait")
+          ],
+          scheduleRuns: [],
+          state: {
+            activeNextActions: [],
+            blockedReason: null,
+            currentObjective: null,
+            nextAction: null,
+            openCommitments: [],
+            pendingDecision: null
+          },
+          thread
+        };
+      }
+    };
+    const threadEntry = listHomeSummaryEntries(buildHomeSummary(service)).find((entry) => entry.kind === "thread");
+
+    expect(threadEntry).toMatchObject({
+      detail: "recent run waiting_approval",
+      label: "Continue Card thread"
+    });
   });
 
   it("keeps assistant narrative out of agenda continuation labels", () => {
@@ -273,7 +343,7 @@ describe("home summary", () => {
     const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
 
     expect(summary.agenda[0]).toBe("Continue: Wrap the planning task");
-    expect(listHomeSummaryEntries(summary)[0]).toMatchObject({
+    expect(listHomeSummaryEntries(summary).find((entry) => entry.kind === "thread")).toMatchObject({
       kind: "thread",
       label: "Continue Wrap the planning task",
       threadId: "thread-a"
@@ -333,6 +403,113 @@ describe("home summary", () => {
     expect(detail).toContain("recent schedules:");
   });
 
+  it("formats thread selection as a conversation recap by default", () => {
+    const baseService = createServiceStub();
+    const service = {
+      ...baseService,
+      showThread(threadId: string) {
+        const detail = baseService.showThread(threadId);
+        return {
+          ...detail,
+          runs: [
+            createThreadRun("run-2", threadId, 2, "succeeded", "Write the final answer", {
+              finalOutput: "The final answer is ready with concise next steps."
+            }),
+            createThreadRun("run-1", threadId, 1, "waiting_approval", "Need permission to write release notes")
+          ],
+          state: {
+            ...detail.state,
+            currentObjective: createCommitment("commitment-a", threadId),
+            nextAction: createNextAction("next-a", threadId, "Review the release notes")
+          }
+        };
+      }
+    };
+    const recap = formatThreadRecapForTui(service as AgentApplicationService, "thread-a");
+
+    expect(recap).toContain("Thread thread-a | Quarterly planning");
+    expect(recap).toContain("Previous conversation:");
+    expect(recap).toContain("- You: Need permission to write release notes");
+    expect(recap).toContain("- You: Write the final answer");
+    expect(recap).toContain("- AutoTalon: The final answer is ready with concise next steps.");
+    expect(recap.indexOf("- You: Need permission to write release notes")).toBeLessThan(
+      recap.indexOf("- You: Write the final answer")
+    );
+    expect(recap).toContain("Current focus:");
+    expect(recap).toContain("- Objective: Wrap the planning task");
+    expect(recap).toContain("- Next: Review the release notes");
+    expect(recap).not.toContain("counts:");
+    expect(recap).not.toContain("recent runs:");
+    expect(recap).not.toContain("recent schedules:");
+  });
+
+  it("omits duplicate focus lines from the thread recap", () => {
+    const baseService = createServiceStub();
+    const service = {
+      ...baseService,
+      showThread(threadId: string) {
+        const thread = createThread(threadId, "只回复：schedule-ok-from-feishu", "2026-01-01T02:00:00.000Z");
+        return {
+          commitments: [],
+          inboxItems: [],
+          lineage: [],
+          nextActions: [],
+          runs: [createThreadRun("run-a", threadId, 1, "succeeded", "只回复：schedule-ok-from-feishu")],
+          scheduleRuns: [],
+          state: {
+            activeNextActions: [],
+            blockedReason: null,
+            currentObjective: createCommitment("commitment-a", threadId, {
+              title: "只回复：schedule-ok-from-feishu"
+            }),
+            nextAction: null,
+            openCommitments: [],
+            pendingDecision: "只回复：schedule-ok-from-feishu"
+          },
+          thread
+        };
+      }
+    };
+    const recap = formatThreadRecapForTui(service as AgentApplicationService, "thread-a");
+
+    expect(recap).not.toContain("Current focus:");
+    expect(recap).not.toContain("Decision needed:");
+    expect(recap).not.toContain("Objective:");
+  });
+
+  it("keeps stale running runs and assistant fragments out of the recap", () => {
+    const baseService = createServiceStub();
+    const service = {
+      ...baseService,
+      showThread(threadId: string) {
+        const detail = baseService.showThread(threadId);
+        return {
+          ...detail,
+          runs: [
+            createThreadRun("run-2", threadId, 2, "running", "A stale in-progress run"),
+            createThreadRun("run-1", threadId, 1, "succeeded", "Check the forecast", {
+              finalOutput: "Weather status: sunny with a high of 29C."
+            })
+          ],
+          state: {
+            ...detail.state,
+            currentObjective: null,
+            nextAction: createNextAction("next-fragment", threadId, "Weather status**: sunny"),
+            pendingDecision: null
+          }
+        };
+      }
+    };
+    const recap = formatThreadRecapForTui(service as AgentApplicationService, "thread-a");
+
+    expect(recap).toContain("- You: Check the forecast");
+    expect(recap).toContain("- AutoTalon: Weather status: sunny with a high of 29C.");
+    expect(recap).not.toContain("A stale in-progress run");
+    expect(recap).not.toContain("Still running.");
+    expect(recap).not.toContain("Current focus:");
+    expect(recap).not.toContain("Weather status**");
+  });
+
   it("keeps completed notification noise and duplicate decisions out of thread details", () => {
     const baseService = createServiceStub();
     const service = {
@@ -366,10 +543,6 @@ describe("home summary", () => {
     expect(detail).toContain("- Need review [pending]");
   });
 });
-
-async function waitForInk(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
 
 function createServiceStub(): HomeServiceStub {
   const threads = [
@@ -619,7 +792,11 @@ function createInbox(
   };
 }
 
-function createCommitment(commitmentId: string, threadId: string): CommitmentRecord {
+function createCommitment(
+  commitmentId: string,
+  threadId: string,
+  overrides: Partial<Pick<CommitmentRecord, "summary" | "title">> = {}
+): CommitmentRecord {
   return {
     blockedReason: null,
     commitmentId,
@@ -632,10 +809,10 @@ function createCommitment(commitmentId: string, threadId: string): CommitmentRec
     source: "manual",
     sourceTraceId: null,
     status: "open",
-    summary: "Wrap the planning task",
+    summary: overrides.summary ?? "Wrap the planning task",
     taskId: null,
     threadId,
-    title: "Wrap the planning task",
+    title: overrides.title ?? "Wrap the planning task",
     updatedAt: "2026-01-01T01:00:00.000Z"
   };
 }
@@ -711,7 +888,8 @@ function createThreadRun(
   threadId: string,
   runNumber: number,
   status: ThreadRunRecord["status"],
-  input: string
+  input: string,
+  summary: ThreadRunRecord["summary"] = {}
 ): ThreadRunRecord {
   return {
     createdAt: `2026-01-01T0${runNumber}:00:00.000Z`,
@@ -721,7 +899,7 @@ function createThreadRun(
     runId,
     runNumber,
     status,
-    summary: {},
+    summary,
     taskId: `task-${runNumber}`,
     threadId
   };

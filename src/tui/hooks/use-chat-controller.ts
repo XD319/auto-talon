@@ -22,6 +22,7 @@ import {
   toTraceActivityMessage,
   type ChatMessage
 } from "../view-models/chat-messages.js";
+import type { PersistedChatSession } from "../session-store.js";
 import type { UiStatus } from "../ui-status.js";
 
 export interface UseChatControllerOptions {
@@ -78,6 +79,7 @@ export interface ChatController {
   requestInterrupt: () => boolean;
   resetVisibleChat: () => void;
   resetVisibleChatPreserveActiveThread: (statusLabel?: string) => void;
+  restoreSession: (session: PersistedChatSession) => void;
   runDurationLabel: string;
   statusLine: string;
   submitPrompt: (text: string) => boolean;
@@ -305,6 +307,16 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     [addSystemMessage]
   );
 
+  const resetTokenHudState = React.useCallback(() => {
+    tokenHudBaselineRef.current = { source: null, usage: null };
+    setTokenHud({
+      contextPercent: 0,
+      estimatedCostUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0
+    });
+  }, []);
+
   const clearConversation = React.useCallback(() => {
     setMessages([welcomeMessage]);
     setStatusLine("conversation cleared");
@@ -324,10 +336,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setSessionApprovalFingerprints([]);
     setFileEdits([]);
     setQueuedPrompts([]);
+    resetTokenHudState();
     setUsedMemoryCount(0);
     setActiveThreadId(null);
     stopTraceSubscription();
-  }, [stopTraceSubscription]);
+  }, [resetTokenHudState, stopTraceSubscription]);
 
   const resetVisibleChat = React.useCallback(() => {
     setMessages([welcomeMessage]);
@@ -347,10 +360,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     seenApprovalMessageIdsRef.current.clear();
     setFileEdits([]);
     setQueuedPrompts([]);
+    resetTokenHudState();
     setUsedMemoryCount(0);
     setActiveThreadId(null);
     stopTraceSubscription();
-  }, [stopTraceSubscription]);
+  }, [resetTokenHudState, stopTraceSubscription]);
 
   const resetVisibleChatPreserveActiveThread = React.useCallback((statusLabel = "thread selected") => {
     setMessages([welcomeMessage]);
@@ -369,9 +383,38 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     seenApprovalMessageIdsRef.current.clear();
     setFileEdits([]);
     setQueuedPrompts([]);
+    resetTokenHudState();
     setUsedMemoryCount(0);
     stopTraceSubscription();
-  }, [stopTraceSubscription]);
+  }, [resetTokenHudState, stopTraceSubscription]);
+
+  const restoreSession = React.useCallback(
+    (session: PersistedChatSession) => {
+      setMessages(session.messages.length > 0 ? session.messages : [welcomeMessage]);
+      setStatusLine("session resumed");
+      setUiStatus({
+        approvalLabel: null,
+        primaryLabel: "session resumed",
+        primaryTone: "muted",
+        runState: "idle",
+        taskLabel: null
+      });
+      setActiveTaskId(null);
+      setPendingApproval(null);
+      setPendingClarifyPrompt(null);
+      activeTaskIdRef.current = null;
+      activeThreadIdRef.current = session.threadId ?? null;
+      seenApprovalMessageIdsRef.current = collectApprovalMessageIds(session.messages);
+      setSessionApprovalFingerprints(session.sessionApprovalFingerprints ?? []);
+      setFileEdits([]);
+      setQueuedPrompts([]);
+      resetTokenHudState();
+      setUsedMemoryCount(0);
+      setActiveThreadId(session.threadId ?? null);
+      stopTraceSubscription();
+    },
+    [resetTokenHudState, stopTraceSubscription]
+  );
 
   const switchActiveThread = React.useCallback((threadId: string) => {
     activeThreadIdRef.current = threadId;
@@ -569,6 +612,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     (text: string): void => {
       submitInFlightRef.current = true;
       beginBusy();
+      startedAtRef.current = Date.now();
       setStatusLine("running");
       const taskId = randomUUID();
       setUiStatus({
@@ -1127,6 +1171,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     requestInterrupt,
     resetVisibleChat,
     resetVisibleChatPreserveActiveThread,
+    restoreSession,
     sessionApprovalFingerprints,
     answerPendingClarifyPrompt,
     cancelPendingClarifyPrompt,

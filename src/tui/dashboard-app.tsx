@@ -2,7 +2,7 @@ import React from "react";
 import { Box, Text, useApp, useInput } from "ink";
 
 import { Banner } from "./components/banner.js";
-import { normalizeStatusLabel, StatusBar } from "./components/status-bar.js";
+import { StatusBar } from "./components/status-bar.js";
 import { useDashboardController, nextPanel, previousPanel } from "./hooks/use-dashboard-controller.js";
 import {
   ApprovalPanel,
@@ -224,19 +224,11 @@ export function AgentTuiApp({
       </Box>
       <Box marginTop={1}>
         <StatusBar
-          details={[
-            `panel ${controller.selectedPanel}`,
-            `task ${controller.uiStatus.taskLabel ?? "none"}`,
-            `selected ${selectedTask === null ? "none" : normalizeStatusLabel(selectedTask.finalSummary, 56)}`
-          ]}
+          details={[`task ${controller.uiStatus.taskLabel ?? "none"}`]}
           hints={[
-            `1-${PANEL_ORDER.length} panels, Tab switch, [ ] task`,
-            "Arrows browse, a/d approval, r refresh, q quit"
-          ]}
-          metrics={[
-            { label: `running ${controller.snapshot.summary.runningTaskCount}`, tone: "accent" },
-            { label: `approvals ${controller.snapshot.summary.pendingApprovalCount}`, tone: "warn" },
-            { label: `failed ${controller.snapshot.summary.failedTaskCount}`, tone: "danger" }
+            controller.selectedPanel === "approvals"
+              ? "a/d approval, r refresh, q quit"
+              : "[ ] task, Tab switch, r refresh, q quit"
           ]}
           primary={{
             label: controller.uiStatus.primaryLabel,

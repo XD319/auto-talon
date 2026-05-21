@@ -4,7 +4,7 @@ import { Box, Text, useApp } from "ink";
 
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
-import type { ApprovalAllowScope } from "../types/index.js";
+import type { ApprovalAllowScope, InboxItem } from "../types/index.js";
 import {
   formatMemoryGuide,
   formatMemoryList,
@@ -12,15 +12,22 @@ import {
   formatMemorySuggestionQueue
 } from "../presentation/memory-formatters.js";
 import { Banner } from "./components/banner.js";
-import { HomeSummary } from "./components/home-summary.js";
 import { InputBox } from "./components/input-box.js";
 import { MessageStream } from "./components/message-stream.js";
 import { PromptZone } from "./components/prompt-zone.js";
-import { buildTokenMetrics, StatusBar } from "./components/status-bar.js";
+import { buildContextMetric, StatusBar } from "./components/status-bar.js";
+import { WelcomeHome } from "./components/welcome-home.js";
 import { editInExternalEditor } from "./external-editor.js";
 import { useChatController } from "./hooks/use-chat-controller.js";
 import { useTextInput } from "./hooks/use-text-input.js";
-import { listSessionIds, saveSession } from "./session-store.js";
+import {
+  listSessionIds,
+  listSessionSummaries,
+  loadSession,
+  saveSession,
+  type ChatSessionSummary,
+  type PersistedChatSession
+} from "./session-store.js";
 import {
   STATIC_SLASH_SUGGESTIONS,
   completeSlashCommand,
@@ -30,14 +37,11 @@ import {
 } from "./slash-commands.js";
 import { theme } from "./theme.js";
 import { displayChatMessages, type ChatMessage } from "./view-models/chat-messages.js";
-import {
-  buildHomeSummary,
-  listHomeSummaryEntries,
-  type HomeSummaryEntry
-} from "./view-models/home-summary.js";
+import { buildWelcomeHome, type WelcomeHomeEntry } from "./view-models/welcome-home.js";
 import {
   buildTodaySummary,
   formatThreadDetailForTui,
+  formatThreadRecapForTui,
   formatTodaySummary,
   resolveRuntimeUserId
 } from "./view-models/today-summary.js";
@@ -48,6 +52,7 @@ export interface ChatTuiAppProps {
   initialMessages?: ChatMessage[];
   initialSessionApprovalFingerprints?: string[];
   initialSessionId: string;
+  initialSessionTitle?: string;
   initialThreadId?: string;
   reviewerId: string;
   service: TuiRuntimeService;
@@ -55,6 +60,10 @@ export interface ChatTuiAppProps {
 
 interface ScheduleCommandController {
   activeThreadId: string | null;
+  addSystemMessage: (text: string) => void;
+}
+
+interface InboxCommandController {
   addSystemMessage: (text: string) => void;
 }
 
@@ -69,18 +78,20 @@ export function ChatTuiApp({
   initialMessages,
   initialSessionApprovalFingerprints,
   initialSessionId,
+  initialSessionTitle,
   initialThreadId,
   reviewerId,
   service
 }: ChatTuiAppProps): React.ReactElement {
   const { exit } = useApp();
-  const [sessionTitle, setSessionTitle] = React.useState("assistant");
+  const [sessionTitle, setSessionTitle] = React.useState(initialSessionTitle ?? "assistant");
   const [sessionId, setSessionId] = React.useState(initialSessionId);
   const [approvalSelectionIndex, setApprovalSelectionIndex] = React.useState(0);
   const [clarifySelectionIndex, setClarifySelectionIndex] = React.useState(0);
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
   const [liveScrollOffset, setLiveScrollOffset] = React.useState(0);
+  const [sessionSummaries, setSessionSummaries] = React.useState<ChatSessionSummary[]>([]);
   const historyRef = React.useRef<string[]>([]);
   const historyIndexRef = React.useRef<number | null>(null);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,14 +135,18 @@ export function ChatTuiApp({
     () => formatTodaySummary(buildTodaySummary(service, { activeThreadId: controller.activeThreadId })),
     [controller.activeThreadId, service]
   );
-  const homeSummary = React.useMemo(
-    () => buildHomeSummary(service, { activeThreadId: controller.activeThreadId }),
-    [controller.activeThreadId, service]
+  const welcomeHome = React.useMemo(
+    () => buildWelcomeHome(sessionSummaries, sessionId),
+    [sessionId, sessionSummaries]
   );
-  const homeEntries = React.useMemo(
-    () => listHomeSummaryEntries(homeSummary),
-    [homeSummary]
-  );
+  const homeEntries = welcomeHome.entries;
+  const refreshSessionSummaries = React.useCallback(() => {
+    void listSessionSummaries(config.workspaceRoot).then(setSessionSummaries);
+  }, [config.workspaceRoot]);
+
+  React.useEffect(() => {
+    refreshSessionSummaries();
+  }, [refreshSessionSummaries, sessionId]);
 
   React.useEffect(() => {
     if (saveTimerRef.current !== null) {
@@ -145,16 +160,17 @@ export function ChatTuiApp({
         id: sessionId,
         messages: controller.messages,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
+        title: sessionTitle,
         ...(controller.activeThreadId !== null ? { threadId: controller.activeThreadId } : {}),
         updatedAt: new Date().toISOString()
-      });
+      }).then(refreshSessionSummaries);
     }, 600);
     return () => {
       if (saveTimerRef.current !== null) {
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [config.workspaceRoot, controller.activeThreadId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, sessionId]);
+  }, [config.workspaceRoot, controller.activeThreadId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, refreshSessionSummaries, sessionId, sessionTitle]);
 
   React.useEffect(() => {
     if (controller.pendingApproval !== null) {
@@ -268,52 +284,33 @@ export function ChatTuiApp({
     [slashSuggestions]
   );
 
-  const openHomeSummaryThread = React.useCallback(
-    (threadId: string) => {
-      const detail = service.showThread(threadId);
-      if (detail.thread === null) {
-        controller.addSystemMessage(`Thread ${threadId} not found.`);
-        return;
+  const restoreSession = React.useCallback(
+    (session: PersistedChatSession): boolean => {
+      if (controller.busy || controller.pendingApproval !== null || controller.pendingClarifyPrompt !== null) {
+        controller.addSystemMessage("Finish the active task, approval, or clarification before resuming another session.");
+        return false;
       }
-      controller.switchActiveThread(threadId);
-      controller.resetVisibleChatPreserveActiveThread("thread selected");
-      controller.addSystemMessage(
-        `Switched active thread to ${detail.thread.threadId.slice(0, 8)} | ${detail.thread.title}`
-      );
-      controller.addSystemMessage(formatThreadDetailForTui(service, threadId));
+      controller.restoreSession(session);
+      setSessionId(session.id);
+      setSessionTitle(session.title ?? "assistant");
+      setHomeSelectionIndex(0);
+      return true;
     },
-    [controller, service]
+    [controller]
   );
 
-  const runHomeSummaryEntry = React.useCallback(
-    (entry: HomeSummaryEntry) => {
-      if (entry.kind === "thread" && typeof entry.threadId === "string" && entry.threadId.length > 0) {
-        openHomeSummaryThread(entry.threadId);
-        return;
-      }
-
-      if (entry.key === "approval" || entry.key === "inbox") {
-        if (typeof entry.threadId === "string" && entry.threadId.length > 0) {
-          openHomeSummaryThread(entry.threadId);
+  const runWelcomeEntry = React.useCallback(
+    (entry: WelcomeHomeEntry) => {
+      void loadSession(config.workspaceRoot, entry.sessionId).then((session) => {
+        if (session === null) {
+          controller.addSystemMessage(`Session ${entry.sessionId} not found.`);
+          refreshSessionSummaries();
           return;
         }
-        controller.addSystemMessage(`No thread is linked to ${entry.label.toLowerCase()} yet.`);
-        return;
-      }
-
-      if (entry.key === "routine") {
-        handleScheduleCommand("/schedule list active", controller, service, {
-          cwd,
-          providerName: config.provider.name
-        });
-        return;
-      }
-
-      if (entry.key === "start") {
-        controller.addSystemMessage("Type a request in plain language to start a new task.");
-      }
+        restoreSession(session);
+      });
     },
-    [config.provider.name, controller, cwd, openHomeSummaryThread, service]
+    [config.workspaceRoot, controller, refreshSessionSummaries, restoreSession]
   );
 
   const handleSlashCommand = React.useCallback(
@@ -326,7 +323,7 @@ export function ChatTuiApp({
         controller.addSystemMessage(
           [
             "Most used: /resume /today /inbox /thread new <title> /schedule create <when> | <prompt>",
-            "Workflow: /thread [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
+            "Workflow: /resume [session] /inbox [show] /thread [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
             "Session: /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | PgUp/PgDn live scroll",
@@ -338,7 +335,21 @@ export function ChatTuiApp({
       }
 
       if (text === "/resume" || text.startsWith("/resume ")) {
-        return handleResumeCommand(text, controller, service);
+        void handleResumeCommand(text, controller, {
+          loadSession: (id) => loadSession(config.workspaceRoot, id),
+          listSessionSummaries: () => listSessionSummaries(config.workspaceRoot),
+          openPicker: () => {
+            controller.resetVisibleChat();
+            setSessionTitle("assistant");
+            setSessionId(randomUUID());
+          },
+          restoreSession
+        }).then((resumed) => {
+          if (!resumed) {
+            refreshSessionSummaries();
+          }
+        });
+        return true;
       }
 
       if (text === "/today") {
@@ -346,20 +357,8 @@ export function ChatTuiApp({
         return true;
       }
 
-      if (text === "/inbox") {
-        const userId = resolveRuntimeUserId();
-        const items = service
-          .listInbox({ status: "pending", userId })
-          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-          .slice(0, 20);
-        controller.addSystemMessage(
-          items.length === 0
-            ? `Inbox pending (user=${userId}): none`
-            : `Inbox pending (user=${userId}, showing ${items.length}):\n${items
-                .map((item) => `- ${item.inboxId.slice(0, 8)} | ${item.title} [${item.status}]`)
-                .join("\n")}`
-        );
-        return true;
+      if (text === "/inbox" || text.startsWith("/inbox ")) {
+        return handleInboxCommand(text, controller, service);
       }
 
       if (text.startsWith("/thread")) {
@@ -559,7 +558,9 @@ export function ChatTuiApp({
       config.workspaceRoot,
       controller,
       cwd,
+      refreshSessionSummaries,
       reviewerId,
+      restoreSession,
       service,
       sessionId,
       sessionTitle
@@ -596,7 +597,7 @@ export function ChatTuiApp({
     onHomeSummarySubmit: () => {
       const entry = homeEntries[homeSelectionIndex];
       if (entry !== undefined) {
-        runHomeSummaryEntry(entry);
+        runWelcomeEntry(entry);
       }
     },
     onImagePasteAttempt: () => {
@@ -710,6 +711,32 @@ export function ChatTuiApp({
     }
   }, [controller.pendingApproval?.approvalId, controller.pendingClarifyPrompt?.promptId]);
 
+  const hasBlockingPrompt = controller.pendingApproval !== null || controller.pendingClarifyPrompt !== null;
+  const statusDetails = hasBlockingPrompt
+    ? []
+    : [
+        ...(controller.uiStatus.runState === "running" ? [controller.runDurationLabel] : []),
+        ...(controller.uiStatus.runState !== "running" && controller.activeThreadId !== null
+          ? [`thread ${controller.activeThreadId.slice(0, 8)}`]
+          : [])
+      ];
+  const statusHint =
+    controller.pendingClarifyPrompt !== null
+      ? "Arrows choose, Tab custom, Enter submit"
+      : controller.pendingApproval !== null
+        ? "1 once, 2 session, 3 always, 4 deny"
+        : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
+          ? "Up/Down + Enter resume"
+          : "";
+  const statusMetrics = hasBlockingPrompt
+    ? []
+    : [
+        buildContextMetric(controller.tokenHud.contextPercent),
+        ...(controller.usedMemoryCount > 0
+          ? [{ label: `mem ${controller.usedMemoryCount}`, tone: "accent" as const }]
+          : [])
+      ];
+
   return (
     <Box flexDirection="column">
       <Banner
@@ -719,13 +746,7 @@ export function ChatTuiApp({
       />
       <Box flexDirection="column">
         {showTodaySummary ? (
-          homeEntries.length > 0 || homeSummary.agenda.length > 0 ? (
-            <HomeSummary selectedIndex={homeSelectionIndex} summary={homeSummary} />
-          ) : (
-            <Text color={theme.muted}>
-              Welcome to your AutoTalon personal assistant. Type a request and press Enter to start.
-            </Text>
-          )
+          <WelcomeHome selectedIndex={homeSelectionIndex} summary={welcomeHome} />
         ) : visibleTranscriptMessages.length > 0 ? (
           <MessageStream messages={visibleTranscriptMessages} />
         ) : (
@@ -772,37 +793,41 @@ export function ChatTuiApp({
       </Box>
       <Box>
         <StatusBar
-          details={[
-            ...(controller.activeThreadId !== null ? [`thread ${controller.activeThreadId.slice(0, 8)}`] : []),
-            `elapsed ${controller.runDurationLabel}`
-          ]}
-          hints={[
-            controller.pendingClarifyPrompt !== null
-              ? "Arrows choose, Tab custom, Enter submit"
-              : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
-                ? "Type a request, /help commands, Up/Down + Enter open item"
-              : controller.hasPendingApproval
-                ? "1 once, 2 session, 3 always, 4 deny"
-                : "Enter send, /help commands"
-          ]}
-          metrics={buildTokenMetrics(
-            controller.tokenHud.inputTokens,
-            controller.tokenHud.outputTokens,
-            controller.tokenHud.contextPercent,
-            controller.tokenHud.estimatedCostUsd
-          ).concat(
-            controller.usedMemoryCount > 0
-              ? [{ label: `Used memory ${controller.usedMemoryCount}`, tone: "accent" as const }]
-              : []
-          )}
+          details={statusDetails}
+          hints={[statusHint]}
+          metrics={statusMetrics}
           primary={{
-            label: controller.uiStatus.primaryLabel,
+            label: formatChatStatusLabel(controller.uiStatus.primaryLabel, {
+              pendingApprovalToolName: controller.pendingApproval?.toolName ?? null,
+              pendingClarifyPrompt: controller.pendingClarifyPrompt !== null,
+              runState: controller.uiStatus.runState
+            }),
             tone: controller.uiStatus.primaryTone
           }}
         />
       </Box>
     </Box>
   );
+}
+
+function formatChatStatusLabel(
+  label: string,
+  state: {
+    pendingApprovalToolName: string | null;
+    pendingClarifyPrompt: boolean;
+    runState: string;
+  }
+): string {
+  if (state.pendingApprovalToolName !== null) {
+    return `approval: ${state.pendingApprovalToolName}`;
+  }
+  if (state.pendingClarifyPrompt) {
+    return "clarify";
+  }
+  if (state.runState === "running") {
+    return "running";
+  }
+  return label;
 }
 
 function shortenPath(value: string, maxLength: number): string {
@@ -863,6 +888,16 @@ function buildDynamicSlashSuggestions(
         label: `/thread ${parsed.args[0]} ${item.threadId.slice(0, 8)}`,
         rank: 1
       }));
+  }
+
+  if (parsed.command === "/inbox" && parsed.args[0] === "show") {
+    return service.listInbox({ status: "pending", userId }).map((item) => ({
+      description: item.title,
+      insertText: `/inbox show ${item.inboxId.slice(0, 8)}`,
+      key: `inbox:${item.inboxId}`,
+      label: `/inbox show ${item.inboxId.slice(0, 8)}`,
+      rank: 1
+    }));
   }
 
   if (parsed.command === "/schedule" && (parsed.args[0] === "pause" || parsed.args[0] === "resume")) {
@@ -1020,6 +1055,79 @@ function handleMemoryCommand(
   return true;
 }
 
+export function handleInboxCommand(
+  text: string,
+  controller: InboxCommandController,
+  service: Pick<TuiRuntimeService, "listInbox" | "showInboxItem">
+): boolean {
+  const parsed = parseSlashInput(text);
+  if (parsed.command !== "/inbox") {
+    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
+    return true;
+  }
+
+  const userId = resolveRuntimeUserId();
+  const pendingItems = service
+    .listInbox({ status: "pending", userId })
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const sub = parsed.args[0] ?? "";
+  if (sub.length === 0) {
+    const items = pendingItems.slice(0, 20);
+    controller.addSystemMessage(
+      items.length === 0
+        ? `Inbox pending (user=${userId}): none`
+        : `Inbox pending (user=${userId}, showing ${items.length}):\n${items
+            .map((item) => `- ${item.inboxId.slice(0, 8)} | ${item.title} [${item.status}]`)
+            .join("\n")}`
+    );
+    return true;
+  }
+
+  if (sub !== "show") {
+    controller.addSystemMessage("Usage: /inbox | /inbox show <inbox-id-prefix>");
+    return true;
+  }
+
+  const prefix = parsed.args[1] ?? "";
+  if (prefix.length === 0) {
+    controller.addSystemMessage("Usage: /inbox show <inbox-id-prefix>");
+    return true;
+  }
+  const matches = pendingItems.filter((item) => item.inboxId.startsWith(prefix));
+  if (matches.length !== 1) {
+    controller.addSystemMessage(
+      matches.length === 0
+        ? `No pending inbox item matched prefix '${prefix}'.`
+        : `Ambiguous inbox prefix '${prefix}':\n${matches
+            .map((item) => `- ${item.inboxId.slice(0, 8)} | ${item.title}`)
+            .join("\n")}`
+    );
+    return true;
+  }
+  const item = service.showInboxItem(matches[0]!.inboxId);
+  controller.addSystemMessage(item === null ? `Inbox item ${matches[0]!.inboxId} not found.` : formatInboxDetailForTui(item));
+  return true;
+}
+
+function formatInboxDetailForTui(item: InboxItem): string {
+  const links = [
+    item.threadId === null ? null : `thread=${item.threadId}`,
+    item.taskId === null ? null : `task=${item.taskId}`,
+    item.approvalId === null ? null : `approval=${item.approvalId}`,
+    item.scheduleRunId === null ? null : `schedule_run=${item.scheduleRunId}`,
+    item.experienceId === null ? null : `experience=${item.experienceId}`,
+    item.skillId === null ? null : `skill=${item.skillId}`
+  ].filter((value): value is string => value !== null);
+  return [
+    `Inbox ${item.inboxId} | ${item.title}`,
+    `${item.category} | ${item.severity} | ${item.status}`,
+    `Summary: ${item.summary}`,
+    ...(item.bodyMd !== null && item.bodyMd.trim().length > 0 ? [`Body:\n${item.bodyMd}`] : []),
+    ...(item.actionHint !== null && item.actionHint.trim().length > 0 ? [`Next: ${item.actionHint}`] : []),
+    ...(links.length > 0 ? [`Links: ${links.join(" | ")}`] : [])
+  ].join("\n");
+}
+
 function handleThreadCommand(text: string, controller: ReturnType<typeof useChatController>, service: TuiRuntimeService): boolean {
   const parsed = parseSlashInput(text);
   const sub = parsed.args[0] ?? "summary";
@@ -1033,7 +1141,7 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
     const threadId = controller.createAndActivateThread(title);
     controller.resetVisibleChatPreserveActiveThread("thread created");
     controller.addSystemMessage(`Switched to new thread ${threadId.slice(0, 8)} | ${title}`);
-    controller.addSystemMessage(formatThreadDetailForTui(service, threadId));
+    controller.addSystemMessage(formatThreadRecapForTui(service, threadId));
     return true;
   }
 
@@ -1062,7 +1170,7 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
     controller.switchActiveThread(match.threadId);
     controller.resetVisibleChatPreserveActiveThread("thread selected");
     controller.addSystemMessage(`Switched active thread to ${match.threadId.slice(0, 8)} | ${match.title}`);
-    controller.addSystemMessage(formatThreadDetailForTui(service, match.threadId));
+    controller.addSystemMessage(formatThreadRecapForTui(service, match.threadId));
     return true;
   }
 
@@ -1113,52 +1221,52 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
   return true;
 }
 
-export function handleResumeCommand(
+interface ResumeCommandSessionStore {
+  listSessionSummaries: () => Promise<ChatSessionSummary[]>;
+  loadSession: (id: string) => Promise<PersistedChatSession | null>;
+  openPicker: () => void;
+  restoreSession: (session: PersistedChatSession) => boolean;
+}
+
+export async function handleResumeCommand(
   text: string,
   controller: ReturnType<typeof useChatController>,
-  service: TuiRuntimeService
-): boolean {
+  sessions: ResumeCommandSessionStore
+): Promise<boolean> {
   const parsed = parseSlashInput(text);
   if (parsed.command !== "/resume") {
     controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
-    return true;
+    return false;
   }
   const prefix = parsed.args[0] ?? "";
-  const userId = resolveRuntimeUserId();
-  const threads = service
-    .listThreads("active")
-    .filter((item) => item.ownerUserId === userId)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-
-  if (threads.length === 0) {
-    controller.addSystemMessage("No active threads to resume. Start with a plain-language request.");
-    return true;
-  }
-
-  let target = threads[0] ?? null;
-  if (prefix.length > 0) {
-    const matches = threads.filter((item) => item.threadId.startsWith(prefix));
-    if (matches.length !== 1) {
-      controller.addSystemMessage(
-        matches.length === 0
-          ? `No thread matched prefix '${prefix}'.`
-          : `Ambiguous thread prefix '${prefix}':\n${matches.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
-      );
-      return true;
+  const summaries = await sessions.listSessionSummaries();
+  if (prefix.length === 0) {
+    sessions.openPicker();
+    if (summaries.length === 0) {
+      controller.addSystemMessage("No saved sessions yet. Start with a plain-language request.");
     }
-    target = matches[0] ?? null;
+    return false;
   }
-
-  if (target === null) {
-    controller.addSystemMessage("No active threads to resume.");
-    return true;
+  const matches = summaries.filter((item) => item.id.startsWith(prefix));
+  if (matches.length !== 1) {
+    controller.addSystemMessage(
+      matches.length === 0
+        ? `No saved session matched prefix '${prefix}'.`
+        : `Ambiguous session prefix '${prefix}':\n${matches.map((item) => `- ${item.id.slice(0, 8)} | ${item.label}`).join("\n")}`
+    );
+    return false;
   }
-
-  controller.switchActiveThread(target.threadId);
-  controller.resetVisibleChatPreserveActiveThread("thread resumed");
-  controller.addSystemMessage(`Resumed thread ${target.threadId.slice(0, 8)} | ${target.title}`);
-  controller.addSystemMessage(formatThreadDetailForTui(service, target.threadId));
-  return true;
+  const target = matches[0];
+  if (target === undefined) {
+    controller.addSystemMessage("No saved session to resume.");
+    return false;
+  }
+  const session = await sessions.loadSession(target.id);
+  if (session === null) {
+    controller.addSystemMessage(`Session ${target.id} could not be loaded.`);
+    return false;
+  }
+  return sessions.restoreSession(session);
 }
 
 export function handleScheduleCommand(

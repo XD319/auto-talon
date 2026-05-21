@@ -19,9 +19,10 @@ type TodayServiceStub = Pick<
 
 describe("personal assistant slash commands", () => {
   it("publishes the new command order and hides dashboard", () => {
-    expect(SLASH_COMMANDS.slice(0, 11)).toEqual([
+    expect(SLASH_COMMANDS.slice(0, 12)).toEqual([
       "/today",
       "/inbox",
+      "/inbox show ",
       "/thread",
       "/thread new ",
       "/thread list",

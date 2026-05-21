@@ -44,6 +44,7 @@ export type TuiRuntimeService = Pick<
   | "runScheduleNow"
   | "runTask"
   | "rollbackFileArtifact"
+  | "showInboxItem"
   | "showTask"
   | "showThread"
   | "subscribeToTaskTrace"

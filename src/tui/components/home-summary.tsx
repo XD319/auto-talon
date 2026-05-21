@@ -26,7 +26,7 @@ function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): Reac
       ))}
       {entries.length > 0 ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color={theme.selection}>Quick actions</Text>
+          <Text color={theme.selection}>Next steps</Text>
           {entries.map((entry, index) => (
             <Box key={entry.key} flexDirection="column">
               <Text color={index === selectedIndex ? theme.emphasis : theme.fg} wrap="truncate-end">
