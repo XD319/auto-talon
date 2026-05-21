@@ -3,6 +3,7 @@ import { parse } from "node-html-parser";
 
 import type { SandboxService } from "../sandbox/sandbox-service.js";
 import type {
+  JsonObject,
   SandboxWebPlan,
   ToolAvailabilityResult,
   ToolDefinition,
@@ -96,27 +97,38 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
     const requestTrace: Array<{ status: number; url: string }> = [];
-    const response = await this.followRedirects(
-      input.plan.url,
-      input.maxRedirects,
-      requestTrace,
-      context.signal
-    );
+    let response: Response;
+    try {
+      response = await this.followRedirects(
+        input.plan.url,
+        input.maxRedirects,
+        requestTrace,
+        context.signal
+      );
+    } catch (error) {
+      if (error instanceof WebFetchNetworkError) {
+        const cause = describeUnknownError(error.cause);
+        const causeMessage = typeof cause.message === "string" ? cause.message : "unknown network error";
+        return {
+          details: {
+            cause,
+            redirectTrace: requestTrace,
+            url: error.url
+          },
+          errorCode: "tool_execution_error",
+          errorMessage: `Web fetch network failed for ${error.url}: ${causeMessage}`,
+          success: false
+        };
+      }
+      throw error;
+    }
     const body = await response.text();
     const normalized = normalizeWebBody(body, response.headers.get("content-type"));
     const truncatedBody = normalized.content.slice(0, input.maxBytes);
-    if (!response.ok) {
-      return {
-        details: {
-          redirectTrace: requestTrace,
-          status: response.status,
-          url: response.url || input.plan.url
-        },
-        errorCode: "tool_execution_error",
-        errorMessage: `Web fetch failed with HTTP status ${response.status}.`,
-        success: false
-      };
-    }
+    const responseUrl = response.url || input.plan.url;
+    const summary = response.ok
+      ? `Fetched ${responseUrl}`
+      : `Fetched ${responseUrl} with HTTP ${response.status}`;
 
     return {
       artifacts: [
@@ -128,24 +140,28 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
             headers: {
               contentType: response.headers.get("content-type")
             },
+            ok: response.ok,
             redirectTrace: requestTrace,
             status: response.status,
-            url: response.url || input.plan.url
+            statusText: response.statusText,
+            url: responseUrl
           },
-          uri: response.url || input.plan.url
+          uri: responseUrl
         }
       ],
       output: {
         body: truncatedBody,
         contentType: response.headers.get("content-type"),
         extractedTitle: normalized.title,
+        ok: response.ok,
         redirectTrace: requestTrace,
         status: response.status,
+        statusText: response.statusText,
         truncated: normalized.content.length > truncatedBody.length,
-        url: response.url || input.plan.url
+        url: responseUrl
       },
       success: true,
-      summary: `Fetched ${response.url || input.plan.url}`
+      summary
     };
   }
 
@@ -157,11 +173,7 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
   ): Promise<Response> {
     let currentUrl = initialUrl;
     for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
-      const response = await this.client.fetch(currentUrl, {
-        method: "GET",
-        redirect: "manual",
-        signal
-      });
+      const response = await this.fetchOnce(currentUrl, signal);
       requestTrace.push({
         status: response.status,
         url: currentUrl
@@ -184,12 +196,64 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
       currentUrl = nextUrl;
     }
 
-    return this.client.fetch(currentUrl, {
-      method: "GET",
-      redirect: "manual",
-      signal
-    });
+    return this.fetchOnce(currentUrl, signal);
   }
+
+  private async fetchOnce(url: string, signal: AbortSignal): Promise<Response> {
+    try {
+      return await this.client.fetch(url, {
+        method: "GET",
+        redirect: "manual",
+        signal
+      });
+    } catch (error) {
+      throw new WebFetchNetworkError(url, error);
+    }
+  }
+}
+
+class WebFetchNetworkError extends Error {
+  public override readonly cause: unknown;
+
+  public constructor(
+    public readonly url: string,
+    cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "WebFetchNetworkError";
+    this.cause = cause;
+  }
+}
+
+function describeUnknownError(error: unknown): JsonObject {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      ...readErrorCode(error),
+      ...readErrorCause(error.cause)
+    };
+  }
+  return {
+    message: String(error),
+    name: typeof error
+  };
+}
+
+function readErrorCode(error: Error): JsonObject {
+  const candidate = error as { code?: unknown };
+  return typeof candidate.code === "string" ? { code: candidate.code } : {};
+}
+
+function readErrorCause(cause: unknown): JsonObject {
+  if (!(cause instanceof Error)) {
+    return {};
+  }
+  return {
+    causeMessage: cause.message,
+    causeName: cause.name,
+    ...readErrorCode(cause)
+  };
 }
 
 function isRedirectStatus(status: number): boolean {

@@ -31,7 +31,7 @@ describe("WebFetchTool", () => {
     expect(requestInit?.redirect).toBe("manual");
   });
 
-  it("returns tool_execution_error when upstream HTTP status is not ok", async () => {
+  it("returns non-ok upstream HTTP status as a readable response", async () => {
     const sandboxService = new SandboxService({
       allowedFetchHosts: ["example.com"],
       workspaceRoot: process.cwd()
@@ -51,12 +51,59 @@ describe("WebFetchTool", () => {
     );
 
     const result = await tool.execute(prepared.preparedInput, createContext());
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("Expected web_fetch to return an HTTP response result.");
+    }
+    const output = result.output as {
+      body: string;
+      ok: boolean;
+      status: number;
+    };
+    expect(output.ok).toBe(false);
+    expect(output.status).toBe(404);
+    expect(output.body).toBe("not found");
+    expect(result.summary).toContain("HTTP 404");
+  });
+
+  it("returns tool_execution_error with cause details when the network request fails", async () => {
+    const sandboxService = new SandboxService({
+      allowedFetchHosts: ["missing.example.com"],
+      workspaceRoot: process.cwd()
+    });
+    const networkCause = Object.assign(new Error("getaddrinfo ENOTFOUND missing.example.com"), {
+      code: "ENOTFOUND"
+    });
+    const tool = new WebFetchTool(sandboxService, {
+      fetch: () => {
+        throw new TypeError("fetch failed", {
+          cause: networkCause
+        });
+      }
+    });
+
+    const prepared = tool.prepare(
+      {
+        url: "https://missing.example.com/page"
+      },
+      createContext()
+    );
+
+    const result = await tool.execute(prepared.preparedInput, createContext());
     expect(result.success).toBe(false);
     if (result.success) {
-      throw new Error("Expected web_fetch to return a failure result.");
+      throw new Error("Expected web_fetch to return a network failure result.");
     }
     expect(result.errorCode).toBe("tool_execution_error");
-    expect(result.details?.status).toBe(404);
+    expect(result.errorMessage).toContain("Web fetch network failed");
+    expect(result.errorMessage).toContain("fetch failed");
+    expect(result.details?.url).toBe("https://missing.example.com/page");
+    expect(result.details?.cause).toMatchObject({
+      causeMessage: "getaddrinfo ENOTFOUND missing.example.com",
+      code: "ENOTFOUND",
+      message: "fetch failed",
+      name: "TypeError"
+    });
   });
 
   it("follows allowed redirects and rejects disallowed redirect targets", async () => {
