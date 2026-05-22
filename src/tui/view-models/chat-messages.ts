@@ -144,7 +144,11 @@ function formatTraceEvent(event: TraceEvent): string {
     case "final_outcome":
       return `final_outcome ${event.payload.status}`;
     case "provider_request_failed":
-      return `Provider request failed: ${event.payload.errorCategory}`;
+      return event.payload.errorCategory === "timeout_error"
+        ? "Provider request failed: timeout_error. Check provider request timeout with talon provider status."
+        : `Provider request failed: ${event.payload.errorCategory}`;
+    case "provider_retry_scheduled":
+      return `Provider retry ${event.payload.attempt}/${event.payload.maxRetries}: ${event.payload.errorCategory}; waiting ${event.payload.delayMs}ms`;
     default:
       return `${event.eventType}: ${event.summary}`;
   }
@@ -229,6 +233,7 @@ function isHighValueActivity(event: TraceEvent): boolean {
     event.eventType === "clarify_cancelled" ||
     event.eventType === "interrupt" ||
     event.eventType === "provider_request_failed" ||
+    event.eventType === "provider_retry_scheduled" ||
     event.eventType === "retry" ||
     event.eventType === "tool_call_failed" ||
     event.eventType === "tool_call_finished"

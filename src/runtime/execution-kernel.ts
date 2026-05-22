@@ -40,6 +40,7 @@ import type {
   ExecutionCheckpointRepository,
   MemoryRecallResult,
   Provider,
+  ProviderRetryNotice,
   ProviderToolCall,
   RuntimeTaskEvent,
   RunMetadataRepository,
@@ -501,13 +502,25 @@ export class ExecutionKernel {
             : buildFilteredContextDebugFragments(state.memoryRecall.decisions)).concat(
             assembled.debug.filteredOutFragments
           );
-        const providerInput =
-          state.onAssistantTextDelta === undefined
-            ? assembled.providerInput
-            : {
-                ...assembled.providerInput,
-                onTextDelta: state.onAssistantTextDelta
-              };
+        const providerInput = {
+          ...assembled.providerInput,
+          ...(state.onAssistantTextDelta === undefined
+            ? {}
+            : { onTextDelta: state.onAssistantTextDelta }),
+          onRetry: (retry: ProviderRetryNotice) => {
+            this.dependencies.traceService.record({
+              actor: `provider.${retry.providerName}`,
+              eventType: "provider_retry_scheduled",
+              payload: {
+                ...retry,
+                iteration
+              },
+              stage: "planning",
+              summary: `Provider retry ${retry.attempt}/${retry.maxRetries} scheduled after ${retry.errorCategory}`,
+              taskId: task.taskId
+            });
+          }
+        };
 
         this.dependencies.traceService.record({
           actor: "runtime.context",

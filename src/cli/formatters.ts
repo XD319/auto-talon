@@ -465,6 +465,7 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
     `Model Configured: ${report.modelConfigured ? "yes" : "no"}`,
     `Model Available: ${formatTernary(report.modelAvailable)}`,
     `Timeout (ms): ${report.timeoutMs}`,
+    `Stream Idle Timeout (ms): ${report.streamIdleTimeoutMs}`,
     `Max Retries: ${report.maxRetries}`,
     `Provider Health: ${report.providerHealthMessage}`,
     `Node: ${report.nodeVersion}`,
@@ -504,20 +505,44 @@ export function formatCurrentProvider(config: {
   baseUrl: string | null;
   configPath: string;
   configSource: string;
+  configured?: boolean;
   maxRetries: number;
   model: string | null;
   name: string;
+  streamIdleTimeoutMs: number;
+  timeoutConfigured?: boolean;
+  builtinProviderName?: string | null;
+  transport?: string;
   timeoutMs: number;
 }): string {
-  return [
+  const lines = [
     `Provider: ${config.name}`,
     `Model: ${config.model ?? "-"}`,
     `Base URL: ${config.baseUrl ?? "-"}`,
     `Config Source: ${config.configSource}`,
     `Config Path: ${config.configPath}`,
-    `Timeout (ms): ${config.timeoutMs}`,
+    `Request Timeout (ms): ${config.timeoutMs}`,
+    `Stream Idle Timeout (ms): ${config.streamIdleTimeoutMs}`,
     `Max Retries: ${config.maxRetries}`
-  ].join("\n");
+  ];
+
+  if (config.configured === false) {
+    lines.push("Setup Required: yes");
+    lines.push("Setup: talon provider setup <provider> --api-key <key>");
+  }
+
+  if (
+    config.timeoutConfigured === true &&
+    config.timeoutMs <= 30_000 &&
+    config.transport !== "mock" &&
+    config.builtinProviderName !== "ollama"
+  ) {
+    lines.push(
+      `Timeout Hint: explicit ${config.timeoutMs}ms remote request timeout is short for tool turns; update with talon provider setup ${config.name} --timeout-ms 120000.`
+    );
+  }
+
+  return lines.join("\n");
 }
 
 export function formatProviderHealth(report: {
@@ -542,6 +567,28 @@ export function formatProviderHealth(report: {
     `Model Available: ${formatTernary(report.modelAvailable)}`,
     `Latency (ms): ${report.latencyMs ?? "-"}`,
     `Error Category: ${report.errorCategory ?? "-"}`,
+    `Message: ${report.message}`
+  ].join("\n");
+}
+
+export function formatProviderSmoke(report: {
+  errorCategory: string | null;
+  latencyMs: number;
+  message: string;
+  modelName: string | null;
+  ok: boolean;
+  providerName: string;
+  streamIdleTimeoutMs: number;
+  timeoutMs: number;
+}): string {
+  return [
+    `Provider: ${report.providerName}`,
+    `Model: ${report.modelName ?? "-"}`,
+    `Request Timeout (ms): ${report.timeoutMs}`,
+    `Stream Idle Timeout (ms): ${report.streamIdleTimeoutMs}`,
+    `Latency (ms): ${report.latencyMs}`,
+    `Success: ${report.ok ? "yes" : "no"}`,
+    `Provider Error Category: ${report.errorCategory ?? "-"}`,
     `Message: ${report.message}`
   ].join("\n");
 }

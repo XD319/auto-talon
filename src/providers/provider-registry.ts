@@ -72,48 +72,55 @@ const DEFAULT_PROVIDER_SETTINGS: Record<SupportedProviderName, Omit<ProviderConf
     baseUrl: "https://api.anthropic.com",
     maxRetries: 2,
     model: "claude-sonnet-4-20250514",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   "xfyun-coding": {
     apiKey: null,
     baseUrl: "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
     maxRetries: 2,
     model: "astron-code-latest",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   gemini: {
     apiKey: null,
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     maxRetries: 2,
     model: "gemini-2.5-flash",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   glm: {
     apiKey: null,
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     maxRetries: 2,
     model: "glm-4.5-air",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   "openai-compatible": {
     apiKey: null,
     baseUrl: null,
     maxRetries: 2,
     model: "gpt-4o-mini",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   openai: {
     apiKey: null,
     baseUrl: "https://api.openai.com/v1",
     maxRetries: 2,
     model: "gpt-4o-mini",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   ollama: {
     apiKey: "ollama",
     baseUrl: "http://localhost:11434/v1",
     maxRetries: 1,
     model: "llama3.2",
+    streamIdleTimeoutMs: 300_000,
     timeoutMs: 60_000
   },
   openrouter: {
@@ -121,27 +128,31 @@ const DEFAULT_PROVIDER_SETTINGS: Record<SupportedProviderName, Omit<ProviderConf
     baseUrl: "https://openrouter.ai/api/v1",
     maxRetries: 2,
     model: "openai/gpt-4o-mini",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   minimax: {
     apiKey: null,
     baseUrl: "https://api.minimax.io/anthropic",
     maxRetries: 2,
     model: "MiniMax-M2.7",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   moonshot: {
     apiKey: null,
     baseUrl: "https://api.moonshot.ai/v1",
     maxRetries: 2,
     model: "kimi-k2.5",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   mock: {
     apiKey: null,
     baseUrl: null,
     maxRetries: 0,
     model: "mock-default",
+    streamIdleTimeoutMs: 5_000,
     timeoutMs: 5_000
   },
   qwen: {
@@ -149,14 +160,16 @@ const DEFAULT_PROVIDER_SETTINGS: Record<SupportedProviderName, Omit<ProviderConf
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     maxRetries: 2,
     model: "qwen-plus",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   },
   xai: {
     apiKey: null,
     baseUrl: "https://api.x.ai/v1",
     maxRetries: 2,
     model: "grok-4.20-reasoning",
-    timeoutMs: 30_000
+    streamIdleTimeoutMs: 300_000,
+    timeoutMs: 120_000
   }
 };
 

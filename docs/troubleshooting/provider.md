@@ -30,14 +30,34 @@ Custom providers can be configured with `customProviders` when they expose eithe
 
 Common configuration knobs:
 
-- Environment: `AGENT_PROVIDER`, `AGENT_PROVIDER_API_KEY`, `AGENT_PROVIDER_BASE_URL`, `AGENT_PROVIDER_MODEL`, `AGENT_PROVIDER_TIMEOUT_MS`, `AGENT_PROVIDER_MAX_RETRIES`
-- File: `.auto-talon/provider.config.json`
+- Environment: `AGENT_PROVIDER`, `AGENT_PROVIDER_API_KEY`, `AGENT_PROVIDER_BASE_URL`, `AGENT_PROVIDER_MODEL`, `AGENT_PROVIDER_TIMEOUT_MS`, `AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS`, `AGENT_PROVIDER_MAX_RETRIES`
+- User defaults: `~/.auto-talon/provider.config.json`
+- Workspace overrides: `.auto-talon/provider.config.json`
+- User config directory override: `AGENT_USER_CONFIG_DIR`
 - Current provider selector: `currentProvider`
 - Provider-specific entries: `providers`
 - Custom HTTP-compatible entries: `customProviders`
 
+New workspaces do not choose `mock` automatically. If diagnostics show
+`Provider: unconfigured`, run `talon provider setup <provider>` to save a user
+default, or select a provider through `AGENT_PROVIDER`. Keep workspace overrides
+only where a project needs them. Select `mock` explicitly for tests or demos.
+If a workspace already has the right endpoint and model, run
+`talon provider promote` there to make that effective provider config the user
+default for new workspaces.
+
 Diagnostics:
 
-- `talon provider current`
+- `talon provider status`
 - `talon provider test`
+- `talon provider smoke`
 - `talon doctor`
+
+When a tool succeeds and the next provider turn fails with `timeout_error`,
+check `talon provider status` first. Older explicit remote provider entries may
+still carry a `30000` request timeout; `status` and `doctor` warn about that
+without rewriting it. Update the active config layer with
+`talon provider setup <provider> --timeout-ms 120000` and use
+`talon provider smoke` to exercise a synthetic post-tool turn. For streaming
+providers, raise `--stream-idle-timeout-ms` only when the response starts but
+then goes silent between chunks.

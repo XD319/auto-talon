@@ -29,7 +29,7 @@ Operational:
 
 Subsystems:
 
-- `talon provider list|current|test|stats|route`
+- `talon provider list|current|status|setup|use|promote|test|smoke|stats|route`
 - `talon budget show --task <id>|--thread <id>`
 - `talon memory list|show|search|snapshot|review|guide|add|forget|why|review-queue`
 - `talon experience list|show|review|promote|search`

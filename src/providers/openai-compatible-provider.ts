@@ -182,7 +182,7 @@ export class OpenAiCompatibleProvider implements Provider {
     this.ensureConfigured();
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => {
+    const requestTimeout = setTimeout(() => {
       controller.abort();
     }, this.config.timeoutMs);
 
@@ -207,6 +207,7 @@ export class OpenAiCompatibleProvider implements Provider {
         new URL("chat/completions", ensureTrailingSlash(this.resolveBaseUrl())).toString(),
         init
       );
+      clearTimeout(requestTimeout);
 
       if (!response.ok) {
         const text = await response.text();
@@ -248,6 +249,24 @@ export class OpenAiCompatibleProvider implements Provider {
       const toolParts = new Map<number, { arguments: string; id: string; name: string }>();
       let lastUsage: ProviderUsage | undefined;
       const decoder = new TextDecoder();
+      const readNextChunk = (): Promise<ReadableStreamReadResult<Uint8Array>> =>
+        new Promise((resolve, reject) => {
+          const idleTimeout = setTimeout(() => {
+            controller.abort();
+            reject(new DOMException("Streaming provider response became idle.", "AbortError"));
+          }, this.config.streamIdleTimeoutMs ?? this.config.timeoutMs);
+
+          reader.read().then(
+            (chunk) => {
+              clearTimeout(idleTimeout);
+              resolve(chunk);
+            },
+            (error: unknown) => {
+              clearTimeout(idleTimeout);
+              reject(error instanceof Error ? error : new Error("Streaming provider read failed."));
+            }
+          );
+        });
       const handleSseLine = (line: string): void => {
         const trimmed = line.trim();
         if (trimmed.length === 0 || !trimmed.startsWith("data:")) {
@@ -314,7 +333,8 @@ export class OpenAiCompatibleProvider implements Provider {
       };
 
       while (true) {
-        const { done, value } = await reader.read();
+        const chunk = await readNextChunk();
+        const { done, value } = chunk;
         if (done) {
           break;
         }
@@ -385,7 +405,7 @@ export class OpenAiCompatibleProvider implements Provider {
     } catch (error) {
       throw toProviderError(error, this.name, this.model);
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(requestTimeout);
     }
   }
 

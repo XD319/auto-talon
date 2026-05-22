@@ -51,6 +51,8 @@ export interface ProviderRequest {
   signal: AbortSignal;
   /** When set, OpenAI-compatible providers may stream assistant text deltas before the final response. */
   onTextDelta?: (delta: string) => void;
+  /** Called before the managed provider waits and retries a retriable provider failure. */
+  onRetry?: (notice: ProviderRetryNotice) => void;
 }
 
 export type ProviderInput = ProviderRequest;
@@ -156,7 +158,19 @@ export interface ProviderConfig {
   maxRetries: number;
   model: string | null;
   name: string;
+  /** Request/connect timeout. Streaming responses switch to streamIdleTimeoutMs after headers arrive. */
   timeoutMs: number;
+  /** Maximum gap between chunks once a streaming provider response has started. */
+  streamIdleTimeoutMs: number;
+}
+
+export interface ProviderRetryNotice {
+  attempt: number;
+  delayMs: number;
+  errorCategory: ProviderErrorCategory;
+  maxRetries: number;
+  modelName: string | null;
+  providerName: string;
 }
 
 export interface ProviderRetryPolicy {

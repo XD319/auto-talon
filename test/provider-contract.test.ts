@@ -65,6 +65,33 @@ describe("Provider runtime safeguards", () => {
     expect(attempts).toBe(3);
   });
 
+  it("reports managed retry notices with the failure category and delay", async () => {
+    const notices: Array<{ attempt: number; errorCategory: string; delayMs: number }> = [];
+    let attempts = 0;
+    const provider = new ManagedProvider(
+      new MockProvider({}, () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new ProviderError({
+            category: "rate_limit",
+            message: "slow down",
+            providerName: "mock",
+            retriable: true
+          });
+        }
+        return finalResponse("ok");
+      }),
+      { maxRetries: 1 } as Pick<ProviderConfig, "maxRetries">
+    );
+    const input = createProviderInput("retry with notice");
+    input.onRetry = (notice) => notices.push(notice);
+
+    await provider.generate(input);
+
+    expect(notices).toMatchObject([{ attempt: 1, errorCategory: "rate_limit" }]);
+    expect(notices[0]?.delayMs).toBeGreaterThanOrEqual(250);
+  });
+
   it("does not retry non-retriable provider errors", async () => {
     let attempts = 0;
     const provider = new ManagedProvider(

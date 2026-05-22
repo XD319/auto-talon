@@ -16,6 +16,7 @@ From npm:
 ```bash
 npm install -g auto-talon
 talon init --yes
+talon provider setup openai --api-key "$OPENAI_API_KEY"
 talon tui
 ```
 
@@ -26,6 +27,7 @@ corepack enable
 corepack pnpm install
 corepack pnpm build
 corepack pnpm dev init --yes
+corepack pnpm dev provider setup openai --api-key "$OPENAI_API_KEY"
 corepack pnpm dev tui
 ```
 
@@ -43,3 +45,5 @@ talon doctor
 
 For a daily first-run experience, open `talon tui`. Use `talon run` and other
 CLI commands when you want automation, diagnostics, or scripted execution.
+`talon provider setup` stores the default provider in user config so later
+workspaces can open with the same provider selection.

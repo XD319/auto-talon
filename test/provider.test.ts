@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApplication, createDefaultRunOptions } from "../src/runtime/index.js";
 import {
@@ -51,6 +51,10 @@ class ScriptedProvider implements Provider {
 
 const tempPaths: string[] = [];
 
+beforeEach(() => {
+  delete process.env.AGENT_PROVIDER;
+});
+
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -60,7 +64,9 @@ afterEach(async () => {
   delete process.env.AGENT_PROVIDER_BASE_URL;
   delete process.env.AGENT_PROVIDER_MODEL;
   delete process.env.AGENT_PROVIDER_TIMEOUT_MS;
+  delete process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS;
   delete process.env.AGENT_PROVIDER_MAX_RETRIES;
+  delete process.env.AGENT_USER_CONFIG_DIR;
 
   while (tempPaths.length > 0) {
     const tempPath = tempPaths.pop();
@@ -71,8 +77,116 @@ afterEach(async () => {
 });
 
 describe("Provider integration", () => {
+  it("starts in an explicit unconfigured state when no provider default exists", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const userConfigDir = await createTempWorkspace();
+    delete process.env.AGENT_PROVIDER;
+    process.env.AGENT_USER_CONFIG_DIR = userConfigDir;
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      }
+    });
+
+    try {
+      expect(handle.service.currentProvider()).toMatchObject({
+        configured: false,
+        name: "unconfigured"
+      });
+
+      const health = await handle.service.testCurrentProvider();
+      expect(health.ok).toBe(false);
+      expect(health.message).toContain("No provider is configured");
+
+      const result = await handle.service.runTask(
+        createDefaultRunOptions("summarize README.md", workspaceRoot, handle.config)
+      );
+      expect(result.task.status).toBe("failed");
+      expect(result.error?.message).toContain("No provider is configured");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("loads user provider defaults before workspace provider overrides", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const userConfigDir = await createTempWorkspace();
+    delete process.env.AGENT_PROVIDER;
+    process.env.AGENT_USER_CONFIG_DIR = userConfigDir;
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(userConfigDir, "provider.config.json"),
+      JSON.stringify(
+        {
+          currentProvider: "glm",
+          providers: {
+            glm: {
+              apiKey: "user-glm-key",
+              timeoutMs: 11_000
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify(
+        {
+          providers: {
+            glm: {
+              timeoutMs: 17_000
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const resolved = resolveProviderConfig(workspaceRoot);
+
+    expect(resolved.name).toBe("glm");
+    expect(resolved.apiKey).toBe("user-glm-key");
+    expect(resolved.timeoutMs).toBe(17_000);
+    expect(resolved.configSource).toBe("file");
+    expect(resolved.configPath).toBe(join(workspaceRoot, ".auto-talon", "provider.config.json"));
+  });
+
+  it("uses resilient remote timeout defaults while preserving explicit short timeout diagnostics", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    process.env.AGENT_PROVIDER = "openai";
+
+    const defaults = resolveProviderConfig(workspaceRoot);
+
+    expect(defaults.timeoutMs).toBe(120_000);
+    expect(defaults.streamIdleTimeoutMs).toBe(300_000);
+    expect(defaults.timeoutConfigured).toBe(false);
+
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "openai",
+        providers: { openai: { timeoutMs: 30_000 } }
+      }),
+      "utf8"
+    );
+    delete process.env.AGENT_PROVIDER;
+
+    const explicit = resolveProviderConfig(workspaceRoot);
+
+    expect(explicit.timeoutMs).toBe(30_000);
+    expect(explicit.timeoutConfigured).toBe(true);
+    expect(explicit.streamIdleTimeoutMs).toBe(300_000);
+  });
+
   it("keeps MockProvider configurable and runnable", async () => {
     const workspaceRoot = await createTempWorkspace();
+    process.env.AGENT_PROVIDER = "mock";
     await fs.writeFile(join(workspaceRoot, "README.md"), "provider test", "utf8");
     const handle = createApplication(workspaceRoot, {
       config: {
@@ -598,6 +712,91 @@ describe("Provider integration", () => {
     expect(streamed).toBe("hello");
   });
 
+  it("resets OpenAI-compatible stream idle timeout after chunks", async () => {
+    const encoder = new TextEncoder();
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        streamIdleTimeoutMs: 50,
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                await wait(10);
+                controller.enqueue(
+                  encoder.encode('data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n')
+                );
+                await wait(10);
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              }
+            }),
+            { status: 200 }
+          )
+        )
+      )
+    );
+
+    const response = await provider.generate({
+      ...createProviderInput(),
+      onTextDelta: () => {}
+    });
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("hi");
+  });
+
+  it("times out an OpenAI-compatible stream that goes idle", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        streamIdleTimeoutMs: 5,
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>({ pull() {} }), { status: 200 })
+        )
+      )
+    );
+
+    await expect(
+      provider.generate({
+        ...createProviderInput(),
+        onTextDelta: () => {}
+      })
+    ).rejects.toMatchObject({
+      category: "timeout_error"
+    });
+  });
+
   it("maps Anthropic-compatible responses into the unified provider response shape", async () => {
     const provider = new AnthropicCompatibleProvider(
       {
@@ -931,9 +1130,16 @@ function createGlmConfig(
     maxRetries: 0,
     model: "glm-4.5-air",
     name: "glm",
+    streamIdleTimeoutMs: 300_000,
     timeoutMs: 5_000,
     ...overrides
   };
+}
+
+async function wait(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 async function createTempWorkspace(): Promise<string> {

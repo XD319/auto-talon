@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import type { ResolvedProviderConfig } from "../../providers/index.js";
+import { hasLegacyShortRemoteTimeout, type ResolvedProviderConfig } from "../../providers/index.js";
 import type { ExperienceRecord, ProviderHealthCheck } from "../../types/index.js";
 
 export interface RuntimeDoctorServiceDependencies {
@@ -83,6 +83,7 @@ export class RuntimeDoctorService {
       },
       tokenBudget: this.dependencies.tokenBudget,
       timeoutMs: this.dependencies.providerConfig.timeoutMs,
+      streamIdleTimeoutMs: this.dependencies.providerConfig.streamIdleTimeoutMs,
       workspaceRoot: this.dependencies.workspaceRoot
     };
   }
@@ -108,6 +109,12 @@ function collectDoctorIssues(
 
   if (providerHealth.modelAvailable === false) {
     issues.push(`Model ${providerHealth.modelName ?? "-"} is not available on the provider endpoint.`);
+  }
+
+  if (hasLegacyShortRemoteTimeout(providerConfig)) {
+    issues.push(
+      `Provider request timeout is explicitly ${providerConfig.timeoutMs}ms; remote tool turns may need talon provider setup ${providerConfig.name} --timeout-ms 120000.`
+    );
   }
 
   if (!isCommandAvailable("corepack")) {

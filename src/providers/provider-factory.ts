@@ -6,8 +6,13 @@ import { OpenAiCompatibleProvider } from "./openai-compatible-provider.js";
 import type { ResolvedProviderConfig } from "./config.js";
 import { assertProviderManifestCompatibility, requireProviderManifest } from "./provider-registry.js";
 import { ManagedProvider } from "./provider-runtime.js";
+import { UnconfiguredProvider } from "./unconfigured-provider.js";
 
 export function createProvider(config: ResolvedProviderConfig): Provider {
+  if (config.configured === false) {
+    return new ManagedProvider(new UnconfiguredProvider(config), config);
+  }
+
   const manifest =
     config.builtinProviderName === null ? null : requireProviderManifest(config.builtinProviderName);
   const provider = createProviderInstance(config, manifest);

@@ -17,6 +17,50 @@ Create defaults with:
 talon init --yes
 ```
 
+Provider defaults are layered. AutoTalon reads the user provider config at
+`~/.auto-talon/provider.config.json` first, then overlays the workspace
+`.auto-talon/provider.config.json`. Workspace provider entries can override a
+model, timeout, route, or project-specific provider selection while user
+defaults keep auth and everyday provider selection reusable across workspaces.
+`AGENT_PROVIDER*` environment variables take precedence over both layers.
+Set `AGENT_USER_CONFIG_DIR` to move the user config directory.
+
+Manage the common case through the CLI:
+
+```bash
+talon provider setup openai --api-key "$OPENAI_API_KEY"
+talon provider use ollama
+talon provider promote
+talon provider status
+```
+
+`provider setup` and `provider use` write the user provider config by default.
+Add `--workspace` when a project should keep a different provider selection or
+provider entry in its workspace config. `provider promote` reads the provider
+that is currently effective in the workspace and writes its provider name,
+model, base URL, key, timeout, stream idle timeout, and retry settings to user
+config.
+
+Provider entries can set two provider timeout values. `timeoutMs` is the
+request timeout for non-streaming calls and the connection/initial-response
+timeout before a streaming response starts. `streamIdleTimeoutMs` is the
+maximum gap between streaming chunks after streaming has started. Remote
+providers default to a `120000` request timeout and a `300000` stream idle
+timeout when a config layer does not explicitly set them; existing explicit
+short request timeout entries remain effective until updated.
+
+If neither config layer nor `AGENT_PROVIDER` selects a provider, runtime
+commands open with an explicit unconfigured provider state. Task execution then
+reports provider setup as required instead of silently using `mock`.
+
+Runtime commands resolve the workspace from the current directory before they
+load these files. A command started in a nested directory reuses the nearest
+parent directory that already has an initialized
+`.auto-talon/runtime.config.json`. Set
+`AGENT_WORKSPACE_ROOT` or pass a command `--cwd` option when you need to choose
+the workspace explicitly. If no parent workspace exists, commands that create a
+runtime initialize the current directory with the default config files.
+
 Run validation with:
 
 ```bash

@@ -27,6 +27,7 @@ export const TRACE_EVENT_TYPES = [
   "model_request",
   "model_response",
   "provider_request_started",
+  "provider_retry_scheduled",
   "provider_request_succeeded",
   "provider_request_failed",
   "policy_decision",
@@ -205,6 +206,16 @@ export interface ProviderRequestSucceededPayload extends JsonObject {
   providerName: string;
   retryCount: number;
   usage: JsonObject | null;
+}
+
+export interface ProviderRetryScheduledPayload extends JsonObject {
+  attempt: number;
+  delayMs: number;
+  errorCategory: ProviderErrorCategory;
+  iteration: number;
+  maxRetries: number;
+  modelName: string | null;
+  providerName: string;
 }
 
 export interface ProviderRequestFailedPayload extends JsonObject {
@@ -788,6 +799,7 @@ export type TraceEvent =
   | TraceEventBase<"model_request", ModelRequestPayload>
   | TraceEventBase<"model_response", ModelResponsePayload>
   | TraceEventBase<"provider_request_started", ProviderRequestStartedPayload>
+  | TraceEventBase<"provider_retry_scheduled", ProviderRetryScheduledPayload>
   | TraceEventBase<"provider_request_succeeded", ProviderRequestSucceededPayload>
   | TraceEventBase<"provider_request_failed", ProviderRequestFailedPayload>
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>

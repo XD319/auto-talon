@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -52,6 +52,119 @@ describe("cli validation and read-only commands", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("feishu");
   });
+
+  it("reuses provider setup from user config in a new workspace", () => {
+    const setupWorkspace = createTempDir("talon-provider-setup-");
+    const freshWorkspace = createTempDir("talon-provider-fresh-");
+    const userConfigDir = createTempDir("talon-provider-user-config-");
+    const env = {
+      AGENT_PROVIDER: undefined,
+      AGENT_USER_CONFIG_DIR: userConfigDir
+    };
+
+    const setup = runCli(
+      setupWorkspace,
+      [
+        "provider",
+        "setup",
+        "openai",
+        "--api-key",
+        "sk-user-test",
+        "--model",
+        "gpt-user-test",
+        "--timeout-ms",
+        "30000",
+        "--stream-idle-timeout-ms",
+        "345000"
+      ],
+      env
+    );
+    const providerConfig = JSON.parse(
+      readFileSync(join(userConfigDir, "provider.config.json"), "utf8")
+    ) as {
+      currentProvider?: string;
+      providers?: Record<string, { apiKey?: string; model?: string; streamIdleTimeoutMs?: number }>;
+    };
+
+    expect(setup.status).toBe(0);
+    expect(setup.stdout).toContain("Configured user provider: openai");
+    expect(existsSync(join(setupWorkspace, ".auto-talon"))).toBe(false);
+    expect(providerConfig.currentProvider).toBe("openai");
+    expect(providerConfig.providers?.openai).toMatchObject({
+      apiKey: "sk-user-test",
+      model: "gpt-user-test",
+      streamIdleTimeoutMs: 345_000
+    });
+
+    const status = runCli(freshWorkspace, ["provider", "status"], env);
+
+    expect(status.status).toBe(0);
+    expect(status.stdout).toContain("Provider: openai");
+    expect(status.stdout).toContain("Model: gpt-user-test");
+    expect(status.stdout).toContain("Config Source: user");
+    expect(status.stdout).toContain("Request Timeout (ms): 30000");
+    expect(status.stdout).toContain("Stream Idle Timeout (ms): 345000");
+    expect(status.stdout).toContain("Timeout Hint:");
+
+    const use = runCli(freshWorkspace, ["provider", "use", "ollama"], env);
+    const nextStatus = runCli(createTempDir("talon-provider-next-"), ["provider", "status"], env);
+
+    expect(use.status).toBe(0);
+    expect(use.stdout).toContain("Selected user provider: ollama");
+    expect(nextStatus.status).toBe(0);
+    expect(nextStatus.stdout).toContain("Provider: ollama");
+    expect(nextStatus.stdout).toContain("Config Source: user");
+  });
+
+  it("promotes the effective workspace provider config to user defaults", () => {
+    const workspace = createTempDir("talon-provider-promote-");
+    const freshWorkspace = createTempDir("talon-provider-promoted-fresh-");
+    const userConfigDir = createTempDir("talon-provider-promoted-user-config-");
+    const env = {
+      AGENT_PROVIDER: undefined,
+      AGENT_USER_CONFIG_DIR: userConfigDir
+    };
+
+    const setup = runCli(
+      workspace,
+      [
+        "provider",
+        "setup",
+        "openai-compatible",
+        "--workspace",
+        "--api-key",
+        "sk-workspace-test",
+        "--base-url",
+        "https://provider.example.test/v1",
+        "--model",
+        "workspace-model"
+      ],
+      env
+    );
+    const promote = runCli(workspace, ["provider", "promote"], env);
+    const status = runCli(freshWorkspace, ["provider", "status"], env);
+
+    expect(setup.status).toBe(0);
+    expect(promote.status).toBe(0);
+    expect(promote.stdout).toContain("Promoted user provider: openai-compatible");
+    expect(status.status).toBe(0);
+    expect(status.stdout).toContain("Provider: openai-compatible");
+    expect(status.stdout).toContain("Model: workspace-model");
+    expect(status.stdout).toContain("Base URL: https://provider.example.test/v1");
+    expect(status.stdout).toContain("Config Source: user");
+  });
+
+  it("smokes the active mock provider through a post-tool request", () => {
+    const workspace = createTempDir("talon-provider-smoke-");
+    const result = runCli(workspace, ["provider", "smoke"], {
+      AGENT_PROVIDER: "mock"
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Provider: mock");
+    expect(result.stdout).toContain("Success: yes");
+    expect(result.stdout).toContain("Provider Error Category: -");
+  });
 });
 
 function createTempDir(prefix: string): string {
@@ -63,7 +176,7 @@ function createTempDir(prefix: string): string {
 function runCli(
   cwd: string,
   args: string[],
-  env: Record<string, string> = {}
+  env: Record<string, string | undefined> = {}
 ): { status: number | null; stderr: string; stdout: string } {
   const result = spawnSync(
     process.execPath,

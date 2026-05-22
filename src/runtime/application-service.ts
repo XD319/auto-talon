@@ -97,7 +97,7 @@ export interface ClarifyActionResult {
 export interface AgentDoctorReport {
   apiKeyConfigured: boolean;
   configPath: string;
-  configSource: "defaults" | "env" | "file";
+  configSource: "defaults" | "env" | "file" | "user";
   databasePath: string;
   endpointReachable: boolean | null;
   experienceStats: {
@@ -138,6 +138,7 @@ export interface AgentDoctorReport {
     reservedOutput: number;
   };
   timeoutMs: number;
+  streamIdleTimeoutMs: number;
   workspaceRoot: string;
   providerRouter?: ProviderRouter;
   budgetService?: BudgetService;
@@ -204,6 +205,17 @@ export interface RuntimeReadModel {
   findExecutionCheckpoint(taskId: string): ExecutionCheckpointRecord | null;
   saveExecutionCheckpoint(record: ExecutionCheckpointRecord): ExecutionCheckpointRecord;
   updateToolCall(toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord;
+}
+
+export interface ProviderSmokeReport {
+  errorCategory: string | null;
+  latencyMs: number;
+  message: string;
+  modelName: string | null;
+  ok: boolean;
+  providerName: string;
+  streamIdleTimeoutMs: number;
+  timeoutMs: number;
 }
 
 export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
@@ -1359,6 +1371,113 @@ export class AgentApplicationService {
       tokenBudget: this.dependencies.tokenBudget,
       workspaceRoot: this.dependencies.workspaceRoot
     }).configDoctor(signal);
+  }
+
+  public async smokeCurrentProvider(signal?: AbortSignal): Promise<ProviderSmokeReport> {
+    const startedAt = Date.now();
+    const now = new Date().toISOString();
+    const tokenBudget = {
+      ...this.dependencies.tokenBudget,
+      usedInput: 0,
+      usedOutput: 0
+    };
+    const task: TaskRecord = {
+      agentProfileId: "executor",
+      createdAt: now,
+      currentIteration: 2,
+      cwd: this.dependencies.workspaceRoot,
+      errorCode: null,
+      errorMessage: null,
+      finalOutput: null,
+      finishedAt: null,
+      input: "Provider smoke post-tool turn.",
+      maxIterations: 2,
+      metadata: { diagnostic: "provider_smoke" },
+      providerName: this.dependencies.provider.name,
+      requesterUserId: "provider-smoke",
+      startedAt: now,
+      status: "running",
+      taskId: randomUUID(),
+      tokenBudget,
+      updatedAt: now
+    };
+    const controller = signal === undefined ? new AbortController() : null;
+
+    try {
+      await this.dependencies.provider.generate({
+        agentProfileId: "executor",
+        availableTools: [
+          {
+            capability: "filesystem.read",
+            description: "Read a small workspace file.",
+            inputSchema: {
+              additionalProperties: false,
+              properties: { path: { type: "string" } },
+              required: ["path"],
+              type: "object"
+            },
+            name: "file_read",
+            privacyLevel: "internal",
+            riskLevel: "low"
+          }
+        ],
+        iteration: 2,
+        memoryContext: [],
+        messages: [
+          {
+            content: "Answer with a short acknowledgement after the tool result.",
+            role: "system"
+          },
+          {
+            content: "Read the project plan.",
+            role: "user"
+          },
+          {
+            content: "",
+            role: "assistant",
+            toolCalls: [
+              {
+                input: { path: "PLAN.md" },
+                reason: "Provider smoke synthetic tool request.",
+                toolCallId: "provider-smoke-file-read",
+                toolName: "file_read"
+              }
+            ]
+          },
+          {
+            content: '{"ok":true,"summary":"Synthetic provider smoke tool result."}',
+            role: "tool",
+            toolCallId: "provider-smoke-file-read",
+            toolName: "file_read"
+          }
+        ],
+        signal: signal ?? controller!.signal,
+        task,
+        tokenBudget
+      });
+      return {
+        errorCategory: null,
+        latencyMs: Date.now() - startedAt,
+        message: "Synthetic post-tool turn completed.",
+        modelName: this.dependencies.providerConfig.model,
+        ok: true,
+        providerName: this.dependencies.provider.name,
+        streamIdleTimeoutMs: this.dependencies.providerConfig.streamIdleTimeoutMs,
+        timeoutMs: this.dependencies.providerConfig.timeoutMs
+      };
+    } catch (error) {
+      const providerError = error as { category?: string; message?: string };
+      return {
+        errorCategory: providerError.category ?? "unknown_error",
+        latencyMs: Date.now() - startedAt,
+        message: providerError.message ?? "Provider smoke failed.",
+        modelName: this.dependencies.providerConfig.model,
+        ok: false,
+        providerName: this.dependencies.provider.name,
+        streamIdleTimeoutMs: this.dependencies.providerConfig.streamIdleTimeoutMs,
+        timeoutMs: this.dependencies.providerConfig.timeoutMs
+      };
+    }
   }
 
   private reconcileExpiredApprovals(): void {

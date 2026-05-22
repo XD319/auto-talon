@@ -49,10 +49,23 @@ export class ManagedProvider implements Provider {
     const startedAt = Date.now();
     let retryCount = 0;
     let lastError: ProviderError | null = null;
+    let streamedTextVisible = false;
+    const managedInput =
+      input.onTextDelta === undefined
+        ? input
+        : {
+            ...input,
+            onTextDelta: (delta: string) => {
+              if (delta.length > 0) {
+                streamedTextVisible = true;
+              }
+              input.onTextDelta?.(delta);
+            }
+          };
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt += 1) {
       try {
-        const response = await this.inner.generate(input);
+        const response = await this.inner.generate(managedInput);
         const validated = assertProviderResponse(response, this.name, this.model);
         const completed = withRetryCount(validated, retryCount);
         this.telemetry.recordSuccess(Date.now() - startedAt, completed.usage, retryCount);
@@ -61,13 +74,22 @@ export class ManagedProvider implements Provider {
         const normalized = toProviderError(error, this.name, this.model, retryCount);
         lastError = normalized;
 
-        if (!normalized.retriable || attempt >= this.config.maxRetries) {
+        if (!normalized.retriable || streamedTextVisible || attempt >= this.config.maxRetries) {
           this.telemetry.recordFailure(Date.now() - startedAt, normalized.category, retryCount);
           throw normalized;
         }
 
         retryCount += 1;
-        await waitBeforeRetry(retryCount);
+        const delayMs = computeRetryDelayMs(retryCount);
+        input.onRetry?.({
+          attempt: retryCount,
+          delayMs,
+          errorCategory: normalized.category,
+          maxRetries: this.config.maxRetries,
+          modelName: this.model ?? null,
+          providerName: this.name
+        });
+        await waitBeforeRetry(delayMs);
       }
     }
 
@@ -209,8 +231,12 @@ function enrichProviderError(error: ProviderError, retryCount: number): Provider
   });
 }
 
-async function waitBeforeRetry(retryCount: number): Promise<void> {
-  const delayMs = Math.min(250 * retryCount, 1_000);
+function computeRetryDelayMs(retryCount: number): number {
+  const exponential = Math.min(250 * 2 ** Math.max(0, retryCount - 1), 4_000);
+  return exponential + Math.floor(Math.random() * Math.min(125, exponential / 4 + 1));
+}
+
+async function waitBeforeRetry(delayMs: number): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
   });

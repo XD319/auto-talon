@@ -1,5 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { ApprovalService } from "../approvals/approval-service.js";
@@ -144,7 +144,7 @@ export interface ResolveAppConfigOptions {
 }
 
 export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigOptions = {}): AppConfig {
-  const workspaceRoot = resolve(process.env.AGENT_WORKSPACE_ROOT ?? cwd);
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
   initializeWorkspaceFiles(workspaceRoot);
   migrateConfigFiles(workspaceRoot);
   validateConfigVersions(workspaceRoot);
@@ -176,6 +176,32 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     workflow: runtimeConfig.workflow,
     workspaceRoot
   };
+}
+
+function resolveWorkspaceRoot(cwd: string): string {
+  const envWorkspaceRoot = process.env.AGENT_WORKSPACE_ROOT?.trim();
+  if (envWorkspaceRoot !== undefined && envWorkspaceRoot.length > 0) {
+    return resolve(envWorkspaceRoot);
+  }
+
+  const requestedRoot = resolve(cwd);
+  return findWorkspaceRoot(requestedRoot) ?? requestedRoot;
+}
+
+function findWorkspaceRoot(startPath: string): string | null {
+  let candidate = startPath;
+
+  while (true) {
+    if (existsSync(join(candidate, ".auto-talon", "runtime.config.json"))) {
+      return candidate;
+    }
+
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      return null;
+    }
+    candidate = parent;
+  }
 }
 
 export interface AppRuntimeHandle {

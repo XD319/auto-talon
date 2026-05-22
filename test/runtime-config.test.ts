@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createApplication, resolveRuntimeConfig } from "../src/runtime/index.js";
+import { createApplication, resolveAppConfig, resolveRuntimeConfig } from "../src/runtime/index.js";
 import { SandboxService } from "../src/sandbox/sandbox-service.js";
 
 const tempPaths: string[] = [];
@@ -171,6 +171,71 @@ describe("runtime config", () => {
     const envConfig = resolveRuntimeConfig(workspaceRoot);
     expect(envConfig.configSource).toBe("env");
     expect(envConfig.webSearch.backend).toBe("disabled");
+  });
+
+  it("reuses the nearest initialized parent workspace from nested directories", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const nestedCwd = join(workspaceRoot, "packages", "assistant", "src");
+    delete process.env.AGENT_PROVIDER;
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "glm",
+        providers: {
+          glm: {
+            apiKey: "parent-workspace-key"
+          }
+        }
+      }),
+      "utf8"
+    );
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        version: 1
+      }),
+      "utf8"
+    );
+    await fs.mkdir(nestedCwd, { recursive: true });
+
+    const config = resolveAppConfig(nestedCwd);
+
+    expect(config.workspaceRoot).toBe(workspaceRoot);
+    expect(config.provider.name).toBe("glm");
+    await expect(fs.stat(join(nestedCwd, ".auto-talon"))).rejects.toThrow();
+  });
+
+  it("does not treat a provider-only parent config as an initialized workspace", async () => {
+    const configParent = await createTempWorkspace();
+    const nestedCwd = join(configParent, "work", "scratch");
+    await fs.mkdir(join(configParent, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(configParent, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "glm"
+      }),
+      "utf8"
+    );
+    await fs.mkdir(nestedCwd, { recursive: true });
+
+    const config = resolveAppConfig(nestedCwd);
+
+    expect(config.workspaceRoot).toBe(nestedCwd);
+  });
+
+  it("lets AGENT_WORKSPACE_ROOT pin the workspace before parent discovery", async () => {
+    const parentWorkspace = await createTempWorkspace();
+    const explicitWorkspace = await createTempWorkspace();
+    const nestedCwd = join(parentWorkspace, "nested");
+    await fs.mkdir(join(parentWorkspace, ".auto-talon"), { recursive: true });
+    await fs.mkdir(nestedCwd, { recursive: true });
+    vi.stubEnv("AGENT_WORKSPACE_ROOT", explicitWorkspace);
+
+    const config = resolveAppConfig(nestedCwd);
+
+    expect(config.workspaceRoot).toBe(explicitWorkspace);
+    await expect(fs.stat(join(nestedCwd, ".auto-talon"))).rejects.toThrow();
   });
 });
 

@@ -20,12 +20,20 @@ import {
   resolveMcpServerConfig
 } from "../mcp/index.js";
 import { replayTaskById, runBetaReadinessCheck, runEvalReport, runReleaseChecklist } from "../diagnostics/index.js";
-import type { SupportedProviderName } from "../providers/index.js";
+import {
+  promoteProviderConfig,
+  setupProviderConfig,
+  useProviderConfig,
+  type ProviderConfigScope,
+  type ProviderConfigWriteResult,
+  type SupportedProviderName
+} from "../providers/index.js";
 import {
   buildRepoMap,
   createApplication,
   createDefaultRunOptions,
   initializeWorkspaceFiles,
+  resolveAppConfig,
   RUNTIME_VERSION,
   type ResolveAppConfigOptions
 } from "../runtime/index.js";
@@ -55,6 +63,7 @@ import {
   formatNextActionList,
   formatProviderCatalog,
   formatProviderHealth,
+  formatProviderSmoke,
   formatProviderStats,
   formatScheduleDetail,
   formatScheduleList,
@@ -1018,7 +1027,7 @@ export async function main(argv = process.argv): Promise<void> {
       }
     });
 
-  const providerCommand = program.command("provider").description("Inspect and test providers");
+  const providerCommand = program.command("provider").description("Configure, inspect, and test providers");
 
   providerCommand.command("list").option("--json", "Print JSON").action((commandOptions: { json?: boolean }) => {
     const handle = createApplication(process.cwd());
@@ -1032,20 +1041,85 @@ export async function main(argv = process.argv): Promise<void> {
     }
   });
 
-  providerCommand.command("current").action(() => {
+  const printCurrentProvider = (): void => {
     const handle = createApplication(process.cwd());
     try {
       console.log(formatCurrentProvider(handle.service.currentProvider()));
     } finally {
       handle.close();
     }
-  });
+  };
+
+  providerCommand.command("current").description("Show the active provider").action(printCurrentProvider);
+  providerCommand.command("status").description("Show provider setup status").action(printCurrentProvider);
+
+  providerCommand
+    .command("setup")
+    .description("Configure a provider in reusable user config")
+    .argument("<provider>", "Provider name; provider:model also sets the model")
+    .option("--api-key <key>", "API key to store in provider config")
+    .option("--base-url <url>", "Provider base URL")
+    .option("--model <model>", "Model name")
+    .option("--timeout-ms <number>", "Request timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
+    .option("--stream-idle-timeout-ms <number>", "Streaming idle timeout in milliseconds", parsePositiveIntegerOption("--stream-idle-timeout-ms"))
+    .option("--max-retries <number>", "Maximum provider retries", parseNonNegativeIntegerOption("--max-retries"))
+    .option("--workspace", "Write this workspace config instead of user config")
+    .action((provider: string, commandOptions: ProviderSetupCommandOptions) => {
+      const result = setupProviderConfig(provider, {
+        ...(commandOptions.apiKey !== undefined ? { apiKey: commandOptions.apiKey } : {}),
+        ...(commandOptions.baseUrl !== undefined ? { baseUrl: commandOptions.baseUrl } : {}),
+        ...(commandOptions.maxRetries !== undefined ? { maxRetries: commandOptions.maxRetries } : {}),
+        ...(commandOptions.model !== undefined ? { model: commandOptions.model } : {}),
+        ...(commandOptions.streamIdleTimeoutMs !== undefined
+          ? { streamIdleTimeoutMs: commandOptions.streamIdleTimeoutMs }
+          : {}),
+        ...(commandOptions.timeoutMs !== undefined ? { timeoutMs: commandOptions.timeoutMs } : {}),
+        ...resolveProviderConfigTarget(commandOptions.workspace === true)
+      });
+      console.log(formatProviderConfigWrite("Configured", result));
+    });
+
+  providerCommand
+    .command("use")
+    .description("Select a provider in reusable user config")
+    .argument("<provider>", "Provider name; provider:model also sets the model")
+    .option("--workspace", "Write this workspace config instead of user config")
+    .action((provider: string, commandOptions: ProviderUseCommandOptions) => {
+      const result = useProviderConfig(provider, resolveProviderConfigTarget(commandOptions.workspace === true));
+      console.log(formatProviderConfigWrite("Selected", result));
+    });
+
+  providerCommand
+    .command("promote")
+    .description("Save the current effective provider as the user default")
+    .action(() => {
+      const handle = createApplication(process.cwd());
+      try {
+        const result = promoteProviderConfig(handle.service.currentProvider());
+        console.log(formatProviderConfigWrite("Promoted", result));
+      } finally {
+        handle.close();
+      }
+    });
 
   providerCommand.command("test").action(async () => {
     const handle = createApplication(process.cwd());
     try {
       const report = await handle.service.testCurrentProvider();
       console.log(formatProviderHealth(report));
+      if (!report.ok) {
+        process.exitCode = 1;
+      }
+    } finally {
+      handle.close();
+    }
+  });
+
+  providerCommand.command("smoke").description("Run a synthetic post-tool provider turn").action(async () => {
+    const handle = createApplication(process.cwd());
+    try {
+      const report = await handle.service.smokeCurrentProvider();
+      console.log(formatProviderSmoke(report));
       if (!report.ok) {
         process.exitCode = 1;
       }
@@ -2007,6 +2081,20 @@ interface SmokeCommandOptions {
   tasks?: string;
 }
 
+interface ProviderSetupCommandOptions {
+  apiKey?: string;
+  baseUrl?: string;
+  maxRetries?: number;
+  model?: string;
+  streamIdleTimeoutMs?: number;
+  timeoutMs?: number;
+  workspace?: boolean;
+}
+
+interface ProviderUseCommandOptions {
+  workspace?: boolean;
+}
+
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
@@ -2021,6 +2109,16 @@ function parsePositiveIntegerOption(optionName: string): (value: string) => numb
   };
 }
 
+function parseNonNegativeIntegerOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new InvalidArgumentError(`${optionName} must be a non-negative integer.`);
+    }
+    return parsed;
+  };
+}
+
 function parsePortOption(optionName: string): (value: string) => number {
   return (value) => {
     const parsed = parsePositiveIntegerOption(optionName)(value);
@@ -2029,6 +2127,29 @@ function parsePortOption(optionName: string): (value: string) => number {
     }
     return parsed;
   };
+}
+
+function resolveProviderConfigTarget(workspace: boolean): { cwd?: string; scope: ProviderConfigScope } {
+  if (!workspace) {
+    return {
+      scope: "user"
+    };
+  }
+
+  return {
+    cwd: resolveAppConfig(process.cwd()).workspaceRoot,
+    scope: "workspace"
+  };
+}
+
+function formatProviderConfigWrite(action: string, result: ProviderConfigWriteResult): string {
+  return [
+    `${action} ${result.scope} provider: ${result.providerName}`,
+    `Model: ${result.model ?? "-"}`,
+    `Config Path: ${result.configPath}`,
+    "Check: talon provider status",
+    "Test: talon provider test"
+  ].join("\n");
 }
 
 function parseNonNegativeNumberOption(optionName: string): (value: string) => number {

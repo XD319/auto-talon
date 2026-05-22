@@ -7,12 +7,7 @@ const CONFIG_VERSION = 1;
 
 const DEFAULT_PROVIDER_CONFIG: JsonObject = {
   version: CONFIG_VERSION,
-  currentProvider: "mock",
-  providers: {
-    mock: {
-      model: "mock-default"
-    }
-  }
+  providers: {}
 };
 
 const DEFAULT_RUNTIME_CONFIG: JsonObject = {

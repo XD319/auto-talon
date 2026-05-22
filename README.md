@@ -70,6 +70,7 @@ Installed package:
 ```bash
 npm install -g auto-talon
 talon init --yes
+talon provider setup openai --api-key "$OPENAI_API_KEY"
 talon tui
 ```
 
@@ -85,6 +86,7 @@ Source checkout:
 corepack pnpm install
 corepack pnpm build
 corepack pnpm dev init --yes
+corepack pnpm dev provider setup openai --api-key "$OPENAI_API_KEY"
 corepack pnpm dev tui
 ```
 
@@ -124,6 +126,8 @@ Validate providers:
 
 ```bash
 talon provider list
+talon provider promote
+talon provider status
 talon provider test
 ```
 
