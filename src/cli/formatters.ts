@@ -496,7 +496,7 @@ export function formatProviderCatalog(
   return providers
     .map(
       (provider) =>
-        `${provider.name} | ${provider.displayName} | current=${provider.name === currentProviderName ? "yes" : "no"} | tools=${provider.supportsToolCalls ? "yes" : "no"} | streaming=${provider.supportsStreaming ? "yes" : "no"}`
+        `${provider.name} | ${provider.displayName} | current=${provider.name === currentProviderName ? "yes" : "no"} | tools=${provider.supportsToolCalls ? "yes" : "no"} | streaming=${provider.supportsStreaming ? "attempt+fallback" : "complete-only"}`
     )
     .join("\n");
 }
@@ -523,6 +523,7 @@ export function formatCurrentProvider(config: {
     `Config Path: ${config.configPath}`,
     `Request Timeout (ms): ${config.timeoutMs}`,
     `Stream Idle Timeout (ms): ${config.streamIdleTimeoutMs}`,
+    `Streaming: ${config.transport === "mock" ? "complete-only" : "attempt+fallback"}`,
     `Max Retries: ${config.maxRetries}`
   ];
 

@@ -51,6 +51,8 @@ export interface ProviderRequest {
   signal: AbortSignal;
   /** When set, OpenAI-compatible providers may stream assistant text deltas before the final response. */
   onTextDelta?: (delta: string) => void;
+  /** Called when a provider changes output mode while serving a turn. */
+  onProviderStatus?: (notice: ProviderStatusNotice) => void;
   /** Called before the managed provider waits and retries a retriable provider failure. */
   onRetry?: (notice: ProviderRetryNotice) => void;
 }
@@ -171,6 +173,14 @@ export interface ProviderRetryNotice {
   maxRetries: number;
   modelName: string | null;
   providerName: string;
+}
+
+export interface ProviderStatusNotice extends JsonObject {
+  kind: "streaming_fallback";
+  message: string;
+  modelName: string | null;
+  providerName: string;
+  reason: string;
 }
 
 export interface ProviderRetryPolicy {

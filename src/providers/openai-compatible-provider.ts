@@ -21,6 +21,12 @@ import {
   toProviderError
 } from "./provider-runtime.js";
 import { composeAbortSignal, ensureTrailingSlash } from "./provider-http.js";
+import {
+  StreamingFallbackState,
+  classifyStreamingFallback,
+  describeStreamingFallbackReason,
+  shouldFallbackFromEmptyStream
+} from "./streaming-fallback.js";
 
 interface OpenAiCompatibleTool {
   function: {
@@ -81,6 +87,7 @@ export class OpenAiCompatibleProvider implements Provider {
 
   public readonly model: string;
   public readonly name: string;
+  private readonly streamingFallback = new StreamingFallbackState();
 
   public constructor(
     protected readonly config: ProviderConfig,
@@ -115,10 +122,14 @@ export class OpenAiCompatibleProvider implements Provider {
   public async generate(input: ProviderRequest): Promise<ProviderResponse> {
     this.ensureConfigured();
 
-    if (input.onTextDelta !== undefined && this.capabilities.streaming) {
-      return this.generateStreaming(input);
+    if (input.onTextDelta !== undefined && this.capabilities.streaming && !this.streamingFallback.isStreamingDisabled()) {
+      return this.generateStreamingWithFallback(input);
     }
 
+    return this.generateComplete(input);
+  }
+
+  private async generateComplete(input: ProviderRequest): Promise<ProviderResponse> {
     const response = await this.requestJson<OpenAiCompatibleResponse>(
       "chat/completions",
       {
@@ -178,7 +189,40 @@ export class OpenAiCompatibleProvider implements Provider {
     };
   }
 
-  private async generateStreaming(input: ProviderRequest): Promise<ProviderResponse> {
+  private async generateStreamingWithFallback(input: ProviderRequest): Promise<ProviderResponse> {
+    const progress = { emittedText: false, madeProgress: false, sawEvent: false };
+    try {
+      const response = await this.generateStreaming(input, progress);
+      if (shouldFallbackFromEmptyStream(response, progress)) {
+        this.streamingFallback.recordFailure(
+          input,
+          "transient",
+          "streaming response contained no usable events",
+          (req, reason) => this.emitStreamingFallbackNotice(req, reason)
+        );
+        return this.generateComplete(input);
+      }
+      this.streamingFallback.recordSuccess();
+      return response;
+    } catch (error) {
+      const fallbackKind = classifyStreamingFallback(error);
+      if (fallbackKind === "ineligible") {
+        throw error;
+      }
+      this.streamingFallback.recordFailure(
+        input,
+        fallbackKind,
+        describeStreamingFallbackReason(error),
+        (req, reason) => this.emitStreamingFallbackNotice(req, reason)
+      );
+      return this.generateComplete(input);
+    }
+  }
+
+  private async generateStreaming(
+    input: ProviderRequest,
+    progress: { emittedText: boolean; madeProgress: boolean; sawEvent: boolean }
+  ): Promise<ProviderResponse> {
     this.ensureConfigured();
 
     const controller = new AbortController();
@@ -263,7 +307,14 @@ export class OpenAiCompatibleProvider implements Provider {
             },
             (error: unknown) => {
               clearTimeout(idleTimeout);
-              reject(error instanceof Error ? error : new Error("Streaming provider read failed."));
+              const causeMessage = error instanceof Error ? error.message : null;
+              reject(
+                new Error(
+                  causeMessage === null || causeMessage.length === 0
+                    ? "Streaming provider read failed."
+                    : `Streaming provider read failed: ${causeMessage}`
+                )
+              );
             }
           );
         });
@@ -282,6 +333,7 @@ export class OpenAiCompatibleProvider implements Provider {
         } catch {
           return;
         }
+        progress.sawEvent = true;
         const usageRaw = chunk["usage"] as
           | {
               completion_tokens?: number;
@@ -310,11 +362,16 @@ export class OpenAiCompatibleProvider implements Provider {
         }
 
         if (typeof delta.content === "string" && delta.content.length > 0) {
+          progress.emittedText = true;
+          progress.madeProgress = true;
           fullContent += delta.content;
           input.onTextDelta?.(delta.content);
         }
 
         if (Array.isArray(delta.tool_calls)) {
+          if (delta.tool_calls.length > 0) {
+            progress.madeProgress = true;
+          }
           for (const tc of delta.tool_calls) {
             const idx = typeof tc.index === "number" ? tc.index : 0;
             const cur = toolParts.get(idx) ?? { arguments: "", id: "", name: "" };
@@ -557,6 +614,16 @@ export class OpenAiCompatibleProvider implements Provider {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private emitStreamingFallbackNotice(input: ProviderRequest, reason: string): void {
+    input.onProviderStatus?.({
+      kind: "streaming_fallback",
+      message: `${this.describe().displayName} streaming unavailable; continuing with complete-only responses.`,
+      modelName: this.model,
+      providerName: this.name,
+      reason
+    });
   }
 }
 

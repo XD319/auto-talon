@@ -309,7 +309,7 @@ describe("Provider integration", () => {
     expect(resolved.transport).toBe("openai-compatible");
     expect(resolved.timeoutMs).toBe(18_000);
     expect(resolved.maxRetries).toBe(5);
-    expect(createProvider(resolved).capabilities?.streaming).toBe(false);
+    expect(createProvider(resolved).capabilities?.streaming).toBe(true);
   });
 
   it("loads custom OpenAI-compatible providers from config without code changes", async () => {
@@ -712,6 +712,233 @@ describe("Provider integration", () => {
     expect(streamed).toBe("hello");
   });
 
+  it("falls back to complete-only when OpenAI-compatible streaming fails before progress", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+    const statuses: string[] = [];
+    const requestModes: Array<boolean | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          return new Response(JSON.stringify({ error: { message: "stream unsupported", type: "unsupported" } }), {
+            status: 501
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "stop",
+                index: 0,
+                message: { content: "fallback answer", role: "assistant" }
+              }
+            ],
+            id: "resp-fallback",
+            model: "kimi-k2",
+            usage: { completion_tokens: 2, prompt_tokens: 4, total_tokens: 6 }
+          }),
+          { status: 200 }
+        );
+      })
+    );
+
+    const response = await provider.generate({
+      ...createProviderInput(),
+      onProviderStatus: (notice) => statuses.push(notice.kind),
+      onTextDelta: () => {
+        throw new Error("fallback should not stream text");
+      }
+    });
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("fallback answer");
+    expect(requestModes).toEqual([true, false]);
+    expect(statuses).toEqual(["streaming_fallback"]);
+  });
+
+  it("falls back to complete-only after OpenAI-compatible streaming is interrupted", async () => {
+    const encoder = new TextEncoder();
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+    let streamed = "";
+    let pulled = false;
+    const requestModes: Array<boolean | undefined> = [];
+    const fetchMock = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as { stream?: boolean };
+      requestModes.push(body.stream);
+      if (body.stream === true) {
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (!pulled) {
+                  pulled = true;
+                  controller.enqueue(encoder.encode('data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'));
+                  return;
+                }
+                controller.error(new Error("stream broke"));
+              }
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: "stop",
+                index: 0,
+                message: { content: "complete answer", role: "assistant" }
+              }
+            ],
+            id: "resp-after-interrupt",
+            model: "kimi-k2",
+            usage: { completion_tokens: 2, prompt_tokens: 4, total_tokens: 6 }
+          }),
+          { status: 200 }
+        )
+      );
+    }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await provider.generate({
+      ...createProviderInput(),
+      onTextDelta: (delta) => {
+        streamed += delta;
+      }
+    });
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("complete answer");
+    expect(streamed).toBe("partial");
+    expect(requestModes).toEqual([true, false]);
+  });
+
+  it("falls back when OpenAI-compatible tool-call streaming fails before visible text", async () => {
+    const encoder = new TextEncoder();
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+    let pulled = false;
+    const requestModes: Array<boolean | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull(controller) {
+                  if (!pulled) {
+                    pulled = true;
+                    controller.enqueue(
+                      encoder.encode(
+                        'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"file_read","arguments":"{\\""}}]}}]}\n\n'
+                      )
+                    );
+                    return;
+                  }
+                  controller.error(new Error("Streaming provider read failed."));
+                }
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "tool_calls",
+                  index: 0,
+                  message: {
+                    content: "",
+                    role: "assistant",
+                    tool_calls: [
+                      {
+                        function: {
+                          arguments: JSON.stringify({ action: "read_file", path: "README.md" }),
+                          name: "file_read"
+                        },
+                        id: "call-fallback",
+                        type: "function"
+                      }
+                    ]
+                  }
+                }
+              ],
+              id: "tool-fallback",
+              model: "kimi-k2",
+              usage: { completion_tokens: 3, prompt_tokens: 5, total_tokens: 8 }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const response = await provider.generate({
+      ...createProviderInput(),
+      onTextDelta: () => {
+        throw new Error("tool-call fallback should not emit visible text");
+      }
+    });
+
+    expect(response.kind).toBe("tool_calls");
+    if (response.kind !== "tool_calls") {
+      throw new Error("Expected fallback response to contain tool calls.");
+    }
+    expect(response.toolCalls[0]?.toolCallId).toBe("call-fallback");
+    expect(requestModes).toEqual([true, false]);
+  });
+
   it("resets OpenAI-compatible stream idle timeout after chunks", async () => {
     const encoder = new TextEncoder();
     const provider = new OpenAiCompatibleProvider(
@@ -761,7 +988,7 @@ describe("Provider integration", () => {
     expect(response.message).toBe("hi");
   });
 
-  it("times out an OpenAI-compatible stream that goes idle", async () => {
+  it("falls back when an OpenAI-compatible stream goes idle before progress", async () => {
     const provider = new OpenAiCompatibleProvider(
       {
         apiKey: "compat-test-key",
@@ -778,23 +1005,396 @@ describe("Provider integration", () => {
         defaultModel: "gpt-4o-mini"
       }
     );
+    const requestModes: Array<boolean | undefined> = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          new Response(new ReadableStream<Uint8Array>({ pull() {} }), { status: 200 })
-        )
-      )
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          return Promise.resolve(
+            new Response(new ReadableStream<Uint8Array>({ pull() {} }), { status: 200 })
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "stop",
+                  index: 0,
+                  message: { content: "idle fallback", role: "assistant" }
+                }
+              ],
+              id: "idle-fallback",
+              model: "kimi-k2",
+              usage: { completion_tokens: 2, prompt_tokens: 5, total_tokens: 7 }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const response = await provider.generate({
+      ...createProviderInput(),
+      onTextDelta: () => {}
+    });
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("idle fallback");
+    expect(requestModes).toEqual([true, false]);
+  });
+
+  it("retries streaming on the next request after a transient OpenAI-compatible streaming failure", async () => {
+    const encoder = new TextEncoder();
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+
+    const requestModes: Array<boolean | undefined> = [];
+    let streamCallCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          streamCallCount += 1;
+          if (streamCallCount === 1) {
+            return Promise.reject(new TypeError("fetch failed"));
+          }
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    encoder.encode('data: {"choices":[{"index":0,"delta":{"content":"streamed-2"}}]}\n\n')
+                  );
+                  controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                  controller.close();
+                }
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "stop",
+                  index: 0,
+                  message: { content: "fallback-1", role: "assistant" }
+                }
+              ],
+              id: "transient-fallback",
+              model: "kimi-k2",
+              usage: { completion_tokens: 2, prompt_tokens: 4, total_tokens: 6 }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const statuses: string[] = [];
+    let firstStreamed = "";
+    const firstResponse = await provider.generate({
+      ...createProviderInput(),
+      onProviderStatus: (notice) => statuses.push(notice.kind),
+      onTextDelta: (delta) => {
+        firstStreamed += delta;
+      }
+    });
+    expect(firstResponse.kind).toBe("final");
+    expect(firstResponse.message).toBe("fallback-1");
+    expect(firstStreamed).toBe("");
+
+    let secondStreamed = "";
+    const secondResponse = await provider.generate({
+      ...createProviderInput(),
+      onProviderStatus: (notice) => statuses.push(notice.kind),
+      onTextDelta: (delta) => {
+        secondStreamed += delta;
+      }
+    });
+    expect(secondResponse.kind).toBe("final");
+    expect(secondResponse.message).toBe("streamed-2");
+    expect(secondStreamed).toBe("streamed-2");
+    // Transient failures must not emit the persistent streaming_fallback notice.
+    expect(statuses).toEqual([]);
+    expect(requestModes).toEqual([true, false, true]);
+  });
+
+  it("persistently disables OpenAI-compatible streaming after consecutive transient failures", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+
+    const requestModes: Array<boolean | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          return Promise.reject(new TypeError("fetch failed"));
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "stop",
+                  index: 0,
+                  message: { content: "complete-only", role: "assistant" }
+                }
+              ],
+              id: "transient-loop",
+              model: "kimi-k2",
+              usage: { completion_tokens: 2, prompt_tokens: 4, total_tokens: 6 }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const statuses: string[] = [];
+    const reasons: string[] = [];
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const response = await provider.generate({
+        ...createProviderInput(),
+        onProviderStatus: (notice) => {
+          statuses.push(notice.kind);
+          reasons.push(notice.reason);
+        },
+        onTextDelta: () => {
+          throw new Error("transient loop should not stream text");
+        }
+      });
+      expect(response.kind).toBe("final");
+      expect(response.message).toBe("complete-only");
+    }
+
+    // Three transient streaming attempts, then one fallback that doesn't even try streaming.
+    expect(requestModes).toEqual([true, false, true, false, true, false, false]);
+    expect(statuses).toEqual(["streaming_fallback"]);
+    expect(reasons[0] ?? "").toContain("consecutive transient streaming failures");
+  });
+
+  it("immediately disables OpenAI-compatible streaming when the endpoint signals it is unsupported", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+    const requestModes: Array<boolean | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ error: { message: "stream unsupported", type: "unsupported" } }), {
+              status: 501
+            })
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "stop",
+                  index: 0,
+                  message: { content: "complete-only", role: "assistant" }
+                }
+              ],
+              id: "persistent-disable",
+              model: "kimi-k2",
+              usage: { completion_tokens: 2, prompt_tokens: 4, total_tokens: 6 }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const statuses: string[] = [];
+    const first = await provider.generate({
+      ...createProviderInput(),
+      onProviderStatus: (notice) => statuses.push(notice.kind),
+      onTextDelta: () => {
+        throw new Error("persistent disable should not stream text");
+      }
+    });
+    expect(first.kind).toBe("final");
+    expect(first.message).toBe("complete-only");
+
+    const second = await provider.generate({
+      ...createProviderInput(),
+      onProviderStatus: (notice) => statuses.push(notice.kind),
+      onTextDelta: () => {
+        throw new Error("streaming should be disabled after the first persistent failure");
+      }
+    });
+    expect(second.kind).toBe("final");
+    expect(second.message).toBe("complete-only");
+
+    // Persistent disable: streaming attempted exactly once, then never again.
+    expect(requestModes).toEqual([true, false, false]);
+    expect(statuses).toEqual(["streaming_fallback"]);
+  });
+
+  it("falls back to complete-only when an OpenAI-compatible streaming response is HTTP-classified as unknown_error", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+
+    const requestModes: Array<boolean | undefined> = [];
+    let streamCallCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          streamCallCount += 1;
+          if (streamCallCount === 1) {
+            // 422 maps to `unknown_error` via classifyProviderHttpError; the streaming
+            // attempt should still fall back to a non-streaming retry instead of
+            // surfacing the error to the caller.
+            return Promise.resolve(
+              new Response(JSON.stringify({ error: { message: "tool schema rejected" } }), { status: 422 })
+            );
+          }
+          return Promise.reject(new Error("second streaming attempt should not happen"));
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "stop",
+                  index: 0,
+                  message: { content: "fallback-after-422", role: "assistant" }
+                }
+              ],
+              id: "fallback-422",
+              model: "kimi-k2",
+              usage: { completion_tokens: 2, prompt_tokens: 4, total_tokens: 6 }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const statuses: string[] = [];
+    const response = await provider.generate({
+      ...createProviderInput(),
+      onProviderStatus: (notice) => statuses.push(notice.kind),
+      onTextDelta: () => {
+        throw new Error("422 fallback should not stream text");
+      }
+    });
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("fallback-after-422");
+    expect(requestModes).toEqual([true, false]);
+    // First transient failure must not emit the persistent streaming_fallback notice.
+    expect(statuses).toEqual([]);
+  });
+
+  it("propagates OpenAI-compatible auth errors instead of looping into a non-streaming retry", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "kimi-k2",
+        name: "openai-compatible",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "OpenAI Compatible",
+        defaultModel: "gpt-4o-mini"
+      }
+    );
+
+    const requestModes: Array<boolean | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: { message: "invalid api key", type: "auth" } }), { status: 401 })
+        );
+      })
     );
 
     await expect(
       provider.generate({
         ...createProviderInput(),
-        onTextDelta: () => {}
+        onTextDelta: () => {
+          throw new Error("auth failure should not stream text");
+        }
       })
-    ).rejects.toMatchObject({
-      category: "timeout_error"
-    });
+    ).rejects.toMatchObject({ category: "auth_error" });
+
+    expect(requestModes).toEqual([true]);
   });
 
   it("maps Anthropic-compatible responses into the unified provider response shape", async () => {
@@ -874,6 +1474,68 @@ describe("Provider integration", () => {
     expect(response.metadata?.providerName).toBe("anthropic");
     expect(response.metadata?.modelName).toBe("claude-sonnet-4-20250514");
     expect(response.usage.totalTokens).toBe(14);
+  });
+
+  it("streams Anthropic-compatible text deltas into the final response", async () => {
+    const encoder = new TextEncoder();
+    const provider = new AnthropicCompatibleProvider(
+      {
+        apiKey: "anthropic-test-key",
+        baseUrl: "https://anthropic.example.test",
+        maxRetries: 0,
+        model: "claude-sonnet-4-20250514",
+        name: "anthropic",
+        streamIdleTimeoutMs: 5_000,
+        timeoutMs: 5_000
+      },
+      {
+        anthropicVersion: "2023-06-01",
+        defaultBaseUrl: "https://api.anthropic.com",
+        defaultDisplayName: "Anthropic",
+        defaultModel: "claude-sonnet-4-20250514"
+      }
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    [
+                      'data: {"type":"message_start","message":{"id":"msg-stream","model":"claude-sonnet-4-20250514","usage":{"input_tokens":6,"output_tokens":0}}}',
+                      "",
+                      'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+                      "",
+                      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello "}}',
+                      "",
+                      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"stream"}}',
+                      "",
+                      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+                      ""
+                    ].join("\n")
+                  )
+                );
+                controller.close();
+              }
+            }),
+            { status: 200 }
+          )
+        )
+      )
+    );
+    const deltas: string[] = [];
+    const input = createProviderInput("stream anthopic");
+    input.onTextDelta = (delta) => deltas.push(delta);
+
+    const response = await provider.generate(input);
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("hello stream");
+    expect(deltas).toEqual(["hello ", "stream"]);
+    expect(response.usage).toMatchObject({ inputTokens: 6, outputTokens: 2, totalTokens: 8 });
   });
 
   it("maps provider failures into unified provider errors", async () => {

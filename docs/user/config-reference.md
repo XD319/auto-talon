@@ -49,6 +49,16 @@ providers default to a `120000` request timeout and a `300000` stream idle
 timeout when a config layer does not explicitly set them; existing explicit
 short request timeout entries remain effective until updated.
 
+Streaming fallback policy: a provider that fails one streaming attempt because
+of a transient network error (DNS hiccup, `TypeError: fetch failed`, idle
+timeout, abort, etc.) falls back to a non-streaming request only for that
+single turn and tries streaming again on the next request. Three consecutive
+transient streaming failures, or any single failure that signals the endpoint
+cannot stream (HTTP 4xx-shaped responses such as 501/`unsupported_capability`,
+`invalid_request`, or malformed streams), persistently disables streaming for
+the remainder of the runtime process and emits a `streaming_fallback`
+`provider_status` event so the TUI/CLI can surface the degradation.
+
 If neither config layer nor `AGENT_PROVIDER` selects a provider, runtime
 commands open with an explicit unconfigured provider state. Task execution then
 reports provider setup as required instead of silently using `mock`.

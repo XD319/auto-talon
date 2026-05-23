@@ -204,7 +204,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
       providerLabel: "iFLYTEK Coding Plan"
     },
     supportsConfiguration: true,
-    supportsStreaming: false,
+    supportsStreaming: true,
     supportsToolCalls: true,
     contractVersion: 1,
     transport: "openai-compatible"

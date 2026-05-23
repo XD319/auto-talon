@@ -20,6 +20,12 @@ import {
   toProviderError
 } from "./provider-runtime.js";
 import { composeAbortSignal, ensureTrailingSlash } from "./provider-http.js";
+import {
+  StreamingFallbackState,
+  classifyStreamingFallback,
+  describeStreamingFallbackReason,
+  shouldFallbackFromEmptyStream
+} from "./streaming-fallback.js";
 
 type AnthropicCompatibleContentBlock =
   | {
@@ -82,6 +88,35 @@ interface AnthropicModelsResponse {
   };
 }
 
+interface AnthropicStreamEvent {
+  content_block?: {
+    id?: string;
+    input?: JsonObject;
+    name?: string;
+    text?: string;
+    type?: "text" | "tool_use";
+  };
+  delta?: {
+    partial_json?: string;
+    stop_reason?: string | null;
+    text?: string;
+    type?: "input_json_delta" | "text_delta";
+  };
+  index?: number;
+  message?: {
+    id?: string;
+    model?: string;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+    };
+  };
+  type?: string;
+  usage?: {
+    output_tokens?: number;
+  };
+}
+
 export class AnthropicCompatibleProvider implements Provider {
   public readonly capabilities = {
     streaming: true,
@@ -91,6 +126,7 @@ export class AnthropicCompatibleProvider implements Provider {
 
   public readonly model: string;
   public readonly name: string;
+  private readonly streamingFallback = new StreamingFallbackState();
 
   public constructor(
     protected readonly config: ProviderConfig,
@@ -118,7 +154,14 @@ export class AnthropicCompatibleProvider implements Provider {
 
   public async generate(input: ProviderRequest): Promise<ProviderResponse> {
     this.ensureConfigured();
+    if (input.onTextDelta !== undefined && this.capabilities.streaming && !this.streamingFallback.isStreamingDisabled()) {
+      return this.generateStreamingWithFallback(input);
+    }
 
+    return this.generateComplete(input);
+  }
+
+  private async generateComplete(input: ProviderRequest): Promise<ProviderResponse> {
     const response = await this.requestJson<AnthropicCompatibleResponse>(
       "v1/messages",
       {
@@ -178,6 +221,36 @@ export class AnthropicCompatibleProvider implements Provider {
       metadata,
       usage
     };
+  }
+
+  private async generateStreamingWithFallback(input: ProviderRequest): Promise<ProviderResponse> {
+    const progress = { emittedText: false, madeProgress: false, sawEvent: false };
+    try {
+      const response = await this.generateStreaming(input, progress);
+      if (shouldFallbackFromEmptyStream(response, progress)) {
+        this.streamingFallback.recordFailure(
+          input,
+          "transient",
+          "streaming response contained no usable events",
+          (req, reason) => this.emitStreamingFallbackNotice(req, reason)
+        );
+        return this.generateComplete(input);
+      }
+      this.streamingFallback.recordSuccess();
+      return response;
+    } catch (error) {
+      const fallbackKind = classifyStreamingFallback(error);
+      if (fallbackKind === "ineligible") {
+        throw error;
+      }
+      this.streamingFallback.recordFailure(
+        input,
+        fallbackKind,
+        describeStreamingFallbackReason(error),
+        (req, reason) => this.emitStreamingFallbackNotice(req, reason)
+      );
+      return this.generateComplete(input);
+    }
   }
 
   public async testConnection(signal?: AbortSignal): Promise<ProviderHealthCheck> {
@@ -245,6 +318,185 @@ export class AnthropicCompatibleProvider implements Provider {
     return this.config.baseUrl ?? this.options.defaultBaseUrl;
   }
 
+  private async generateStreaming(
+    input: ProviderRequest,
+    progress: { emittedText: boolean; madeProgress: boolean; sawEvent: boolean }
+  ): Promise<ProviderResponse> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    try {
+      const response = await fetch(
+        new URL("v1/messages", ensureTrailingSlash(this.resolveBaseUrl())).toString(),
+        {
+          body: JSON.stringify({
+            max_tokens: Math.max(1, input.tokenBudget.outputLimit),
+            messages: toAnthropicMessages(input.messages),
+            model: this.model,
+            stream: true,
+            system: readSystemPrompt(input.messages),
+            tools: input.availableTools.map((tool) => toAnthropicTool(tool))
+          }),
+          headers: this.buildHeaders(),
+          method: "POST",
+          signal: composeAbortSignal(input.signal, controller.signal)
+        }
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        const parsed = parseJson<AnthropicCompatibleResponse>(text, this.name, this.model);
+        const category = classifyProviderHttpError(
+          response.status,
+          readErrorType(parsed),
+          readErrorCode(parsed)
+        );
+        throw createProviderError({
+          category,
+          message:
+            extractErrorMessage(parsed) ??
+            `${this.describe().displayName} streaming request failed with status ${response.status}.`,
+          modelName: this.model,
+          providerName: this.name,
+          retriable: isRetriableCategory(category),
+          statusCode: response.status,
+          summary: summarizeProviderCategory(category)
+        });
+      }
+      if (response.body === null) {
+        throw createProviderError({
+          category: "malformed_response",
+          message: "Provider returned an empty streaming body.",
+          modelName: this.model,
+          providerName: this.name,
+          retriable: false,
+          summary: "The provider response stream was missing."
+        });
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const textBlocks = new Map<number, string>();
+      const toolBlocks = new Map<number, { id: string; input: string; name: string }>();
+      let buffer = "";
+      let id: string | null = null;
+      let model = this.model;
+      let stopReason: string | null = null;
+      let usage: ProviderUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+
+      const handlePayload = (payload: string): void => {
+        if (payload.trim().length === 0) {
+          return;
+        }
+        const event = parseJson<AnthropicStreamEvent>(payload, this.name, this.model);
+        progress.sawEvent = true;
+        if (event.type === "message_start") {
+          id = event.message?.id ?? id;
+          model = event.message?.model ?? model;
+          usage = toUsage(event.message?.usage);
+          return;
+        }
+        if (event.type === "content_block_start" && event.index !== undefined) {
+          if (event.content_block?.type === "text") {
+            textBlocks.set(event.index, event.content_block.text ?? "");
+          }
+          if (event.content_block?.type === "tool_use") {
+            progress.madeProgress = true;
+            toolBlocks.set(event.index, {
+              id: event.content_block.id ?? "",
+              input:
+                event.content_block.input !== undefined &&
+                Object.keys(event.content_block.input).length > 0
+                  ? JSON.stringify(event.content_block.input)
+                  : "",
+              name: event.content_block.name ?? ""
+            });
+          }
+          return;
+        }
+        if (event.type === "content_block_delta" && event.index !== undefined) {
+          if (event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
+            if (event.delta.text.length > 0) {
+              progress.emittedText = true;
+              progress.madeProgress = true;
+            }
+            textBlocks.set(event.index, `${textBlocks.get(event.index) ?? ""}${event.delta.text}`);
+            input.onTextDelta?.(event.delta.text);
+          }
+          if (event.delta?.type === "input_json_delta" && typeof event.delta.partial_json === "string") {
+            const block = toolBlocks.get(event.index);
+            if (block !== undefined) {
+              progress.madeProgress = true;
+              block.input += event.delta.partial_json;
+            }
+          }
+          return;
+        }
+        if (event.type === "message_delta") {
+          stopReason = event.delta?.stop_reason ?? stopReason;
+          usage = {
+            ...usage,
+            outputTokens: event.usage?.output_tokens ?? usage.outputTokens,
+            totalTokens: usage.inputTokens + (event.usage?.output_tokens ?? usage.outputTokens)
+          };
+        }
+      };
+
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          break;
+        }
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const events = buffer.split(/\r?\n\r?\n/u);
+        buffer = events.pop() ?? "";
+        for (const eventText of events) {
+          const payload = eventText
+            .split(/\r?\n/u)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice("data:".length).trim())
+            .join("\n");
+          handlePayload(payload);
+        }
+      }
+      if (buffer.trim().length > 0) {
+        const payload = buffer
+          .split(/\r?\n/u)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice("data:".length).trim())
+          .join("\n");
+        handlePayload(payload);
+      }
+
+      const message = [...textBlocks.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([, value]) => value.trim())
+        .filter((value) => value.length > 0)
+        .join("\n");
+      const toolCalls = [...toolBlocks.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([, block], index) => parseStreamToolCall(block, index, this.name));
+      const metadata = {
+        finishReason: stopReason,
+        modelName: model,
+        providerName: this.name,
+        raw: {
+          contentCount: textBlocks.size + toolBlocks.size,
+          id,
+          stopReason,
+          type: "message_stream"
+        },
+        requestId: id,
+        retryCount: 0
+      };
+      return toolCalls.length > 0
+        ? { kind: "tool_calls", message, metadata, toolCalls, usage }
+        : { kind: "final", message, metadata, usage };
+    } catch (error) {
+      throw toProviderError(error, this.name, this.model);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private ensureConfigured(): void {
     if (this.config.apiKey === null || this.config.apiKey.length === 0) {
       throw createProviderError({
@@ -284,16 +536,8 @@ export class AnthropicCompatibleProvider implements Provider {
     }, this.config.timeoutMs);
 
     try {
-      const headers: Record<string, string> = {
-        "anthropic-version": this.options.anthropicVersion ?? "2023-06-01",
-        "Content-Type": "application/json"
-      };
-      if (this.config.apiKey !== null) {
-        headers["x-api-key"] = this.config.apiKey;
-      }
-
       const init: RequestInit = {
-        headers,
+        headers: this.buildHeaders(),
         method,
         signal: composeAbortSignal(signal, controller.signal)
       };
@@ -336,6 +580,27 @@ export class AnthropicCompatibleProvider implements Provider {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private buildHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      "anthropic-version": this.options.anthropicVersion ?? "2023-06-01",
+      "Content-Type": "application/json"
+    };
+    if (this.config.apiKey !== null) {
+      headers["x-api-key"] = this.config.apiKey;
+    }
+    return headers;
+  }
+
+  private emitStreamingFallbackNotice(input: ProviderRequest, reason: string): void {
+    input.onProviderStatus?.({
+      kind: "streaming_fallback",
+      message: `${this.describe().displayName} streaming unavailable; continuing with complete-only responses.`,
+      modelName: this.model,
+      providerName: this.name,
+      reason
+    });
   }
 }
 
@@ -431,6 +696,44 @@ function parseToolCall(
     raw: {
       index
     },
+    reason: `Provider ${block.name} tool call requested.`,
+    toolCallId: block.id,
+    toolName: block.name
+  };
+}
+
+function parseStreamToolCall(
+  block: { id: string; input: string; name: string },
+  index: number,
+  providerName: string
+): ProviderToolCall {
+  let input: unknown;
+  try {
+    input = JSON.parse(block.input.length > 0 ? block.input : "{}");
+  } catch (error) {
+    throw createProviderError({
+      category: "malformed_response",
+      cause: error,
+      details: { index },
+      message: "Provider streamed invalid tool input JSON.",
+      providerName,
+      retriable: false,
+      summary: "The provider streamed malformed tool call input."
+    });
+  }
+  if (!isNonEmptyString(block.id) || !isNonEmptyString(block.name) || !isJsonObject(input)) {
+    throw createProviderError({
+      category: "malformed_response",
+      details: { index },
+      message: "Provider streamed an invalid tool call payload.",
+      providerName,
+      retriable: false,
+      summary: "The provider streamed malformed tool call data."
+    });
+  }
+  return {
+    input,
+    raw: { index },
     reason: `Provider ${block.name} tool call requested.`,
     toolCallId: block.id,
     toolName: block.name
