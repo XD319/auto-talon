@@ -38,6 +38,7 @@ import type {
   Provider,
   ProviderStatsSnapshot,
   ProviderHealthCheck,
+  RuntimeOutputEvent,
   RuntimeRunOptions,
   NextActionDraft,
   NextActionRecord,
@@ -57,6 +58,7 @@ import type {
   ToolCallRecord
 } from "../types/index.js";
 import type { TraceService } from "../tracing/trace-service.js";
+import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
@@ -201,6 +203,8 @@ export interface RuntimeReadModel {
   listThreads(): ThreadRecord[];
   findThread(threadId: string): ThreadRecord | null;
   listToolCalls(taskId: string): ToolCallRecord[];
+  listOutputEvents(taskId: string): RuntimeOutputEvent[];
+  listThreadOutputEvents(threadId: string): RuntimeOutputEvent[];
   listTrace(taskId: string): TraceEvent[];
   findExecutionCheckpoint(taskId: string): ExecutionCheckpointRecord | null;
   saveExecutionCheckpoint(record: ExecutionCheckpointRecord): ExecutionCheckpointRecord;
@@ -249,6 +253,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
     reservedOutput: number;
   };
   traceService: TraceService;
+  outputService: RuntimeOutputService;
   assistantThreadProjectionService: AssistantThreadProjectionService;
   providerRouter?: ProviderRouter;
   budgetService?: BudgetService;
@@ -1064,6 +1069,7 @@ export class AgentApplicationService {
     scheduleRuns: ScheduleRunRecord[];
     task: TaskRecord | null;
     toolCalls: ToolCallRecord[];
+    output: RuntimeOutputEvent[];
     trace: TraceEvent[];
   } {
     const task = this.dependencies.findTask(taskId);
@@ -1075,6 +1081,7 @@ export class AgentApplicationService {
       scheduleRuns: task === null ? [] : this.dependencies.listScheduleRunsByTask(taskId),
       task,
       toolCalls: task === null ? [] : this.dependencies.listToolCalls(taskId),
+      output: task === null ? [] : this.dependencies.listOutputEvents(taskId),
       trace: task === null ? [] : this.dependencies.listTrace(taskId)
     };
   }
@@ -1202,6 +1209,25 @@ export class AgentApplicationService {
 
   public traceTask(taskId: string): TraceEvent[] {
     return this.dependencies.listTrace(taskId);
+  }
+
+  public outputTask(taskId: string): RuntimeOutputEvent[] {
+    return this.dependencies.listOutputEvents(taskId);
+  }
+
+  public outputThread(threadId: string): RuntimeOutputEvent[] {
+    return this.dependencies.listThreadOutputEvents(threadId);
+  }
+
+  public subscribeToTaskOutput(
+    taskId: string,
+    listener: (event: RuntimeOutputEvent) => void
+  ): () => void {
+    return this.dependencies.outputService.subscribe((event) => {
+      if (event.taskId === taskId) {
+        listener(event);
+      }
+    });
   }
 
   public taskTimeline(taskId: string): TaskTimelineReport {

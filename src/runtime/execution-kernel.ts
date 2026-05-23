@@ -11,6 +11,8 @@ import {
   buildFinalSessionCompactInput,
   buildReviewerTracePayload,
   createToolFeedbackMessage,
+  createToolFeedbackMessageWithNotice,
+  DEDUPLICATABLE_CAPABILITIES,
   emitTaskEvent,
   estimateTokenCount,
   injectResumeContextMessages,
@@ -18,11 +20,13 @@ import {
   providerUsageToJson,
   readThreadResumeMemoryContext,
   readThreadResumeMessages,
+  rebuildSignaturesFromMessages,
   rebuildTurnProviderMessages,
   sleepWithAbort,
   summarizeText,
   summarizeToolOutput,
-  toConversationRole
+  toConversationRole,
+  toolCallSignature
 } from "./kernel-support.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
@@ -41,7 +45,9 @@ import type {
   MemoryRecallResult,
   Provider,
   ProviderRetryNotice,
+  ProviderStatusNotice,
   ProviderToolCall,
+  RuntimeOutputEvent,
   RuntimeTaskEvent,
   RunMetadataRepository,
   RuntimeRunOptions,
@@ -66,6 +72,7 @@ import type { CompactTriggerPolicy } from "../memory/compact-policy.js";
 import type { ToolOrchestrator } from "../tools/index.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
+import type { RuntimeOutputService } from "./runtime-output-service.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -84,6 +91,7 @@ export interface ExecutionKernelDependencies {
   threadSessionMemoryService: ThreadSessionMemoryService;
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
+  outputService: RuntimeOutputService;
   workflow: WorkflowRuntimeConfig;
   compact: RuntimeConfig["compact"];
   budgetPricing?: Record<string, BudgetPricingEntry>;
@@ -97,8 +105,11 @@ export interface ExecutionKernelDependencies {
   workspaceRoot: string;
 }
 
+const PROGRESS_GUARD_THRESHOLD = 3;
+
 interface ExecutionLoopState {
   costWarnedToolNames: string[];
+  cumulativeToolCallCount: number;
   cwd: string;
   managedAbortController: ReturnType<typeof createManagedAbortController>;
   maxIterations: number;
@@ -107,9 +118,12 @@ interface ExecutionLoopState {
   messages: ConversationMessage[];
   /** Present only when the CLI/TUI requests streamed assistant text. */
   onAssistantTextDelta?: (delta: string) => void;
+  onOutputEvent?: (event: RuntimeOutputEvent) => void;
   onTaskEvent?: (event: RuntimeTaskEvent) => void;
   pendingToolCalls: ProviderToolCall[];
   selectedSkillContext: ContextFragment[];
+  silentToolTurns: number;
+  toolCallSignatures: Map<string, { iteration: number; toolCallId: string }>;
   turnFilteredFragments: ContextAssemblyDebugView["filteredOutFragments"];
   turnProviderMessages: ConversationMessage[];
   repoMapSummary?: string;
@@ -164,6 +178,14 @@ export class ExecutionKernel {
       threadId: options.threadId ?? null,
       tokenBudget: options.tokenBudget
     });
+    const stopOutputSubscription =
+      options.onOutputEvent === undefined
+        ? null
+        : this.dependencies.outputService.subscribe((event) => {
+            if (event.taskId === taskId) {
+              options.onOutputEvent?.(event);
+            }
+          });
 
     this.dependencies.traceService.record({
       actor: "runtime.kernel",
@@ -177,6 +199,12 @@ export class ExecutionKernel {
       },
       stage: "lifecycle",
       summary: "Task persisted",
+      taskId
+    });
+    this.emitOutput({
+      eventType: "task_input",
+      payload: { input: options.taskInput },
+      stage: "planning",
       taskId
     });
 
@@ -284,6 +312,7 @@ export class ExecutionKernel {
       return await this.executeLoop({
         cwd: options.cwd,
         costWarnedToolNames: [],
+        cumulativeToolCallCount: 0,
         managedAbortController,
         maxIterations: options.maxIterations,
         memoryContext: [...recallPlan.fragments, ...resumeMemoryContext],
@@ -292,11 +321,14 @@ export class ExecutionKernel {
         ...(options.onAssistantTextDelta !== undefined
           ? { onAssistantTextDelta: options.onAssistantTextDelta }
           : {}),
+        ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         ...(options.onTaskEvent !== undefined ? { onTaskEvent: options.onTaskEvent } : {}),
         pendingToolCalls: [],
         ...(repoMap?.summary !== undefined ? { repoMapSummary: repoMap.summary } : {}),
         selectedSkillContext: recallPlan.fragments.filter((fragment) => fragment.scope === "skill_ref"),
+        silentToolTurns: 0,
         task,
+        toolCallSignatures: new Map(),
         turnFilteredFragments: [],
         turnProviderMessages: messages,
         tokenBudget: options.tokenBudget
@@ -304,11 +336,15 @@ export class ExecutionKernel {
     } catch (error) {
       throw this.finalizeTaskFailure(task, toAppError(error), options.onTaskEvent);
     } finally {
+      stopOutputSubscription?.();
       managedAbortController.dispose();
     }
   }
 
-  public async resumeTask(taskId: string, signal?: AbortSignal): Promise<RuntimeRunResult> {
+  public async resumeTask(
+    taskId: string,
+    options: { onOutputEvent?: (event: RuntimeOutputEvent) => void; signal?: AbortSignal } = {}
+  ): Promise<RuntimeRunResult> {
     const task = this.dependencies.taskRepository.findById(taskId);
     if (task === null) {
       throw new AppError({
@@ -340,23 +376,40 @@ export class ExecutionKernel {
       });
     }
 
-    const managedAbortController = createManagedAbortController(runMetadata.timeoutMs, signal);
+    const managedAbortController = createManagedAbortController(runMetadata.timeoutMs, options.signal);
+    const stopOutputSubscription =
+      options.onOutputEvent === undefined
+        ? null
+        : this.dependencies.outputService.subscribe((event) => {
+            if (event.taskId === taskId) {
+              options.onOutputEvent?.(event);
+            }
+          });
     let resumedTask = this.dependencies.taskRepository.update(taskId, {
       status: "running"
     });
 
     try {
+      const isDeduplicatable = (toolName: string): boolean => {
+        const descriptor = this.dependencies.toolOrchestrator.describeTool(toolName);
+        return descriptor !== null && DEDUPLICATABLE_CAPABILITIES.has(descriptor.capability);
+      };
+
       return await this.executeLoop({
         cwd: resumedTask.cwd,
         costWarnedToolNames: [],
+        cumulativeToolCallCount: 0,
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
         memoryRecall: null,
         messages: checkpoint.messages,
+        ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         pendingToolCalls: checkpoint.pendingToolCalls,
         selectedSkillContext: [],
+        silentToolTurns: 0,
         task: resumedTask,
+        toolCallSignatures: rebuildSignaturesFromMessages(checkpoint.messages, isDeduplicatable),
         turnFilteredFragments: [],
         turnProviderMessages: checkpoint.messages,
         tokenBudget: resumedTask.tokenBudget
@@ -365,6 +418,7 @@ export class ExecutionKernel {
       resumedTask = this.dependencies.taskRepository.findById(taskId) ?? resumedTask;
       throw this.finalizeTaskFailure(resumedTask, toAppError(error));
     } finally {
+      stopOutputSubscription?.();
       managedAbortController.dispose();
     }
   }
@@ -502,11 +556,42 @@ export class ExecutionKernel {
             : buildFilteredContextDebugFragments(state.memoryRecall.decisions)).concat(
             assembled.debug.filteredOutFragments
           );
+        const turnId = randomUUID();
+        this.emitOutput({
+          eventType: "assistant_turn_started",
+          payload: {
+            display: "provisional",
+            iteration,
+            providerName: this.dependencies.provider.name,
+            turnId
+          },
+          stage: "planning",
+          taskId: task.taskId
+        });
         const providerInput = {
           ...assembled.providerInput,
-          ...(state.onAssistantTextDelta === undefined
-            ? {}
-            : { onTextDelta: state.onAssistantTextDelta }),
+          onTextDelta: (delta: string) => {
+            state.onAssistantTextDelta?.(delta);
+            this.emitOutput({
+              eventType: "assistant_turn_delta",
+              payload: {
+                delta,
+                display: "provisional",
+                iteration,
+                turnId
+              },
+              stage: "planning",
+              taskId: task.taskId
+            });
+          },
+          onProviderStatus: (notice: ProviderStatusNotice) => {
+            this.emitOutput({
+              eventType: "provider_status",
+              payload: notice,
+              stage: "planning",
+              taskId: task.taskId
+            });
+          },
           onRetry: (retry: ProviderRetryNotice) => {
             this.dependencies.traceService.record({
               actor: `provider.${retry.providerName}`,
@@ -607,6 +692,40 @@ export class ExecutionKernel {
             ? { toolCalls: providerResponse.toolCalls }
             : {})
         });
+        this.emitOutput({
+          eventType: "assistant_turn_completed",
+          payload: {
+            display: providerResponse.kind === "final" ? "final" : "intermediate",
+            iteration,
+            text: providerResponse.message,
+            turnId
+          },
+          stage: providerResponse.kind === "final" ? "completion" : "planning",
+          taskId: task.taskId
+        });
+
+        const visibleReasoningText = providerResponse.message.trim();
+        if (providerResponse.kind === "tool_calls" && visibleReasoningText.length === 0) {
+          state.silentToolTurns += 1;
+        } else {
+          state.silentToolTurns = 0;
+        }
+        if (
+          providerResponse.kind === "tool_calls" &&
+          state.silentToolTurns >= PROGRESS_GUARD_THRESHOLD
+        ) {
+          messages.push({
+            content:
+              `progress guard: you have made ${state.silentToolTurns} consecutive tool-call rounds at iterations ${iteration - state.silentToolTurns + 1}-${iteration} without writing any visible reasoning text. Stop calling tools and answer the user's request based on what you already know. If the original question was conceptual or general-knowledge, answer directly without further tool use.`,
+            metadata: {
+              privacyLevel: "internal",
+              retentionKind: "session",
+              sourceType: "system_prompt"
+            },
+            role: "system"
+          });
+          state.silentToolTurns = 0;
+        }
 
         this.dependencies.traceService.record({
           actor: `provider.${activeProvider.name}`,
@@ -917,32 +1036,77 @@ export class ExecutionKernel {
         }
 
         toolCallCount += 1;
+        state.cumulativeToolCallCount += 1;
         const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
         const structuredOutputSummary = summarizeToolOutput(outcome.result.output);
-        const toolSummary = `${outcome.result.summary} | ${structuredOutputSummary}`;
+        const isDeduplicatable =
+          toolDescriptor !== null && DEDUPLICATABLE_CAPABILITIES.has(toolDescriptor.capability);
+        const signature = isDeduplicatable
+          ? toolCallSignature(toolCall.toolName, toolCall.input)
+          : null;
+        const priorCall =
+          signature === null ? null : state.toolCallSignatures.get(signature) ?? null;
+        const duplicateNotice =
+          priorCall === null
+            ? null
+            : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments — synthesize from the prior result and answer the user.`;
+        const finishedSummary =
+          priorCall === null
+            ? `${outcome.result.summary} | ${structuredOutputSummary}`
+            : `${outcome.result.summary} | ${structuredOutputSummary} (duplicate of iter ${priorCall.iteration})`;
+        const privacyLevel = toolDescriptor?.privacyLevel ?? "internal";
+
         if (toolDescriptor !== null) {
           if (toolDescriptor.capability !== "interaction.ask_user") {
             messages.push(
-              createToolFeedbackMessage(outcome.result.output, toolCall, toolDescriptor.privacyLevel)
+              duplicateNotice === null
+                ? createToolFeedbackMessage(outcome.result.output, toolCall, privacyLevel)
+                : createToolFeedbackMessageWithNotice(
+                    outcome.result.output,
+                    toolCall,
+                    privacyLevel,
+                    duplicateNotice
+                  )
             );
+          }
+          if (signature !== null && priorCall === null) {
+            state.toolCallSignatures.set(signature, {
+              iteration,
+              toolCallId: toolCall.toolCallId
+            });
           }
           emitTaskEvent(state.onTaskEvent, {
             iteration,
             kind: "tool",
             status: "finished",
-            summary: toolSummary,
+            summary: finishedSummary,
             taskId: task.taskId,
             toolCallId: toolCall.toolCallId,
             toolName: toolCall.toolName
           });
           continue;
         }
-        messages.push(createToolFeedbackMessage(outcome.result.output, toolCall, "internal"));
+        messages.push(
+          duplicateNotice === null
+            ? createToolFeedbackMessage(outcome.result.output, toolCall, privacyLevel)
+            : createToolFeedbackMessageWithNotice(
+                outcome.result.output,
+                toolCall,
+                privacyLevel,
+                duplicateNotice
+              )
+        );
+        if (signature !== null && priorCall === null) {
+          state.toolCallSignatures.set(signature, {
+            iteration,
+            toolCallId: toolCall.toolCallId
+          });
+        }
         emitTaskEvent(state.onTaskEvent, {
           iteration,
           kind: "tool",
           status: "finished",
-          summary: toolSummary,
+          summary: finishedSummary,
           taskId: task.taskId,
           toolCallId: toolCall.toolCallId,
           toolName: toolCall.toolName
@@ -993,6 +1157,8 @@ export class ExecutionKernel {
         taskId: task.taskId
       });
       const compacted = await this.compactMessages({
+        iteration,
+        iterationThreshold: this.dependencies.compact.iterationThreshold,
         maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
         messages,
         pendingToolCalls,
@@ -1000,7 +1166,7 @@ export class ExecutionKernel {
         taskId: task.taskId,
         tokenEstimate: estimateTokenCount(messages),
         tokenThreshold: this.dependencies.compact.tokenThreshold,
-        toolCallCount,
+        toolCallCount: state.cumulativeToolCallCount,
         toolCallThreshold: this.dependencies.compact.toolCallThreshold
       });
       if (compacted.triggered) {
@@ -1020,6 +1186,8 @@ export class ExecutionKernel {
             threadId: task.threadId
           });
           const compactInput = {
+            iteration,
+            iterationThreshold: this.dependencies.compact.iterationThreshold,
             maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
             messages: preCompactMessages,
             pendingToolCalls,
@@ -1028,7 +1196,7 @@ export class ExecutionKernel {
             taskId: task.taskId,
             tokenEstimate: estimateTokenCount(preCompactMessages),
             tokenThreshold: this.dependencies.compact.tokenThreshold,
-            toolCallCount,
+            toolCallCount: state.cumulativeToolCallCount,
             toolCallThreshold: this.dependencies.compact.toolCallThreshold
           } as const;
           const workerDispatcher = this.dependencies.workerDispatcher;
@@ -1071,6 +1239,8 @@ export class ExecutionKernel {
         const initialSystemPrompt =
           messages.find((message) => message.role === "system") ?? null;
         messages.length = 0;
+        state.toolCallSignatures.clear();
+        state.silentToolTurns = 0;
         if (initialSystemPrompt !== null) {
           messages.push(initialSystemPrompt);
         }
@@ -1159,7 +1329,9 @@ export class ExecutionKernel {
 
     return {
       reason:
-        decision.reason === "token_budget" || decision.reason === "tool_call_count"
+        decision.reason === "token_budget" ||
+        decision.reason === "tool_call_count" ||
+        decision.reason === "iteration_count"
           ? decision.reason
           : "message_count",
       replacementMessages: [
@@ -1317,5 +1489,9 @@ export class ExecutionKernel {
       taskId: task.taskId,
       threadId: task.threadId
     });
+  }
+
+  private emitOutput(draft: Parameters<RuntimeOutputService["record"]>[0]): RuntimeOutputEvent {
+    return this.dependencies.outputService.record(draft);
   }
 }

@@ -490,6 +490,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
             },
       audit: auditEntries,
       notices,
+      output: details.output,
       task: {
         errorCode: details.task.errorCode,
         errorMessage: details.task.errorMessage,
@@ -573,10 +574,25 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
         });
       }
     });
+    const unsubscribeOutput = this.dependencies.applicationService.subscribeToTaskOutput(taskId, (output) => {
+      listener({
+        kind: "output",
+        output,
+        taskId
+      });
+      for (const outbound of this.outboundAdapters.values()) {
+        void outbound.sendEvent?.({
+          kind: "output",
+          output,
+          taskId
+        });
+      }
+    });
 
     return () => {
       unsubscribeTrace();
       unsubscribeAudit();
+      unsubscribeOutput();
     };
   }
 

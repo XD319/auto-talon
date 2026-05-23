@@ -12,7 +12,9 @@ import {
 
 export interface BuildSessionMemoryInput {
   task: TaskRecord;
-  compact: SessionCompactInput & { reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" };
+  compact: SessionCompactInput & {
+    reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" | "iteration_count";
+  };
   availableTools: ProviderToolDescriptor[];
   trigger?: ThreadSessionMemoryDraft["trigger"];
 }

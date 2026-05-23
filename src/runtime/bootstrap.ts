@@ -59,6 +59,7 @@ import { AgentApplicationService } from "./application-service.js";
 import { ContextCompactor, SessionSearchService, ThreadSessionMemoryService } from "./context/index.js";
 import { BudgetService } from "./budget/index.js";
 import { ExecutionKernel } from "./execution-kernel.js";
+import { RuntimeOutputService } from "./runtime-output-service.js";
 import { RecallBudgetPolicy, RecallPlanner } from "./retrieval/index.js";
 import { DeliveryService } from "./delivery/index.js";
 import { InboxCollector, InboxService } from "./inbox/index.js";
@@ -87,6 +88,7 @@ export interface AppConfig {
   defaultProfileId: "executor" | "planner" | "reviewer";
   defaultTimeoutMs: number;
   compact: {
+    iterationThreshold: number;
     messageThreshold: number;
     tokenThreshold: number;
     toolCallThreshold: number;
@@ -260,6 +262,8 @@ export function createApplication(
     databasePath: config.databasePath
   });
   const traceService = new TraceService(storage.traces);
+  const outputService = new RuntimeOutputService(storage.outputs, (taskId) => storage.tasks.findById(taskId));
+  const stopOutputTraceProjection = traceService.subscribe((event) => outputService.projectTrace(event));
   const auditService = new AuditService(storage.auditLogs);
   const budgetService = new BudgetService(config.budget, traceService, auditService);
   budgetService.start();
@@ -480,6 +484,7 @@ export function createApplication(
     toolExposurePlanner,
     toolOrchestrator,
     traceService,
+    outputService,
     workflow: config.workflow,
     workspaceRoot: config.workspaceRoot
   });
@@ -584,6 +589,8 @@ export function createApplication(
     findThreadSessionMemory: (sessionMemoryId) => storage.threadSessionMemories.findById(sessionMemoryId),
     listThreadLineage: (threadId) => storage.threadLineage.listByThreadId(threadId),
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
+    listOutputEvents: (taskId) => storage.outputs.listByTaskId(taskId),
+    listThreadOutputEvents: (threadId) => storage.outputs.listByThreadId(threadId),
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     findExecutionCheckpoint: (taskId) => storage.checkpoints.findByTaskId(taskId),
     saveExecutionCheckpoint: (record) => storage.checkpoints.save(record),
@@ -606,6 +613,7 @@ export function createApplication(
       reservedOutput: config.tokenBudget.reservedOutput
     },
     traceService,
+    outputService,
     auditService,
     memoryPlane,
     experiencePlane,
@@ -631,6 +639,7 @@ export function createApplication(
       budgetService.stop();
       service?.stopScheduler();
       void mcpClientManager.close();
+      stopOutputTraceProjection();
       storage.close();
     },
     config,

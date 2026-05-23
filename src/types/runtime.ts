@@ -4,6 +4,7 @@ import type { ContextFragment } from "./memory.js";
 import type { AgentProfileId } from "./profile.js";
 import type { TaskRecord } from "./task.js";
 import type { ToolSchemaDescriptor } from "./tool.js";
+import type { RuntimeOutputEvent } from "./output.js";
 
 export type ConversationRole = "assistant" | "system" | "tool" | "user";
 
@@ -226,6 +227,8 @@ export interface RuntimeRunOptions {
   metadata?: JsonObject;
   /** Forwarded to the provider as `onTextDelta` when supported (e.g. OpenAI-compatible streaming). */
   onAssistantTextDelta?: (delta: string) => void;
+  /** Presentation-safe runtime output stream for TUI, CLI, and gateway adapters. */
+  onOutputEvent?: (event: RuntimeOutputEvent) => void;
   /** Unified task stream callback for lifecycle, stage, tool, and result events. */
   onTaskEvent?: (event: RuntimeTaskEvent) => void;
 }

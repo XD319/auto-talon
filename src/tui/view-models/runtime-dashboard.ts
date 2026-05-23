@@ -6,6 +6,7 @@ import type {
   JsonObject,
   JsonValue,
   MemoryRecord,
+  RuntimeOutputEvent,
   TaskRecord,
   TraceEvent,
   ToolCallRecord
@@ -16,6 +17,7 @@ export const PANEL_ORDER = [
   "approvals",
   "diff",
   "trace",
+  "transcript",
   "memory",
   "experience",
   "skills",
@@ -138,6 +140,7 @@ export interface SelectedTaskViewModel {
   metadata: Array<{ label: string; value: string }>;
   recentEvents: string[];
   trace: TraceEntryViewModel[];
+  output: RuntimeOutputEvent[];
 }
 
 export interface RuntimeDashboardViewModel {
@@ -212,6 +215,7 @@ export class RuntimeDashboardQueryService {
       memoryHits: buildMemoryHits(detail.trace, memories),
       metadata: buildMetadata(currentTask),
       recentEvents: detail.trace.slice(-5).map((event) => event.summary),
+      output: detail.output,
       trace: detail.trace.slice(-100).map(toTraceEntry)
     };
   }

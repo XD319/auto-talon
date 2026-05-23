@@ -6,6 +6,7 @@ export * from "./tool-exposure-planner.js";
 export * from "./context/index.js";
 export * from "./repo-map.js";
 export * from "./runtime-config.js";
+export * from "./runtime-output-service.js";
 export * from "./scheduler/index.js";
 export * from "./jobs/index.js";
 export * from "./delivery/index.js";

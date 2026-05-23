@@ -131,7 +131,9 @@ export class MemoryPlane {
     const summary = summarizeCompactMessages(input);
     return Promise.resolve({
       reason:
-        decision.reason === "token_budget" || decision.reason === "tool_call_count"
+        decision.reason === "token_budget" ||
+        decision.reason === "tool_call_count" ||
+        decision.reason === "iteration_count"
           ? decision.reason
           : "message_count",
       replacementMessages: [

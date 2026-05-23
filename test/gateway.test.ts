@@ -177,6 +177,7 @@ describe("Phase 5 gateway adapters", () => {
 
       const trace = handle.service.traceTask(result.result.taskId);
       const audit = handle.service.auditTask(result.result.taskId);
+      const snapshot = gateway.getTaskSnapshot(result.result.taskId);
 
       expect(
         trace.some(
@@ -194,6 +195,8 @@ describe("Phase 5 gateway adapters", () => {
             entry.payload.externalSessionId === "sdk-session"
         )
       ).toBe(true);
+      expect(snapshot?.output.some((event) => event.eventType === "assistant_turn_completed")).toBe(true);
+      expect(snapshot?.output.at(-1)?.eventType).toBe("result");
     } finally {
       handle.close();
     }

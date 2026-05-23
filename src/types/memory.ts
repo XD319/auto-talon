@@ -160,7 +160,8 @@ export const SESSION_COMPACT_TRIGGER_REASONS = [
   "message_count",
   "context_budget",
   "token_budget",
-  "tool_call_count"
+  "tool_call_count",
+  "iteration_count"
 ] as const;
 
 export type SessionCompactTriggerReason = (typeof SESSION_COMPACT_TRIGGER_REASONS)[number];
@@ -183,6 +184,8 @@ export interface SessionCompactInput {
   tokenThreshold?: number;
   toolCallCount?: number;
   toolCallThreshold?: number;
+  iteration?: number;
+  iterationThreshold?: number;
   pendingToolCalls?: Array<{
     toolCallId: string;
     toolName: string;

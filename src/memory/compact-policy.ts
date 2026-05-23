@@ -21,6 +21,13 @@ export class CompactTriggerPolicy {
       };
     }
 
+    if ((input.iterationThreshold ?? Number.POSITIVE_INFINITY) <= (input.iteration ?? 0)) {
+      return {
+        reason: "iteration_count",
+        triggered: true
+      };
+    }
+
     if ((input.tokenThreshold ?? Number.POSITIVE_INFINITY) <= (input.tokenEstimate ?? 0)) {
       return {
         reason: "token_budget",

@@ -451,7 +451,7 @@ export interface MemoryWriteRejectedPayload extends JsonObject {
 }
 
 export interface SessionCompactedPayload extends JsonObject {
-  reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count";
+  reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" | "iteration_count";
   summaryMemoryId: string;
   replacedMessageCount: number;
   summarizerId?: string;

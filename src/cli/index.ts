@@ -93,7 +93,8 @@ import type {
   ExperienceQuery,
   ExperienceSourceType,
   ExperienceStatus,
-  ExperienceType
+  ExperienceType,
+  RuntimeOutputEvent
 } from "../types/index.js";
 import type { InboundMessageAdapter } from "../types/index.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
@@ -119,6 +120,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--thread <threadId>", "Reuse an existing thread id")
     .option("--max-iterations <number>", "Maximum loop iterations", parsePositiveIntegerOption("--max-iterations"))
     .option("--timeout-ms <number>", "Task timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
+    .option("--json-events", "Write runtime output events as NDJSON on stderr")
     .action(async (task: string, commandOptions: RunCommandOptions) => {
       const handle = createApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
@@ -135,6 +137,7 @@ export async function main(argv = process.argv): Promise<void> {
         if (commandOptions.timeoutMs !== undefined) {
           runOptions.timeoutMs = commandOptions.timeoutMs;
         }
+        runOptions.onOutputEvent = createCliOutputListener(commandOptions.jsonEvents === true);
 
         const result = await handle.service.runTask(runOptions);
         console.log(`Task ID: ${result.task.taskId}`);
@@ -158,7 +161,8 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--last", "Continue the latest thread for current user")
     .option("--thread <threadId>", "Continue a specific thread id")
     .option("--cwd <path>", "Working directory", process.cwd())
-    .action(async (task: string | undefined, commandOptions: { cwd: string; last?: boolean; thread?: string }) => {
+    .option("--json-events", "Write runtime output events as NDJSON on stderr")
+    .action(async (task: string | undefined, commandOptions: { cwd: string; jsonEvents?: boolean; last?: boolean; thread?: string }) => {
       const handle = createApplication(commandOptions.cwd);
       try {
         const threadInput =
@@ -177,12 +181,19 @@ export async function main(argv = process.argv): Promise<void> {
                   throw new Error("No task input or next action found.");
                 }
                 return handle.service.continueThread(threadId, threadInput, {
-                  cwd: commandOptions.cwd
+                  cwd: commandOptions.cwd,
+                  onOutputEvent: createCliOutputListener(commandOptions.jsonEvents === true)
                 });
               })()
             : commandOptions.last === true
-              ? await handle.service.continueLatest(task, { cwd: commandOptions.cwd })
-              : await handle.service.continueLatest(task, { cwd: commandOptions.cwd });
+              ? await handle.service.continueLatest(task, {
+                  cwd: commandOptions.cwd,
+                  onOutputEvent: createCliOutputListener(commandOptions.jsonEvents === true)
+                })
+              : await handle.service.continueLatest(task, {
+                  cwd: commandOptions.cwd,
+                  onOutputEvent: createCliOutputListener(commandOptions.jsonEvents === true)
+                });
         console.log(`Task ID: ${result.task.taskId}`);
         console.log(`Thread ID: ${result.task.threadId ?? "-"}`);
         console.log(`Status: ${result.task.status}`);
@@ -2013,7 +2024,42 @@ interface SandboxCommandOptions {
   writeRoot?: string[];
 }
 
+function createCliOutputListener(jsonEvents: boolean): (event: RuntimeOutputEvent) => void {
+  return (event) => {
+    if (jsonEvents) {
+      console.error(JSON.stringify({ kind: "output", output: event, taskId: event.taskId }));
+      return;
+    }
+    const line = formatCliOutputEvent(event);
+    if (line !== null) {
+      console.error(line);
+    }
+  };
+}
+
+function formatCliOutputEvent(event: RuntimeOutputEvent): string | null {
+  switch (event.eventType) {
+    case "task_input":
+      return `[task ${event.taskId.slice(0, 8)}] accepted`;
+    case "assistant_turn_started":
+      return `[turn ${event.payload.iteration}] assistant responding`;
+    case "provider_status":
+      return `[provider ${event.payload.kind}] ${event.payload.providerName}: ${event.payload.reason}`;
+    case "tool_status":
+      return `[tool ${event.payload.status}] ${event.payload.toolName}: ${event.payload.summary}`;
+    case "approval":
+      return `[approval ${event.payload.status}] ${event.payload.toolName}`;
+    case "clarification":
+      return `[clarification ${event.payload.status}] ${event.payload.question ?? event.payload.promptId}`;
+    case "error":
+      return `[task ${event.payload.status}] ${event.payload.message}`;
+    default:
+      return null;
+  }
+}
+
 interface RunCommandOptions extends SandboxCommandOptions {
+  jsonEvents?: boolean;
   maxIterations?: number;
   profile: string;
   thread?: string;

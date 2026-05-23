@@ -12,7 +12,8 @@ import {
   MemoryPanel,
   SkillsPanel,
   TaskPanel,
-  TracePanel
+  TracePanel,
+  TranscriptPanel
 } from "./panels/index.js";
 import { theme } from "./theme.js";
 import {
@@ -210,6 +211,8 @@ export function AgentTuiApp({
               <DiffPanel diff={selectedTask?.diff ?? []} />
             ) : controller.selectedPanel === "trace" ? (
               <TracePanel trace={selectedTask?.trace ?? []} />
+            ) : controller.selectedPanel === "transcript" ? (
+              <TranscriptPanel events={selectedTask?.output ?? []} />
             ) : controller.selectedPanel === "memory" ? (
               <MemoryPanel memoryHits={selectedTask?.memoryHits ?? []} />
             ) : controller.selectedPanel === "experience" ? (

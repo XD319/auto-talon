@@ -37,6 +37,8 @@ export type TuiRuntimeService = Pick<
   | "listThreads"
   | "listInbox"
   | "markNextActionDone"
+  | "outputTask"
+  | "outputThread"
   | "pauseSchedule"
   | "providerStats"
   | "resolveApproval"
@@ -48,5 +50,6 @@ export type TuiRuntimeService = Pick<
   | "showTask"
   | "showThread"
   | "subscribeToTaskTrace"
+  | "subscribeToTaskOutput"
   | "traceTask"
 >;

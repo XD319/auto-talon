@@ -16,6 +16,7 @@ import { SqliteNextActionRepository } from "./repositories/commitments/next-acti
 import { SqliteMemoryRepository } from "./repositories/memory-repository.js";
 import { SqliteMemorySnapshotRepository } from "./repositories/memory-snapshot-repository.js";
 import { SqliteRunMetadataRepository } from "./repositories/run-metadata-repository.js";
+import { SqliteRuntimeOutputRepository } from "./repositories/runtime-output-repository.js";
 import { SqliteScheduleRepository } from "./repositories/schedules/schedule-repository.js";
 import { SqliteScheduleRunRepository } from "./repositories/schedules/schedule-run-repository.js";
 import { SqliteTaskRepository } from "./repositories/task-repository.js";
@@ -42,6 +43,7 @@ export class StorageManager {
   public readonly schedules: SqliteScheduleRepository;
   public readonly scheduleRuns: SqliteScheduleRunRepository;
   public readonly traces: SqliteTraceRepository;
+  public readonly outputs: SqliteRuntimeOutputRepository;
   public readonly toolCalls: SqliteToolCallRepository;
   public readonly artifacts: SqliteArtifactRepository;
   public readonly runMetadata: SqliteRunMetadataRepository;
@@ -74,6 +76,7 @@ export class StorageManager {
     this.schedules = new SqliteScheduleRepository(this.database);
     this.scheduleRuns = new SqliteScheduleRunRepository(this.database);
     this.traces = new SqliteTraceRepository(this.database);
+    this.outputs = new SqliteRuntimeOutputRepository(this.database);
     this.toolCalls = new SqliteToolCallRepository(this.database);
     this.artifacts = new SqliteArtifactRepository(this.database);
     this.runMetadata = new SqliteRunMetadataRepository(this.database);

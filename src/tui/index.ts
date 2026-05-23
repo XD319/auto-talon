@@ -24,7 +24,6 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     scheduler: { autoStart: true },
     ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {})
   });
-  const screen = enterTerminalScreen();
   try {
     const sessionId = options.resumeSessionId ?? randomUUID();
     let initialMessages = undefined;
@@ -68,7 +67,6 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     await app.waitUntilExit();
     app.unmount();
   } finally {
-    screen.release();
     handle.close();
   }
 }

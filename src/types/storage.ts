@@ -36,6 +36,7 @@ import type {
 } from "./memory.js";
 import type { ArtifactDraft, ArtifactRecord, ToolCallRecord } from "./tool.js";
 import type { TraceEvent } from "./trace.js";
+import type { RuntimeOutputEvent } from "./output.js";
 import type { RunMetadataRecord, TaskDraft, TaskRecord, TaskStatus } from "./task.js";
 import type { RuntimeErrorCode } from "./error.js";
 import type {
@@ -175,6 +176,12 @@ export interface NextActionRepository {
 export interface TraceRepository {
   append(event: Omit<TraceEvent, "sequence">): TraceEvent;
   listByTaskId(taskId: string): TraceEvent[];
+}
+
+export interface RuntimeOutputRepository {
+  append(event: Omit<RuntimeOutputEvent, "sequence">): RuntimeOutputEvent;
+  listByTaskId(taskId: string): RuntimeOutputEvent[];
+  listByThreadId(threadId: string): RuntimeOutputEvent[];
 }
 
 export interface ToolCallRepository {

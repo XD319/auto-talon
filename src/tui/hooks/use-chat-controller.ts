@@ -608,6 +608,49 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     []
   );
 
+  // Preserves the visible text from a tool-calling turn so the transcript keeps
+  // every assistant utterance the way Claude Code / Hermes-style transcripts do.
+  // If the turn produced no visible reasoning text, the streaming placeholder is
+  // dropped so we don't leave an empty bubble in the scrollback.
+  const freezeIntermediateAgentMessage = React.useCallback(
+    (id: string, text: string) => {
+      const trimmed = text.trim();
+      setMessages((current) => {
+        const index = current.findIndex((message) => message.id === id && message.kind === "agent");
+        if (index === -1) {
+          if (trimmed.length === 0) {
+            return current;
+          }
+          return [
+            ...current,
+            {
+              id,
+              kind: "agent",
+              streaming: false,
+              text,
+              timestamp: new Date().toISOString()
+            }
+          ];
+        }
+        const message = current[index];
+        if (message === undefined || message.kind !== "agent") {
+          return current;
+        }
+        if (trimmed.length === 0) {
+          return current.filter((entry) => entry.id !== id);
+        }
+        const next = [...current];
+        next[index] = {
+          ...message,
+          streaming: false,
+          text
+        } satisfies Extract<ChatMessage, { kind: "agent" }>;
+        return next;
+      });
+    },
+    []
+  );
+
   const executePrompt = React.useCallback(
     (text: string): void => {
       submitInFlightRef.current = true;
@@ -651,18 +694,53 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             interactivePromptMode: "tui",
             sessionApprovalFingerprints
           };
-          runOptions.onAssistantTextDelta = (delta: string) => {
-            streamedAnyRef.current = true;
-            if (streamingAgentIdRef.current === null) {
+          runOptions.onOutputEvent = (event) => {
+            if (event.eventType === "assistant_turn_started") {
+              cancelPendingDelta();
+              // Only the still-streaming placeholder for the previous turn (if any)
+              // should be cleared here; an intermediate turn that already produced
+              // visible reasoning was frozen into history below and must stay.
+              removeStreamingMessage(streamingAgentIdRef.current);
+              streamedAnyRef.current = false;
+              streamingAgentIdRef.current = `agent:stream:${event.payload.turnId}`;
               return;
             }
-            pendingDeltaRef.current += delta;
-            if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
+            if (event.eventType === "assistant_turn_delta") {
+              streamedAnyRef.current = true;
+              if (streamingAgentIdRef.current === null) {
+                return;
+              }
+              pendingDeltaRef.current += event.payload.delta;
+              if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
+                flushPendingDelta();
+                return;
+              }
+              if (flushTimerRef.current === null) {
+                flushTimerRef.current = setTimeout(flushPendingDelta, STREAM_FLUSH_INTERVAL_MS);
+              }
+              return;
+            }
+            if (
+              event.eventType === "assistant_turn_completed" &&
+              event.payload.display === "intermediate"
+            ) {
               flushPendingDelta();
+              cancelPendingDelta();
+              const intermediateStreamId = streamingAgentIdRef.current;
+              streamingAgentIdRef.current = null;
+              streamedAnyRef.current = false;
+              if (intermediateStreamId !== null) {
+                freezeIntermediateAgentMessage(intermediateStreamId, event.payload.text);
+              }
               return;
             }
-            if (flushTimerRef.current === null) {
-              flushTimerRef.current = setTimeout(flushPendingDelta, STREAM_FLUSH_INTERVAL_MS);
+            if (event.eventType === "provider_status") {
+              setStatusLine(event.payload.message);
+              setUiStatus((current) => ({
+                ...current,
+                primaryLabel: event.payload.message,
+                primaryTone: "warn"
+              }));
             }
           };
 
@@ -710,22 +788,26 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             return;
           }
 
-          const messageText =
-            result.output !== undefined && result.output !== null && result.output.length > 0
-              ? result.output
-              : summarizeTaskResult(result.task);
-          if (activeStreamId !== null) {
-            finalizeStreamingAgentMessage(activeStreamId, messageText);
+          if (isSuspendedWithoutAssistantOutput(result.output, result.task)) {
+            removeStreamingMessage(activeStreamId);
           } else {
-            setMessages((current) => [
-              ...current,
-              {
-                id: `agent:${result.task.taskId}:${randomUUID()}`,
-                kind: "agent",
-                text: messageText,
-                timestamp: new Date().toISOString()
-              }
-            ]);
+            const messageText =
+              result.output !== undefined && result.output !== null && result.output.length > 0
+                ? result.output
+                : summarizeTaskResult(result.task);
+            if (activeStreamId !== null) {
+              finalizeStreamingAgentMessage(activeStreamId, messageText);
+            } else {
+              setMessages((current) => [
+                ...current,
+                {
+                  id: `agent:${result.task.taskId}:${randomUUID()}`,
+                  kind: "agent",
+                  text: messageText,
+                  timestamp: new Date().toISOString()
+                }
+              ]);
+            }
           }
           setStatusLine(result.task.status);
           setUiStatus({
@@ -1442,6 +1524,13 @@ function summarizeTaskResult(task: TaskRecord): string {
     return task.errorMessage;
   }
   return `Task ${task.taskId.slice(0, 8)} finished with status ${task.status}.`;
+}
+
+function isSuspendedWithoutAssistantOutput(output: string | null, task: TaskRecord): boolean {
+  return (
+    (output === null || output.length === 0) &&
+    (task.status === "waiting_approval" || task.status === "waiting_clarification")
+  );
 }
 
 function formatDuration(milliseconds: number): string {

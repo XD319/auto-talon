@@ -61,6 +61,11 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "add clarify prompts and approval scope columns",
     up: migrateV11,
     version: 11
+  },
+  {
+    description: "add runtime output events table",
+    up: migrateV12,
+    version: 12
   }
 ];
 
@@ -764,6 +769,26 @@ function migrateV11(database: DatabaseSync): void {
       ON clarify_prompts(task_id, requested_at);
     CREATE INDEX IF NOT EXISTS idx_clarify_prompts_pending
       ON clarify_prompts(status, expires_at);
+  `);
+}
+
+function migrateV12(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS output_events (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
+      task_id TEXT NOT NULL,
+      thread_id TEXT,
+      timestamp TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_output_events_task
+      ON output_events(task_id, sequence);
+    CREATE INDEX IF NOT EXISTS idx_output_events_thread
+      ON output_events(thread_id, sequence);
   `);
 }
 

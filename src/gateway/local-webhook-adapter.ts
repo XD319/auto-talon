@@ -169,6 +169,9 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
       for (const notice of snapshot.notices) {
         response.write(`data: ${JSON.stringify({ kind: "gateway_notice", taskId, notice })}\n\n`);
       }
+      for (const output of snapshot.output) {
+        response.write(`data: ${JSON.stringify({ kind: "output", taskId, output })}\n\n`);
+      }
 
       if (isTerminalStatus(snapshot.task.status)) {
         response.end();

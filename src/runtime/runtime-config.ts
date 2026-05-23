@@ -31,7 +31,8 @@ const runtimeConfigFileSchema = z.object({
       messageThreshold: z.number().int().positive().optional(),
       summarizer: z.enum(["deterministic", "provider_subagent"]).optional(),
       tokenThreshold: z.number().int().positive().optional(),
-      toolCallThreshold: z.number().int().positive().optional()
+      toolCallThreshold: z.number().int().positive().optional(),
+      iterationThreshold: z.number().int().positive().optional()
     })
     .optional(),
   recall: z
@@ -141,6 +142,7 @@ export interface RuntimeConfig {
   defaultMaxIterations: number;
   defaultTimeoutMs: number;
   compact: {
+    iterationThreshold: number;
     messageThreshold: number;
     tokenThreshold: number;
     toolCallThreshold: number;
@@ -194,6 +196,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     maxResults: 5
   },
   compact: {
+    iterationThreshold: 8,
     messageThreshold: 8,
     summarizer: "deterministic",
     tokenThreshold: 48_000,
@@ -345,7 +348,11 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       toolCallThreshold:
         envConfig.compact?.toolCallThreshold ??
         fileConfig?.compact?.toolCallThreshold ??
-        DEFAULT_RUNTIME_CONFIG.compact.toolCallThreshold
+        DEFAULT_RUNTIME_CONFIG.compact.toolCallThreshold,
+      iterationThreshold:
+        envConfig.compact?.iterationThreshold ??
+        fileConfig?.compact?.iterationThreshold ??
+        DEFAULT_RUNTIME_CONFIG.compact.iterationThreshold
     },
     recall: {
       budgetRatio:

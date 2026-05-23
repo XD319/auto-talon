@@ -11,7 +11,12 @@ import {
   useChatController,
   type ChatController
 } from "../src/tui/hooks/use-chat-controller.js";
-import { handleInboxCommand, handleResumeCommand, handleScheduleCommand } from "../src/tui/chat-app.js";
+import {
+  handleInboxCommand,
+  handleResumeCommand,
+  handleScheduleCommand,
+  isLiveTranscriptMessage
+} from "../src/tui/chat-app.js";
 import {
   canSubmitTextInput,
   deleteCharacterAfter,
@@ -113,6 +118,24 @@ describe("chat tui view-models", () => {
     expect(visible).toHaveLength(1);
     expect(visible[0]?.kind).toBe("activity");
   });
+
+  it("keeps completed transcript rows in terminal scrollback", () => {
+    const finishedReply: ChatMessage = {
+      id: "agent-finished",
+      kind: "agent",
+      text: "finished reply",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const streamingReply: ChatMessage = {
+      ...finishedReply,
+      id: "agent-streaming",
+      streaming: true
+    };
+
+    expect(isLiveTranscriptMessage(finishedReply)).toBe(false);
+    expect(isLiveTranscriptMessage(streamingReply)).toBe(true);
+    expect(isLiveTranscriptMessage(toApprovalMessage(createApprovalRecord(), createToolCallRecord()))).toBe(true);
+  });
 });
 
 describe("use-chat-controller helpers", () => {
@@ -208,6 +231,65 @@ describe("use-chat-controller helpers", () => {
       expect(
         messages.filter((message) => message.kind === "agent").map((message) => message.text)
       ).toEqual(["reply-one", "reply-two"]);
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("preserves intermediate assistant turns alongside the final reply", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createMultiTurnControllerService();
+    let submitPrompt: ChatController["submitPrompt"] | null = null;
+    let messages: ChatMessage[] = [];
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        submitPrompt = instance.submitPrompt;
+      }, [instance]);
+
+      React.useEffect(() => {
+        messages = instance.messages;
+      }, [instance.messages]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => submitPrompt !== null);
+      if (submitPrompt === null) {
+        throw new Error("submitPrompt should be initialized before the test submits prompts.");
+      }
+      expect(submitPrompt("research")).toBe(true);
+
+      await waitFor(
+        () =>
+          messages.filter(
+            (message) => message.kind === "agent" && message.streaming !== true
+          ).length === 2
+      );
+
+      const agentReplies = messages
+        .filter((message): message is Extract<ChatMessage, { kind: "agent" }> => message.kind === "agent");
+      expect(agentReplies.map((message) => message.text)).toEqual([
+        "Let me check the README first.",
+        "Here is the answer."
+      ]);
+      expect(agentReplies.every((message) => message.streaming !== true)).toBe(true);
     } finally {
       app.unmount();
       await app.waitUntilExit();
@@ -325,6 +407,102 @@ describe("use-chat-controller helpers", () => {
       expect(continueThread).toHaveBeenCalledTimes(1);
       expect(continueThread.mock.calls[0]?.[0]).toBe("thread-123");
       expect(continueThread.mock.calls[0]?.[1]).toBe("second");
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("does not turn an approval suspension into an assistant reply", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const runTask = vi.fn((options: RuntimeRunOptions) => Promise.resolve({
+      output: null,
+      task: {
+        ...createControllerTask(options),
+        status: "waiting_approval"
+      }
+    }));
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueThread() {
+        return Promise.reject(new Error("continueThread should not be called in this test."));
+      },
+      createThread() {
+        throw new Error("createThread should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
+        return [];
+      },
+      listTasks() {
+        return [];
+      },
+      providerStats() {
+        return null;
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask,
+      showTask() {
+        return { approvals: [], artifacts: [], inboxItems: [], scheduleRuns: [], task: null, toolCalls: [], trace: [] };
+      },
+      subscribeToTaskTrace() {
+        return () => {};
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      expect(getController().submitPrompt("needs approval")).toBe(true);
+      await waitFor(
+        () =>
+          !getController().busy &&
+          runTask.mock.calls.length === 1 &&
+          getController().messages.some((message) => message.kind === "user" && message.text === "needs approval")
+      );
+
+      expect(getController().messages.filter((message) => message.kind === "agent")).toEqual([]);
+      expect(getController().messages.filter((message) => message.kind === "user").map((message) => message.text)).toEqual([
+        "needs approval"
+      ]);
     } finally {
       app.unmount();
       await app.waitUntilExit();
@@ -1531,6 +1709,7 @@ function createControllerConfig(): AppConfig {
       }
     },
     compact: {
+      iterationThreshold: 20,
       messageThreshold: 20,
       summarizer: "deterministic",
       tokenThreshold: 8_000,
@@ -1610,6 +1789,118 @@ function createControllerConfig(): AppConfig {
       testCommands: []
     },
     workspaceRoot: process.cwd()
+  };
+}
+
+function createMultiTurnControllerService(): ControllerServiceStub {
+  const tasks = new Map<string, TaskRecord>();
+  let sequence = 0;
+
+  const emit = (
+    options: RuntimeRunOptions,
+    draft: Omit<
+      Extract<Parameters<NonNullable<RuntimeRunOptions["onOutputEvent"]>>[0], { eventType: string }>,
+      "eventId" | "sequence" | "stage" | "taskId" | "threadId" | "timestamp"
+    > & { stage?: string }
+  ): void => {
+    sequence += 1;
+    const event = {
+      ...draft,
+      eventId: `event-${sequence}`,
+      sequence,
+      stage: draft.stage ?? "planning",
+      taskId: options.taskId ?? "task",
+      threadId: options.threadId ?? null,
+      timestamp: new Date().toISOString()
+    };
+    options.onOutputEvent?.(event as Parameters<NonNullable<RuntimeRunOptions["onOutputEvent"]>>[0]);
+  };
+
+  const runTask = async (options: RuntimeRunOptions) => {
+    const task = createControllerTask(options);
+    tasks.set(task.taskId, task);
+
+    emit(options, {
+      eventType: "assistant_turn_started",
+      payload: { display: "provisional", iteration: 1, providerName: "mock", turnId: "turn-1" }
+    });
+    options.onAssistantTextDelta?.("Let me check the README first.");
+    emit(options, {
+      eventType: "assistant_turn_delta",
+      payload: { delta: "Let me check the README first.", display: "provisional", iteration: 1, turnId: "turn-1" }
+    });
+    emit(options, {
+      eventType: "assistant_turn_completed",
+      payload: { display: "intermediate", iteration: 1, text: "Let me check the README first.", turnId: "turn-1" },
+      stage: "planning"
+    });
+
+    emit(options, {
+      eventType: "assistant_turn_started",
+      payload: { display: "provisional", iteration: 2, providerName: "mock", turnId: "turn-2" }
+    });
+    options.onAssistantTextDelta?.("Here is the answer.");
+    emit(options, {
+      eventType: "assistant_turn_delta",
+      payload: { delta: "Here is the answer.", display: "provisional", iteration: 2, turnId: "turn-2" }
+    });
+    emit(options, {
+      eventType: "assistant_turn_completed",
+      payload: { display: "final", iteration: 2, text: "Here is the answer.", turnId: "turn-2" },
+      stage: "completion"
+    });
+
+    task.status = "succeeded";
+    task.finalOutput = "Here is the answer.";
+    return { output: "Here is the answer.", task };
+  };
+
+  return {
+    answerClarifyPrompt() {
+      return Promise.reject(new Error("answerClarifyPrompt should not be called in this test."));
+    },
+    cancelClarifyPrompt() {
+      throw new Error("cancelClarifyPrompt should not be called in this test.");
+    },
+    continueThread() {
+      return Promise.reject(new Error("continueThread should not be called in this test."));
+    },
+    createThread() {
+      throw new Error("createThread should not be called in this test.");
+    },
+    listPendingApprovals() {
+      return [];
+    },
+    listPendingClarifyPrompts() {
+      return [];
+    },
+    listTasks() {
+      return [...tasks.values()];
+    },
+    providerStats() {
+      return null;
+    },
+    resolveApproval() {
+      throw new Error("resolveApproval should not be called in this test.");
+    },
+    runTask,
+    showTask(taskId: string) {
+      return {
+        approvals: [],
+        artifacts: [],
+        inboxItems: [],
+        scheduleRuns: [],
+        task: tasks.get(taskId) ?? null,
+        toolCalls: [],
+        trace: []
+      };
+    },
+    subscribeToTaskTrace() {
+      return () => {};
+    },
+    traceTask() {
+      return [];
+    }
   };
 }
 

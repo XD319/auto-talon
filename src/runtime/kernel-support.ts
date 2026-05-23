@@ -8,8 +8,14 @@ import type {
   RuntimeRunOptions,
   RuntimeTaskEvent,
   SessionCompactInput,
-  TaskRecord
+  TaskRecord,
+  ToolCapability
 } from "../types/index.js";
+
+export const DEDUPLICATABLE_CAPABILITIES = new Set<ToolCapability>([
+  "filesystem.read",
+  "network.fetch_public_readonly"
+]);
 
 export function providerUsageToJson(usage: {
   cachedInputTokens?: number;
@@ -50,6 +56,65 @@ export function createToolFeedbackMessage(
     toolCallId: toolCall.toolCallId,
     toolName: toolCall.toolName
   };
+}
+
+export function createToolFeedbackMessageWithNotice(
+  output: unknown,
+  toolCall: { toolCallId: string; toolName: string },
+  privacyLevel: "public" | "internal" | "restricted",
+  notice: string
+): ConversationMessage {
+  const base = createToolFeedbackMessage(output, toolCall, privacyLevel);
+  return {
+    ...base,
+    content: `${notice}\n\n${base.content}`
+  };
+}
+
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return `{${entries
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
+    .join(",")}}`;
+}
+
+export function toolCallSignature(toolName: string, input: unknown): string {
+  try {
+    return `${toolName}|${stableStringify(input ?? null)}`;
+  } catch {
+    return `${toolName}|${JSON.stringify(input ?? null)}`;
+  }
+}
+
+export function rebuildSignaturesFromMessages(
+  messages: ConversationMessage[],
+  isDeduplicatable: (toolName: string) => boolean
+): Map<string, { iteration: number; toolCallId: string }> {
+  const signatures = new Map<string, { iteration: number; toolCallId: string }>();
+  let iteration = 0;
+  for (const message of messages) {
+    if (message.role === "assistant" && message.toolCalls !== undefined) {
+      iteration += 1;
+      for (const call of message.toolCalls) {
+        if (!isDeduplicatable(call.toolName)) {
+          continue;
+        }
+        const signature = toolCallSignature(call.toolName, call.input);
+        if (!signatures.has(signature)) {
+          signatures.set(signature, { iteration, toolCallId: call.toolCallId });
+        }
+      }
+    }
+  }
+  return signatures;
 }
 
 export function buildReviewerTracePayload(

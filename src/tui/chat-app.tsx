@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import React from "react";
 import { Box, Text, useApp } from "ink";
 
@@ -13,8 +15,9 @@ import {
 } from "../presentation/memory-formatters.js";
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
-import { MessageStream } from "./components/message-stream.js";
+import { MessageStream, StaticMessageStream } from "./components/message-stream.js";
 import { PromptZone } from "./components/prompt-zone.js";
+import { TranscriptViewer } from "./components/transcript-viewer.js";
 import { buildContextMetric, StatusBar } from "./components/status-bar.js";
 import { WelcomeHome } from "./components/welcome-home.js";
 import { editInExternalEditor } from "./external-editor.js";
@@ -45,6 +48,8 @@ import {
   formatTodaySummary,
   resolveRuntimeUserId
 } from "./view-models/today-summary.js";
+import type { RuntimeOutputEvent } from "../types/index.js";
+import { outputEventsToMarkdown, type TranscriptViewerMode } from "./view-models/transcript-output.js";
 
 export interface ChatTuiAppProps {
   config: TuiAppConfig;
@@ -91,6 +96,12 @@ export function ChatTuiApp({
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
   const [liveScrollOffset, setLiveScrollOffset] = React.useState(0);
+  const [transcriptViewer, setTranscriptViewer] = React.useState<{
+    events: RuntimeOutputEvent[];
+    mode: TranscriptViewerMode;
+    query: string;
+    scope: string;
+  } | null>(null);
   const [sessionSummaries, setSessionSummaries] = React.useState<ChatSessionSummary[]>([]);
   const historyRef = React.useRef<string[]>([]);
   const historyIndexRef = React.useRef<number | null>(null);
@@ -121,16 +132,24 @@ export function ChatTuiApp({
     () => (showTodaySummary ? [] : displayMessages),
     [displayMessages, showTodaySummary]
   );
-  const visibleTranscriptMessages = React.useMemo(() => {
-    if (transcriptMessages.length <= LIVE_TRANSCRIPT_WINDOW_SIZE) {
-      return transcriptMessages;
+  const staticTranscriptMessages = React.useMemo(
+    () => transcriptMessages.filter((message) => !isLiveTranscriptMessage(message)),
+    [transcriptMessages]
+  );
+  const liveTranscriptMessages = React.useMemo(
+    () => transcriptMessages.filter(isLiveTranscriptMessage),
+    [transcriptMessages]
+  );
+  const visibleLiveTranscriptMessages = React.useMemo(() => {
+    if (liveTranscriptMessages.length <= LIVE_TRANSCRIPT_WINDOW_SIZE) {
+      return liveTranscriptMessages;
     }
-    const maxOffset = Math.max(transcriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0);
+    const maxOffset = Math.max(liveTranscriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0);
     const boundedOffset = Math.min(liveScrollOffset, maxOffset);
-    const end = transcriptMessages.length - boundedOffset;
+    const end = liveTranscriptMessages.length - boundedOffset;
     const start = Math.max(0, end - LIVE_TRANSCRIPT_WINDOW_SIZE);
-    return transcriptMessages.slice(start, end);
-  }, [liveScrollOffset, transcriptMessages]);
+    return liveTranscriptMessages.slice(start, end);
+  }, [liveScrollOffset, liveTranscriptMessages]);
   const todaySummaryText = React.useMemo(
     () => formatTodaySummary(buildTodaySummary(service, { activeThreadId: controller.activeThreadId })),
     [controller.activeThreadId, service]
@@ -187,7 +206,7 @@ export function ChatTuiApp({
 
   React.useEffect(() => {
     setLiveScrollOffset(0);
-  }, [transcriptMessages.length]);
+  }, [liveTranscriptMessages.length]);
 
   React.useEffect(() => {
     setHomeSelectionIndex((current) => clampSelection(current, homeEntries.length));
@@ -238,9 +257,9 @@ export function ChatTuiApp({
         setLiveScrollOffset(0);
         return;
       }
-      setLiveScrollOffset(Math.max(transcriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0));
+      setLiveScrollOffset(Math.max(liveTranscriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0));
     },
-    [transcriptMessages.length]
+    [liveTranscriptMessages.length]
   );
 
   const slashSuggestions = React.useCallback(
@@ -396,6 +415,54 @@ export function ChatTuiApp({
         return true;
       }
 
+      if (text === "/transcript" || text.startsWith("/transcript ")) {
+        const args = text.trim().split(/\s+/u).slice(1);
+        const command = args[0] ?? "open";
+        if (command === "close") {
+          setTranscriptViewer(null);
+          return true;
+        }
+        const currentEvents =
+          controller.activeThreadId !== null
+            ? service.outputThread(controller.activeThreadId)
+            : controller.activeTaskId !== null
+              ? service.outputTask(controller.activeTaskId)
+              : [];
+        const scope =
+          controller.activeThreadId !== null
+            ? `thread ${controller.activeThreadId.slice(0, 8)}`
+            : controller.activeTaskId !== null
+              ? `task ${controller.activeTaskId.slice(0, 8)}`
+              : "current session";
+        if (command === "export") {
+          const format = args[1] === "json" ? "json" : "md";
+          const dir = join(config.workspaceRoot, ".auto-talon", "transcripts");
+          const file = join(dir, `transcript-${Date.now()}.${format}`);
+          void mkdir(dir, { recursive: true })
+            .then(() =>
+              writeFile(
+                file,
+                format === "json" ? JSON.stringify(currentEvents, null, 2) : outputEventsToMarkdown(currentEvents),
+                "utf8"
+              )
+            )
+            .then(() => controller.addSystemMessage(`Transcript exported: ${file}`))
+            .catch((error: unknown) =>
+              controller.addSystemMessage(`Transcript export failed: ${error instanceof Error ? error.message : String(error)}`)
+            );
+          return true;
+        }
+        const mode = command === "detail" ? "detail" : command === "final" ? "final" : transcriptViewer?.mode ?? "final";
+        const query = command === "search" ? args.slice(1).join(" ") : "";
+        setTranscriptViewer({
+          events: currentEvents,
+          mode,
+          query,
+          scope
+        });
+        return true;
+      }
+
       if (text === "/edit") {
         return false;
       }
@@ -489,7 +556,7 @@ export function ChatTuiApp({
           `status_line: ${controller.statusLine}`,
           `ui_status: ${controller.uiStatus.primaryLabel}`,
           `elapsed: ${controller.runDurationLabel}`,
-          `ui_scroll: transcript(offset=${liveScrollOffset})`,
+          `ui_scroll: terminal + live(offset=${liveScrollOffset})`,
           `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
           `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`
@@ -563,7 +630,8 @@ export function ChatTuiApp({
       restoreSession,
       service,
       sessionId,
-      sessionTitle
+      sessionTitle,
+      transcriptViewer
     ]
   );
 
@@ -739,19 +807,27 @@ export function ChatTuiApp({
 
   return (
     <Box flexDirection="column">
+      <StaticMessageStream messages={staticTranscriptMessages} />
       <Banner
         details={[config.provider.model ?? config.provider.name, shortenPath(cwd, 20)]}
         productName="AUTOTALON"
         title={sessionTitle === "assistant" ? "Personal Assistant" : sessionTitle}
       />
       <Box flexDirection="column">
-        {showTodaySummary ? (
+        {transcriptViewer !== null ? (
+          <TranscriptViewer
+            events={transcriptViewer.events}
+            mode={transcriptViewer.mode}
+            query={transcriptViewer.query}
+            title={`Transcript ${transcriptViewer.scope}`}
+          />
+        ) : showTodaySummary ? (
           <WelcomeHome selectedIndex={homeSelectionIndex} summary={welcomeHome} />
-        ) : visibleTranscriptMessages.length > 0 ? (
-          <MessageStream messages={visibleTranscriptMessages} />
-        ) : (
+        ) : visibleLiveTranscriptMessages.length > 0 ? (
+          <MessageStream messages={visibleLiveTranscriptMessages} />
+        ) : staticTranscriptMessages.length === 0 ? (
           <Text color={theme.muted}>No conversation yet.</Text>
-        )}
+        ) : null}
       </Box>
       <PromptZone
         approvalPrompt={
@@ -858,6 +934,13 @@ function clampSelection(index: number, size: number): number {
 
 function shouldShowHomeSummary(messages: ChatMessage[]): boolean {
   return messages.every((message) => message.id === "system:welcome");
+}
+
+export function isLiveTranscriptMessage(message: ChatMessage): boolean {
+  return (
+    (message.kind === "agent" && message.streaming === true) ||
+    (message.kind === "approval" && message.status === "pending")
+  );
 }
 
 function parseSlashInput(text: string): { args: string[]; command: string; rest: string } {

@@ -15,7 +15,7 @@ export interface SummarizerWorkerDependencies {
 export interface SummarizerWorkerInput {
   compactResult: SessionCompactResult;
   compactInput: SessionCompactInput & {
-    reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count";
+    reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" | "iteration_count";
   };
   task: TaskRecord;
   availableTools: ProviderToolDescriptor[];

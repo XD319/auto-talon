@@ -15,6 +15,7 @@ export * from "./governance.js";
 export * from "./inbox.js";
 export * from "./memory.js";
 export * from "./mcp.js";
+export * from "./output.js";
 export * from "./policy.js";
 export * from "./profile.js";
 export * from "./runtime.js";

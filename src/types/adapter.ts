@@ -1,6 +1,7 @@
 import type { JsonObject } from "./common.js";
 import type { AuditLogRecord } from "./audit.js";
 import type { TraceEvent } from "./trace.js";
+import type { RuntimeOutputEvent } from "./output.js";
 import type { InboxDeliveryEvent, InboxItem, InboxListQuery } from "./inbox.js";
 import type {
   ScheduleDeliveryTarget,
@@ -117,6 +118,11 @@ export type GatewayTaskEvent =
       taskId: string;
     }
   | {
+      kind: "output";
+      output: RuntimeOutputEvent;
+      taskId: string;
+    }
+  | {
       kind: "gateway_notice";
       notice: GatewayCapabilityNotice;
       taskId: string;
@@ -181,6 +187,7 @@ export interface GatewayTaskSnapshot {
   } | null;
   audit: AuditLogRecord[];
   notices: GatewayCapabilityNotice[];
+  output: RuntimeOutputEvent[];
   task: GatewayTaskResultView;
   trace: TraceEvent[];
 }

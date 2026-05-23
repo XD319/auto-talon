@@ -41,5 +41,15 @@ describe("CompactTriggerPolicy breakpoints", () => {
       toolCallThreshold: 20
     });
     expect(toolDecision.reason).toBe("tool_call_count");
+
+    const iterationDecision = policy.shouldCompact({
+      iteration: 8,
+      iterationThreshold: 8,
+      maxMessagesBeforeCompact: 50,
+      messages: [{ content: "x", role: "user" }],
+      sessionScopeKey: "s1",
+      taskId: "t1"
+    });
+    expect(iterationDecision.reason).toBe("iteration_count");
   });
 });
