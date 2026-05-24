@@ -1816,7 +1816,7 @@ function createMultiTurnControllerService(): ControllerServiceStub {
     options.onOutputEvent?.(event as Parameters<NonNullable<RuntimeRunOptions["onOutputEvent"]>>[0]);
   };
 
-  const runTask = async (options: RuntimeRunOptions) => {
+  const runTask = (options: RuntimeRunOptions) => {
     const task = createControllerTask(options);
     tasks.set(task.taskId, task);
 
@@ -1852,7 +1852,7 @@ function createMultiTurnControllerService(): ControllerServiceStub {
 
     task.status = "succeeded";
     task.finalOutput = "Here is the answer.";
-    return { output: "Here is the answer.", task };
+    return Promise.resolve({ output: "Here is the answer.", task });
   };
 
   return {

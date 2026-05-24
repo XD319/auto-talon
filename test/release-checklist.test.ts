@@ -70,7 +70,7 @@ describe("release checklist helpers", () => {
 
   it("validates schema version from migrations instead of local workspace state", () => {
     expect(validateMigrationSchemaVersion()).toEqual({
-      details: "user_version=11, expected=11",
+      details: "user_version=12, expected=12",
       ok: true
     });
   });
