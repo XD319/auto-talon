@@ -324,6 +324,61 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
+  it("drops hidden tool-call assistant turns from the visible transcript", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createMultiTurnControllerService({ hiddenIntermediate: true });
+    let submitPrompt: ChatController["submitPrompt"] | null = null;
+    let messages: ChatMessage[] = [];
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        submitPrompt = instance.submitPrompt;
+      }, [instance]);
+
+      React.useEffect(() => {
+        messages = instance.messages;
+      }, [instance.messages]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => submitPrompt !== null);
+      if (submitPrompt === null) {
+        throw new Error("submitPrompt should be initialized before the test submits prompts.");
+      }
+      expect(submitPrompt("research")).toBe(true);
+
+      await waitFor(
+        () =>
+          messages.filter(
+            (message) => message.kind === "agent" && message.streaming !== true
+          ).length === 1
+      );
+
+      const agentReplies = messages
+        .filter((message): message is Extract<ChatMessage, { kind: "agent" }> => message.kind === "agent");
+      expect(agentReplies.map((message) => message.text)).toEqual(["Here is the answer."]);
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
   it("continues the same thread after the first submitted prompt", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
@@ -1826,7 +1881,7 @@ function createControllerConfig(): AppConfig {
   };
 }
 
-function createMultiTurnControllerService(): ControllerServiceStub {
+function createMultiTurnControllerService(config: { hiddenIntermediate?: boolean } = {}): ControllerServiceStub {
   const tasks = new Map<string, TaskRecord>();
   let sequence = 0;
 
@@ -1865,7 +1920,13 @@ function createMultiTurnControllerService(): ControllerServiceStub {
     });
     emit(options, {
       eventType: "assistant_turn_completed",
-      payload: { display: "intermediate", iteration: 1, text: "Let me check the README first.", turnId: "turn-1" },
+      payload: {
+        display: "intermediate",
+        iteration: 1,
+        text: "Let me check the README first.",
+        ...(config.hiddenIntermediate ? { transcriptVisibility: "hidden" as const } : {}),
+        turnId: "turn-1"
+      },
       stage: "planning"
     });
 

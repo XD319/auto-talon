@@ -46,26 +46,32 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
       initialThreadId = loaded?.threadId;
     }
 
-    const app = render(
-      React.createElement(ChatTuiApp, {
-        config: handle.config,
-        cwd,
-        ...(initialMessages !== undefined ? { initialMessages } : {}),
-        ...(initialSessionApprovalFingerprints !== undefined
-          ? { initialSessionApprovalFingerprints }
-          : {}),
-        ...(initialSessionTitle !== undefined ? { initialSessionTitle } : {}),
-        ...(initialThreadId !== undefined ? { initialThreadId } : {}),
-        initialSessionId: sessionId,
-        reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer",
-        service: handle.service
-      }),
-      {
-        exitOnCtrlC: false
-      }
-    );
-    await app.waitUntilExit();
-    app.unmount();
+    const screen = enterTerminalScreen();
+    let app: ReturnType<typeof render> | null = null;
+    try {
+      app = render(
+        React.createElement(ChatTuiApp, {
+          config: handle.config,
+          cwd,
+          ...(initialMessages !== undefined ? { initialMessages } : {}),
+          ...(initialSessionApprovalFingerprints !== undefined
+            ? { initialSessionApprovalFingerprints }
+            : {}),
+          ...(initialSessionTitle !== undefined ? { initialSessionTitle } : {}),
+          ...(initialThreadId !== undefined ? { initialThreadId } : {}),
+          initialSessionId: sessionId,
+          reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer",
+          service: handle.service
+        }),
+        {
+          exitOnCtrlC: false
+        }
+      );
+      await app.waitUntilExit();
+    } finally {
+      app?.unmount();
+      screen.release();
+    }
   } finally {
     handle.close();
   }

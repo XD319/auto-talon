@@ -610,8 +610,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     []
   );
 
-  // Preserves the visible text from a tool-calling turn so the transcript keeps
-  // every assistant utterance the way Claude Code / Hermes-style transcripts do.
+  // Preserves intermediate text only when runtime marks it transcript-visible.
   // If the turn produced no visible reasoning text, the streaming placeholder is
   // dropped so we don't leave an empty bubble in the scrollback.
   const freezeIntermediateAgentMessage = React.useCallback(
@@ -735,7 +734,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               streamingAgentIdRef.current = null;
               streamedAnyRef.current = false;
               if (intermediateStreamId !== null) {
-                freezeIntermediateAgentMessage(intermediateStreamId, event.payload.text);
+                if (event.payload.transcriptVisibility === "hidden") {
+                  removeStreamingMessage(intermediateStreamId);
+                } else {
+                  freezeIntermediateAgentMessage(intermediateStreamId, event.payload.text);
+                }
               }
               return;
             }
