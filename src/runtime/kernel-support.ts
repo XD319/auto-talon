@@ -117,6 +117,57 @@ export function rebuildSignaturesFromMessages(
   return signatures;
 }
 
+/**
+ * Returns true when the persisted message history contains at least one tool-result
+ * message whose tool is classified as a filesystem write and whose payload does not
+ * look like the error envelope produced by `toolResultOutputForModel` on failure.
+ *
+ * Used when resuming a task from an approval/clarification checkpoint so the runtime
+ * does not pessimistically treat the new turn as if no write has ever happened —
+ * otherwise `evaluateNoWriteFinal` defers a perfectly valid final response and the
+ * next iteration is forced to retry, eventually tripping the `task_incomplete` guard.
+ */
+export function historyHasSuccessfulWrite(
+  messages: ConversationMessage[],
+  isWriteTool: (toolName: string) => boolean
+): boolean {
+  for (const message of messages) {
+    if (message.role !== "tool" || message.toolName === undefined) {
+      continue;
+    }
+    if (!isWriteTool(message.toolName)) {
+      continue;
+    }
+    if (!isToolResultErrorEnvelope(message.content)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isToolResultErrorEnvelope(content: string): boolean {
+  if (content.length === 0 || content === "null") {
+    // Empty/null payload cannot prove success, but write tools always serialize a
+    // non-empty object on success in our codebase, so treat this as inconclusive
+    // (the caller will keep scanning later messages).
+    return true;
+  }
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith("{")) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const record = parsed as Record<string, unknown>;
+    return typeof record.errorCode === "string" && typeof record.error === "string";
+  } catch {
+    return false;
+  }
+}
+
 export function buildReviewerTracePayload(
   iteration: number,
   debug: ContextAssemblyDebugView,
@@ -238,7 +289,10 @@ export function buildFinalSessionCompactInput(
   return {
     maxMessagesBeforeCompact: messages.length,
     messages: messages.map((message) => ({
-      content: message.content,
+      content:
+        message.role === "assistant" && message.toolCalls !== undefined
+          ? ""
+          : message.content,
       role: message.role,
       ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
       ...(message.toolName !== undefined ? { toolName: message.toolName } : {}),
@@ -251,6 +305,7 @@ export function buildFinalSessionCompactInput(
           }
         : {})
     })),
+    originalGoal: task.input,
     reason: "context_budget",
     sessionScopeKey: task.threadId ?? task.taskId,
     taskId: task.taskId

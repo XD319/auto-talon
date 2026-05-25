@@ -300,6 +300,256 @@ describe("coding workflow loop", () => {
       handle.close();
     }
   });
+
+  it("does not accept a code-change final that made no file writes", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        const sawImplementationGuard = input.messages.some((message) =>
+          message.content.includes("Stop verifier")
+        );
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+
+        if (!sawImplementationGuard && toolMessages.length === 0) {
+          return finalResponse("Implemented the requested feature.");
+        }
+        if (toolMessages.length === 0) {
+          return toolCallResponse("Writing the requested feature.", [
+            {
+              input: { action: "write_file", content: "feature complete\n", path: "feature.txt" },
+              reason: "Create the requested implementation artifact.",
+              toolCallId: "write-feature",
+              toolName: "file_write"
+            }
+          ]);
+        }
+        return finalResponse("Implemented the requested feature.");
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
+      runOptions.maxIterations = 4;
+      const result = await handle.service.runTask(runOptions);
+      const details = handle.service.showTask(result.task.taskId);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(await fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).toBe("feature complete\n");
+      expect(details.toolCalls.some((toolCall) => toolCall.toolCallId === "write-feature")).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("fails a code-change task when the model keeps finishing without file writes", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider(() => finalResponse("No files were changed in this run. The code already works."))
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
+      runOptions.maxIterations = 4;
+      const result = await handle.service.runTask(runOptions);
+
+      expect(result.task.status).toBe("failed");
+      expect(result.error?.code).toBe("task_incomplete");
+      await expect(fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).rejects.toThrow();
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("allows read-only tasks to finish without file writes", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider(() => finalResponse("I inspected the workspace and summarized the files."))
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("inspect and summarize the workspace", workspaceRoot, handle.config);
+      runOptions.maxIterations = 2;
+      const result = await handle.service.runTask(runOptions);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("inspected");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("feeds missing file read errors back to the model instead of failing the task", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    await fs.mkdir(join(workspaceRoot, "css"), { recursive: true });
+    await fs.writeFile(join(workspaceRoot, "css", "style.css"), "body { color: green; }\n", "utf8");
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        const lastToolMessage = toolMessages.at(-1)?.content ?? "";
+        if (toolMessages.length === 0) {
+          return toolCallResponse("Check the stylesheet.", [
+            {
+              input: { action: "read_file", path: "style.css" },
+              reason: "Try the stylesheet path from memory.",
+              toolCallId: "read-missing-style",
+              toolName: "file_read"
+            }
+          ]);
+        }
+        if (lastToolMessage.includes("ENOENT") || lastToolMessage.includes("errorCode")) {
+          return toolCallResponse("Correct the stylesheet path.", [
+            {
+              input: { action: "read_file", path: "css/style.css" },
+              reason: "Use the path referenced by index.html.",
+              toolCallId: "read-real-style",
+              toolName: "file_read"
+            }
+          ]);
+        }
+        return finalResponse("Recovered from the missing file read and inspected css/style.css.");
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("inspect the stylesheet", workspaceRoot, handle.config);
+      runOptions.maxIterations = 5;
+      const result = await handle.service.runTask(runOptions);
+      const details = handle.service.showTask(result.task.taskId);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("Recovered");
+      expect(details.toolCalls.find((call) => call.toolCallId === "read-missing-style")?.status).toBe("failed");
+      expect(details.toolCalls.find((call) => call.toolCallId === "read-real-style")?.status).toBe("finished");
+      expect(details.trace.some((event) => event.eventType === "tool_call_failed")).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("gates read tools in write-required mode and lets the model recover by writing", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const seenToolPlans: string[][] = [];
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        seenToolPlans.push(input.availableTools.map((tool) => tool.name));
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.some((message) => message.toolName === "file_write")) {
+          return finalResponse("Implemented after the runtime required a write.");
+        }
+        if (!input.availableTools.some((tool) => tool.name === "file_read")) {
+          return toolCallResponse("Write now that read tools are gated.", [
+            {
+              input: {
+                action: "write_file",
+                content: "done after gate\n",
+                path: "gated.txt"
+              },
+              reason: "Create the requested implementation artifact.",
+              toolCallId: "write-after-gate",
+              toolName: "file_write"
+            }
+          ]);
+        }
+        return toolCallResponse(`Inspect before writing ${input.iteration}.`, [
+          {
+            input: { action: "read_file", path: "package.json" },
+            reason: "Inspect before implementing.",
+            toolCallId: `read-before-gate-${input.iteration}`,
+            toolName: "file_read"
+          }
+        ]);
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
+      runOptions.maxIterations = 10;
+      const result = await handle.service.runTask(runOptions);
+      const gatedPlan = seenToolPlans.find(
+        (plan) => plan.includes("file_write") && !plan.includes("file_read")
+      );
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("Implemented after");
+      expect(gatedPlan).toBeDefined();
+      expect(await fs.readFile(join(workspaceRoot, "gated.txt"), "utf8")).toBe("done after gate\n");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("blocks unavailable read calls after entering write-required mode", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) =>
+        toolCallResponse(`Ignore the write gate ${input.iteration}.`, [
+          {
+            input: { action: "read_file", path: "package.json" },
+            reason: "Keep reading even when it is no longer available.",
+            toolCallId: `blocked-read-${input.iteration}`,
+            toolName: "file_read"
+          }
+        ])
+      )
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
+      runOptions.maxIterations = 20;
+      const result = await handle.service.runTask(runOptions);
+      const trace = handle.service.traceTask(result.task.taskId);
+
+      expect(result.task.status).toBe("failed");
+      expect(result.error?.code).toBe("task_incomplete");
+      expect(result.error?.message).toContain("write-required tool gate");
+      expect(trace.some((event) => event.eventType === "runtime_tool_gate_applied")).toBe(true);
+      expect(trace.some((event) => event.eventType === "tool_call_blocked")).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("fails implementation tasks that remain stuck in read-only tool rounds", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) =>
+        toolCallResponse(`Keep reading ${input.iteration}.`, [
+          {
+            input: { action: "read_file", path: "package.json" },
+            reason: "Inspect before implementing.",
+            toolCallId: `read-package-${input.iteration}`,
+            toolName: "file_read"
+          }
+        ])
+      )
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
+      runOptions.maxIterations = 20;
+      const result = await handle.service.runTask(runOptions);
+
+      expect(result.task.status).toBe("failed");
+      expect(result.error?.code).toBe("task_incomplete");
+      expect(result.error?.message).toContain("read-only");
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 async function createWorkflowWorkspace(): Promise<string> {

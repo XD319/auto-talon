@@ -32,7 +32,7 @@ export class McpToolBridge {
   public async callTool(input: {
     name: string;
     arguments: JsonObject;
-  }): Promise<{ content: JsonObject; status: "approval_required" | "completed" }> {
+  }): Promise<{ content: JsonObject; status: "approval_required" | "completed" | "error" }> {
     const taskId = `mcp-task-${Date.now()}`;
     const outcome = await this.toolOrchestrator.execute(
       {
@@ -73,6 +73,17 @@ export class McpToolBridge {
           status: "approval_required"
         },
         status: "approval_required"
+      };
+    }
+
+    if (!outcome.result.success) {
+      return {
+        content: {
+          error: outcome.result.errorMessage,
+          errorCode: outcome.result.errorCode,
+          ...(outcome.result.details === undefined ? {} : { details: outcome.result.details })
+        },
+        status: "error"
       };
     }
 

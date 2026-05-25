@@ -51,6 +51,7 @@ export interface AssistantTurnCompletedOutputPayload extends JsonObject {
   display: "intermediate" | "final";
   iteration: number;
   text: string;
+  transcriptVisibility?: "hidden" | "visible";
   turnId: string;
 }
 

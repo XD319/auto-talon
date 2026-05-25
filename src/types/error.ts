@@ -13,6 +13,7 @@ export const RUNTIME_ERROR_CODES = [
   "sandbox_denied",
   "storage_error",
   "task_not_found",
+  "task_incomplete",
   "task_not_resumable",
   "timeout",
   "tool_execution_error",

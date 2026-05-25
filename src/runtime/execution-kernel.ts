@@ -18,6 +18,7 @@ import {
   injectResumeContextMessages,
   normalizeProviderFailure,
   providerUsageToJson,
+  historyHasSuccessfulWrite,
   readThreadResumeMemoryContext,
   readThreadResumeMessages,
   rebuildSignaturesFromMessages,
@@ -60,6 +61,7 @@ import type {
   ThreadCommitmentState,
   ThreadLineageRepository,
   ThreadRunRepository,
+  ToolExecutionResult,
   TokenBudget,
   BudgetPricingEntry
 } from "../types/index.js";
@@ -127,8 +129,13 @@ interface ExecutionLoopState {
   completionIntentSeenAt: number | null;
   criticalBudgetPressureEmitted: boolean;
   postCompletionVerificationReads: number;
+  implementationReadOnlyGuardEmitted: boolean;
+  implementationReadOnlyRounds: number;
+  implementationWriteRequired: boolean;
+  implementationWriteRequiredViolations: number;
   selectedSkillContext: ContextFragment[];
   silentToolTurns: number;
+  noWriteFinalGuardEmitted: boolean;
   toolCallSignatures: Map<string, { iteration: number; toolCallId: string }>;
   turnFilteredFragments: ContextAssemblyDebugView["filteredOutFragments"];
   turnProviderMessages: ConversationMessage[];
@@ -136,6 +143,7 @@ interface ExecutionLoopState {
   task: TaskRecord;
   tokenBudget: TokenBudget;
   warningBudgetPressureEmitted: boolean;
+  writeExpected: boolean;
   writeToolSucceeded: boolean;
 }
 
@@ -347,6 +355,7 @@ export class ExecutionKernel {
         memoryContext: [...recallPlan.fragments, ...resumeMemoryContext],
         memoryRecall: null,
         messages,
+        noWriteFinalGuardEmitted: false,
         ...(options.onAssistantTextDelta !== undefined
           ? { onAssistantTextDelta: options.onAssistantTextDelta }
           : {}),
@@ -354,6 +363,10 @@ export class ExecutionKernel {
         ...(options.onTaskEvent !== undefined ? { onTaskEvent: options.onTaskEvent } : {}),
         pendingToolCalls: [],
         postCompletionVerificationReads: 0,
+        implementationReadOnlyGuardEmitted: false,
+        implementationReadOnlyRounds: 0,
+        implementationWriteRequired: false,
+        implementationWriteRequiredViolations: 0,
         ...(repoMap?.summary !== undefined ? { repoMapSummary: repoMap.summary } : {}),
         selectedSkillContext: recallPlan.fragments.filter((fragment) => fragment.scope === "skill_ref"),
         silentToolTurns: 0,
@@ -363,6 +376,7 @@ export class ExecutionKernel {
         turnProviderMessages: messages,
         tokenBudget: options.tokenBudget,
         warningBudgetPressureEmitted: false,
+        writeExpected: expectsFileModification(options.taskInput),
         writeToolSucceeded: false
       });
     } catch (error) {
@@ -426,6 +440,11 @@ export class ExecutionKernel {
         const descriptor = this.dependencies.toolOrchestrator.describeTool(toolName);
         return descriptor !== null && DEDUPLICATABLE_CAPABILITIES.has(descriptor.capability);
       };
+      const isWriteTool = (toolName: string): boolean => {
+        const descriptor = this.dependencies.toolOrchestrator.describeTool(toolName);
+        return descriptor?.capability === "filesystem.write" || toolName.includes("write");
+      };
+      const resumedWriteToolSucceeded = historyHasSuccessfulWrite(checkpoint.messages, isWriteTool);
 
       return await this.executeLoop({
         cwd: resumedTask.cwd,
@@ -438,9 +457,14 @@ export class ExecutionKernel {
         memoryContext: checkpoint.memoryContext,
         memoryRecall: null,
         messages: checkpoint.messages,
+        noWriteFinalGuardEmitted: false,
         ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         pendingToolCalls: checkpoint.pendingToolCalls,
         postCompletionVerificationReads: 0,
+        implementationReadOnlyGuardEmitted: false,
+        implementationReadOnlyRounds: 0,
+        implementationWriteRequired: false,
+        implementationWriteRequiredViolations: 0,
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
@@ -449,7 +473,8 @@ export class ExecutionKernel {
         turnProviderMessages: checkpoint.messages,
         tokenBudget: resumedTask.tokenBudget,
         warningBudgetPressureEmitted: false,
-        writeToolSucceeded: false
+        writeExpected: expectsFileModification(resumedTask.input),
+        writeToolSucceeded: resumedWriteToolSucceeded
       });
     } catch (error) {
       resumedTask = this.dependencies.taskRepository.findById(taskId) ?? resumedTask;
@@ -558,6 +583,7 @@ export class ExecutionKernel {
       });
 
       if (pendingToolCalls.length === 0) {
+        const baseAvailableTools = this.dependencies.toolOrchestrator.listTools();
         if (this.dependencies.toolExposurePlanner !== undefined) {
           const exposure = await this.dependencies.toolExposurePlanner.plan({
             context: {
@@ -578,7 +604,10 @@ export class ExecutionKernel {
             .filter((decision) => decision.costWarning === true)
             .map((decision) => decision.toolName);
           state.managedAbortController.touchActivity("tool_exposure_planned");
+        } else {
+          availableTools = baseAvailableTools;
         }
+        availableTools = this.applyRuntimeToolGate(state, availableTools, iteration);
         const assembled = this.contextAssembler.assemble({
           availableTools,
           filteredOutFragments: state.turnFilteredFragments,
@@ -744,6 +773,20 @@ export class ExecutionKernel {
           throw providerError;
         }
         state.managedAbortController.touchActivity("provider_request_succeeded");
+        const noWriteFinalDecision =
+          providerResponse.kind === "final"
+            ? this.evaluateNoWriteFinal(state)
+            : "accept";
+        const deferNoWriteFinal = noWriteFinalDecision === "defer";
+        const rejectNoWriteFinal = noWriteFinalDecision === "fail";
+        const assistantDisplay =
+          providerResponse.kind === "final" && !deferNoWriteFinal && !rejectNoWriteFinal
+            ? "final"
+            : "intermediate";
+        const transcriptVisibility =
+          providerResponse.kind === "tool_calls" || deferNoWriteFinal || rejectNoWriteFinal
+            ? "hidden"
+            : "visible";
 
         messages.push({
           content: providerResponse.message,
@@ -758,12 +801,13 @@ export class ExecutionKernel {
         this.emitOutput({
           eventType: "assistant_turn_completed",
           payload: {
-            display: providerResponse.kind === "final" ? "final" : "intermediate",
+            display: assistantDisplay,
             iteration,
             text: providerResponse.message,
+            transcriptVisibility,
             turnId
           },
-          stage: providerResponse.kind === "final" ? "completion" : "planning",
+          stage: assistantDisplay === "final" ? "completion" : "planning",
           taskId: task.taskId
         });
         state.managedAbortController.touchActivity("assistant_turn_completed");
@@ -884,12 +928,18 @@ export class ExecutionKernel {
           });
         }
 
+        if (deferNoWriteFinal) {
+          this.injectNoWriteFinalGuard(state, messages);
+          state.turnProviderMessages = rebuildTurnProviderMessages(messages, state.turnProviderMessages);
+          continue;
+        }
+
         if (providerResponse.kind === "retry") {
           this.dependencies.traceService.record({
-      actor: "runtime.kernel",
-      eventType: "retry",
-      payload: {
-        delayMs: providerResponse.delayMs,
+            actor: "runtime.kernel",
+            eventType: "retry",
+            payload: {
+              delayMs: providerResponse.delayMs,
               iteration,
               reason: providerResponse.reason
             },
@@ -918,7 +968,23 @@ export class ExecutionKernel {
         }
 
         if (providerResponse.kind === "final") {
-          return this.completeTaskSuccess(state, messages, availableTools, task, providerResponse.message);
+          if (noWriteFinalDecision === "fail") {
+            throw new AppError({
+              code: "task_incomplete",
+              details: {
+                reason: "implementation_final_without_file_changes"
+              },
+              message:
+                "Implementation task ended without any successful filesystem write. The model tried to finish after inspection only."
+            });
+          }
+          return this.completeTaskSuccess(
+            state,
+            messages,
+            availableTools,
+            task,
+            providerResponse.message
+          );
         }
 
         const postCompletionDecision = this.evaluatePostCompletionToolCalls(
@@ -945,6 +1011,7 @@ export class ExecutionKernel {
       }
 
       let toolCallCount = 0;
+      const executingToolCalls = pendingToolCalls;
       for (const [toolIndex, toolCall] of pendingToolCalls.entries()) {
         throwIfAborted(
           state.managedAbortController.abortController.signal,
@@ -960,26 +1027,38 @@ export class ExecutionKernel {
         });
         state.managedAbortController.touchActivity("tool_call_started");
 
-        const outcome = await this.dependencies.toolOrchestrator.execute(
-          {
-            input: toolCall.input,
-            iteration,
-            reason: toolCall.reason,
-            taskId: task.taskId,
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName
-          },
-          {
-            agentProfileId: task.agentProfileId,
-            cwd: state.cwd,
-            iteration,
-            signal: state.managedAbortController.abortController.signal,
-            taskId: task.taskId,
-            taskMetadata: task.metadata,
-            userId: task.requesterUserId,
-            workspaceRoot: this.dependencies.workspaceRoot
-          }
+        const blockedToolResult = this.buildUnavailableToolResult(
+          state,
+          availableTools,
+          toolCall,
+          iteration
         );
+        const outcome =
+          blockedToolResult === null
+            ? await this.dependencies.toolOrchestrator.execute(
+                {
+                  input: toolCall.input,
+                  iteration,
+                  reason: toolCall.reason,
+                  taskId: task.taskId,
+                  toolCallId: toolCall.toolCallId,
+                  toolName: toolCall.toolName
+                },
+                {
+                  agentProfileId: task.agentProfileId,
+                  cwd: state.cwd,
+                  iteration,
+                  signal: state.managedAbortController.abortController.signal,
+                  taskId: task.taskId,
+                  taskMetadata: task.metadata,
+                  userId: task.requesterUserId,
+                  workspaceRoot: this.dependencies.workspaceRoot
+                }
+              )
+            : {
+                kind: "completed" as const,
+                result: blockedToolResult
+              };
         state.managedAbortController.touchActivity(`tool_call_${outcome.kind}`);
 
         if (outcome.kind === "approval_required") {
@@ -1044,12 +1123,15 @@ export class ExecutionKernel {
         state.cumulativeToolCallCount += 1;
         const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
         if (
-          toolDescriptor?.capability === "filesystem.write" ||
-          toolCall.toolName.includes("write")
+          outcome.result.success &&
+          (toolDescriptor?.capability === "filesystem.write" ||
+            toolCall.toolName.includes("write"))
         ) {
           state.writeToolSucceeded = true;
         }
-        const structuredOutputSummary = summarizeToolOutput(outcome.result.output);
+        const toolResultOutput = toolResultOutputForModel(outcome.result);
+        const toolSummary = toolResultSummary(outcome.result, toolCall.toolName);
+        const structuredOutputSummary = summarizeToolOutput(toolResultOutput);
         const isDeduplicatable =
           toolDescriptor !== null && DEDUPLICATABLE_CAPABILITIES.has(toolDescriptor.capability);
         const signature = isDeduplicatable
@@ -1063,17 +1145,17 @@ export class ExecutionKernel {
             : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments — synthesize from the prior result and answer the user.`;
         const finishedSummary =
           priorCall === null
-            ? `${outcome.result.summary} | ${structuredOutputSummary}`
-            : `${outcome.result.summary} | ${structuredOutputSummary} (duplicate of iter ${priorCall.iteration})`;
+            ? `${toolSummary} | ${structuredOutputSummary}`
+            : `${toolSummary} | ${structuredOutputSummary} (duplicate of iter ${priorCall.iteration})`;
         const privacyLevel = toolDescriptor?.privacyLevel ?? "internal";
 
         if (toolDescriptor !== null) {
           if (toolDescriptor.capability !== "interaction.ask_user") {
             messages.push(
               duplicateNotice === null
-                ? createToolFeedbackMessage(outcome.result.output, toolCall, privacyLevel)
+                ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
                 : createToolFeedbackMessageWithNotice(
-                    outcome.result.output,
+                    toolResultOutput,
                     toolCall,
                     privacyLevel,
                     duplicateNotice
@@ -1089,19 +1171,34 @@ export class ExecutionKernel {
           emitTaskEvent(state.onTaskEvent, {
             iteration,
             kind: "tool",
-            status: "finished",
+            status: outcome.result.success ? "finished" : "failed",
             summary: finishedSummary,
             taskId: task.taskId,
             toolCallId: toolCall.toolCallId,
             toolName: toolCall.toolName
           });
+          if (
+            state.implementationWriteRequired &&
+            state.implementationWriteRequiredViolations >= 2
+          ) {
+            throw new AppError({
+              code: "task_incomplete",
+              details: {
+                iteration,
+                reason: "implementation_write_required_tool_gate_ignored",
+                toolName: toolCall.toolName
+              },
+              message:
+                "Implementation task ignored the write-required tool gate and kept requesting read-only tools instead of writing files."
+            });
+          }
           continue;
         }
         messages.push(
           duplicateNotice === null
-            ? createToolFeedbackMessage(outcome.result.output, toolCall, privacyLevel)
+            ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
             : createToolFeedbackMessageWithNotice(
-                outcome.result.output,
+                toolResultOutput,
                 toolCall,
                 privacyLevel,
                 duplicateNotice
@@ -1116,15 +1213,31 @@ export class ExecutionKernel {
         emitTaskEvent(state.onTaskEvent, {
           iteration,
           kind: "tool",
-          status: "finished",
+          status: outcome.result.success ? "finished" : "failed",
           summary: finishedSummary,
           taskId: task.taskId,
           toolCallId: toolCall.toolCallId,
           toolName: toolCall.toolName
         });
+        if (
+          state.implementationWriteRequired &&
+          state.implementationWriteRequiredViolations >= 2
+        ) {
+          throw new AppError({
+            code: "task_incomplete",
+            details: {
+              iteration,
+              reason: "implementation_write_required_tool_gate_ignored",
+              toolName: toolCall.toolName
+            },
+            message:
+              "Implementation task ignored the write-required tool gate and kept requesting read-only tools instead of writing files."
+          });
+        }
       }
 
       pendingToolCalls = [];
+      this.updateImplementationReadLoopGuard(state, messages, iteration, executingToolCalls);
       this.dependencies.executionCheckpointRepository.delete(task.taskId);
       state.turnProviderMessages = rebuildTurnProviderMessages(messages, state.turnProviderMessages);
 
@@ -1172,6 +1285,7 @@ export class ExecutionKernel {
         iterationThreshold: this.dependencies.compact.iterationThreshold,
         maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
         messages,
+        originalGoal: task.input,
         pendingToolCalls,
         sessionScopeKey: task.threadId ?? task.taskId,
         taskId: task.taskId,
@@ -1201,6 +1315,7 @@ export class ExecutionKernel {
             iterationThreshold: this.dependencies.compact.iterationThreshold,
             maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
             messages: preCompactMessages,
+            originalGoal: task.input,
             pendingToolCalls,
             reason: compactReason,
             sessionScopeKey: task.threadId,
@@ -1357,6 +1472,170 @@ export class ExecutionKernel {
       summary: `Iteration budget pressure: ${tier}`,
       taskId: state.task.taskId
     });
+  }
+
+  private evaluateNoWriteFinal(state: ExecutionLoopState): "accept" | "defer" | "fail" {
+    if (!state.writeExpected || state.writeToolSucceeded) {
+      return "accept";
+    }
+    return state.noWriteFinalGuardEmitted ? "fail" : "defer";
+  }
+
+  private injectNoWriteFinalGuard(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[]
+  ): void {
+    state.noWriteFinalGuardEmitted = true;
+    messages.push({
+      content:
+        "Stop verifier: the user asked for an implementation or code-change task, but this run has not completed any successful filesystem write. Do not final-answer yet. If changes are required, call file_write now. If you are blocked from changing files, final-answer with the blocker. Do not claim the work is complete based only on reads.",
+      metadata: {
+        privacyLevel: "internal",
+        retentionKind: "session",
+        sourceType: "system_prompt"
+      },
+      role: "system"
+    });
+  }
+
+  private updateImplementationReadLoopGuard(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    iteration: number,
+    toolCalls: ProviderToolCall[]
+  ): void {
+    if (!state.writeExpected || state.writeToolSucceeded) {
+      state.implementationReadOnlyRounds = 0;
+      state.implementationReadOnlyGuardEmitted = false;
+      state.implementationWriteRequired = false;
+      state.implementationWriteRequiredViolations = 0;
+      return;
+    }
+    if (!allToolCallsAreReads(toolCalls)) {
+      state.implementationReadOnlyRounds = 0;
+      state.implementationReadOnlyGuardEmitted = false;
+      return;
+    }
+
+    state.implementationReadOnlyRounds += 1;
+    if (
+      state.implementationReadOnlyRounds >= 6 &&
+      !state.implementationReadOnlyGuardEmitted
+    ) {
+      state.implementationReadOnlyGuardEmitted = true;
+      state.implementationWriteRequired = true;
+      state.implementationWriteRequiredViolations = 0;
+      messages.push({
+        content:
+          "Read-loop guard: this is an implementation task and the run has spent several consecutive turns only reading files without any successful filesystem write. The runtime is now entering write-required mode and will temporarily withhold read-only tools. Use the existing tool results to call file_write now, or final-answer with a blocker if you cannot make the change. Do not request more read tools until a successful write happens.",
+        metadata: {
+          privacyLevel: "internal",
+          retentionKind: "session",
+          sourceType: "system_prompt"
+        },
+        role: "system"
+      });
+    }
+
+    if (state.implementationReadOnlyRounds >= 12) {
+      throw new AppError({
+        code: "task_incomplete",
+        details: {
+          iteration,
+          readOnlyRounds: state.implementationReadOnlyRounds,
+          reason: "implementation_read_loop_without_file_changes"
+        },
+        message:
+          "Implementation task made too many consecutive read-only turns without any successful filesystem write."
+      });
+    }
+  }
+
+  private applyRuntimeToolGate(
+    state: ExecutionLoopState,
+    availableTools: ProviderToolDescriptor[],
+    iteration: number
+  ): ProviderToolDescriptor[] {
+    if (!state.implementationWriteRequired || !state.writeExpected || state.writeToolSucceeded) {
+      return availableTools;
+    }
+
+    const gatedTools = availableTools.filter((tool) => isAllowedInWriteRequiredMode(tool));
+    if (gatedTools.length === availableTools.length) {
+      return availableTools;
+    }
+
+    this.dependencies.traceService.record({
+      actor: "runtime.tool_gate",
+      eventType: "runtime_tool_gate_applied",
+      payload: {
+        hiddenTools: availableTools
+          .filter((tool) => !gatedTools.includes(tool))
+          .map((tool) => tool.name),
+        iteration,
+        mode: "write_required",
+        visibleTools: gatedTools.map((tool) => tool.name)
+      },
+      stage: "control",
+      summary: "Write-required runtime tool gate applied",
+      taskId: state.task.taskId
+    });
+
+    return gatedTools;
+  }
+
+  private buildUnavailableToolResult(
+    state: ExecutionLoopState,
+    availableTools: ProviderToolDescriptor[],
+    toolCall: ProviderToolCall,
+    iteration: number
+  ): ToolExecutionResult | null {
+    const availableToolNames = new Set(availableTools.map((tool) => tool.name));
+    if (availableToolNames.has(toolCall.toolName)) {
+      return null;
+    }
+    if (!state.implementationWriteRequired) {
+      return null;
+    }
+
+    const descriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
+    const readOnlyTool = isReadOnlyToolDescriptor(descriptor, toolCall.toolName);
+    const availableToolList = [...availableToolNames].join(", ");
+    const reason = readOnlyTool
+      ? `Tool ${toolCall.toolName} is temporarily unavailable because this implementation task entered write-required mode after repeated read-only turns. Use file_write now, or final-answer with a concrete blocker. Do not call additional read-only tools until a successful write happens.`
+      : `Tool ${toolCall.toolName} is temporarily unavailable because this implementation task entered write-required mode without a successful file write. Use file_write now, or final-answer with a concrete blocker. Available tools: ${
+          availableToolList.length > 0 ? availableToolList : "none"
+        }.`;
+
+    state.implementationWriteRequiredViolations += 1;
+
+    this.dependencies.traceService.record({
+      actor: "runtime.tool_gate",
+      eventType: "tool_call_blocked",
+      payload: {
+        availableTools: [...availableToolNames],
+        iteration,
+        mode: state.implementationWriteRequired ? "write_required" : "normal",
+        reason,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        violationCount: state.implementationWriteRequiredViolations
+      },
+      stage: "control",
+      summary: `Blocked unavailable tool call ${toolCall.toolName}`,
+      taskId: state.task.taskId
+    });
+
+    return {
+      details: {
+        availableTools: [...availableToolNames],
+        mode: state.implementationWriteRequired ? "write_required" : "normal",
+        requestedTool: toolCall.toolName
+      },
+      errorCode: "tool_unavailable",
+      errorMessage: reason,
+      success: false
+    };
   }
 
   private evaluatePostCompletionToolCalls(
@@ -1605,6 +1884,7 @@ export class ExecutionKernel {
     const summarized = await summarizer.summarize({
       maxMessagesBeforeCompact: input.maxMessagesBeforeCompact,
       messages: input.messages,
+      ...(input.originalGoal !== undefined ? { originalGoal: input.originalGoal } : {}),
       sessionScopeKey: input.sessionScopeKey,
       taskId: input.taskId
     });
@@ -1785,7 +2065,51 @@ export class ExecutionKernel {
 }
 
 function allToolCallsAreReads(toolCalls: ProviderToolCall[]): boolean {
-  return toolCalls.length > 0 && toolCalls.every((call) => call.toolName.includes("read"));
+  return toolCalls.length > 0 && toolCalls.every((call) => isReadOnlyToolName(call.toolName));
+}
+
+function isAllowedInWriteRequiredMode(tool: ProviderToolDescriptor): boolean {
+  return tool.capability === "filesystem.write";
+}
+
+function isReadOnlyToolDescriptor(
+  descriptor: ProviderToolDescriptor | null,
+  toolName: string
+): boolean {
+  if (descriptor !== null) {
+    return (
+      descriptor.capability === "filesystem.read" ||
+      descriptor.capability === "network.fetch_public_readonly"
+    );
+  }
+  return isReadOnlyToolName(toolName);
+}
+
+function isReadOnlyToolName(toolName: string): boolean {
+  return (
+    toolName.includes("read") ||
+    toolName.includes("search") ||
+    toolName.includes("fetch") ||
+    toolName.includes("view")
+  );
+}
+
+function toolResultOutputForModel(result: ToolExecutionResult): unknown {
+  if (result.success) {
+    return result.output;
+  }
+  return {
+    error: result.errorMessage,
+    errorCode: result.errorCode,
+    recoverable: true,
+    ...(result.details === undefined ? {} : { details: result.details })
+  };
+}
+
+function toolResultSummary(result: ToolExecutionResult, toolName: string): string {
+  return result.success
+    ? result.summary
+    : `Tool ${toolName} failed: ${result.errorMessage}`;
 }
 
 function hasCompletionIntent(message: string): boolean {
@@ -1816,4 +2140,28 @@ function hasCompletionIntent(message: string): boolean {
     /implementation is complete/u
   ];
   return completionSignals.some((pattern) => pattern.test(compact));
+}
+
+function expectsFileModification(input: string): boolean {
+  const compact = input.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (compact.length === 0) {
+    return false;
+  }
+  const strongWriteIntent =
+    /\b(implement|fix|modify|update|add|create|build|write|develop|repair|refactor|change)\b/u.test(
+      compact
+    ) ||
+    /(?:\u5b9e\u73b0|\u4fee\u590d|\u4fee\u6539|\u6539\u9020|\u65b0\u589e|\u6dfb\u52a0|\u7f16\u5199|\u5199\u4ee3\u7801|\u91cd\u6784|\u4f18\u5316|\u5b8c\u6210.*(?:\u5f00\u53d1|\u4efb\u52a1|\u9636\u6bb5|\u529f\u80fd))/u.test(
+      compact
+    );
+  if (strongWriteIntent) {
+    return true;
+  }
+  const readOnlyIntent =
+    /\b(inspect|summarize|explain|analyze|review|look|list|read|show)\b/u.test(compact) ||
+    /(?:\u67e5\u770b|\u603b\u7ed3|\u5206\u6790|\u89e3\u91ca|\u5217\u51fa|\u8bfb\u53d6)/u.test(
+      compact
+    );
+  const weakCodeIntent = /\b(code|development)\b/u.test(compact) || /\u5f00\u53d1|\u4ee3\u7801/u.test(compact);
+  return weakCodeIntent && !readOnlyIntent;
 }

@@ -40,8 +40,16 @@ describe("Skill runtime integration", () => {
     });
 
     try {
+      // Use a read-leaning prompt so the runtime's "no-write final" guard does not
+      // defer the scripted provider's single final response. The test only cares
+      // about which skill metadata is injected into the initial provider input,
+      // not whether the synthetic task itself requires filesystem writes.
       const result = await handle.service.runTask(
-        createDefaultRunOptions("fix sqlite migration retries", workspaceRoot, handle.config)
+        createDefaultRunOptions(
+          "review the sqlite migration retries playbook",
+          workspaceRoot,
+          handle.config
+        )
       );
       expect(result.task.status).toBe("succeeded");
     } finally {

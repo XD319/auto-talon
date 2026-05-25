@@ -44,7 +44,9 @@ export const TRACE_EVENT_TYPES = [
   "tool_call_started",
   "tool_call_finished",
   "tool_call_failed",
+  "tool_call_blocked",
   "tool_exposure_decided",
+  "runtime_tool_gate_applied",
   "loop_iteration_completed",
   "turn_end",
   "retry",
@@ -332,6 +334,16 @@ export interface ToolCallFailedPayload extends JsonObject {
   errorMessage: string;
 }
 
+export interface ToolCallBlockedPayload extends JsonObject {
+  iteration: number;
+  toolCallId: string;
+  toolName: string;
+  availableTools: string[];
+  mode: "normal" | "write_required";
+  reason: string;
+  violationCount: number;
+}
+
 export interface ToolExposureDecidedPayload extends JsonObject {
   iteration: number;
   taskId: string;
@@ -339,6 +351,13 @@ export interface ToolExposureDecidedPayload extends JsonObject {
   hiddenTools: string[];
   reasons: string[];
   decisions: ToolExposureDecision[];
+}
+
+export interface RuntimeToolGateAppliedPayload extends JsonObject {
+  iteration: number;
+  mode: "write_required";
+  visibleTools: string[];
+  hiddenTools: string[];
 }
 
 export interface LoopIterationCompletedPayload extends JsonObject {
@@ -837,7 +856,9 @@ export type TraceEvent =
   | TraceEventBase<"tool_call_started", ToolCallStartedPayload>
   | TraceEventBase<"tool_call_finished", ToolCallFinishedPayload>
   | TraceEventBase<"tool_call_failed", ToolCallFailedPayload>
+  | TraceEventBase<"tool_call_blocked", ToolCallBlockedPayload>
   | TraceEventBase<"tool_exposure_decided", ToolExposureDecidedPayload>
+  | TraceEventBase<"runtime_tool_gate_applied", RuntimeToolGateAppliedPayload>
   | TraceEventBase<"loop_iteration_completed", LoopIterationCompletedPayload>
   | TraceEventBase<"turn_end", TurnEndPayload>
   | TraceEventBase<"retry", RetryPayload>

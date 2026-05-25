@@ -23,6 +23,7 @@ import type {
   ToolCallRequest,
   ToolDefinition,
   ToolExecutionContext,
+  ToolExecutionResult,
   ToolExecutionSuccess
 } from "../types/index.js";
 import type { PreparedAskUserInput } from "./ask-user-tool.js";
@@ -42,7 +43,7 @@ export interface ToolOrchestratorDependencies {
 
 export interface ToolExecutionCompletedOutcome {
   kind: "completed";
-  result: ToolExecutionSuccess;
+  result: ToolExecutionResult;
   toolCall: ToolCallRecord;
 }
 
@@ -395,8 +396,7 @@ export class ToolOrchestrator {
     try {
       const result = await tool.execute(prepared.preparedInput, context);
       if (!result.success) {
-        return this.failToolCall(
-          toolCall,
+        const toolError =
           result.details === undefined
             ? new AppError({
                 code: result.errorCode,
@@ -406,8 +406,11 @@ export class ToolOrchestrator {
                 code: result.errorCode,
                 details: result.details,
                 message: result.errorMessage
-              })
-        );
+              });
+        if (isRecoverableToolFailure(tool)) {
+          return this.completeToolCallFailure(toolCall, toolError);
+        }
+        return this.failToolCall(toolCall, toolError);
       }
 
       this.dependencies.artifactRepository.createMany(
@@ -451,7 +454,11 @@ export class ToolOrchestrator {
         toolCall: finishedCall
       };
     } catch (error) {
-      return this.failToolCall(toolCall, toAppError(error));
+      const appError = toToolExecutionError(error);
+      if (isRecoverableToolFailure(tool)) {
+        return this.completeToolCallFailure(toolCall, appError);
+      }
+      return this.failToolCall(toolCall, appError);
     }
   }
 
@@ -642,6 +649,35 @@ export class ToolOrchestrator {
     error: AppError,
     status: ToolCallRecord["status"] = "failed"
   ): never {
+    this.recordFailedToolCall(toolCall, error, status);
+    throw error;
+  }
+
+  private completeToolCallFailure(
+    toolCall: ToolCallRecord,
+    error: AppError,
+    status: ToolCallRecord["status"] = "failed"
+  ): ToolExecutionCompletedOutcome {
+    const failedCall = this.recordFailedToolCall(toolCall, error, status);
+    return {
+      kind: "completed",
+      result: {
+        ...(error.details === undefined
+          ? {}
+          : { details: error.details as JsonObject }),
+        errorCode: error.code,
+        errorMessage: error.message,
+        success: false
+      },
+      toolCall: failedCall
+    };
+  }
+
+  private recordFailedToolCall(
+    toolCall: ToolCallRecord,
+    error: AppError,
+    status: ToolCallRecord["status"]
+  ): ToolCallRecord {
     const failedCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
       errorCode: error.code,
       errorMessage: error.message,
@@ -684,7 +720,7 @@ export class ToolOrchestrator {
       toolCallId: failedCall.toolCallId
     });
 
-    throw error;
+    return failedCall;
   }
 
   private resolveClarifyPrompt(
@@ -854,6 +890,28 @@ function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "
   return kind === "file" || kind === "network" || kind === "shell" || kind === "mcp" || kind === "prompt"
     ? kind
     : "shell";
+}
+
+function isRecoverableToolFailure(tool: ToolDefinition): boolean {
+  return tool.capability === "filesystem.read";
+}
+
+function toToolExecutionError(error: unknown): AppError {
+  if (error instanceof AppError) {
+    return error;
+  }
+  if (error instanceof Error) {
+    return new AppError({
+      cause: error,
+      code: "tool_execution_error",
+      message: error.message
+    });
+  }
+  return new AppError({
+    cause: error,
+    code: "tool_execution_error",
+    message: "Unknown tool execution error"
+  });
 }
 
 function extractSandboxTarget(sandboxDetails: Record<string, unknown>): string {
