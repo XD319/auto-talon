@@ -80,6 +80,35 @@ describe("assistant output projection", () => {
       handle.close();
     }
   });
+
+  it("does not turn ordinary summary bullets into next actions", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const output = [
+      "Implementation complete.",
+      "",
+      "## Implemented features",
+      "- Snake data structure",
+      "- Food rendering",
+      "- Score display"
+    ].join("\n");
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: output,
+        usage: { inputTokens: 2, outputTokens: 2 }
+      }))
+    });
+
+    try {
+      const result = await handle.service.runTask(createDefaultRunOptions("summarize completed work", workspaceRoot, handle.config));
+      const threadId = result.task.threadId ?? "";
+      const nextActions = handle.service.listNextActions({ threadId }).filter((item) => item.source === "assistant_pledge");
+      expect(nextActions).toHaveLength(0);
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 async function createTempWorkspace(): Promise<string> {

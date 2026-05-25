@@ -115,6 +115,12 @@ export class CommitmentCollector {
       statuses: ["open", "in_progress", "blocked", "waiting_decision"],
       threadId: sessionMemory.threadId
     });
+    const nextActions = sessionMemory.nextActions.filter((title) =>
+      shouldProjectSessionNextAction(title)
+    );
+    if (commitments.length === 0 && nextActions.length === 0 && sessionMemory.openLoops.length === 0) {
+      return;
+    }
     const objective = sessionMemory.goal.trim().slice(0, 160);
     const commitment =
       commitments[0] ??
@@ -136,7 +142,7 @@ export class CommitmentCollector {
       threadId: sessionMemory.threadId
     });
     if (existing.length === 0) {
-      sessionMemory.nextActions.forEach((title, index) => {
+      nextActions.forEach((title, index) => {
         this.dependencies.nextActionService.create({
           commitmentId: commitment.commitmentId,
           rank: index,
@@ -229,4 +235,26 @@ export class CommitmentCollector {
       `${event.payload.errorCode}: ${event.payload.errorMessage}`
     );
   }
+}
+
+function shouldProjectSessionNextAction(title: string): boolean {
+  const compact = title.replace(/\s+/gu, " ").trim();
+  if (compact.length === 0) {
+    return false;
+  }
+  if (
+    /\b(no files? (?:were )?changed|no changes? (?:were )?made|nothing changed|completed|implemented|fixed|summary)\b/iu.test(
+      compact
+    )
+  ) {
+    return false;
+  }
+  if (
+    /(?:\u6ca1\u6709\u4fee\u6539|\u6ca1\u6709\u6539\u52a8|\u672a\u4fee\u6539|\u672a\u6539\u52a8|\u5df2\u5b8c\u6210|\u5df2\u5b9e\u73b0|\u603b\u7ed3)/u.test(
+      compact
+    )
+  ) {
+    return false;
+  }
+  return true;
 }

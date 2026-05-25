@@ -76,11 +76,14 @@ export class AssistantThreadProjectionService {
       }
     }
 
-    const openNextActions = this.dependencies.nextActionService.list({
-      statuses: ["active", "pending", "blocked"],
+    const nextActions = this.dependencies.nextActionService.list({
       threadId: input.threadId
     });
-    const nextActionByTitle = new Map(openNextActions.map((item) => [normalizeTitle(item.title), item] as const));
+    const nextActionByTitle = new Map(
+      nextActions
+        .filter((item) => item.source === "assistant_pledge")
+        .map((item) => [normalizeTitle(item.title), item] as const)
+    );
 
     let assignedActive = false;
     for (const item of parsed.nextActions) {
@@ -156,17 +159,18 @@ function parseAssistantOutput(output: string): ParsedProjection {
   let section: "commitments" | "nextActions" | "blockedItems" | null = null;
   let structuredFound = false;
   for (const line of lines) {
-    if (HEADING_COMMITMENTS.test(stripMarkdownPunctuation(line))) {
+    const heading = stripMarkdownPunctuation(line);
+    if (isCommitmentHeading(heading)) {
       section = "commitments";
       structuredFound = true;
       continue;
     }
-    if (HEADING_NEXT.test(stripMarkdownPunctuation(line))) {
+    if (isNextActionHeading(heading)) {
       section = "nextActions";
       structuredFound = true;
       continue;
     }
-    if (HEADING_BLOCKED.test(stripMarkdownPunctuation(line))) {
+    if (isBlockedHeading(heading)) {
       section = "blockedItems";
       structuredFound = true;
       continue;
@@ -188,18 +192,30 @@ function parseAssistantOutput(output: string): ParsedProjection {
   if (structuredFound || lines.length === 0) {
     return parsed;
   }
-  for (const line of lines) {
-    const listItem = parseListItem(line);
-    if (listItem === null) {
-      continue;
-    }
-    if (listItem.blocked) {
-      parsed.blockedItems.push(listItem);
-    } else {
-      parsed.nextActions.push(listItem);
-    }
-  }
   return parsed;
+}
+
+function isCommitmentHeading(line: string): boolean {
+  return (
+    HEADING_COMMITMENTS.test(line) ||
+    /^(commitments?|\u627f\u8bfa|\u8cac\u4efb|\u8d23\u4efb)\s*[:：]?$/iu.test(line)
+  );
+}
+
+function isNextActionHeading(line: string): boolean {
+  return (
+    HEADING_NEXT.test(line) ||
+    /^(next(\s+actions?)?|next\s*steps?|\u4e0b\u4e00\u6b65|\u540e\u7eed\u884c\u52a8)\s*[:：]?$/iu.test(
+      line
+    )
+  );
+}
+
+function isBlockedHeading(line: string): boolean {
+  return (
+    HEADING_BLOCKED.test(line) ||
+    /^(blocked|blocked\s+items?|\u963b\u585e|\u53d7\u963b|\u5361\u4f4f)\s*[:：]?$/iu.test(line)
+  );
 }
 
 function parseKeyedLine(line: string): { item: ParsedItem; section: keyof ParsedProjection } | null {
