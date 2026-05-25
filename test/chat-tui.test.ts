@@ -8,6 +8,8 @@ import {
   completeApprovalMessage,
   mergeTraceMessages,
   syncPendingApprovalMessages,
+  TUI_ACTIVITY_TIMEOUT_MS,
+  TUI_INTERACTIVE_MAX_ITERATIONS,
   useChatController,
   type ChatController
 } from "../src/tui/hooks/use-chat-controller.js";
@@ -15,7 +17,8 @@ import {
   handleInboxCommand,
   handleResumeCommand,
   handleScheduleCommand,
-  isLiveTranscriptMessage
+  isLiveTranscriptMessage,
+  sliceTranscriptMessages
 } from "../src/tui/chat-app.js";
 import {
   canSubmitTextInput,
@@ -119,7 +122,7 @@ describe("chat tui view-models", () => {
     expect(visible[0]?.kind).toBe("activity");
   });
 
-  it("keeps completed transcript rows in terminal scrollback", () => {
+  it("distinguishes live rows from completed transcript rows", () => {
     const finishedReply: ChatMessage = {
       id: "agent-finished",
       kind: "agent",
@@ -135,6 +138,31 @@ describe("chat tui view-models", () => {
     expect(isLiveTranscriptMessage(finishedReply)).toBe(false);
     expect(isLiveTranscriptMessage(streamingReply)).toBe(true);
     expect(isLiveTranscriptMessage(toApprovalMessage(createApprovalRecord(), createToolCallRecord()))).toBe(true);
+  });
+
+  it("slices transcript history from the bottom with a bounded offset", () => {
+    const messages: ChatMessage[] = Array.from({ length: 5 }, (_, index) => ({
+      id: `system-${index}`,
+      kind: "system" as const,
+      text: `line ${index}`,
+      timestamp: "2026-01-01T00:00:00.000Z"
+    }));
+
+    expect(sliceTranscriptMessages(messages, 0, 3).map((message) => message.id)).toEqual([
+      "system-2",
+      "system-3",
+      "system-4"
+    ]);
+    expect(sliceTranscriptMessages(messages, 1, 3).map((message) => message.id)).toEqual([
+      "system-1",
+      "system-2",
+      "system-3"
+    ]);
+    expect(sliceTranscriptMessages(messages, 99, 3).map((message) => message.id)).toEqual([
+      "system-0",
+      "system-1",
+      "system-2"
+    ]);
   });
 });
 
@@ -405,8 +433,14 @@ describe("use-chat-controller helpers", () => {
 
       expect(runTask).toHaveBeenCalledTimes(1);
       expect(continueThread).toHaveBeenCalledTimes(1);
+      expect(runTask.mock.calls[0]?.[0].maxIterations).toBe(TUI_INTERACTIVE_MAX_ITERATIONS);
+      expect(runTask.mock.calls[0]?.[0].timeoutMode).toBe("activity");
+      expect(runTask.mock.calls[0]?.[0].timeoutMs).toBe(TUI_ACTIVITY_TIMEOUT_MS);
       expect(continueThread.mock.calls[0]?.[0]).toBe("thread-123");
       expect(continueThread.mock.calls[0]?.[1]).toBe("second");
+      expect(continueThread.mock.calls[0]?.[2]?.maxIterations).toBe(TUI_INTERACTIVE_MAX_ITERATIONS);
+      expect(continueThread.mock.calls[0]?.[2]?.timeoutMode).toBe("activity");
+      expect(continueThread.mock.calls[0]?.[2]?.timeoutMs).toBe(TUI_ACTIVITY_TIMEOUT_MS);
     } finally {
       app.unmount();
       await app.waitUntilExit();

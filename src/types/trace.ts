@@ -30,6 +30,8 @@ export const TRACE_EVENT_TYPES = [
   "provider_retry_scheduled",
   "provider_request_succeeded",
   "provider_request_failed",
+  "iteration_budget_pressure",
+  "no_tools_tool_calls_ignored",
   "policy_decision",
   "approval_requested",
   "approval_resolved",
@@ -173,6 +175,7 @@ export interface GatewayApprovalResolvedPayload extends JsonObject {
 
 export interface TaskStartedPayload extends JsonObject {
   maxIterations: number;
+  timeoutMode?: "activity" | "wall_clock";
   timeoutMs: number;
 }
 
@@ -220,11 +223,29 @@ export interface ProviderRetryScheduledPayload extends JsonObject {
 
 export interface ProviderRequestFailedPayload extends JsonObject {
   errorCategory: ProviderErrorCategory;
+  errorMessage?: string;
   iteration: number;
+  lastActivityReason?: string | null;
   latencyMs: number;
   modelName: string | null;
   providerName: string;
   retryCount: number;
+  timeoutMs?: number;
+  timeoutSource?: "activity" | "provider" | "wall_clock";
+}
+
+export interface IterationBudgetPressurePayload extends JsonObject {
+  iteration: number;
+  maxIterations: number;
+  remainingIterations: number;
+  tier: "critical" | "warning";
+}
+
+export interface NoToolsToolCallsIgnoredPayload extends JsonObject {
+  iteration: number;
+  message: string;
+  reason: string;
+  toolNames: string[];
 }
 
 export interface PolicyDecisionPayload extends JsonObject {
@@ -802,6 +823,8 @@ export type TraceEvent =
   | TraceEventBase<"provider_retry_scheduled", ProviderRetryScheduledPayload>
   | TraceEventBase<"provider_request_succeeded", ProviderRequestSucceededPayload>
   | TraceEventBase<"provider_request_failed", ProviderRequestFailedPayload>
+  | TraceEventBase<"iteration_budget_pressure", IterationBudgetPressurePayload>
+  | TraceEventBase<"no_tools_tool_calls_ignored", NoToolsToolCallsIgnoredPayload>
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>
   | TraceEventBase<"approval_requested", ApprovalRequestedPayload>
   | TraceEventBase<"approval_resolved", ApprovalResolvedPayload>

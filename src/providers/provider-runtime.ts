@@ -118,7 +118,7 @@ export function toProviderError(
     return enrichProviderError(error, retryCount);
   }
 
-  if (error instanceof DOMException && error.name === "AbortError") {
+  if (isTimeoutAbortError(error)) {
     return new ProviderError({
       category: "timeout_error",
       cause: error,
@@ -154,6 +154,19 @@ export function toProviderError(
     retryCount,
     summary: "The provider failed with an unknown error."
   });
+}
+
+function isTimeoutAbortError(error: unknown): boolean {
+  if (error === "timeout") {
+    return true;
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  if (error instanceof Error) {
+    return error.name === "AbortError" || error.message.toLowerCase().includes("timeout");
+  }
+  return false;
 }
 
 export function createProviderError(shape: ProviderErrorShape): ProviderError {

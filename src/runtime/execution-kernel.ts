@@ -44,6 +44,8 @@ import type {
   ExecutionCheckpointRepository,
   MemoryRecallResult,
   Provider,
+  ProviderResponse,
+  ProviderToolDescriptor,
   ProviderRetryNotice,
   ProviderStatusNotice,
   ProviderToolCall,
@@ -106,6 +108,7 @@ export interface ExecutionKernelDependencies {
 }
 
 const PROGRESS_GUARD_THRESHOLD = 3;
+const POST_COMPLETION_VERIFICATION_READ_LIMIT = 1;
 
 interface ExecutionLoopState {
   costWarnedToolNames: string[];
@@ -121,6 +124,9 @@ interface ExecutionLoopState {
   onOutputEvent?: (event: RuntimeOutputEvent) => void;
   onTaskEvent?: (event: RuntimeTaskEvent) => void;
   pendingToolCalls: ProviderToolCall[];
+  completionIntentSeenAt: number | null;
+  criticalBudgetPressureEmitted: boolean;
+  postCompletionVerificationReads: number;
   selectedSkillContext: ContextFragment[];
   silentToolTurns: number;
   toolCallSignatures: Map<string, { iteration: number; toolCallId: string }>;
@@ -129,6 +135,8 @@ interface ExecutionLoopState {
   repoMapSummary?: string;
   task: TaskRecord;
   tokenBudget: TokenBudget;
+  warningBudgetPressureEmitted: boolean;
+  writeToolSucceeded: boolean;
 }
 
 export class ExecutionKernel {
@@ -222,12 +230,27 @@ export class ExecutionKernel {
       workspaceRoot: this.dependencies.workspaceRoot
     });
 
-    const managedAbortController = createManagedAbortController(
-      options.timeoutMs,
-      options.signal
-    );
+    const timeoutMode = options.timeoutMode ?? "wall_clock";
+    const managedAbortController = createManagedAbortController(options.timeoutMs, options.signal, {
+      mode: timeoutMode,
+      onInactivityWarning: (details) => {
+        this.emitOutput({
+          eventType: "provider_status",
+          payload: {
+            kind: "inactivity_warning",
+            message: "Task has been inactive for 75% of the timeout window.",
+            modelName: this.dependencies.provider.model ?? null,
+            providerName: this.dependencies.provider.name,
+            reason: details.lastActivityReason ?? "no recent runtime activity"
+          },
+          stage: "planning",
+          taskId
+        });
+      }
+    });
 
     try {
+      managedAbortController.touchActivity("task_started");
       task = this.dependencies.taskRepository.update(taskId, {
         startedAt: new Date().toISOString(),
         status: "running"
@@ -245,6 +268,7 @@ export class ExecutionKernel {
         eventType: "task_started",
         payload: {
           maxIterations: options.maxIterations,
+          timeoutMode,
           timeoutMs: options.timeoutMs
         },
         stage: "lifecycle",
@@ -270,6 +294,7 @@ export class ExecutionKernel {
             threadId
           })
         : null;
+      managedAbortController.touchActivity("tool_exposure_planned");
       const availableTools =
         initialToolExposure?.tools ?? this.dependencies.toolOrchestrator.listTools();
       const recallPlan = await this.planRecall({
@@ -279,9 +304,11 @@ export class ExecutionKernel {
         tokenBudget: options.tokenBudget,
         toolPlan: availableTools.map((tool) => tool.name)
       });
+      managedAbortController.touchActivity("recall_planned");
       const repoMap = this.dependencies.workflow.repoMap.enabled
         ? buildRepoMap(this.dependencies.workspaceRoot)
         : null;
+      managedAbortController.touchActivity("repo_map_created");
       const messages = this.contextAssembler.buildInitialMessages(
         task,
         availableTools,
@@ -312,6 +339,8 @@ export class ExecutionKernel {
       return await this.executeLoop({
         cwd: options.cwd,
         costWarnedToolNames: [],
+        completionIntentSeenAt: null,
+        criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
         managedAbortController,
         maxIterations: options.maxIterations,
@@ -324,6 +353,7 @@ export class ExecutionKernel {
         ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         ...(options.onTaskEvent !== undefined ? { onTaskEvent: options.onTaskEvent } : {}),
         pendingToolCalls: [],
+        postCompletionVerificationReads: 0,
         ...(repoMap?.summary !== undefined ? { repoMapSummary: repoMap.summary } : {}),
         selectedSkillContext: recallPlan.fragments.filter((fragment) => fragment.scope === "skill_ref"),
         silentToolTurns: 0,
@@ -331,7 +361,9 @@ export class ExecutionKernel {
         toolCallSignatures: new Map(),
         turnFilteredFragments: [],
         turnProviderMessages: messages,
-        tokenBudget: options.tokenBudget
+        tokenBudget: options.tokenBudget,
+        warningBudgetPressureEmitted: false,
+        writeToolSucceeded: false
       });
     } catch (error) {
       throw this.finalizeTaskFailure(task, toAppError(error), options.onTaskEvent);
@@ -398,6 +430,8 @@ export class ExecutionKernel {
       return await this.executeLoop({
         cwd: resumedTask.cwd,
         costWarnedToolNames: [],
+        completionIntentSeenAt: null,
+        criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
@@ -406,13 +440,16 @@ export class ExecutionKernel {
         messages: checkpoint.messages,
         ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         pendingToolCalls: checkpoint.pendingToolCalls,
+        postCompletionVerificationReads: 0,
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
         toolCallSignatures: rebuildSignaturesFromMessages(checkpoint.messages, isDeduplicatable),
         turnFilteredFragments: [],
         turnProviderMessages: checkpoint.messages,
-        tokenBudget: resumedTask.tokenBudget
+        tokenBudget: resumedTask.tokenBudget,
+        warningBudgetPressureEmitted: false,
+        writeToolSucceeded: false
       });
     } catch (error) {
       resumedTask = this.dependencies.taskRepository.findById(taskId) ?? resumedTask;
@@ -510,6 +547,7 @@ export class ExecutionKernel {
       iteration <= state.maxIterations;
       iteration += 1
     ) {
+      this.maybeInjectIterationBudgetPressure(state, iteration);
       throwIfAborted(
         state.managedAbortController.abortController.signal,
         state.managedAbortController.getReason()
@@ -539,6 +577,7 @@ export class ExecutionKernel {
           state.costWarnedToolNames = exposure.decisions
             .filter((decision) => decision.costWarning === true)
             .map((decision) => decision.toolName);
+          state.managedAbortController.touchActivity("tool_exposure_planned");
         }
         const assembled = this.contextAssembler.assemble({
           availableTools,
@@ -556,6 +595,7 @@ export class ExecutionKernel {
             : buildFilteredContextDebugFragments(state.memoryRecall.decisions)).concat(
             assembled.debug.filteredOutFragments
           );
+        state.managedAbortController.touchActivity("context_assembled");
         const turnId = randomUUID();
         this.emitOutput({
           eventType: "assistant_turn_started",
@@ -571,6 +611,7 @@ export class ExecutionKernel {
         const providerInput = {
           ...assembled.providerInput,
           onTextDelta: (delta: string) => {
+            state.managedAbortController.touchActivity("assistant_turn_delta");
             state.onAssistantTextDelta?.(delta);
             this.emitOutput({
               eventType: "assistant_turn_delta",
@@ -585,6 +626,7 @@ export class ExecutionKernel {
             });
           },
           onProviderStatus: (notice: ProviderStatusNotice) => {
+            state.managedAbortController.touchActivity("provider_status");
             this.emitOutput({
               eventType: "provider_status",
               payload: notice,
@@ -593,6 +635,7 @@ export class ExecutionKernel {
             });
           },
           onRetry: (retry: ProviderRetryNotice) => {
+            state.managedAbortController.touchActivity("provider_retry_scheduled");
             this.dependencies.traceService.record({
               actor: `provider.${retry.providerName}`,
               eventType: "provider_retry_scheduled",
@@ -642,6 +685,7 @@ export class ExecutionKernel {
           summary: "Provider request started",
           taskId: task.taskId
         });
+        state.managedAbortController.touchActivity("provider_request_started");
 
         this.dependencies.traceService.record({
           actor: `provider.${activeProvider.name}`,
@@ -664,23 +708,42 @@ export class ExecutionKernel {
           providerResponse = await activeProvider.generate(providerInput);
         } catch (error) {
           const providerError = normalizeProviderFailure(error, activeProvider);
+          const abortReason = state.managedAbortController.getReason();
+          const signalAborted = state.managedAbortController.abortController.signal.aborted;
+          const timeoutSource =
+            signalAborted && abortReason === "timeout"
+              ? state.managedAbortController.timeoutMode
+              : providerError.category === "timeout_error"
+                ? "provider"
+                : undefined;
           this.dependencies.traceService.record({
             actor: `provider.${activeProvider.name}`,
             eventType: "provider_request_failed",
             payload: {
-              errorCategory: providerError.category,
+              errorCategory:
+                signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category,
+              errorMessage: providerError.message,
               iteration,
+              lastActivityReason: state.managedAbortController.getLastActivityReason(),
               latencyMs: Date.now() - startedAt,
               modelName: providerError.modelName ?? activeProvider.model ?? null,
               providerName: activeProvider.name,
-              retryCount: providerError.retryCount
+              retryCount: providerError.retryCount,
+              timeoutMs: state.managedAbortController.timeoutMs,
+              ...(timeoutSource !== undefined ? { timeoutSource } : {})
             },
             stage: "planning",
-            summary: `Provider request failed with ${providerError.category}`,
+            summary: `Provider request failed with ${
+              signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category
+            }`,
             taskId: task.taskId
           });
+          if (signalAborted) {
+            throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
+          }
           throw providerError;
         }
+        state.managedAbortController.touchActivity("provider_request_succeeded");
 
         messages.push({
           content: providerResponse.message,
@@ -703,6 +766,7 @@ export class ExecutionKernel {
           stage: providerResponse.kind === "final" ? "completion" : "planning",
           taskId: task.taskId
         });
+        state.managedAbortController.touchActivity("assistant_turn_completed");
 
         const visibleReasoningText = providerResponse.message.trim();
         if (providerResponse.kind === "tool_calls" && visibleReasoningText.length === 0) {
@@ -854,91 +918,30 @@ export class ExecutionKernel {
         }
 
         if (providerResponse.kind === "final") {
-          this.dependencies.executionCheckpointRepository.delete(task.taskId);
-          task = this.dependencies.taskRepository.update(task.taskId, {
-            finalOutput: providerResponse.message,
-            finishedAt: new Date().toISOString(),
-            status: "succeeded"
-          });
-          this.dependencies.memoryPlane.recordFinalOutcome(task, providerResponse.message);
+          return this.completeTaskSuccess(state, messages, availableTools, task, providerResponse.message);
+        }
 
-          this.dependencies.traceService.record({
-            actor: "runtime.kernel",
-            eventType: "final_outcome",
-            payload: {
-              errorCode: null,
-              errorMessage: null,
-              output: providerResponse.message,
-              status: "succeeded"
-            },
-            stage: "completion",
-            summary: "Task completed successfully",
-            taskId: task.taskId
-          });
-          this.dependencies.traceService.record({
-            actor: "runtime.kernel",
-            eventType: "task_success",
-            payload: {
-              cwd: task.cwd,
-              outputSummary: summarizeText(providerResponse.message, 240),
-              status: "succeeded"
-            },
-            stage: "lifecycle",
-            summary: "Task success lifecycle hook published",
-            taskId: task.taskId
-          });
-          this.dependencies.traceService.record({
-            actor: "runtime.kernel",
-            eventType: "session_end",
-            payload: {
-              status: "succeeded",
-              summary: summarizeText(providerResponse.message, 240)
-            },
-            stage: "lifecycle",
-            summary: "Session end lifecycle hook published",
-            taskId: task.taskId
-          });
-          emitTaskEvent(state.onTaskEvent, {
-            errorCode: null,
-            errorMessage: null,
-            kind: "result",
-            outputPreview: summarizeText(providerResponse.message, 200),
-            status: "succeeded",
-            taskId: task.taskId
-          });
-
-          this.persistThreadRun(task, task.input, {
-            finalOutput: providerResponse.message,
-            status: task.status
-          });
-          if (task.threadId !== null && task.threadId !== undefined) {
-            const latestRun =
-              this.dependencies.threadRunRepository.findByTaskId(task.taskId) ??
-              this.dependencies.threadRunRepository.findLatestByThreadId(task.threadId);
-            const finalSessionMemoryDraft = this.dependencies.contextCompactor.buildSessionMemory({
-              availableTools,
-              compact: buildFinalSessionCompactInput(messages, task),
-              task,
-              trigger: "final"
-            });
-            this.dependencies.threadSessionMemoryService.create({
-              ...finalSessionMemoryDraft,
-              runId: latestRun?.runId ?? null,
-              threadId: task.threadId,
-              trigger: "final"
-            });
-          }
-
-          return {
-            output: providerResponse.message,
-            task
-          };
+        const postCompletionDecision = this.evaluatePostCompletionToolCalls(
+          state,
+          iteration,
+          providerResponse
+        );
+        if (postCompletionDecision === "summarize") {
+          return this.requestFinalSummaryWithoutTools(
+            state,
+            messages,
+            availableTools,
+            task,
+            iteration,
+            "post_completion_verification_exhausted"
+          );
         }
 
         task = this.dependencies.taskRepository.update(task.taskId, {
           status: "waiting_tool"
         });
         pendingToolCalls = providerResponse.toolCalls;
+        state.managedAbortController.touchActivity("tool_call_requested");
       }
 
       let toolCallCount = 0;
@@ -955,6 +958,7 @@ export class ExecutionKernel {
           toolCallId: toolCall.toolCallId,
           toolName: toolCall.toolName
         });
+        state.managedAbortController.touchActivity("tool_call_started");
 
         const outcome = await this.dependencies.toolOrchestrator.execute(
           {
@@ -976,6 +980,7 @@ export class ExecutionKernel {
             workspaceRoot: this.dependencies.workspaceRoot
           }
         );
+        state.managedAbortController.touchActivity(`tool_call_${outcome.kind}`);
 
         if (outcome.kind === "approval_required") {
           task = this.dependencies.taskRepository.update(task.taskId, {
@@ -1038,6 +1043,12 @@ export class ExecutionKernel {
         toolCallCount += 1;
         state.cumulativeToolCallCount += 1;
         const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
+        if (
+          toolDescriptor?.capability === "filesystem.write" ||
+          toolCall.toolName.includes("write")
+        ) {
+          state.writeToolSucceeded = true;
+        }
         const structuredOutputSummary = summarizeToolOutput(outcome.result.output);
         const isDeduplicatable =
           toolDescriptor !== null && DEDUPLICATABLE_CAPABILITIES.has(toolDescriptor.capability);
@@ -1289,10 +1300,287 @@ export class ExecutionKernel {
       }
     }
 
-    throw new AppError({
-      code: "max_rounds_exceeded",
-      message: `Task exceeded ${state.maxIterations} iterations.`
+    return this.requestFinalSummaryWithoutTools(
+      state,
+      messages,
+      availableTools,
+      task,
+      state.maxIterations,
+      "max_iterations_exhausted"
+    );
+  }
+
+  private maybeInjectIterationBudgetPressure(state: ExecutionLoopState, iteration: number): void {
+    const ratio = iteration / Math.max(1, state.maxIterations);
+    const tier = ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : null;
+    if (tier === null) {
+      return;
+    }
+    if (tier === "warning" && state.warningBudgetPressureEmitted) {
+      return;
+    }
+    if (tier === "critical" && state.criticalBudgetPressureEmitted) {
+      return;
+    }
+    if (tier === "warning") {
+      state.warningBudgetPressureEmitted = true;
+    } else {
+      state.criticalBudgetPressureEmitted = true;
+    }
+    const remainingIterations = Math.max(0, state.maxIterations - iteration + 1);
+    const pressureMessage: ConversationMessage = {
+      content:
+        tier === "critical"
+          ? `Iteration budget critical: ${remainingIterations}/${state.maxIterations} loop iterations remain. Stop nonessential tool calls now and provide the final answer as soon as possible.`
+          : `Iteration budget warning: ${remainingIterations}/${state.maxIterations} loop iterations remain. Begin converging; use tools only if they are required to finish the user's request.`,
+      metadata: {
+        privacyLevel: "internal",
+        retentionKind: "session",
+        sourceType: "system_prompt"
+      },
+      role: "system"
+    };
+    state.messages.push(pressureMessage);
+    if (state.turnProviderMessages !== state.messages) {
+      state.turnProviderMessages.push(pressureMessage);
+    }
+    this.dependencies.traceService.record({
+      actor: "runtime.loop",
+      eventType: "iteration_budget_pressure",
+      payload: {
+        iteration,
+        maxIterations: state.maxIterations,
+        remainingIterations,
+        tier
+      },
+      stage: "control",
+      summary: `Iteration budget pressure: ${tier}`,
+      taskId: state.task.taskId
     });
+  }
+
+  private evaluatePostCompletionToolCalls(
+    state: ExecutionLoopState,
+    iteration: number,
+    providerResponse: Extract<ProviderResponse, { kind: "tool_calls" }>
+  ): "continue" | "summarize" {
+    if (!state.writeToolSucceeded || !allToolCallsAreReads(providerResponse.toolCalls)) {
+      return "continue";
+    }
+
+    if (state.completionIntentSeenAt === null && hasCompletionIntent(providerResponse.message)) {
+      state.completionIntentSeenAt = iteration;
+    }
+    if (state.completionIntentSeenAt === null) {
+      return "continue";
+    }
+
+    if (state.postCompletionVerificationReads >= POST_COMPLETION_VERIFICATION_READ_LIMIT) {
+      return "summarize";
+    }
+    state.postCompletionVerificationReads += 1;
+    return "continue";
+  }
+
+  private async requestFinalSummaryWithoutTools(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    availableTools: ProviderToolDescriptor[],
+    task: TaskRecord,
+    iteration: number,
+    reason: "max_iterations_exhausted" | "post_completion_verification_exhausted"
+  ): Promise<RuntimeRunResult> {
+    const activeProvider =
+      this.dependencies.providerRouter?.selectProvider({
+        kind: "main",
+        taskId: task.taskId,
+        threadId: task.threadId ?? null,
+        ...(this.dependencies.routingMode !== undefined
+          ? { mode: this.dependencies.routingMode }
+          : {})
+      }).provider ?? this.dependencies.provider;
+    const summaryPrompt =
+      reason === "max_iterations_exhausted"
+        ? `The loop reached its iteration budget (${state.maxIterations}). Do not call tools. Summarize the completed work, files changed or inspected, and any remaining work.`
+        : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
+    const finalMessages: ConversationMessage[] = [
+      ...state.turnProviderMessages,
+      ...messages.filter((message) => message.role === "tool").slice(-6),
+      {
+        content: summaryPrompt,
+        metadata: {
+          privacyLevel: "internal",
+          retentionKind: "session",
+          sourceType: "system_prompt"
+        },
+        role: "system"
+      }
+    ];
+    const startedAt = Date.now();
+    let providerResponse: ProviderResponse;
+    try {
+      providerResponse = await activeProvider.generate({
+        agentProfileId: task.agentProfileId,
+        availableTools: [],
+        iteration: iteration + 1,
+        memoryContext: state.memoryContext,
+        messages: finalMessages,
+        ...(state.onAssistantTextDelta !== undefined
+          ? { onTextDelta: state.onAssistantTextDelta }
+          : {}),
+        signal: state.managedAbortController.abortController.signal,
+        task,
+        tokenBudget: state.tokenBudget
+      });
+    } catch {
+      throw new AppError({
+        code: "max_rounds_exceeded",
+        message: `Task exceeded ${state.maxIterations} iterations.`
+      });
+    }
+    state.managedAbortController.touchActivity("no_tools_final_summary");
+
+    this.dependencies.traceService.record({
+      actor: `provider.${activeProvider.name}`,
+      eventType: "provider_request_succeeded",
+      payload: {
+        iteration: iteration + 1,
+        kind: providerResponse.kind,
+        latencyMs: Date.now() - startedAt,
+        modelName:
+          providerResponse.metadata?.modelName ??
+          activeProvider.model ??
+          activeProvider.describe?.().model ??
+          null,
+        providerName: providerResponse.metadata?.providerName ?? activeProvider.name,
+        retryCount: providerResponse.metadata?.retryCount ?? 0,
+        usage: providerUsageToJson(providerResponse.usage)
+      },
+      stage: "completion",
+      summary: `No-tools final summary completed with ${providerResponse.kind}`,
+      taskId: task.taskId
+    });
+
+    if (providerResponse.kind === "tool_calls") {
+      this.dependencies.traceService.record({
+        actor: `provider.${activeProvider.name}`,
+        eventType: "no_tools_tool_calls_ignored",
+        payload: {
+          iteration: iteration + 1,
+          message: providerResponse.message,
+          reason,
+          toolNames: providerResponse.toolCalls.map((call) => call.toolName)
+        },
+        stage: "completion",
+        summary: "Ignored tool calls from no-tools final summary",
+        taskId: task.taskId
+      });
+    }
+
+    const finalMessage = providerResponse.message.trim();
+    if (finalMessage.length === 0) {
+      throw new AppError({
+        code: "max_rounds_exceeded",
+        message: `Task exceeded ${state.maxIterations} iterations.`
+      });
+    }
+
+    messages.push({
+      content: finalMessage,
+      role: "assistant",
+      ...(providerResponse.metadata?.raw !== undefined
+        ? { metadata: providerResponse.metadata.raw }
+        : {})
+    });
+    return this.completeTaskSuccess(state, messages, availableTools, task, finalMessage);
+  }
+
+  private completeTaskSuccess(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    availableTools: ProviderToolDescriptor[],
+    task: TaskRecord,
+    finalOutput: string
+  ): RuntimeRunResult {
+    this.dependencies.executionCheckpointRepository.delete(task.taskId);
+    const completedTask = this.dependencies.taskRepository.update(task.taskId, {
+      finalOutput,
+      finishedAt: new Date().toISOString(),
+      status: "succeeded"
+    });
+    this.dependencies.memoryPlane.recordFinalOutcome(completedTask, finalOutput);
+
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "final_outcome",
+      payload: {
+        errorCode: null,
+        errorMessage: null,
+        output: finalOutput,
+        status: "succeeded"
+      },
+      stage: "completion",
+      summary: "Task completed successfully",
+      taskId: completedTask.taskId
+    });
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "task_success",
+      payload: {
+        cwd: completedTask.cwd,
+        outputSummary: summarizeText(finalOutput, 240),
+        status: "succeeded"
+      },
+      stage: "lifecycle",
+      summary: "Task success lifecycle hook published",
+      taskId: completedTask.taskId
+    });
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "session_end",
+      payload: {
+        status: "succeeded",
+        summary: summarizeText(finalOutput, 240)
+      },
+      stage: "lifecycle",
+      summary: "Session end lifecycle hook published",
+      taskId: completedTask.taskId
+    });
+    emitTaskEvent(state.onTaskEvent, {
+      errorCode: null,
+      errorMessage: null,
+      kind: "result",
+      outputPreview: summarizeText(finalOutput, 200),
+      status: "succeeded",
+      taskId: completedTask.taskId
+    });
+
+    this.persistThreadRun(completedTask, completedTask.input, {
+      finalOutput,
+      status: completedTask.status
+    });
+    if (completedTask.threadId !== null && completedTask.threadId !== undefined) {
+      const latestRun =
+        this.dependencies.threadRunRepository.findByTaskId(completedTask.taskId) ??
+        this.dependencies.threadRunRepository.findLatestByThreadId(completedTask.threadId);
+      const finalSessionMemoryDraft = this.dependencies.contextCompactor.buildSessionMemory({
+        availableTools,
+        compact: buildFinalSessionCompactInput(messages, completedTask),
+        task: completedTask,
+        trigger: "final"
+      });
+      this.dependencies.threadSessionMemoryService.create({
+        ...finalSessionMemoryDraft,
+        runId: latestRun?.runId ?? null,
+        threadId: completedTask.threadId,
+        trigger: "final"
+      });
+    }
+
+    return {
+      output: finalOutput,
+      task: completedTask
+    };
   }
 
   private async compactMessages(
@@ -1494,4 +1782,38 @@ export class ExecutionKernel {
   private emitOutput(draft: Parameters<RuntimeOutputService["record"]>[0]): RuntimeOutputEvent {
     return this.dependencies.outputService.record(draft);
   }
+}
+
+function allToolCallsAreReads(toolCalls: ProviderToolCall[]): boolean {
+  return toolCalls.length > 0 && toolCalls.every((call) => call.toolName.includes("read"));
+}
+
+function hasCompletionIntent(message: string): boolean {
+  const compact = message.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (compact.length === 0) {
+    return false;
+  }
+  const planningSignals = [
+    "让我",
+    "我需要",
+    "需要我继续",
+    "let me",
+    "need to",
+    "what's missing",
+    "this tool call"
+  ];
+  if (planningSignals.some((signal) => compact.includes(signal))) {
+    return false;
+  }
+  const completionSignals = [
+    /已完成/u,
+    /第一阶段[^。.!?]{0,30}完成/u,
+    /基础框架搭建[^。.!?]{0,30}完成/u,
+    /完成情况/u,
+    /all files are complete/u,
+    /complete and functional/u,
+    /completed the .*task/u,
+    /implementation is complete/u
+  ];
+  return completionSignals.some((pattern) => pattern.test(compact));
 }

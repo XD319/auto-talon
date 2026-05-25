@@ -41,8 +41,16 @@ export class ResumePacketBuilder {
       cwd: overrides?.cwd ?? this.dependencies.config.workspaceRoot,
       maxIterations: overrides?.maxIterations ?? this.dependencies.config.defaultMaxIterations,
       metadata,
+      ...(overrides?.onAssistantTextDelta !== undefined
+        ? { onAssistantTextDelta: overrides.onAssistantTextDelta }
+        : {}),
+      ...(overrides?.onOutputEvent !== undefined ? { onOutputEvent: overrides.onOutputEvent } : {}),
+      ...(overrides?.onTaskEvent !== undefined ? { onTaskEvent: overrides.onTaskEvent } : {}),
+      ...(overrides?.signal !== undefined ? { signal: overrides.signal } : {}),
       taskInput: newInput,
+      ...(overrides?.taskId !== undefined ? { taskId: overrides.taskId } : {}),
       threadId,
+      ...(overrides?.timeoutMode !== undefined ? { timeoutMode: overrides.timeoutMode } : {}),
       timeoutMs: overrides?.timeoutMs ?? this.dependencies.config.defaultTimeoutMs,
       tokenBudget: overrides?.tokenBudget ?? this.dependencies.config.tokenBudget,
       userId:

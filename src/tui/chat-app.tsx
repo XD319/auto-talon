@@ -15,7 +15,7 @@ import {
 } from "../presentation/memory-formatters.js";
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
-import { MessageStream, StaticMessageStream } from "./components/message-stream.js";
+import { MessageStream } from "./components/message-stream.js";
 import { PromptZone } from "./components/prompt-zone.js";
 import { TranscriptViewer } from "./components/transcript-viewer.js";
 import { buildContextMetric, StatusBar } from "./components/status-bar.js";
@@ -95,7 +95,7 @@ export function ChatTuiApp({
   const [clarifySelectionIndex, setClarifySelectionIndex] = React.useState(0);
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
-  const [liveScrollOffset, setLiveScrollOffset] = React.useState(0);
+  const [transcriptScrollOffset, setTranscriptScrollOffset] = React.useState(0);
   const [transcriptViewer, setTranscriptViewer] = React.useState<{
     events: RuntimeOutputEvent[];
     mode: TranscriptViewerMode;
@@ -132,24 +132,10 @@ export function ChatTuiApp({
     () => (showTodaySummary ? [] : displayMessages),
     [displayMessages, showTodaySummary]
   );
-  const staticTranscriptMessages = React.useMemo(
-    () => transcriptMessages.filter((message) => !isLiveTranscriptMessage(message)),
-    [transcriptMessages]
+  const visibleTranscriptMessages = React.useMemo(
+    () => sliceTranscriptMessages(transcriptMessages, transcriptScrollOffset, TRANSCRIPT_WINDOW_SIZE),
+    [transcriptMessages, transcriptScrollOffset]
   );
-  const liveTranscriptMessages = React.useMemo(
-    () => transcriptMessages.filter(isLiveTranscriptMessage),
-    [transcriptMessages]
-  );
-  const visibleLiveTranscriptMessages = React.useMemo(() => {
-    if (liveTranscriptMessages.length <= LIVE_TRANSCRIPT_WINDOW_SIZE) {
-      return liveTranscriptMessages;
-    }
-    const maxOffset = Math.max(liveTranscriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0);
-    const boundedOffset = Math.min(liveScrollOffset, maxOffset);
-    const end = liveTranscriptMessages.length - boundedOffset;
-    const start = Math.max(0, end - LIVE_TRANSCRIPT_WINDOW_SIZE);
-    return liveTranscriptMessages.slice(start, end);
-  }, [liveScrollOffset, liveTranscriptMessages]);
   const todaySummaryText = React.useMemo(
     () => formatTodaySummary(buildTodaySummary(service, { activeThreadId: controller.activeThreadId })),
     [controller.activeThreadId, service]
@@ -205,8 +191,10 @@ export function ChatTuiApp({
   }, [controller.pendingClarifyPrompt?.promptId]);
 
   React.useEffect(() => {
-    setLiveScrollOffset(0);
-  }, [liveTranscriptMessages.length]);
+    setTranscriptScrollOffset((current) =>
+      Math.min(current, maxTranscriptScrollOffset(transcriptMessages.length, TRANSCRIPT_WINDOW_SIZE))
+    );
+  }, [transcriptMessages.length]);
 
   React.useEffect(() => {
     setHomeSelectionIndex((current) => clampSelection(current, homeEntries.length));
@@ -246,20 +234,26 @@ export function ChatTuiApp({
     [config.workspaceRoot]
   );
 
-  const scrollLiveTranscript = React.useCallback((direction: -1 | 1, accelerated: boolean) => {
-    const delta = accelerated ? LIVE_TRANSCRIPT_PAGE_SIZE * 2 : LIVE_TRANSCRIPT_PAGE_SIZE;
-    setLiveScrollOffset((current) => Math.max(0, current + (direction < 0 ? delta : -delta)));
-  }, []);
+  const scrollTranscript = React.useCallback((direction: -1 | 1, accelerated: boolean) => {
+    const delta = accelerated ? TRANSCRIPT_PAGE_SIZE * 2 : TRANSCRIPT_PAGE_SIZE;
+    setTranscriptScrollOffset((current) =>
+      clampScrollOffset(
+        current + (direction < 0 ? delta : -delta),
+        transcriptMessages.length,
+        TRANSCRIPT_WINDOW_SIZE
+      )
+    );
+  }, [transcriptMessages.length]);
 
-  const jumpLiveTranscript = React.useCallback(
+  const jumpTranscript = React.useCallback(
     (target: "start" | "end") => {
       if (target === "end") {
-        setLiveScrollOffset(0);
+        setTranscriptScrollOffset(0);
         return;
       }
-      setLiveScrollOffset(Math.max(liveTranscriptMessages.length - LIVE_TRANSCRIPT_WINDOW_SIZE, 0));
+      setTranscriptScrollOffset(maxTranscriptScrollOffset(transcriptMessages.length, TRANSCRIPT_WINDOW_SIZE));
     },
-    [liveTranscriptMessages.length]
+    [transcriptMessages.length]
   );
 
   const slashSuggestions = React.useCallback(
@@ -345,9 +339,9 @@ export function ChatTuiApp({
             "Workflow: /resume [session] /inbox [show] /thread [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
             "Session: /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
-            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | PgUp/PgDn live scroll",
+            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | PgUp/PgDn transcript scroll",
             "Saved sessions: use `talon tui --resume <id>` to restore transcript files from .auto-talon/sessions.",
-            "Transcript keeps terminal scrollback for native copy/mouse wheel; PgUp/PgDn accelerates the live area."
+            "Transcript stays in the TUI viewport; PgUp/PgDn reviews recent turns."
           ].join("\n")
         );
         return true;
@@ -556,7 +550,7 @@ export function ChatTuiApp({
           `status_line: ${controller.statusLine}`,
           `ui_status: ${controller.uiStatus.primaryLabel}`,
           `elapsed: ${controller.runDurationLabel}`,
-          `ui_scroll: terminal + live(offset=${liveScrollOffset})`,
+          `ui_scroll: terminal + transcript(offset=${transcriptScrollOffset})`,
           `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
           `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`
@@ -740,8 +734,8 @@ export function ChatTuiApp({
       setClarifyCustomActive((current) => !current);
     },
     onExternalEditorEdit: openExternalEditor,
-    onPageJump: jumpLiveTranscript,
-    onPageScroll: scrollLiveTranscript,
+    onPageJump: jumpTranscript,
+    onPageScroll: scrollTranscript,
     onTabComplete: completeInput,
     onSubmit: (value) => {
       if (value.trim() === "/edit") {
@@ -759,6 +753,7 @@ export function ChatTuiApp({
       if (!accepted) {
         return false;
       }
+      setTranscriptScrollOffset(0);
       historyRef.current.push(value);
       if (historyRef.current.length > 200) {
         historyRef.current = historyRef.current.slice(-200);
@@ -807,7 +802,6 @@ export function ChatTuiApp({
 
   return (
     <Box flexDirection="column">
-      <StaticMessageStream messages={staticTranscriptMessages} />
       <Banner
         details={[config.provider.model ?? config.provider.name, shortenPath(cwd, 20)]}
         productName="AUTOTALON"
@@ -823,9 +817,9 @@ export function ChatTuiApp({
           />
         ) : showTodaySummary ? (
           <WelcomeHome selectedIndex={homeSelectionIndex} summary={welcomeHome} />
-        ) : visibleLiveTranscriptMessages.length > 0 ? (
-          <MessageStream messages={visibleLiveTranscriptMessages} />
-        ) : staticTranscriptMessages.length === 0 ? (
+        ) : visibleTranscriptMessages.length > 0 ? (
+          <MessageStream messages={visibleTranscriptMessages} />
+        ) : transcriptMessages.length === 0 ? (
           <Text color={theme.muted}>No conversation yet.</Text>
         ) : null}
       </Box>
@@ -916,8 +910,30 @@ const APPROVAL_ACTIONS: Array<{ action: "allow" | "deny"; scope?: ApprovalAllowS
   { action: "allow", scope: "always" },
   { action: "deny" }
 ];
-const LIVE_TRANSCRIPT_WINDOW_SIZE = 12;
-const LIVE_TRANSCRIPT_PAGE_SIZE = 6;
+const TRANSCRIPT_WINDOW_SIZE = 12;
+const TRANSCRIPT_PAGE_SIZE = 6;
+
+export function sliceTranscriptMessages(
+  messages: ChatMessage[],
+  scrollOffset: number,
+  windowSize: number
+): ChatMessage[] {
+  if (messages.length <= windowSize) {
+    return messages;
+  }
+  const boundedOffset = clampScrollOffset(scrollOffset, messages.length, windowSize);
+  const end = messages.length - boundedOffset;
+  const start = Math.max(0, end - windowSize);
+  return messages.slice(start, end);
+}
+
+function clampScrollOffset(offset: number, messageCount: number, windowSize: number): number {
+  return Math.max(0, Math.min(offset, maxTranscriptScrollOffset(messageCount, windowSize)));
+}
+
+function maxTranscriptScrollOffset(messageCount: number, windowSize: number): number {
+  return Math.max(messageCount - windowSize, 0);
+}
 
 function clampSelection(index: number, size: number): number {
   if (size <= 0) {

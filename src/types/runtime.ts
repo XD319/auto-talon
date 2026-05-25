@@ -177,7 +177,7 @@ export interface ProviderRetryNotice {
 }
 
 export interface ProviderStatusNotice extends JsonObject {
-  kind: "streaming_fallback";
+  kind: "inactivity_warning" | "streaming_fallback";
   message: string;
   modelName: string | null;
   providerName: string;
@@ -221,6 +221,7 @@ export interface RuntimeRunOptions {
   agentProfileId: AgentProfileId;
   maxIterations: number;
   taskId?: string;
+  timeoutMode?: "activity" | "wall_clock";
   timeoutMs: number;
   tokenBudget: TokenBudget;
   signal?: AbortSignal;

@@ -7,8 +7,10 @@ import {
   MockProvider,
   OpenAiCompatibleProvider,
   ProviderError,
+  composeAbortSignal,
   createProvider,
-  classifyProviderHttpError
+  classifyProviderHttpError,
+  toProviderError
 } from "../src/providers/index.js";
 import { listProviderManifests, resolveDefaultProviderSettings } from "../src/providers/provider-registry.js";
 import {
@@ -40,6 +42,35 @@ describe("Provider runtime safeguards", () => {
     expect(classifyProviderHttpError(503, "service_unavailable")).toBe("provider_unavailable");
     expect(classifyProviderHttpError(501, "unsupported_feature")).toBe("unsupported_capability");
     expect(classifyProviderHttpError(400, "invalid_request_error")).toBe("invalid_request");
+  });
+
+  it("classifies raw timeout abort reasons as provider timeouts", () => {
+    const providerError = toProviderError("timeout", "xfyun-coding", "astron-code-latest");
+
+    expect(providerError.category).toBe("timeout_error");
+    expect(providerError.message).toBe("Provider request timed out.");
+  });
+
+  it("preserves abort reasons when composing fallback abort signals", () => {
+    const originalAny = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+    Object.defineProperty(AbortSignal, "any", {
+      configurable: true,
+      value: undefined
+    });
+    try {
+      const parent = new AbortController();
+      const timeout = new AbortController();
+      const signal = composeAbortSignal(parent.signal, timeout.signal);
+
+      timeout.abort("timeout");
+
+      expect(signal.aborted).toBe(true);
+      expect(signal.reason).toBe("timeout");
+    } finally {
+      if (originalAny !== undefined) {
+        Object.defineProperty(AbortSignal, "any", originalAny);
+      }
+    }
   });
 
   it("retries retriable provider errors", async () => {

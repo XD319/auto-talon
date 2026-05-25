@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Static, Text } from "ink";
+import { Box, Text } from "ink";
 
 import { sanitizeTerminalText } from "../text-sanitize.js";
 import { theme } from "../theme.js";
@@ -24,14 +24,6 @@ export function MessageStream({ messages }: MessageStreamProps): React.ReactElem
         </React.Fragment>
       ))}
     </Box>
-  );
-}
-
-export function StaticMessageStream({ messages }: MessageStreamProps): React.ReactElement {
-  return (
-    <Static items={messages}>
-      {(message) => <MessageItem key={message.id} message={message} />}
-    </Static>
   );
 }
 

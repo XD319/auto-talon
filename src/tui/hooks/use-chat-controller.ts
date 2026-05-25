@@ -107,6 +107,8 @@ const welcomeMessage: ChatMessage = {
 };
 const STREAM_FLUSH_INTERVAL_MS = 50;
 const STREAM_FLUSH_MAX_CHARS = 1_024;
+export const TUI_ACTIVITY_TIMEOUT_MS = 900_000;
+export const TUI_INTERACTIVE_MAX_ITERATIONS = 90;
 
 export function useChatController(input: UseChatControllerOptions): ChatController {
   const [messages, setMessages] = React.useState<ChatMessage[]>(() =>
@@ -685,6 +687,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       void (async () => {
         try {
           const runOptions = createDefaultRunOptions(text, input.cwd, input.config);
+          runOptions.maxIterations = TUI_INTERACTIVE_MAX_ITERATIONS;
+          runOptions.timeoutMode = "activity";
+          runOptions.timeoutMs = TUI_ACTIVITY_TIMEOUT_MS;
           const abortController = new AbortController();
           activeAbortControllerRef.current = abortController;
           runOptions.signal = abortController.signal;

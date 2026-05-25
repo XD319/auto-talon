@@ -176,6 +176,130 @@ describe("coding workflow loop", () => {
       handle.close();
     }
   }, 30000);
+
+  it("requests a no-tools summary instead of failing when iterations are exhausted", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        if (input.availableTools.length === 0) {
+          return finalResponse("Summary after iteration budget: inspected the workspace.");
+        }
+        return toolCallResponse("Need one more look.", [
+          {
+            input: { action: "read_file", path: "package.json" },
+            reason: "Keep inspecting.",
+            toolCallId: `read-${input.iteration}`,
+            toolName: "file_read"
+          }
+        ]);
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("inspect until summary", workspaceRoot, handle.config);
+      runOptions.maxIterations = 2;
+      const result = await handle.service.runTask(runOptions);
+      const trace = handle.service.traceTask(result.task.taskId);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("Summary after iteration budget");
+      expect(trace.some((event) => event.eventType === "iteration_budget_pressure")).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("stops post-completion read loops with a no-tools final summary", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        if (input.availableTools.length === 0) {
+          return finalResponse("第一阶段已完成：创建了页面和说明。");
+        }
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.length === 0) {
+          return toolCallResponse("开始创建文件。", [
+            {
+              input: { action: "write_file", content: "done\n", path: "phase.txt" },
+              reason: "Create the requested phase artifact.",
+              toolCallId: "write-phase",
+              toolName: "file_write"
+            }
+          ]);
+        }
+        return toolCallResponse("第一阶段已完成。", [
+          {
+            input: { action: "read_file", path: "phase.txt" },
+            reason: "Verify the completed phase.",
+            toolCallId: `verify-${input.iteration}`,
+            toolName: "file_read"
+          }
+        ]);
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("开发第一阶段", workspaceRoot, handle.config);
+      runOptions.maxIterations = 8;
+      const result = await handle.service.runTask(runOptions);
+      const details = handle.service.showTask(result.task.taskId);
+      const phaseReads = details.toolCalls.filter(
+        (toolCall) => toolCall.toolName === "file_read" && toolCall.toolCallId.startsWith("verify-")
+      );
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("第一阶段已完成");
+      expect(phaseReads).toHaveLength(1);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("ignores tool calls returned by a no-tools final summary response", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        if (input.availableTools.length === 0) {
+          return toolCallResponse("Summary with ignored tool call.", [
+            {
+              input: { action: "read_file", path: "package.json" },
+              reason: "This should be ignored.",
+              toolCallId: "ignored-read",
+              toolName: "file_read"
+            }
+          ]);
+        }
+        return toolCallResponse("Keep reading.", [
+          {
+            input: { action: "read_file", path: "package.json" },
+            reason: "Use the loop budget.",
+            toolCallId: `budget-read-${input.iteration}`,
+            toolName: "file_read"
+          }
+        ]);
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("summarize even with tools", workspaceRoot, handle.config);
+      runOptions.maxIterations = 1;
+      const result = await handle.service.runTask(runOptions);
+      const trace = handle.service.traceTask(result.task.taskId);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toBe("Summary with ignored tool call.");
+      expect(trace.some((event) => event.eventType === "no_tools_tool_calls_ignored")).toBe(true);
+      expect(handle.service.showTask(result.task.taskId).toolCalls.some((call) => call.toolCallId === "ignored-read")).toBe(false);
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 async function createWorkflowWorkspace(): Promise<string> {

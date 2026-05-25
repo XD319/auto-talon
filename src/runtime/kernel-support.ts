@@ -1,5 +1,5 @@
 import { AppError } from "../core/app-error.js";
-import { ProviderError } from "../providers/index.js";
+import { ProviderError, toProviderError } from "../providers/index.js";
 import type {
   ContextAssemblyDebugView,
   ContextFragment,
@@ -169,25 +169,7 @@ export function normalizeProviderFailure(
     return error;
   }
 
-  if (error instanceof Error) {
-    return new ProviderError({
-      category: "unknown_error",
-      cause: error,
-      message: error.message,
-      modelName: provider.model ?? provider.describe?.().model ?? undefined,
-      providerName: provider.name,
-      summary: "The provider failed with an unexpected error."
-    });
-  }
-
-  return new ProviderError({
-    category: "unknown_error",
-    cause: error,
-    message: "Unknown provider failure.",
-    modelName: provider.model ?? provider.describe?.().model ?? undefined,
-    providerName: provider.name,
-    summary: "The provider failed with an unknown error."
-  });
+  return toProviderError(error, provider.name, provider.model ?? provider.describe?.().model ?? undefined);
 }
 
 export async function sleepWithAbort(delayMs: number, signal: AbortSignal): Promise<void> {

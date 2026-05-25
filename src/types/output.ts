@@ -63,7 +63,7 @@ export interface ToolStatusOutputPayload extends JsonObject {
 }
 
 export interface ProviderStatusOutputPayload extends JsonObject {
-  kind: "streaming_fallback";
+  kind: "inactivity_warning" | "streaming_fallback";
   message: string;
   modelName: string | null;
   providerName: string;

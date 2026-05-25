@@ -19,8 +19,9 @@ export function composeAbortSignal(
   }
 
   const controller = new AbortController();
-  const abort = (): void => {
-    controller.abort();
+  const abort = (event: Event): void => {
+    const signal = event.target instanceof AbortSignal ? event.target : undefined;
+    controller.abort(signal?.reason);
   };
   parent.addEventListener("abort", abort, { once: true });
   timeoutSignal.addEventListener("abort", abort, { once: true });

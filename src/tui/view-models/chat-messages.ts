@@ -145,7 +145,7 @@ function formatTraceEvent(event: TraceEvent): string {
       return `final_outcome ${event.payload.status}`;
     case "provider_request_failed":
       return event.payload.errorCategory === "timeout_error"
-        ? "Provider request failed: timeout_error. Check provider request timeout with talon provider status."
+        ? event.payload.errorMessage ?? "Provider request failed: timeout_error."
         : `Provider request failed: ${event.payload.errorCategory}`;
     case "provider_retry_scheduled":
       return `Provider retry ${event.payload.attempt}/${event.payload.maxRetries}: ${event.payload.errorCategory}; waiting ${event.payload.delayMs}ms`;
