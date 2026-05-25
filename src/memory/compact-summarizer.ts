@@ -116,13 +116,18 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
   const commandsRun = extractCommands(toolMessages);
   const blockers = extractBlockers(toolMessages, assistantMessages);
   const nextActions = extractNextActions(assistantMessages);
+  // Fall back to the task's original goal so repeated compactions cannot wipe the
+  // user's intent from the structured summary surfaced to the next iteration.
+  const fallbackGoal = summarize(input.originalGoal ?? "", 220);
+  const firstUserGoal = summarize(userMessages.at(0)?.content ?? "", 220);
+  const latestUserGoal = summarize(userMessages.at(-1)?.content ?? "", 220);
   return {
     blockers,
     commandsRun,
     completedWork: completedWork || "[n/a]",
     filesTouched,
-    goal: summarize(userMessages.at(0)?.content ?? "", 220) || "[n/a]",
-    latestUserRequest: summarize(userMessages.at(-1)?.content ?? "", 220) || "[n/a]",
+    goal: firstUserGoal || fallbackGoal || "[n/a]",
+    latestUserRequest: latestUserGoal || fallbackGoal || "[n/a]",
     nextActions,
     toolSignals: keyToolSignals || "[n/a]"
   };

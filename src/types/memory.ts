@@ -190,6 +190,12 @@ export interface SessionCompactInput {
     toolCallId: string;
     toolName: string;
   }>;
+  /**
+   * Original user goal (typically `TaskRecord.input`). Used as a fallback when the
+   * compacted message window no longer contains any user-role messages, so the
+   * structured session summary never degrades to `goal=[n/a]`.
+   */
+  originalGoal?: string;
 }
 
 export interface SessionCompactResult {

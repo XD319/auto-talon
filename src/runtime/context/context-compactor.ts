@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ProviderToolDescriptor,
   SessionCompactInput,
   TaskRecord,
@@ -136,10 +136,7 @@ function collectNextActions(messages: SessionCompactInput["messages"]): string[]
   if (Array.isArray(lastAssistant.toolCalls) && lastAssistant.toolCalls.length > 0) {
     actions.push(...lastAssistant.toolCalls.map((call) => `run ${call.toolName} (${call.toolCallId})`));
   }
-  const compact = normalizeMemoryLine(lastAssistant.content, 120);
-  if (compact.length > 0 && looksActionable(compact)) {
-    actions.push(compact);
-  }
+  actions.push(...extractExplicitNextActions(lastAssistant.content));
   return uniqueList(actions).slice(0, 3);
 }
 
@@ -173,11 +170,39 @@ function normalizeMemoryLine(value: string, maxLength: number): string {
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
 }
 
-function looksActionable(value: string): boolean {
-  return (
-    /\b(run|write|update|fix|create|check|verify|read|search|continue|summarize|execute)\b/iu.test(
-      value
-    ) ||
-    /执行|写入|更新|修复|创建|检查|验证|读取|搜索|继续|总结/u.test(value)
-  );
+function extractExplicitNextActions(value: string): string[] {
+  const actions: string[] = [];
+  let inNextActionSection = false;
+  for (const rawLine of value.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (line.length === 0) {
+      if (inNextActionSection) {
+        break;
+      }
+      continue;
+    }
+    const heading = line.replace(/^[#*\s]+|[:\uFF1A*\s]+$/gu, "").trim();
+    if (/^(next actions?|next steps?|\u4e0b\u4e00\u6b65|\u540e\u7eed\u52a8\u4f5c)$/iu.test(heading)) {
+      inNextActionSection = true;
+      continue;
+    }
+    if (/^(commitments?|blocked|summary|completed work|\u603b\u7ed3|\u5df2\u5b8c\u6210)$/iu.test(heading)) {
+      if (inNextActionSection) {
+        break;
+      }
+      continue;
+    }
+    if (!inNextActionSection) {
+      const keyed = line.match(/^(?:next actions?|next steps?|\u4e0b\u4e00\u6b65)\s*[:\uFF1A]\s*(.+)$/iu);
+      if (keyed?.[1] !== undefined) {
+        actions.push(normalizeMemoryLine(keyed[1], 120));
+      }
+      continue;
+    }
+    const item = line.replace(/^[-*+]\s+/u, "").replace(/^\d+[.)]\s+/u, "").trim();
+    if (item.length > 0) {
+      actions.push(normalizeMemoryLine(item, 120));
+    }
+  }
+  return actions.filter((item) => item.length > 0);
 }
