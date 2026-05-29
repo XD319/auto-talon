@@ -4,9 +4,65 @@ import { describe, expect, it } from "vitest";
 
 import { runMigrations } from "../src/storage/migrations.js";
 import { StorageManager } from "../src/storage/database.js";
+import { ThreadSessionMemoryService } from "../src/runtime/context/thread-session-memory-service.js";
+import type { TraceService } from "../src/tracing/trace-service.js";
+import type { TraceEvent, TraceEventDraft } from "../src/types/index.js";
 
 describe("thread session memory repository", () => {
-  it("writes events, upserts current, and keeps history order", () => {
+  it("emits compact trace metadata from persisted session memory", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    const trace: TraceEvent[] = [];
+    try {
+      storage.threads.create({
+        agentProfileId: "executor",
+        cwd: "/tmp/workspace",
+        ownerUserId: "u1",
+        providerName: "mock",
+        threadId: "thread-memory-trace",
+        title: "thread memory trace"
+      });
+      const service = new ThreadSessionMemoryService({
+        repository: storage.threadSessionMemories,
+        traceService: {
+          record(event: TraceEventDraft) {
+            const persisted = {
+              ...event,
+              eventId: event.eventId ?? `trace-${trace.length}`,
+              sequence: trace.length + 1,
+              timestamp: event.timestamp ?? "2026-01-01T00:00:00.000Z"
+            } as TraceEvent;
+            trace.push(persisted);
+            return persisted;
+          }
+        } as unknown as TraceService
+      });
+
+      service.create({
+        decisions: [],
+        goal: "Ship feature",
+        metadata: {
+          compactReason: "tool_call_count",
+          replacedMessageCount: 17
+        },
+        nextActions: [],
+        openLoops: [],
+        summary: "compact memory",
+        taskId: "task-compact",
+        threadId: "thread-memory-trace",
+        trigger: "compact"
+      });
+
+      const compacted = trace.find((event) => event.eventType === "session_compacted");
+      expect(compacted?.payload).toMatchObject({
+        reason: "tool_call_count",
+        replacedMessageCount: 17
+      });
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("writes events, upserts current, and keeps history order", async () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
       storage.threads.create({
@@ -27,6 +83,9 @@ describe("thread session memory repository", () => {
         taskId: "task-1",
         threadId: "thread-memory-1",
         trigger: "manual"
+      });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1);
       });
       const second = storage.threadSessionMemories.create({
         decisions: ["switch to plan B"],

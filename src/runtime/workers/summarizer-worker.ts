@@ -47,6 +47,14 @@ export class SummarizerWorker {
     });
     const sessionMemory = this.dependencies.threadSessionMemoryService.create({
       ...draft,
+      metadata: {
+        ...(draft.metadata ?? {}),
+        compactReason: input.compactInput.reason,
+        replacedMessageCount: Math.max(
+          0,
+          input.compactInput.messages.length - input.compactResult.replacementMessages.length
+        )
+      },
       runId: input.runId,
       threadId: input.task.threadId,
       trigger: "compact"

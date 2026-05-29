@@ -36,6 +36,7 @@ import {
   toTraceActivityMessage,
   type ChatMessage
 } from "../src/tui/view-models/chat-messages.js";
+import { splitMessageStreamMessages } from "../src/tui/components/message-stream.js";
 import type { AgentApplicationService, AppConfig } from "../src/runtime/index.js";
 import { createDefaultRunOptions } from "../src/runtime/index.js";
 import type {
@@ -120,6 +121,53 @@ describe("chat tui view-models", () => {
     const visible = displayChatMessages([activity]);
     expect(visible).toHaveLength(1);
     expect(visible[0]?.kind).toBe("activity");
+  });
+
+  it("hides successful low-value file reads in chat mode", () => {
+    const activity = toTraceActivityMessage(createTraceEvent("tool_call_finished", {
+      iteration: 1,
+      toolCallId: "call-00112233",
+      toolName: "file_read",
+      summary: "read file",
+      outputPreview: "ok"
+    }));
+
+    expect(displayChatMessages([activity])).toEqual([]);
+  });
+
+  it("formats tool execution failures as user-facing task errors", () => {
+    const activity = toTraceActivityMessage(createTraceEvent("tool_call_failed", {
+      errorCode: "tool_execution_error",
+      errorMessage: "ENOENT: no such file or directory, stat 'D:\\talon-test\\food.js'",
+      iteration: 1,
+      toolCallId: "call-00112233",
+      toolName: "file_read"
+    }));
+
+    expect(activity.text).toBe(
+      "file_read failed while executing the requested action: requested path not found: D:\\talon-test\\food.js. This is a tool error, not an AutoTalon runtime failure."
+    );
+  });
+
+  it("keeps the latest completed message in the live TUI region", () => {
+    const user: ChatMessage = {
+      id: "user-1",
+      kind: "user",
+      text: "prompt",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const agent: ChatMessage = {
+      id: "agent-1",
+      kind: "agent",
+      streaming: false,
+      text: "final answer",
+      timestamp: "2026-01-01T00:00:01.000Z"
+    };
+
+    const split = splitMessageStreamMessages([user, agent]);
+
+    expect(split.stableMessages.map((message) => message.id)).toEqual(["user-1"]);
+    expect(split.dynamicMessages.map((message) => message.id)).toEqual(["agent-1"]);
   });
 
   it("distinguishes live rows from completed transcript rows", () => {
@@ -496,6 +544,103 @@ describe("use-chat-controller helpers", () => {
       expect(continueThread.mock.calls[0]?.[2]?.maxIterations).toBe(TUI_INTERACTIVE_MAX_ITERATIONS);
       expect(continueThread.mock.calls[0]?.[2]?.timeoutMode).toBe("activity");
       expect(continueThread.mock.calls[0]?.[2]?.timeoutMs).toBe(TUI_ACTIVITY_TIMEOUT_MS);
+    } finally {
+      app.unmount();
+      await app.waitUntilExit();
+    }
+  });
+
+  it("uses the latest interaction mode when submitting prompts", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const runTask = vi.fn((options: RuntimeRunOptions) => Promise.resolve({
+      output: "planned",
+      task: {
+        ...createControllerTask(options),
+        finalOutput: "planned",
+        status: "succeeded"
+      }
+    }));
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueThread() {
+        return Promise.reject(new Error("continueThread should not be called in this test."));
+      },
+      createThread() {
+        throw new Error("createThread should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
+        return [];
+      },
+      listTasks() {
+        return [];
+      },
+      providerStats() {
+        return null;
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask,
+      showTask() {
+        return { approvals: [], artifacts: [], inboxItems: [], scheduleRuns: [], task: null, toolCalls: [], trace: [] };
+      },
+      subscribeToTaskTrace() {
+        return () => {};
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let submitPrompt: ChatController["submitPrompt"] | null = null;
+    let switchToPlan: (() => void) | null = null;
+    let currentMode: "agent" | "plan" = "agent";
+
+    function Harness(): React.ReactElement | null {
+      const [interactionMode, setInteractionMode] = React.useState<"agent" | "plan">("agent");
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        interactionMode,
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        currentMode = interactionMode;
+        submitPrompt = instance.submitPrompt;
+        switchToPlan = () => setInteractionMode("plan");
+      }, [instance, interactionMode]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => submitPrompt !== null && switchToPlan !== null);
+      switchToPlan?.();
+      await waitFor(() => currentMode === "plan");
+      if (submitPrompt === null) {
+        throw new Error("submitPrompt should be initialized before submissions.");
+      }
+      expect(submitPrompt("implement the requested feature")).toBe(true);
+      await waitFor(() => runTask.mock.calls.length === 1);
+
+      expect(runTask.mock.calls[0]?.[0].agentProfileId).toBe("planner");
+      expect(runTask.mock.calls[0]?.[0].metadata?.interactivePromptMode).toBe("tui");
     } finally {
       app.unmount();
       await app.waitUntilExit();

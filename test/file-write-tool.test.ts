@@ -68,6 +68,69 @@ describe("FileWriteTool", () => {
     expect(await fs.readFile(filePath, "utf8")).toBe("alpha\nY\nbeta\nalpha\nX\ngamma\n");
   });
 
+  it("accepts oldText and newText aliases for apply_patch replacements", async () => {
+    const root = await createTempDir("auto-talon-file-write-");
+    const filePath = join(root, "aliases.txt");
+    await fs.writeFile(filePath, "const value = CONFIG.OLD_KEY;\n", "utf8");
+    const tool = new FileWriteTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        action: "apply_patch",
+        patches: [
+          {
+            newText: "const value = CONFIG.NEW_KEY;",
+            oldText: "const value = CONFIG.OLD_KEY;"
+          }
+        ],
+        path: filePath
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(filePath, "utf8")).toBe("const value = CONFIG.NEW_KEY;\n");
+  });
+
+  it("includes file preview and nearest match when apply_patch target is missing", async () => {
+    const root = await createTempDir("auto-talon-file-write-");
+    const filePath = join(root, "food.js");
+    await fs.writeFile(
+      filePath,
+      "class Food {\n  spawn() {\n    const newPosition = { x: 1, y: 2 };\n  }\n}\n",
+      "utf8"
+    );
+    const tool = new FileWriteTool(createSandbox(root));
+    const prepared = tool.prepare(
+      {
+        action: "apply_patch",
+        patches: [
+          {
+            find: "this.position = { x: 0, y: 0 };",
+            replace: "this.position = { x: 1, y: 1 };"
+          }
+        ],
+        path: filePath
+      },
+      createContext(root)
+    );
+
+    try {
+      await tool.execute(prepared.preparedInput, createContext(root));
+      throw new Error("Expected apply_patch to reject when the target text is missing.");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "tool_execution_error"
+      });
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).toMatch(/was not found/i);
+      expect(message).toContain("File head");
+      expect(message).toContain("Re-read the file");
+      expect(message).toMatch(/newPosition|spawn/i);
+    }
+  });
+
   it("stores full rollback content and writes snapshot reference", async () => {
     const root = await createTempDir("auto-talon-file-write-");
     const filePath = join(root, "large.txt");

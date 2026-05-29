@@ -14,12 +14,15 @@ export interface MessageStreamProps {
   messages: ChatMessage[];
 }
 
-// A message is considered "stable" once it can no longer change. Stable
+export interface MessageStreamPartition {
+  dynamicMessages: ChatMessage[];
+  stableMessages: ChatMessage[];
+}
+
+// A message is considered "stable" once it can no longer change. Older stable
 // messages are committed via Ink's <Static> so they are written to the terminal
-// exactly once. This is what stops long transcripts from being re-printed on
-// every streaming tick — the previous behaviour caused visible duplication on
-// terminals where the frame height exceeds the window height (PowerShell /
-// ConHost are particularly prone to this).
+// exactly once. The newest visible stable message stays in the dynamic region so
+// a just-completed assistant response remains visible in the active TUI frame.
 function isMessageStable(message: ChatMessage): boolean {
   if (message.kind === "agent") {
     return message.streaming !== true;
@@ -30,22 +33,29 @@ function isMessageStable(message: ChatMessage): boolean {
   return true;
 }
 
-export function MessageStream({ messages }: MessageStreamProps): React.ReactElement {
-  // Stable region is always a contiguous prefix of `messages`. We stop walking
-  // at the first non-stable message so that anything appearing *after* an
-  // in-flight item stays in the dynamic region until it itself becomes stable.
-  const stableCount = React.useMemo(() => {
-    for (let index = 0; index < messages.length; index += 1) {
-      const message = messages[index];
-      if (message === undefined || !isMessageStable(message)) {
-        return index;
-      }
+export function splitMessageStreamMessages(messages: ChatMessage[]): MessageStreamPartition {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message === undefined || !isMessageStable(message)) {
+      return {
+        dynamicMessages: messages.slice(index),
+        stableMessages: messages.slice(0, index)
+      };
     }
-    return messages.length;
-  }, [messages]);
+  }
 
-  const stableMessages = messages.slice(0, stableCount);
-  const dynamicMessages = messages.slice(stableCount);
+  const stablePrefixCount = Math.max(0, messages.length - 1);
+  return {
+    dynamicMessages: messages.slice(stablePrefixCount),
+    stableMessages: messages.slice(0, stablePrefixCount)
+  };
+}
+
+export function MessageStream({ messages }: MessageStreamProps): React.ReactElement {
+  const { dynamicMessages, stableMessages } = React.useMemo(
+    () => splitMessageStreamMessages(messages),
+    [messages]
+  );
 
   // <Static> is append-only: items already committed to the terminal cannot be
   // unrendered. When the transcript is replaced (clear / restoreSession / new

@@ -112,7 +112,11 @@ export class ToolOrchestrator {
   ): Promise<ToolExecutionOutcome> {
     const tool = this.tools.get(request.toolName);
     const riskLevel = tool?.riskLevel ?? "high";
-    let toolCall = this.ensureToolCallRecord(request, riskLevel);
+    let toolCall = this.ensureToolCallRecord(
+      request,
+      riskLevel,
+      tool !== undefined && !isMutationTool(tool)
+    );
 
     if (tool === undefined) {
       return this.failToolCall(
@@ -166,16 +170,17 @@ export class ToolOrchestrator {
     const parsed = tool.inputSchema.safeParse(request.input);
     if (!parsed.success) {
       const validationSummary = summarizeValidationIssues(parsed.error.issues);
-      return this.failToolCall(
-        toolCall,
-        new AppError({
-          code: "tool_validation_error",
-          details: {
-            issues: z.treeifyError(parsed.error)
-          },
-          message: validationSummary
-        })
-      );
+      const validationError = new AppError({
+        code: "tool_validation_error",
+        details: {
+          issues: z.treeifyError(parsed.error)
+        },
+        message: validationSummary
+      });
+      if (isRecoverableToolFailure(tool)) {
+        return this.completeToolCallFailure(toolCall, validationError);
+      }
+      return this.failToolCall(toolCall, validationError);
     }
 
     let prepared: Awaited<ReturnType<typeof tool.prepare>>;
@@ -354,6 +359,11 @@ export class ToolOrchestrator {
         }
       }
 
+      if (toolCall.status === "requested") {
+        toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
+          status: "awaiting_approval"
+        });
+      }
       toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
         status: "approved"
       });
@@ -464,13 +474,23 @@ export class ToolOrchestrator {
 
   private ensureToolCallRecord(
     request: ToolCallRequest,
-    riskLevel: ToolCallRecord["riskLevel"]
+    riskLevel: ToolCallRecord["riskLevel"],
+    allowCrossTaskReplay: boolean
   ): ToolCallRecord {
     const existing = this.dependencies.toolCallRepository.findById(request.toolCallId);
-    if (existing !== null) {
+    if (existing !== null && existing.taskId === request.taskId) {
+      return existing;
+    }
+    if (
+      existing !== null &&
+      allowCrossTaskReplay &&
+      existing.toolName === request.toolName &&
+      JSON.stringify(existing.input) === JSON.stringify(request.input)
+    ) {
       return existing;
     }
 
+    const toolCallId = existing === null ? request.toolCallId || randomUUID() : randomUUID();
     const toolCall = this.dependencies.toolCallRepository.create({
       errorCode: null,
       errorMessage: null,
@@ -484,7 +504,7 @@ export class ToolOrchestrator {
       status: "requested",
       summary: null,
       taskId: request.taskId,
-      toolCallId: request.toolCallId || randomUUID(),
+      toolCallId,
       toolName: request.toolName
     });
 
@@ -494,6 +514,7 @@ export class ToolOrchestrator {
       payload: {
         input: request.input,
         iteration: request.iteration,
+        originalToolCallId: existing === null ? null : request.toolCallId,
         reason: request.reason,
         riskLevel,
         toolCallId: toolCall.toolCallId,
@@ -833,12 +854,21 @@ export class ToolOrchestrator {
       kind: "completed",
       result: {
         output: toolCall.output,
+        replayed: true,
         success: true,
         summary: toolCall.summary ?? `Tool ${toolCall.toolName} finished (replayed).`
       },
       toolCall
     };
   }
+}
+
+function isMutationTool(tool: ToolDefinition): boolean {
+  return (
+    tool.capability === "filesystem.write" ||
+    tool.sideEffectLevel === "workspace_mutation" ||
+    tool.sideEffectLevel === "external_mutation"
+  );
 }
 
 function summarizeValidationIssues(issues: z.ZodIssue[]): string {
@@ -893,7 +923,7 @@ function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "
 }
 
 function isRecoverableToolFailure(tool: ToolDefinition): boolean {
-  return tool.capability === "filesystem.read";
+  return tool.capability === "filesystem.read" || tool.capability === "filesystem.write";
 }
 
 function toToolExecutionError(error: unknown): AppError {

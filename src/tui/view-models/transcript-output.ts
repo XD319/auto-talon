@@ -41,9 +41,12 @@ function toRows(event: RuntimeOutputEvent, mode: TranscriptViewerMode): Transcri
         ? []
         : [row(event, "assistant", event.payload.text)];
     case "tool_status":
-      return mode === "detail"
-        ? [row(event, "status", `${event.payload.status} ${event.payload.toolName}: ${event.payload.summary}`)]
-        : [];
+      if (mode !== "detail") {
+        return [];
+      }
+      return event.payload.status === "failed"
+        ? [row(event, "status", event.payload.summary)]
+        : [row(event, "status", `${event.payload.status} ${event.payload.toolName}: ${event.payload.summary}`)];
     case "provider_status":
       return mode === "detail"
         ? [row(event, "status", `${event.payload.providerName}: ${event.payload.message}`)]

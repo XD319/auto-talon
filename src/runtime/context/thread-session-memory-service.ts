@@ -17,12 +17,26 @@ export class ThreadSessionMemoryService {
     const sessionMemory = this.dependencies.repository.create(draft);
     if (sessionMemory.taskId !== null) {
       if (sessionMemory.trigger === "compact") {
+        const compactReason =
+          typeof sessionMemory.metadata.compactReason === "string"
+            ? sessionMemory.metadata.compactReason
+            : "message_count";
+        const replacedMessageCount =
+          typeof sessionMemory.metadata.replacedMessageCount === "number"
+            ? Math.max(0, sessionMemory.metadata.replacedMessageCount)
+            : 0;
         this.dependencies.traceService.record({
           actor: "runtime.session_memory",
           eventType: "session_compacted",
           payload: {
-            reason: "message_count",
-            replacedMessageCount: 0,
+            reason:
+              compactReason === "context_budget" ||
+              compactReason === "token_budget" ||
+              compactReason === "tool_call_count" ||
+              compactReason === "iteration_count"
+                ? compactReason
+                : "message_count",
+            replacedMessageCount,
             summaryMemoryId: sessionMemory.sessionMemoryId
           },
           stage: "memory",

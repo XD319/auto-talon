@@ -1,4 +1,5 @@
 import type { TuiApprovalActionResult, TuiRuntimeService } from "../runtime-api.js";
+import { formatToolCallFailureForUser } from "../../presentation/tool-failure-formatters.js";
 import type {
   ApprovalRecord,
   ArtifactRecord,
@@ -490,7 +491,7 @@ function buildErrorViewModels(task: TaskRecord, trace: TraceEvent[]): ErrorViewM
     if (event.eventType === "tool_call_failed") {
       errors.push({
         code: event.payload.errorCode,
-        message: event.payload.errorMessage,
+        message: formatToolCallFailureForUser(event.payload),
         source: `tool.${event.payload.toolName}`,
         timestamp: event.timestamp
       });

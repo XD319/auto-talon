@@ -1,4 +1,5 @@
 import type { ApprovalRecord, ToolCallRecord, TraceEvent } from "../../types/index.js";
+import { formatToolCallFailureForUser } from "../../presentation/tool-failure-formatters.js";
 
 export type ChatMessage =
   | {
@@ -130,7 +131,7 @@ function formatTraceEvent(event: TraceEvent): string {
     case "tool_call_finished":
       return formatFinishedToolCall(event);
     case "tool_call_failed":
-      return `Failed ${event.payload.toolName}: ${event.payload.errorMessage}`;
+      return formatToolCallFailureForUser(event.payload);
     case "approval_requested":
       return `Approval requested for ${event.payload.toolName}`;
     case "approval_resolved":
@@ -236,6 +237,10 @@ function isHighValueActivity(event: TraceEvent): boolean {
     event.eventType === "provider_retry_scheduled" ||
     event.eventType === "retry" ||
     event.eventType === "tool_call_failed" ||
-    event.eventType === "tool_call_finished"
+    (event.eventType === "tool_call_finished" && isHighValueFinishedTool(event.payload.toolName))
   );
+}
+
+function isHighValueFinishedTool(toolName: string): boolean {
+  return toolName.includes("write") || toolName === "test_run" || toolName === "shell";
 }

@@ -202,6 +202,8 @@ export interface ProviderStatsSnapshot {
   totalRequests: number;
 }
 
+export type TuiInteractionMode = "agent" | "plan";
+
 export interface Provider {
   name: string;
   model?: string | undefined;

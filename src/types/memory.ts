@@ -196,6 +196,8 @@ export interface SessionCompactInput {
    * structured session summary never degrades to `goal=[n/a]`.
    */
   originalGoal?: string;
+  /** Human-readable list of paths still pinned in context after compaction. */
+  recentlyReadFilesSummary?: string;
 }
 
 export interface SessionCompactResult {

@@ -10,7 +10,8 @@ import type {
   ClarifyPromptRecord,
   TaskRecord,
   ToolCallRecord,
-  TraceEvent
+  TraceEvent,
+  TuiInteractionMode
 } from "../../types/index.js";
 import {
   contextWindowPercent,
@@ -31,6 +32,7 @@ export interface UseChatControllerOptions {
   initialMessages?: ChatMessage[];
   initialSessionApprovalFingerprints?: string[];
   initialThreadId?: string;
+  interactionMode?: TuiInteractionMode;
   reviewerId: string;
   service: TuiRuntimeService;
 }
@@ -693,6 +695,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           activeAbortControllerRef.current = abortController;
           runOptions.signal = abortController.signal;
           runOptions.taskId = taskId;
+          if ((input.interactionMode ?? "agent") === "plan") {
+            runOptions.agentProfileId = "planner";
+          }
           runOptions.metadata = {
             ...(runOptions.metadata ?? {}),
             interactivePromptMode: "tui",
@@ -901,6 +906,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       flushPendingDelta,
       input.config,
       input.cwd,
+      input.interactionMode,
       input.service,
       sessionApprovalFingerprints,
       refresh,

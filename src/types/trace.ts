@@ -59,6 +59,8 @@ export const TRACE_EVENT_TYPES = [
   "session_end",
   "delegation_complete",
   "context_assembled",
+  "recent_files_refetched",
+  "recent_files_pinned",
   "repo_map_created",
   "memory_recalled",
   "recall_explain",
@@ -429,6 +431,19 @@ export interface DelegationCompletePayload extends JsonObject {
 export interface ContextAssembledPayload extends JsonObject {
   iteration: number;
   debugView: ContextAssemblyDebugView;
+}
+
+export interface RecentFilesRefetchedPayload extends JsonObject {
+  evicted: string[];
+  paths: string[];
+}
+
+export interface RecentFilesPinnedPayload extends JsonObject {
+  entries: Array<{
+    bytes: number;
+    path: string;
+    truncated: boolean;
+  }>;
 }
 
 export interface RepoMapCreatedPayload extends JsonObject {
@@ -871,6 +886,8 @@ export type TraceEvent =
   | TraceEventBase<"session_end", SessionEndPayload>
   | TraceEventBase<"delegation_complete", DelegationCompletePayload>
   | TraceEventBase<"context_assembled", ContextAssembledPayload>
+  | TraceEventBase<"recent_files_refetched", RecentFilesRefetchedPayload>
+  | TraceEventBase<"recent_files_pinned", RecentFilesPinnedPayload>
   | TraceEventBase<"repo_map_created", RepoMapCreatedPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"recall_explain", RecallExplainPayload>

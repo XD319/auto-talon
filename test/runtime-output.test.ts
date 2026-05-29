@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApplication, createDefaultRunOptions } from "../src/runtime/index.js";
+import { RuntimeDashboardQueryService } from "../src/tui/view-models/runtime-dashboard.js";
 import { buildTranscriptRows } from "../src/tui/view-models/transcript-output.js";
 import type { Provider, ProviderInput, ProviderResponse } from "../src/types/index.js";
 
@@ -50,6 +51,34 @@ class SlowDeltaProvider implements Provider {
       message: "still working",
       usage: { inputTokens: 1, outputTokens: 2 }
     };
+  }
+}
+
+class MissingFileProvider implements Provider {
+  public readonly name = "missing-file-provider";
+
+  public generate(input: ProviderInput): Promise<ProviderResponse> {
+    if (!input.messages.some((message) => message.role === "tool")) {
+      return Promise.resolve({
+        kind: "tool_calls",
+        message: "checking file",
+        toolCalls: [
+          {
+            input: { action: "read_file", path: join(input.task.cwd, "missing.txt") },
+            reason: "Read a file that may exist.",
+            toolCallId: "missing-read",
+            toolName: "file_read"
+          }
+        ],
+        usage: { inputTokens: 1, outputTokens: 1 }
+      });
+    }
+
+    return Promise.resolve({
+      kind: "final",
+      message: "handled missing file",
+      usage: { inputTokens: 1, outputTokens: 1 }
+    });
   }
 }
 
@@ -151,6 +180,44 @@ describe("runtime output events", () => {
       expect(started?.eventType === "task_started" ? started.payload.timeoutMode : null).toBe("activity");
       expect(started?.eventType === "task_started" ? started.payload.timeoutMs : null).toBe(900_000);
       expect(handle.service.outputTask("continued-task-id").some((event) => event.eventType === "result")).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("projects tool failures with user-facing scope instead of raw runtime internals", async () => {
+    const workspace = await fs.mkdtemp(join(tmpdir(), "talon-output-missing-file-"));
+    tempPaths.push(workspace);
+    const handle = createApplication(workspace, {
+      config: { databasePath: join(workspace, "runtime.db") },
+      provider: new MissingFileProvider()
+    });
+
+    try {
+      const options = createDefaultRunOptions("read a missing file", workspace, handle.config);
+      const result = await handle.service.runTask(options);
+      const traceFailure = handle.service
+        .traceTask(result.task.taskId)
+        .find((event) => event.eventType === "tool_call_failed");
+      const outputFailure = handle.service
+        .outputTask(result.task.taskId)
+        .find((event) => event.eventType === "tool_status" && event.payload.status === "failed");
+      const detailRows = buildTranscriptRows(handle.service.outputTask(result.task.taskId), { mode: "detail" });
+      const dashboard = new RuntimeDashboardQueryService(handle.service).getDashboard({
+        selectedPanel: "errors",
+        selectedTaskId: result.task.taskId
+      });
+
+      expect(traceFailure?.eventType === "tool_call_failed" ? traceFailure.payload.errorMessage : "").toContain(
+        "ENOENT"
+      );
+      expect(outputFailure?.eventType === "tool_status" ? outputFailure.payload.summary : "").toContain(
+        "not an AutoTalon runtime failure"
+      );
+      expect(detailRows.map((row) => row.text)).toContain(
+        `file_read failed while executing the requested action: requested path not found: ${join(workspace, "missing.txt")}. This is a tool error, not an AutoTalon runtime failure.`
+      );
+      expect(dashboard.selectedTask?.errors[0]?.message).toContain("not an AutoTalon runtime failure");
     } finally {
       handle.close();
     }

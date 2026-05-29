@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { closeApplication, createApplication, render, unmount, waitUntilExit } = vi.hoisted(() => {
   const closeApplication = vi.fn();
-  const waitUntilExit = vi.fn(async () => undefined);
+  const waitUntilExit = vi.fn(() => Promise.resolve());
   const unmount = vi.fn();
   const render = vi.fn(() => ({ unmount, waitUntilExit }));
   const createApplication = vi.fn(() => ({
@@ -33,7 +33,7 @@ vi.mock("../src/tui/dashboard-app.js", () => ({
 }));
 
 vi.mock("../src/tui/session-store.js", () => ({
-  loadSession: vi.fn(async () => null)
+  loadSession: vi.fn(() => Promise.resolve(null))
 }));
 
 vi.mock("../src/tui/view-models/runtime-dashboard.js", () => ({

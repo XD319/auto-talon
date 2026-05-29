@@ -87,6 +87,7 @@ export interface StructuredSummaryFields {
   latestUserRequest: string;
   completedWork: string;
   filesTouched: string[];
+  recentlyReadFiles: string;
   commandsRun: string[];
   blockers: string[];
   nextActions: string[];
@@ -129,6 +130,7 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
     goal: firstUserGoal || fallbackGoal || "[n/a]",
     latestUserRequest: latestUserGoal || fallbackGoal || "[n/a]",
     nextActions,
+    recentlyReadFiles: input.recentlyReadFilesSummary ?? "[none]",
     toolSignals: keyToolSignals || "[n/a]"
   };
 }
@@ -140,6 +142,7 @@ export function formatStructuredSummary(fields: StructuredSummaryFields): string
       `latest_user_request=${fields.latestUserRequest}`,
       `completedWork=${fields.completedWork}`,
       `filesTouched=${fields.filesTouched.join("; ") || "[none]"}`,
+      `recentlyReadFiles=${fields.recentlyReadFiles}`,
       `commandsRun=${fields.commandsRun.join("; ") || "[none]"}`,
       `blockers=${fields.blockers.join("; ") || "[none]"}`,
       `nextActions=${fields.nextActions.join("; ") || "[none]"}`,

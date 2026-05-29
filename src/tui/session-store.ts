@@ -1,10 +1,12 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { TuiInteractionMode } from "../types/index.js";
 import type { ChatMessage } from "./view-models/chat-messages.js";
 
 export interface PersistedChatSession {
   id: string;
+  interactionMode?: TuiInteractionMode;
   messages: ChatMessage[];
   sessionApprovalFingerprints?: string[];
   title?: string;
@@ -62,6 +64,13 @@ export async function loadSession(workspaceRoot: string, sessionId: string): Pro
       return null;
     }
     if (parsed.threadId !== undefined && typeof parsed.threadId !== "string") {
+      return null;
+    }
+    if (
+      parsed.interactionMode !== undefined &&
+      parsed.interactionMode !== "agent" &&
+      parsed.interactionMode !== "plan"
+    ) {
       return null;
     }
     if (parsed.title !== undefined && typeof parsed.title !== "string") {

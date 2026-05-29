@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { formatToolCallFailureForUser } from "../presentation/tool-failure-formatters.js";
 import type {
   RuntimeOutputEvent,
   RuntimeOutputEventDraft,
@@ -103,7 +104,7 @@ function projectTraceToOutput(event: TraceEvent): RuntimeOutputEventDraft | null
         payload: {
           iteration: event.payload.iteration,
           status: "failed",
-          summary: event.payload.errorMessage,
+          summary: formatToolCallFailureForUser(event.payload),
           toolCallId: event.payload.toolCallId,
           toolName: event.payload.toolName
         },

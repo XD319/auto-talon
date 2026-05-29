@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 
 import type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
+import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import type { BudgetLimits, BudgetPricingEntry, ProviderTier, RoutingMode, TokenBudget } from "../types/index.js";
 
 export type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
@@ -33,6 +34,15 @@ const runtimeConfigFileSchema = z.object({
       tokenThreshold: z.number().int().positive().optional(),
       toolCallThreshold: z.number().int().positive().optional(),
       iterationThreshold: z.number().int().positive().optional()
+    })
+    .optional(),
+  contextRetention: z
+    .object({
+      maxFiles: z.number().int().positive().optional(),
+      maxBytesPerFile: z.number().int().positive().optional(),
+      maxTotalBytes: z.number().int().positive().optional(),
+      maxBytesPerFileUnderGuard: z.number().int().positive().optional(),
+      maxTotalBytesUnderGuard: z.number().int().positive().optional()
     })
     .optional(),
   recall: z
@@ -148,6 +158,7 @@ export interface RuntimeConfig {
     toolCallThreshold: number;
     summarizer: "deterministic" | "provider_subagent";
   };
+  contextRetention: ContextRetentionConfig;
   recall: {
     enabled: boolean;
     budgetRatio: number;
@@ -201,6 +212,13 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     summarizer: "deterministic",
     tokenThreshold: 48_000,
     toolCallThreshold: 20
+  },
+  contextRetention: {
+    maxFiles: 5,
+    maxBytesPerFile: 8_000,
+    maxTotalBytes: 32_000,
+    maxBytesPerFileUnderGuard: 16_000,
+    maxTotalBytesUnderGuard: 48_000
   },
   recall: {
     budgetRatio: 0.25,
@@ -432,6 +450,28 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
             fileConfig?.budget?.pricing ??
             DEFAULT_RUNTIME_CONFIG.budget.pricing
         )
+    },
+    contextRetention: {
+      maxFiles:
+        envConfig.contextRetention?.maxFiles ??
+        fileConfig?.contextRetention?.maxFiles ??
+        DEFAULT_RUNTIME_CONFIG.contextRetention.maxFiles,
+      maxBytesPerFile:
+        envConfig.contextRetention?.maxBytesPerFile ??
+        fileConfig?.contextRetention?.maxBytesPerFile ??
+        DEFAULT_RUNTIME_CONFIG.contextRetention.maxBytesPerFile,
+      maxTotalBytes:
+        envConfig.contextRetention?.maxTotalBytes ??
+        fileConfig?.contextRetention?.maxTotalBytes ??
+        DEFAULT_RUNTIME_CONFIG.contextRetention.maxTotalBytes,
+      maxBytesPerFileUnderGuard:
+        envConfig.contextRetention?.maxBytesPerFileUnderGuard ??
+        fileConfig?.contextRetention?.maxBytesPerFileUnderGuard ??
+        DEFAULT_RUNTIME_CONFIG.contextRetention.maxBytesPerFileUnderGuard,
+      maxTotalBytesUnderGuard:
+        envConfig.contextRetention?.maxTotalBytesUnderGuard ??
+        fileConfig?.contextRetention?.maxTotalBytesUnderGuard ??
+        DEFAULT_RUNTIME_CONFIG.contextRetention.maxTotalBytesUnderGuard
     },
     tokenBudget,
     webSearch,

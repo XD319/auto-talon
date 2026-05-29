@@ -5,6 +5,10 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { AppError } from "../core/app-error.js";
+import {
+  buildPatchTargetNotFoundMessage,
+  type PatchTargetHint
+} from "./patch-target-hints.js";
 import type { SandboxService } from "../sandbox/sandbox-service.js";
 import type {
   ArtifactDraft,
@@ -15,14 +19,17 @@ import type {
   ToolPreparation
 } from "../types/index.js";
 
-const patchSchema = z.object({
-  find: z.string().min(1),
-  afterContext: z.string().optional(),
-  beforeContext: z.string().optional(),
-  expectedOccurrences: z.number().int().positive().optional(),
-  replace: z.string(),
-  replaceAll: z.boolean().default(false)
-});
+const patchSchema = z.preprocess(
+  normalizePatchAliases,
+  z.object({
+    find: z.string().min(1),
+    afterContext: z.string().optional(),
+    beforeContext: z.string().optional(),
+    expectedOccurrences: z.number().int().positive().optional(),
+    replace: z.string(),
+    replaceAll: z.boolean().default(false)
+  })
+);
 
 const fileWriteSchema = z
   .object({
@@ -118,6 +125,22 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
         type: "string"
       },
       patches: {
+        description:
+          "Only for apply_patch. Array of text replacements. Each item uses find/replace; oldText/newText and targetText/newText are accepted as aliases.",
+        items: {
+          properties: {
+            afterContext: { type: "string" },
+            beforeContext: { type: "string" },
+            expectedOccurrences: { type: "number" },
+            find: { type: "string" },
+            newText: { description: "Alias for replace.", type: "string" },
+            oldText: { description: "Alias for find.", type: "string" },
+            replace: { type: "string" },
+            replaceAll: { type: "boolean" },
+            targetText: { description: "Alias for find.", type: "string" }
+          },
+          type: "object"
+        },
         type: "array"
       },
       replaceAll: {
@@ -287,9 +310,16 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
 
     const occurrences = findOccurrences(originalContent, input.targetText);
     if (occurrences.length === 0) {
+      const hint = buildPatchTargetNotFoundMessage(
+        targetPath,
+        input.targetText,
+        originalContent,
+        "Target text"
+      );
       throw new AppError({
         code: "tool_execution_error",
-        message: `Target text was not found in ${targetPath}.`
+        details: patchTargetHintDetails(hint.details),
+        message: hint.message
       });
     }
     if (!input.replaceAll && occurrences.length > 1) {
@@ -304,9 +334,16 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
 
     const firstOccurrence = occurrences[0];
     if (firstOccurrence === undefined) {
+      const hint = buildPatchTargetNotFoundMessage(
+        targetPath,
+        input.targetText,
+        originalContent,
+        "Target text"
+      );
       throw new AppError({
         code: "tool_execution_error",
-        message: `Target text was not found in ${targetPath}.`
+        details: patchTargetHintDetails(hint.details),
+        message: hint.message
       });
     }
     const updatedContent = replaceTextAtOccurrences(
@@ -361,9 +398,11 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
     for (const patch of input.patches) {
       const candidates = findOccurrences(workingContent, patch.find);
       if (candidates.length === 0) {
+        const hint = buildPatchTargetNotFoundMessage(targetPath, patch.find, workingContent);
         throw new AppError({
           code: "tool_execution_error",
-          message: `Patch target "${patch.find}" was not found in ${targetPath}.`
+          details: patchTargetHintDetails(hint.details),
+          message: hint.message
         });
       }
 
@@ -573,6 +612,27 @@ function matchesPatchContext(
   }
 
   return true;
+}
+
+function patchTargetHintDetails(hint: PatchTargetHint): Record<string, unknown> {
+  return {
+    fileHead: hint.fileHead,
+    nearestLine: hint.nearestLine,
+    nearestMatch: hint.nearestMatch,
+    similarityPercent: hint.similarityPercent
+  };
+}
+
+function normalizePatchAliases(input: unknown): unknown {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return input;
+  }
+  const record = input as Record<string, unknown>;
+  return {
+    ...record,
+    find: record.find ?? record.oldText ?? record.targetText,
+    replace: record.replace ?? record.newText
+  };
 }
 
 function summarizeFileChange(beforeText: string, afterText: string): {

@@ -6,7 +6,7 @@ import { Box, Text, useApp } from "ink";
 
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
-import type { ApprovalAllowScope, InboxItem } from "../types/index.js";
+import type { ApprovalAllowScope, InboxItem, TuiInteractionMode } from "../types/index.js";
 import {
   formatMemoryGuide,
   formatMemoryList,
@@ -58,6 +58,7 @@ export interface ChatTuiAppProps {
   initialSessionApprovalFingerprints?: string[];
   initialSessionId: string;
   initialSessionTitle?: string;
+  initialInteractionMode?: TuiInteractionMode;
   initialThreadId?: string;
   reviewerId: string;
   service: TuiRuntimeService;
@@ -84,6 +85,7 @@ export function ChatTuiApp({
   initialSessionApprovalFingerprints,
   initialSessionId,
   initialSessionTitle,
+  initialInteractionMode,
   initialThreadId,
   reviewerId,
   service
@@ -91,6 +93,9 @@ export function ChatTuiApp({
   const { exit } = useApp();
   const [sessionTitle, setSessionTitle] = React.useState(initialSessionTitle ?? "assistant");
   const [sessionId, setSessionId] = React.useState(initialSessionId);
+  const [interactionMode, setInteractionMode] = React.useState<TuiInteractionMode>(
+    initialInteractionMode ?? "agent"
+  );
   const [approvalSelectionIndex, setApprovalSelectionIndex] = React.useState(0);
   const [clarifySelectionIndex, setClarifySelectionIndex] = React.useState(0);
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
@@ -116,6 +121,7 @@ export function ChatTuiApp({
       ? { initialSessionApprovalFingerprints }
       : {}),
     ...(initialThreadId !== undefined ? { initialThreadId } : {}),
+    interactionMode,
     reviewerId,
     service
   });
@@ -163,6 +169,7 @@ export function ChatTuiApp({
     saveTimerRef.current = setTimeout(() => {
       void saveSession(config.workspaceRoot, {
         id: sessionId,
+        interactionMode,
         messages: controller.messages,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title: sessionTitle,
@@ -175,7 +182,7 @@ export function ChatTuiApp({
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [config.workspaceRoot, controller.activeThreadId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, refreshSessionSummaries, sessionId, sessionTitle]);
+  }, [config.workspaceRoot, controller.activeThreadId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, interactionMode, refreshSessionSummaries, sessionId, sessionTitle]);
 
   React.useEffect(() => {
     if (controller.pendingApproval !== null) {
@@ -306,6 +313,7 @@ export function ChatTuiApp({
       controller.restoreSession(session);
       setSessionId(session.id);
       setSessionTitle(session.title ?? "assistant");
+      setInteractionMode(session.interactionMode ?? "agent");
       setHomeSelectionIndex(0);
       return true;
     },
@@ -337,7 +345,7 @@ export function ChatTuiApp({
           [
             "Most used: /resume /today /inbox /thread new <title> /schedule create <when> | <prompt>",
             "Workflow: /resume [session] /inbox [show] /thread [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
-            "Session: /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
+            "Session: /mode [agent|plan] /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | PgUp/PgDn transcript scroll",
             "Saved sessions: use `talon tui --resume <id>` to restore transcript files from .auto-talon/sessions.",
@@ -406,6 +414,22 @@ export function ChatTuiApp({
 
       if (text === "/ops") {
         controller.addSystemMessage("Open ops with: talon ops (or talon tui --mode ops).");
+        return true;
+      }
+
+      if (text === "/mode") {
+        controller.addSystemMessage(`Current mode: ${interactionMode}. Use /mode plan for read-only planning or /mode agent for normal agent runs.`);
+        return true;
+      }
+
+      if (text === "/mode plan" || text === "/mode agent") {
+        const nextMode = text.endsWith("plan") ? "plan" : "agent";
+        setInteractionMode(nextMode);
+        controller.addSystemMessage(
+          nextMode === "plan"
+            ? "Mode set to plan. Future prompts are read-only until you switch back with /mode agent."
+            : "Mode set to agent. Future prompts can edit files when the request clearly asks for changes."
+        );
         return true;
       }
 
@@ -542,6 +566,7 @@ export function ChatTuiApp({
           `model: ${config.provider.model ?? config.provider.name}`,
           `provider: ${config.provider.name}`,
           `reviewer: ${reviewerId}`,
+          `mode: ${interactionMode}`,
           `thread: ${controller.activeThreadId ?? "(none)"}`,
           `busy: ${controller.busy}`,
           `active_task: ${controller.activeTaskId ?? "(none)"}`,
@@ -623,6 +648,7 @@ export function ChatTuiApp({
       reviewerId,
       restoreSession,
       service,
+      interactionMode,
       sessionId,
       sessionTitle,
       transcriptViewer
@@ -781,7 +807,8 @@ export function ChatTuiApp({
         ...(controller.uiStatus.runState === "running" ? [controller.runDurationLabel] : []),
         ...(controller.uiStatus.runState !== "running" && controller.activeThreadId !== null
           ? [`thread ${controller.activeThreadId.slice(0, 8)}`]
-          : [])
+          : []),
+        `mode ${interactionMode}`
       ];
   const statusHint =
     controller.pendingClarifyPrompt !== null

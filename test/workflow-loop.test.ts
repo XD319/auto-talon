@@ -301,7 +301,7 @@ describe("coding workflow loop", () => {
     }
   });
 
-  it("does not accept a code-change final that made no file writes", async () => {
+  it("accepts a code-change final even when no file writes were made", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
     const handle = createApplication(workspaceRoot, {
       config: { databasePath: join(workspaceRoot, "runtime.db") },
@@ -336,14 +336,14 @@ describe("coding workflow loop", () => {
       const details = handle.service.showTask(result.task.taskId);
 
       expect(result.task.status).toBe("succeeded");
-      expect(await fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).toBe("feature complete\n");
-      expect(details.toolCalls.some((toolCall) => toolCall.toolCallId === "write-feature")).toBe(true);
+      await expect(fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).rejects.toThrow();
+      expect(details.toolCalls.some((toolCall) => toolCall.toolCallId === "write-feature")).toBe(false);
     } finally {
       handle.close();
     }
   });
 
-  it("fails a code-change task when the model keeps finishing without file writes", async () => {
+  it("does not require file writes before a code-change task can finish", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
     const handle = createApplication(workspaceRoot, {
       config: { databasePath: join(workspaceRoot, "runtime.db") },
@@ -356,8 +356,8 @@ describe("coding workflow loop", () => {
       runOptions.maxIterations = 4;
       const result = await handle.service.runTask(runOptions);
 
-      expect(result.task.status).toBe("failed");
-      expect(result.error?.code).toBe("task_incomplete");
+      expect(result.task.status).toBe("succeeded");
+      expect(result.error).toBeUndefined();
       await expect(fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).rejects.toThrow();
     } finally {
       handle.close();
@@ -379,6 +379,195 @@ describe("coding workflow loop", () => {
 
       expect(result.task.status).toBe("succeeded");
       expect(result.output).toContain("inspected");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("keeps mutation tools visible for unfinished implementation status questions", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const seenToolPlans: string[][] = [];
+    const prompt =
+      "\u7b2c\u4e09\u9636\u6bb5\u8fd8\u6709\u54ea\u4e9b\u6ca1\u5b9e\u73b0\u5b8c\u6bd5";
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        seenToolPlans.push(input.availableTools.map((tool) => tool.name));
+        return finalResponse("phase three still has unfinished implementation items.");
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions(prompt, workspaceRoot, handle.config);
+      runOptions.maxIterations = 2;
+      const result = await handle.service.runTask(runOptions);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("phase three");
+      expect(seenToolPlans).toHaveLength(1);
+      expect(seenToolPlans[0]).toContain("file_read");
+      expect(seenToolPlans[0]).toContain("file_write");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("exposes write tools for start-from implementation prompts", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const seenToolPlans: string[][] = [];
+    const prompt = "\u5148\u4ece\u6dfb\u52a0\u52a8\u753b\u6548\u679c\u5f00\u59cb";
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        seenToolPlans.push(input.availableTools.map((tool) => tool.name));
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.length === 0) {
+          return toolCallResponse("Add the animation effect file.", [
+            {
+              input: { action: "write_file", content: "animation enabled\n", path: "animation.txt" },
+              reason: "The user explicitly asked to start adding animation effects.",
+              toolCallId: "write-animation-start",
+              toolName: "file_write"
+            }
+          ]);
+        }
+        return finalResponse("Animation work started.");
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions(prompt, workspaceRoot, handle.config);
+      runOptions.maxIterations = 4;
+      const result = await handle.service.runTask(runOptions);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("Animation work started");
+      expect(seenToolPlans[0]).toContain("file_write");
+      expect(await fs.readFile(join(workspaceRoot, "animation.txt"), "utf8")).toBe(
+        "animation enabled\n"
+      );
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("keeps mutation tools visible for next-stage analysis questions", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const seenToolPlans: string[][] = [];
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        seenToolPlans.push(input.availableTools.map((tool) => tool.name));
+        return finalResponse("下一步应该先确认开发文档里的阶段边界。");
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("那接下来该开发文档里的哪个阶段了？", workspaceRoot, handle.config);
+      runOptions.maxIterations = 2;
+      const result = await handle.service.runTask(runOptions);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(seenToolPlans).toHaveLength(1);
+      expect(seenToolPlans[0]).toContain("file_read");
+      expect(seenToolPlans[0]).toContain("file_write");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("blocks mutation tool calls for the planner profile through policy", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: {
+        ...WORKFLOW_POLICY_CONFIG,
+        rules: [
+          {
+            description: "Deny planner writes in this workflow test.",
+            effect: "deny",
+            id: "deny-planner-write",
+            match: {
+              agentProfiles: ["planner"],
+              capabilities: ["filesystem.write"]
+            },
+            priority: 110
+          },
+          ...WORKFLOW_POLICY_CONFIG.rules
+        ]
+      },
+      provider: new ScriptedProvider((input) => {
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.length > 0) {
+          return finalResponse("I cannot write files in planner mode.");
+        }
+        return toolCallResponse("Trying to write despite read-only mode.", [
+          {
+            input: { action: "write_file", content: "should not be written\n", path: "PROGRESS.md" },
+            reason: "This call should be blocked by planner policy.",
+            toolCallId: "blocked-read-only-write",
+            toolName: "file_write"
+          }
+        ]);
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("那接下来该开发文档里的哪个阶段了？", workspaceRoot, handle.config);
+      runOptions.maxIterations = 4;
+      runOptions.agentProfileId = "planner";
+      const result = await handle.service.runTask(runOptions);
+      const details = handle.service.showTask(result.task.taskId);
+      const blockedWrite = details.toolCalls.find((toolCall) => toolCall.toolCallId === "blocked-read-only-write");
+
+      expect(result.task.status).toBe("failed");
+      expect(result.error?.code).toBe("policy_denied");
+      expect(blockedWrite?.status).toBe("failed");
+      expect(blockedWrite?.errorCode).toBe("policy_denied");
+      await expect(fs.readFile(join(workspaceRoot, "PROGRESS.md"), "utf8")).rejects.toThrow();
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("allows ambiguous repair questions to use agent-mode write tools", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const seenToolPlans: string[][] = [];
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        seenToolPlans.push(input.availableTools.map((tool) => tool.name));
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.length > 0) {
+          return finalResponse("The write completed in agent mode.");
+        }
+        return toolCallResponse("Trying to repair an ambiguous question.", [
+          {
+            input: { action: "write_file", content: "should not be written\n", path: "ambiguous.txt" },
+            reason: "Agent mode leaves mutation decisions to policy.",
+            toolCallId: "blocked-ambiguous-write",
+            toolName: "file_write"
+          }
+        ]);
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("\u8fd9\u4e2a\u80fd\u4fee\u5417", workspaceRoot, handle.config);
+      runOptions.maxIterations = 4;
+      const result = await handle.service.runTask(runOptions);
+      const details = handle.service.showTask(result.task.taskId);
+      const blockedWrite = details.toolCalls.find((toolCall) => toolCall.toolCallId === "blocked-ambiguous-write");
+
+      expect(result.task.status).toBe("succeeded");
+      expect(seenToolPlans[0]).toContain("file_read");
+      expect(seenToolPlans[0]).toContain("file_write");
+      expect(blockedWrite?.status).toBe("finished");
+      expect(await fs.readFile(join(workspaceRoot, "ambiguous.txt"), "utf8")).toBe("should not be written\n");
     } finally {
       handle.close();
     }
@@ -434,122 +623,69 @@ describe("coding workflow loop", () => {
     }
   });
 
-  it("gates read tools in write-required mode and lets the model recover by writing", async () => {
+  it("feeds failed file writes back to the model so it can re-read and retry", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
-    const seenToolPlans: string[][] = [];
+    await fs.writeFile(join(workspaceRoot, "config.js"), "const color = 'green';\n", "utf8");
+    let sawRecoverableWriteFailure = false;
     const handle = createApplication(workspaceRoot, {
       config: { databasePath: join(workspaceRoot, "runtime.db") },
       policyConfig: WORKFLOW_POLICY_CONFIG,
       provider: new ScriptedProvider((input) => {
-        seenToolPlans.push(input.availableTools.map((tool) => tool.name));
         const toolMessages = input.messages.filter((message) => message.role === "tool");
-        if (toolMessages.some((message) => message.toolName === "file_write")) {
-          return finalResponse("Implemented after the runtime required a write.");
-        }
-        if (!input.availableTools.some((tool) => tool.name === "file_read")) {
-          return toolCallResponse("Write now that read tools are gated.", [
+        const lastToolMessage = toolMessages.at(-1)?.content ?? "";
+        if (toolMessages.length === 0) {
+          return toolCallResponse("Try updating the remembered color target.", [
             {
               input: {
-                action: "write_file",
-                content: "done after gate\n",
-                path: "gated.txt"
+                action: "update_file",
+                newText: "const color = 'blue';\n",
+                path: "config.js",
+                targetText: "const background = 'green';\n"
               },
-              reason: "Create the requested implementation artifact.",
-              toolCallId: "write-after-gate",
+              reason: "Use the target text remembered from context.",
+              toolCallId: "write-stale-target",
               toolName: "file_write"
             }
           ]);
         }
-        return toolCallResponse(`Inspect before writing ${input.iteration}.`, [
-          {
-            input: { action: "read_file", path: "package.json" },
-            reason: "Inspect before implementing.",
-            toolCallId: `read-before-gate-${input.iteration}`,
-            toolName: "file_read"
-          }
-        ]);
+        if (lastToolMessage.includes("recoverable") && lastToolMessage.includes("Target text")) {
+          sawRecoverableWriteFailure = true;
+          return toolCallResponse("Retry with the current file contents.", [
+            {
+              input: {
+                action: "update_file",
+                newText: "const color = 'blue';\n",
+                path: "config.js",
+                targetText: "const color = 'green';\n"
+              },
+              reason: "The previous file_write result showed the real target text.",
+              toolCallId: "write-current-target",
+              toolName: "file_write"
+            }
+          ]);
+        }
+        return finalResponse("Recovered from the stale write target and updated config.js.");
       })
     });
 
     try {
-      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
-      runOptions.maxIterations = 10;
+      const runOptions = createDefaultRunOptions("update the config color", workspaceRoot, handle.config);
+      runOptions.maxIterations = 5;
       const result = await handle.service.runTask(runOptions);
-      const gatedPlan = seenToolPlans.find(
-        (plan) => plan.includes("file_write") && !plan.includes("file_read")
-      );
+      const details = handle.service.showTask(result.task.taskId);
 
       expect(result.task.status).toBe("succeeded");
-      expect(result.output).toContain("Implemented after");
-      expect(gatedPlan).toBeDefined();
-      expect(await fs.readFile(join(workspaceRoot, "gated.txt"), "utf8")).toBe("done after gate\n");
+      expect(result.output).toContain("Recovered");
+      expect(sawRecoverableWriteFailure).toBe(true);
+      expect(await fs.readFile(join(workspaceRoot, "config.js"), "utf8")).toBe("const color = 'blue';\n");
+      expect(details.toolCalls.find((call) => call.toolCallId === "write-stale-target")?.status).toBe("failed");
+      expect(details.toolCalls.find((call) => call.toolCallId === "write-current-target")?.status).toBe("finished");
+      expect(details.trace.some((event) => event.eventType === "tool_call_failed")).toBe(true);
     } finally {
       handle.close();
     }
   });
 
-  it("blocks unavailable read calls after entering write-required mode", async () => {
-    const workspaceRoot = await createWorkflowWorkspace();
-    const handle = createApplication(workspaceRoot, {
-      config: { databasePath: join(workspaceRoot, "runtime.db") },
-      policyConfig: WORKFLOW_POLICY_CONFIG,
-      provider: new ScriptedProvider((input) =>
-        toolCallResponse(`Ignore the write gate ${input.iteration}.`, [
-          {
-            input: { action: "read_file", path: "package.json" },
-            reason: "Keep reading even when it is no longer available.",
-            toolCallId: `blocked-read-${input.iteration}`,
-            toolName: "file_read"
-          }
-        ])
-      )
-    });
-
-    try {
-      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
-      runOptions.maxIterations = 20;
-      const result = await handle.service.runTask(runOptions);
-      const trace = handle.service.traceTask(result.task.taskId);
-
-      expect(result.task.status).toBe("failed");
-      expect(result.error?.code).toBe("task_incomplete");
-      expect(result.error?.message).toContain("write-required tool gate");
-      expect(trace.some((event) => event.eventType === "runtime_tool_gate_applied")).toBe(true);
-      expect(trace.some((event) => event.eventType === "tool_call_blocked")).toBe(true);
-    } finally {
-      handle.close();
-    }
-  });
-
-  it("fails implementation tasks that remain stuck in read-only tool rounds", async () => {
-    const workspaceRoot = await createWorkflowWorkspace();
-    const handle = createApplication(workspaceRoot, {
-      config: { databasePath: join(workspaceRoot, "runtime.db") },
-      policyConfig: WORKFLOW_POLICY_CONFIG,
-      provider: new ScriptedProvider((input) =>
-        toolCallResponse(`Keep reading ${input.iteration}.`, [
-          {
-            input: { action: "read_file", path: "package.json" },
-            reason: "Inspect before implementing.",
-            toolCallId: `read-package-${input.iteration}`,
-            toolName: "file_read"
-          }
-        ])
-      )
-    });
-
-    try {
-      const runOptions = createDefaultRunOptions("implement the requested feature", workspaceRoot, handle.config);
-      runOptions.maxIterations = 20;
-      const result = await handle.service.runTask(runOptions);
-
-      expect(result.task.status).toBe("failed");
-      expect(result.error?.code).toBe("task_incomplete");
-      expect(result.error?.message).toContain("read-only");
-    } finally {
-      handle.close();
-    }
-  });
 });
 
 async function createWorkflowWorkspace(): Promise<string> {

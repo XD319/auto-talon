@@ -74,6 +74,7 @@ import { JobRunner } from "./jobs/index.js";
 import { SchedulerService } from "./scheduler/index.js";
 import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./threads/index.js";
 import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
+import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import { resolveRuntimeConfig, type WebSearchRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles } from "./workspace-setup.js";
@@ -94,6 +95,7 @@ export interface AppConfig {
     toolCallThreshold: number;
     summarizer: "deterministic" | "provider_subagent";
   };
+  contextRetention: ContextRetentionConfig;
   recall: {
     enabled: boolean;
     budgetRatio: number;
@@ -164,6 +166,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     defaultProfileId: "executor",
     defaultTimeoutMs: runtimeConfig.defaultTimeoutMs,
     compact: runtimeConfig.compact,
+    contextRetention: runtimeConfig.contextRetention,
     recall: runtimeConfig.recall,
     promotion: runtimeConfig.promotion,
     routing: runtimeConfig.routing,
@@ -460,6 +463,7 @@ export function createApplication(
 
   const executionKernel = new ExecutionKernel({
     compact: config.compact,
+    contextRetention: config.contextRetention,
     compactPolicy,
     agentProfileRegistry,
     budgetPricing: config.budget.pricing,
