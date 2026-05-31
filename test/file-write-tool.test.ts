@@ -39,6 +39,29 @@ describe("FileWriteTool", () => {
     await expect(tool.execute(prepared.preparedInput, createContext(root))).rejects.toThrow(
       /appears 2 times/i
     );
+    await expect(listRollbackSnapshots(root)).resolves.toHaveLength(0);
+  });
+
+  it("does not create rollback snapshots when write_file fails with overwrite=false", async () => {
+    const root = await createTempDir("auto-talon-file-write-");
+    const filePath = join(root, "existing.txt");
+    await fs.writeFile(filePath, "original\n", "utf8");
+    const tool = new FileWriteTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        action: "write_file",
+        content: "replacement\n",
+        overwrite: false,
+        path: filePath
+      },
+      createContext(root)
+    );
+
+    await expect(tool.execute(prepared.preparedInput, createContext(root))).rejects.toThrow(
+      /overwrite=false/i
+    );
+    await expect(listRollbackSnapshots(root)).resolves.toHaveLength(0);
   });
 
   it("supports context-aware apply_patch replacements", async () => {
@@ -129,6 +152,7 @@ describe("FileWriteTool", () => {
       expect(message).toContain("Re-read the file");
       expect(message).toMatch(/newPosition|spawn/i);
     }
+    await expect(listRollbackSnapshots(root)).resolves.toHaveLength(0);
   });
 
   it("stores full rollback content and writes snapshot reference", async () => {
@@ -176,6 +200,14 @@ async function createTempDir(prefix: string): Promise<string> {
   const tempPath = await fs.mkdtemp(join(tmpdir(), prefix));
   tempPaths.push(tempPath);
   return tempPath;
+}
+
+async function listRollbackSnapshots(workspaceRoot: string): Promise<string[]> {
+  try {
+    return await fs.readdir(join(workspaceRoot, ".auto-talon", "rollbacks"));
+  } catch {
+    return [];
+  }
 }
 
 function createContext(workspaceRoot: string): ToolExecutionContext {

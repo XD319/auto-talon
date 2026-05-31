@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { main } from "../src/cli/index.js";
+import { createApplication } from "../src/runtime/index.js";
 
 describe("cli schedule commands", () => {
   it("supports create/list/edit/pause/resume/run-now/status/tick/remove flows", async () => {
@@ -38,6 +39,49 @@ describe("cli schedule commands", () => {
       logSpy.mockRestore();
       process.chdir(previousCwd);
       rmSync(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("creates schedules in the workspace passed through --cwd", async () => {
+    const commandWorkspace = mkdtempSync(join(tmpdir(), "talon-cli-schedule-command-"));
+    const targetWorkspace = mkdtempSync(join(tmpdir(), "talon-cli-schedule-target-"));
+    const previousCwd = process.cwd();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      process.chdir(commandWorkspace);
+      await main([
+        "node",
+        "talon",
+        "schedule",
+        "create",
+        "hello target workspace",
+        "--name",
+        "target schedule",
+        "--every",
+        "5m",
+        "--cwd",
+        targetWorkspace
+      ]);
+
+      const targetHandle = createApplication(targetWorkspace);
+      const commandHandle = createApplication(commandWorkspace);
+      try {
+        const targetSchedules = targetHandle.service.listSchedules();
+        const commandSchedules = commandHandle.service.listSchedules();
+        expect(targetSchedules).toHaveLength(1);
+        expect(targetSchedules[0]?.name).toBe("target schedule");
+        expect(targetSchedules[0]?.cwd).toBe(targetWorkspace);
+        expect(targetSchedules[0]?.providerName).toBe(targetHandle.config.provider.name);
+        expect(commandSchedules).toHaveLength(0);
+      } finally {
+        targetHandle.close();
+        commandHandle.close();
+      }
+    } finally {
+      logSpy.mockRestore();
+      process.chdir(previousCwd);
+      rmSync(commandWorkspace, { force: true, recursive: true });
+      rmSync(targetWorkspace, { force: true, recursive: true });
     }
   });
 });

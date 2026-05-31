@@ -340,11 +340,11 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--backoff-base <ms>", "Backoff base milliseconds", parsePositiveIntegerOption("--backoff-base"), 5000)
     .option("--backoff-max <ms>", "Backoff max milliseconds", parsePositiveIntegerOption("--backoff-max"), 300000)
     .action((input: string, commandOptions: ScheduleCreateOptions) => {
-      const handle = createApplication(process.cwd());
+      const cwd = commandOptions.cwd ?? process.cwd();
+      const handle = createApplication(cwd);
       try {
         const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
         const name = commandOptions.name ?? "scheduled-run";
-        const cwd = commandOptions.cwd ?? process.cwd();
         const profile = (commandOptions.profile ?? "executor") as "executor" | "planner" | "reviewer";
         const schedule = handle.service.createSchedule({
           agentProfileId: profile,

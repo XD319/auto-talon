@@ -254,10 +254,6 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
     const targetPath = input.plan.resolvedPath;
-    const checkpoint = await createRollbackArtifact(targetPath, input.action, context.workspaceRoot);
-
-    await fs.mkdir(dirname(targetPath), { recursive: true });
-
     if (!input.overwrite) {
       const fileExists = await exists(targetPath);
       if (fileExists) {
@@ -268,6 +264,9 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       }
     }
 
+    const checkpoint = await createRollbackArtifact(targetPath, input.action, context.workspaceRoot);
+
+    await fs.mkdir(dirname(targetPath), { recursive: true });
     await fs.writeFile(targetPath, input.content, "utf8");
 
     return {
@@ -301,13 +300,6 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
   ): Promise<ToolExecutionResult> {
     const targetPath = input.plan.resolvedPath;
     const originalContent = await fs.readFile(targetPath, "utf8");
-    const checkpoint = await createRollbackArtifactFromContent(
-      targetPath,
-      input.action,
-      originalContent,
-      context.workspaceRoot
-    );
-
     const occurrences = findOccurrences(originalContent, input.targetText);
     if (occurrences.length === 0) {
       const hint = buildPatchTargetNotFoundMessage(
@@ -353,6 +345,13 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       input.replaceAll ? occurrences : [firstOccurrence]
     );
 
+    const checkpoint = await createRollbackArtifactFromContent(
+      targetPath,
+      input.action,
+      originalContent,
+      context.workspaceRoot
+    );
+
     await fs.writeFile(targetPath, updatedContent, "utf8");
 
     return {
@@ -386,12 +385,6 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
   ): Promise<ToolExecutionResult> {
     const targetPath = input.plan.resolvedPath;
     const originalContent = await fs.readFile(targetPath, "utf8");
-    const checkpoint = await createRollbackArtifactFromContent(
-      targetPath,
-      input.action,
-      originalContent,
-      context.workspaceRoot
-    );
     let workingContent = originalContent;
     let appliedPatchCount = 0;
 
@@ -461,6 +454,13 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
         message: "File patch interrupted."
       });
     }
+
+    const checkpoint = await createRollbackArtifactFromContent(
+      targetPath,
+      input.action,
+      originalContent,
+      context.workspaceRoot
+    );
 
     await fs.writeFile(targetPath, workingContent, "utf8");
 
