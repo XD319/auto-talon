@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { SandboxService } from "../src/sandbox/sandbox-service.js";
 import { ShellTool } from "../src/tools/shell-tool.js";
-import type { ShellCommandExecutor } from "../src/tools/shell/shell-executor.js";
+import { ShellExecutor, type ShellCommandExecutor } from "../src/tools/shell/shell-executor.js";
 import type { ToolExecutionContext } from "../src/types/index.js";
 
 describe("ShellTool", () => {
@@ -31,6 +31,30 @@ describe("ShellTool", () => {
       throw new Error("Expected success when allowNonZeroExit=true.");
     }
     expect((result.output as { exitCode: number }).exitCode).toBe(3);
+  });
+});
+
+describe("ShellExecutor", () => {
+  it("rejects already-aborted requests before spawning a shell", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const executor = new ShellExecutor({
+      shellArgs: [],
+      shellExecutable: "definitely-not-a-real-shell-executable"
+    });
+
+    await expect(
+      executor.execute({
+        command: "should not run",
+        cwd: process.cwd(),
+        env: {},
+        signal: controller.signal,
+        timeoutMs: 1_000
+      })
+    ).rejects.toMatchObject({
+      code: "interrupt",
+      message: "Shell command interrupted."
+    });
   });
 });
 

@@ -381,6 +381,31 @@ export class AnthropicCompatibleProvider implements Provider {
       let model = this.model;
       let stopReason: string | null = null;
       let usage: ProviderUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+      const readNextChunk = (): Promise<ReadableStreamReadResult<Uint8Array>> =>
+        new Promise((resolve, reject) => {
+          const idleTimeout = setTimeout(() => {
+            controller.abort();
+            reject(new DOMException("Streaming provider response became idle.", "AbortError"));
+          }, this.config.streamIdleTimeoutMs ?? this.config.timeoutMs);
+
+          reader.read().then(
+            (chunk) => {
+              clearTimeout(idleTimeout);
+              resolve(chunk);
+            },
+            (error: unknown) => {
+              clearTimeout(idleTimeout);
+              const causeMessage = error instanceof Error ? error.message : null;
+              reject(
+                new Error(
+                  causeMessage === null || causeMessage.length === 0
+                    ? "Streaming provider read failed."
+                    : `Streaming provider read failed: ${causeMessage}`
+                )
+              );
+            }
+          );
+        });
 
       const handlePayload = (payload: string): void => {
         if (payload.trim().length === 0) {
@@ -441,7 +466,7 @@ export class AnthropicCompatibleProvider implements Provider {
       };
 
       while (true) {
-        const chunk = await reader.read();
+        const chunk = await readNextChunk();
         if (chunk.done) {
           break;
         }

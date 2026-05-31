@@ -22,6 +22,7 @@ import {
   ProviderRouter,
   resolveProviderCatalog,
   resolveProviderConfig,
+  resolveProviderConfigForProvider,
   type ProviderCatalogEntry,
   type ResolvedProviderConfig
 } from "../providers/index.js";
@@ -270,13 +271,22 @@ export function createApplication(
   const auditService = new AuditService(storage.auditLogs);
   const budgetService = new BudgetService(config.budget, traceService, auditService);
   budgetService.start();
+  const routedProviders = new Map<string, Provider>();
   const providerRouter = new ProviderRouter(
     config.routing,
     (providerName) => {
       if (providerName === provider.name) {
         return provider;
       }
-      return provider;
+      const existing = routedProviders.get(providerName);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const routedProvider = createProvider(
+        resolveProviderConfigForProvider(config.workspaceRoot, providerName)
+      );
+      routedProviders.set(providerName, routedProvider);
+      return routedProvider;
     },
     budgetService,
     traceService,

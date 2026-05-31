@@ -130,6 +130,16 @@ export class ShellExecutor implements ShellCommandExecutor {
 
   public execute(request: ShellExecutionRequest): Promise<ShellExecutionResult> {
     return new Promise((resolve, reject) => {
+      if (request.signal.aborted) {
+        reject(
+          new AppError({
+            code: "interrupt",
+            message: "Shell command interrupted."
+          })
+        );
+        return;
+      }
+
       const startedAt = Date.now();
       const child = spawn(this.shellExecutable, [...this.shellArgs, request.command], {
         cwd: request.cwd,
@@ -173,7 +183,11 @@ export class ShellExecutor implements ShellCommandExecutor {
         onAbort();
       }, request.timeoutMs);
 
-      request.signal.addEventListener("abort", onAbort);
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      if (request.signal.aborted) {
+        onAbort();
+        return;
+      }
 
       child.stdout.on("data", (chunk: Buffer) => {
         const updated = appendWithLimit(stdout, chunk, this.maxOutputBytes);

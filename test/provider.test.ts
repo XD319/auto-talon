@@ -207,6 +207,39 @@ describe("Provider integration", () => {
     }
   });
 
+  it("uses the routed provider instead of silently reusing the current provider", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    process.env.AGENT_PROVIDER = "mock";
+    await fs.writeFile(join(workspaceRoot, "README.md"), "provider test", "utf8");
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db"),
+        routing: {
+          helpers: { classify: null, recallRank: null, summarize: "cheap" },
+          mode: "quality_first",
+          providers: { balanced: "mock", cheap: "mock", quality: "openai" }
+        }
+      }
+    });
+
+    try {
+      const result = await handle.service.runTask(
+        createDefaultRunOptions("read README.md", workspaceRoot, handle.config)
+      );
+
+      expect(handle.service.currentProvider().name).toBe("mock");
+      expect(result.task.status).toBe("failed");
+      expect(result.error?.message).toContain("OpenAI API key is not configured");
+      expect(
+        handle.service
+          .traceTask(result.task.taskId)
+          .some((event) => event.eventType === "provider_request_failed" && event.payload.providerName === "openai")
+      ).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("loads GLM provider configuration from file", async () => {
     const workspaceRoot = await createTempWorkspace();
     await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
@@ -1536,6 +1569,69 @@ describe("Provider integration", () => {
     expect(response.message).toBe("hello stream");
     expect(deltas).toEqual(["hello ", "stream"]);
     expect(response.usage).toMatchObject({ inputTokens: 6, outputTokens: 2, totalTokens: 8 });
+  });
+
+  it("falls back when an Anthropic-compatible stream goes idle before progress", async () => {
+    const provider = new AnthropicCompatibleProvider(
+      {
+        apiKey: "anthropic-test-key",
+        baseUrl: "https://anthropic.example.test",
+        maxRetries: 0,
+        model: "claude-sonnet-4-20250514",
+        name: "anthropic",
+        streamIdleTimeoutMs: 5,
+        timeoutMs: 5_000
+      },
+      {
+        anthropicVersion: "2023-06-01",
+        defaultBaseUrl: "https://api.anthropic.com",
+        defaultDisplayName: "Anthropic",
+        defaultModel: "claude-sonnet-4-20250514"
+      }
+    );
+    const requestModes: Array<boolean | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        if (body.stream === true) {
+          return Promise.resolve(
+            new Response(new ReadableStream<Uint8Array>({ pull() {} }), { status: 200 })
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [
+                {
+                  text: "anthropic idle fallback",
+                  type: "text"
+                }
+              ],
+              id: "msg-idle-fallback",
+              model: "claude-sonnet-4-20250514",
+              stop_reason: "end_turn",
+              type: "message",
+              usage: {
+                input_tokens: 5,
+                output_tokens: 2
+              }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const response = await provider.generate({
+      ...createProviderInput("stream anthropic idle"),
+      onTextDelta: () => {}
+    });
+
+    expect(response.kind).toBe("final");
+    expect(response.message).toBe("anthropic idle fallback");
+    expect(requestModes).toEqual([true, undefined]);
   });
 
   it("maps provider failures into unified provider errors", async () => {

@@ -72,6 +72,30 @@ export interface ResolvedProviderConfig extends ProviderConfig {
 }
 
 export function resolveProviderConfig(cwd = process.cwd()): ResolvedProviderConfig {
+  const providerSelection = process.env.AGENT_PROVIDER;
+  return resolveProviderConfigInternal(cwd, {
+    includeProviderSelectionEnv: true,
+    ...(providerSelection !== undefined ? { providerSelection } : {})
+  });
+}
+
+export function resolveProviderConfigForProvider(
+  cwd: string,
+  providerSelection: string
+): ResolvedProviderConfig {
+  return resolveProviderConfigInternal(cwd, {
+    includeProviderSelectionEnv: false,
+    providerSelection
+  });
+}
+
+function resolveProviderConfigInternal(
+  cwd: string,
+  options: {
+    includeProviderSelectionEnv: boolean;
+    providerSelection?: string;
+  }
+): ResolvedProviderConfig {
   const workspaceConfigPath = join(resolve(cwd), ".auto-talon", "provider.config.json");
   const userConfigPath = resolveUserProviderConfigPath();
   const userConfig = loadProviderConfigFile(userConfigPath);
@@ -80,11 +104,16 @@ export function resolveProviderConfig(cwd = process.cwd()): ResolvedProviderConf
   const customProviders = normalizeCustomProviders(fileConfig.customProviders);
   const providerEntries = normalizeProviderEntries(fileConfig.providers, customProviders);
   const providerSelection = resolveConfiguredProviderSelection(
-    process.env.AGENT_PROVIDER ?? workspaceConfig.currentProvider ?? userConfig.currentProvider,
+    options.providerSelection ?? workspaceConfig.currentProvider ?? userConfig.currentProvider,
     customProviders
   );
   if (providerSelection.providerName === null) {
-    const configSource = resolveProviderConfigSource(userConfig, workspaceConfig, null);
+    const configSource = resolveProviderConfigSource(
+      userConfig,
+      workspaceConfig,
+      null,
+      options.includeProviderSelectionEnv
+    );
     return createUnconfiguredProviderConfig(
       resolveConfigPath(configSource, userConfigPath, workspaceConfigPath),
       configSource
@@ -95,7 +124,12 @@ export function resolveProviderConfig(cwd = process.cwd()): ResolvedProviderConf
   const fileEntry = providerEntries[configuredName];
   const customProvider = customProviders[configuredName];
   const builtinProviderName = normalizeProviderName(configuredName);
-  const configSource = resolveProviderConfigSource(userConfig, workspaceConfig, configuredName);
+  const configSource = resolveProviderConfigSource(
+    userConfig,
+    workspaceConfig,
+    configuredName,
+    options.includeProviderSelectionEnv
+  );
   const configPath = resolveConfigPath(configSource, userConfigPath, workspaceConfigPath);
 
   if (builtinProviderName !== null) {
@@ -478,9 +512,10 @@ function mergeNamedEntries<TEntry extends JsonObject>(
 function resolveProviderConfigSource(
   userConfig: ProviderConfigFile,
   workspaceConfig: ProviderConfigFile,
-  providerName: string | null
+  providerName: string | null,
+  includeProviderSelectionEnv: boolean
 ): ResolvedProviderConfig["configSource"] {
-  if (hasProviderEnvConfig()) {
+  if (hasProviderEnvConfig(includeProviderSelectionEnv)) {
     return "env";
   }
 
@@ -495,9 +530,9 @@ function resolveProviderConfigSource(
   return "defaults";
 }
 
-function hasProviderEnvConfig(): boolean {
+function hasProviderEnvConfig(includeProviderSelectionEnv: boolean): boolean {
   return (
-    process.env.AGENT_PROVIDER !== undefined ||
+    (includeProviderSelectionEnv && process.env.AGENT_PROVIDER !== undefined) ||
     process.env.AGENT_PROVIDER_MODEL !== undefined ||
     process.env.AGENT_PROVIDER_BASE_URL !== undefined ||
     process.env.AGENT_PROVIDER_API_KEY !== undefined ||
