@@ -540,6 +540,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     const interval = setInterval(refresh, busy ? 2_000 : 5_000);
     return () => {
       clearInterval(interval);
+    };
+  }, [busy, refresh]);
+
+  React.useEffect(() => {
+    return () => {
       stopTraceSubscription();
       if (flushTimerRef.current !== null) {
         clearTimeout(flushTimerRef.current);
@@ -547,7 +552,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       }
       pendingDeltaRef.current = "";
     };
-  }, [busy, refresh, stopTraceSubscription]);
+  }, [stopTraceSubscription]);
 
   const runDurationLabel = formatDuration(Date.now() - startedAtRef.current);
 

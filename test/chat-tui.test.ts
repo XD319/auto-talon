@@ -69,6 +69,21 @@ type ControllerServiceStub = Pick<
   | "traceTask"
 >;
 
+type InkRenderResult = ReturnType<typeof render>;
+
+async function unmountInkApp(app: InkRenderResult): Promise<void> {
+  const beforeExitListeners = new Set(
+    process.rawListeners("beforeExit") as Array<(...args: unknown[]) => void>
+  );
+  app.unmount();
+  await app.waitUntilExit();
+  for (const listener of process.rawListeners("beforeExit") as Array<(...args: unknown[]) => void>) {
+    if (!beforeExitListeners.has(listener)) {
+      process.off("beforeExit", listener);
+    }
+  }
+}
+
 describe("chat tui view-models", () => {
   it("formats trace events into activity messages", () => {
     const event = createTraceEvent("tool_call_started", {
@@ -308,8 +323,7 @@ describe("use-chat-controller helpers", () => {
         messages.filter((message) => message.kind === "agent").map((message) => message.text)
       ).toEqual(["reply-one", "reply-two"]);
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -367,8 +381,7 @@ describe("use-chat-controller helpers", () => {
       ]);
       expect(agentReplies.every((message) => message.streaming !== true)).toBe(true);
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -422,8 +435,7 @@ describe("use-chat-controller helpers", () => {
         .filter((message): message is Extract<ChatMessage, { kind: "agent" }> => message.kind === "agent");
       expect(agentReplies.map((message) => message.text)).toEqual(["Here is the answer."]);
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -545,8 +557,130 @@ describe("use-chat-controller helpers", () => {
       expect(continueThread.mock.calls[0]?.[2]?.timeoutMode).toBe("activity");
       expect(continueThread.mock.calls[0]?.[2]?.timeoutMs).toBe(TUI_ACTIVITY_TIMEOUT_MS);
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
+    }
+  });
+
+  it("keeps live trace subscription active while a submitted task is busy", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    let capturedOptions: RuntimeRunOptions | null = null;
+    let resolveRun: ((value: { output: string; task: TaskRecord }) => void) | null = null;
+    let traceListener: ((event: TraceEvent) => void) | null = null;
+    let unsubscribeCount = 0;
+    let subscribedTaskId: string | null = null;
+    const runTask = vi.fn((options: RuntimeRunOptions) => {
+      capturedOptions = options;
+      return new Promise<{ output: string; task: TaskRecord }>((resolve) => {
+        resolveRun = resolve;
+      });
+    });
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueThread() {
+        return Promise.reject(new Error("continueThread should not be called in this test."));
+      },
+      createThread() {
+        throw new Error("createThread should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
+        return [];
+      },
+      listTasks() {
+        return [];
+      },
+      providerStats() {
+        return null;
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask,
+      showTask() {
+        return { approvals: [], artifacts: [], inboxItems: [], scheduleRuns: [], task: null, toolCalls: [], trace: [] };
+      },
+      subscribeToTaskTrace(taskId: string, listener: (event: TraceEvent) => void) {
+        subscribedTaskId = taskId;
+        traceListener = listener;
+        return () => {
+          unsubscribeCount += 1;
+          traceListener = null;
+        };
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let controller: ChatController | null = null;
+    let submitPrompt: ChatController["submitPrompt"] | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+        submitPrompt = instance.submitPrompt;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null && submitPrompt !== null);
+      if (submitPrompt === null) {
+        throw new Error("submitPrompt should be initialized before the test submits prompts.");
+      }
+      submitPrompt("live trace");
+      await waitFor(() => traceListener !== null && subscribedTaskId !== null);
+      await delay(20);
+      expect(unsubscribeCount).toBe(0);
+
+      traceListener?.({
+        ...createTraceEvent("memory_recalled", {
+          blockedMemoryIds: [],
+          entries: [],
+          query: "live trace",
+          selectedMemoryIds: ["m1", "m2"],
+          selectedScopes: ["project"]
+        }),
+        sequence: 2,
+        taskId: subscribedTaskId ?? "task-live-trace"
+      });
+
+      await waitFor(() => controller?.usedMemoryCount === 2);
+      if (capturedOptions === null || resolveRun === null) {
+        throw new Error("runTask should be pending before resolving the test.");
+      }
+      resolveRun({
+        output: "done",
+        task: {
+          ...createControllerTask(capturedOptions),
+          finalOutput: "done",
+          status: "succeeded"
+        }
+      });
+      await waitFor(() => controller?.busy === false);
+    } finally {
+      await unmountInkApp(app);
     }
   });
 
@@ -642,8 +776,7 @@ describe("use-chat-controller helpers", () => {
       expect(runTask.mock.calls[0]?.[0].agentProfileId).toBe("planner");
       expect(runTask.mock.calls[0]?.[0].metadata?.interactivePromptMode).toBe("tui");
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -738,8 +871,7 @@ describe("use-chat-controller helpers", () => {
         "needs approval"
       ]);
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -850,8 +982,7 @@ describe("use-chat-controller helpers", () => {
       expect(runTask).toHaveBeenCalledTimes(0);
       expect(continueThread.mock.calls[0]?.[0]).toBe("thread-new");
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -967,8 +1098,7 @@ describe("use-chat-controller helpers", () => {
       expect(controller?.pendingApproval).toBeNull();
       expect(controller?.pendingClarifyPrompt).toBeNull();
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -1023,8 +1153,7 @@ describe("use-chat-controller helpers", () => {
       expect(activeController.messages).toHaveLength(1);
       expect(activeController.messages[0]?.id).toBe("system:welcome");
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -1074,8 +1203,7 @@ describe("use-chat-controller helpers", () => {
       expect(getController().messages).toHaveLength(1);
       expect(getController().messages[0]?.id).toBe("system:welcome");
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -1126,8 +1254,7 @@ describe("use-chat-controller helpers", () => {
       expect(getController().sessionApprovalFingerprints).toEqual(["resume-fingerprint"]);
       expect(getController().uiStatus.primaryLabel).toBe("session resumed");
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -1243,8 +1370,7 @@ describe("use-chat-controller helpers", () => {
       expect(errorMessage?.kind).toBe("error");
       expect(errorMessage?.message).toContain("clarify failed");
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 
@@ -1355,8 +1481,7 @@ describe("use-chat-controller helpers", () => {
       expect(activeController.tokenHud.outputTokens).toBe(0);
       expect(activeController.tokenHud.contextPercent).toBe(0);
     } finally {
-      app.unmount();
-      await app.waitUntilExit();
+      await unmountInkApp(app);
     }
   });
 });
