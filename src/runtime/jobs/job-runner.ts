@@ -5,7 +5,6 @@ import { planRetry } from "./backoff.js";
 import type { RunTaskResult } from "../application-service.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type {
-  RuntimeRunOptions,
   ScheduleRecord,
   ScheduleRepository,
   ScheduleRunRecord,
@@ -192,24 +191,4 @@ export class JobRunner {
     }
     return "blocked";
   }
-}
-
-export function buildRunOptionsForSchedule(schedule: ScheduleRecord): RuntimeRunOptions {
-  return {
-    agentProfileId: schedule.agentProfileId,
-    cwd: schedule.cwd,
-    maxIterations: 12,
-    taskInput: schedule.input,
-    ...(schedule.threadId !== null ? { threadId: schedule.threadId } : {}),
-    timeoutMs: 120_000,
-    tokenBudget: {
-      inputLimit: 64_000,
-      outputLimit: 8_000,
-      reservedOutput: 1_000,
-      usedInput: 0,
-      usedOutput: 0,
-      usedCostUsd: 0
-    },
-    userId: schedule.ownerUserId
-  };
 }
