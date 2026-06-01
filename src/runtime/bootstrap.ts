@@ -47,6 +47,7 @@ import {
   CodeSearchTool,
   FileReadTool,
   FileWriteTool,
+  GitTool,
   ShellTool,
   SkillViewTool,
   TestRunTool,
@@ -352,6 +353,7 @@ export function createApplication(
       new CodeSearchTool(sandboxService),
       new FileReadTool(sandboxService),
       new FileWriteTool(sandboxService),
+      new GitTool(shellExecutor, sandboxService),
       new SkillViewTool(skillRegistry),
       new ShellTool(shellExecutor, sandboxService),
       new TestRunTool(
