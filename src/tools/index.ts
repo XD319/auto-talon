@@ -1,4 +1,5 @@
 export * from "./file-read-tool.js";
+export * from "./code-search-tool.js";
 export * from "./file-write-tool.js";
 export * from "./ask-user-tool.js";
 export * from "./shell-tool.js";

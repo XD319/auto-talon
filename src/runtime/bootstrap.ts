@@ -44,6 +44,7 @@ import type {
 } from "../types/index.js";
 import {
   AskUserTool,
+  CodeSearchTool,
   FileReadTool,
   FileWriteTool,
   ShellTool,
@@ -348,6 +349,7 @@ export function createApplication(
     toolCallRepository: storage.toolCalls,
     tools: [
       new AskUserTool(),
+      new CodeSearchTool(sandboxService),
       new FileReadTool(sandboxService),
       new FileWriteTool(sandboxService),
       new SkillViewTool(skillRegistry),
