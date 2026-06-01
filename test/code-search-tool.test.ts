@@ -108,6 +108,63 @@ describe("CodeSearchTool", () => {
     expect(result.errorCode).toBe("tool_validation_error");
     expect(result.errorMessage).toContain("Invalid regex");
   });
+
+  it("uses rg file discovery when available", async () => {
+    const root = await createTempDir("auto-talon-code-search-");
+    await fs.mkdir(join(root, "src"), { recursive: true });
+    const targetPath = join(root, "src", "from-rg.ts");
+    await fs.writeFile(targetPath, "export const token = true;\n", "utf8");
+    const tool = new CodeSearchTool(createSandbox(root), {
+      runRgFiles: () => Promise.resolve([targetPath])
+    });
+
+    const prepared = tool.prepare(
+      {
+        query: "token"
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("Expected rg-backed code_search to succeed.");
+    }
+    const output = result.output as {
+      matches: Array<{ relativePath: string }>;
+      searchBackend: string;
+    };
+    expect(output.searchBackend).toBe("rg");
+    expect(output.matches[0]?.relativePath).toBe("src/from-rg.ts");
+  });
+
+  it("falls back to node file discovery when rg is unavailable", async () => {
+    const root = await createTempDir("auto-talon-code-search-");
+    await fs.mkdir(join(root, "src"), { recursive: true });
+    await fs.writeFile(join(root, "src", "fallback.ts"), "const fallback = 1;\n", "utf8");
+    const tool = new CodeSearchTool(createSandbox(root), {
+      runRgFiles: () => Promise.resolve(null)
+    });
+
+    const prepared = tool.prepare(
+      {
+        query: "fallback"
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("Expected node-backed code_search to succeed.");
+    }
+    const output = result.output as {
+      matches: Array<{ relativePath: string }>;
+      searchBackend: string;
+    };
+    expect(output.searchBackend).toBe("node");
+    expect(output.matches[0]?.relativePath).toBe("src/fallback.ts");
+  });
 });
 
 function createSandbox(workspaceRoot: string): SandboxService {

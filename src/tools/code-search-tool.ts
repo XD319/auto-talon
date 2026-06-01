@@ -1,4 +1,6 @@
 import { promises as fs } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { basename, extname, join, relative, sep } from "node:path";
 
 import { z } from "zod";
@@ -30,7 +32,9 @@ const codeSearchSchema = z.object({
   searchFilenames: z.boolean().default(false)
 });
 
-interface PreparedCodeSearchInput {
+const execFileAsync = promisify(execFile);
+
+export interface PreparedCodeSearchInput {
   caseSensitive: boolean;
   contextLines: number;
   excludeGlobs: string[];
@@ -56,6 +60,10 @@ interface CodeSearchMatch extends JsonObject {
 interface FilenameMatch extends JsonObject {
   path: string;
   relativePath: string;
+}
+
+export interface CodeSearchToolOptions {
+  runRgFiles?: (directoryPath: string, input: PreparedCodeSearchInput) => Promise<string[] | null>;
 }
 
 export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, PreparedCodeSearchInput> {
@@ -87,7 +95,10 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
     type: "object"
   };
 
-  public constructor(private readonly sandboxService: SandboxService) {}
+  public constructor(
+    private readonly sandboxService: SandboxService,
+    private readonly options: CodeSearchToolOptions = {}
+  ) {}
 
   public prepare(input: unknown, context: ToolExecutionContext): ToolPreparation<PreparedCodeSearchInput> {
     const parsedInput = this.inputSchema.parse(input);
@@ -132,9 +143,10 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
     }
 
     const stat = await fs.stat(input.plan.resolvedPath);
-    const files = stat.isDirectory()
-      ? await collectFiles(input.plan.resolvedPath, input, context.signal)
+    const fileDiscovery = stat.isDirectory()
+      ? await collectFiles(input.plan.resolvedPath, input, context.signal, this.options.runRgFiles)
       : [input.plan.resolvedPath];
+    const files = Array.isArray(fileDiscovery) ? fileDiscovery : fileDiscovery.files;
     const matches: CodeSearchMatch[] = [];
     const filenameMatches: FilenameMatch[] = [];
 
@@ -164,6 +176,7 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
         path: input.plan.resolvedPath,
         query: input.query,
         regex: input.regex,
+        searchBackend: Array.isArray(fileDiscovery) ? "node" : fileDiscovery.backend,
         searchedFileCount: files.length,
         truncated: matches.length + filenameMatches.length >= input.maxResults
       },
@@ -176,14 +189,34 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
 async function collectFiles(
   directoryPath: string,
   input: PreparedCodeSearchInput,
-  signal: AbortSignal
-): Promise<string[]> {
+  signal: AbortSignal,
+  runRgFiles?: (directoryPath: string, input: PreparedCodeSearchInput) => Promise<string[] | null>
+): Promise<{ backend: "node" | "rg"; files: string[] }> {
   if (signal.aborted) {
     throw new AppError({
       code: "interrupt",
       message: "Code search interrupted."
     });
   }
+  const rgFiles = await (runRgFiles ?? defaultRunRgFiles)(directoryPath, input);
+  if (rgFiles !== null) {
+    return {
+      backend: "rg",
+      files: await filterCandidateFiles(directoryPath, rgFiles, input, signal)
+    };
+  }
+
+  return {
+    backend: "node",
+    files: await collectFilesWithNode(directoryPath, input, signal)
+  };
+}
+
+async function collectFilesWithNode(
+  directoryPath: string,
+  input: PreparedCodeSearchInput,
+  signal: AbortSignal
+): Promise<string[]> {
   const files: string[] = [];
   const entries = await fs.readdir(directoryPath, { withFileTypes: true });
   for (const entry of entries) {
@@ -195,7 +228,7 @@ async function collectFiles(
       if (IGNORED_DIRECTORIES.has(entry.name.toLowerCase())) {
         continue;
       }
-      files.push(...(await collectFiles(nextPath, input, signal)));
+      files.push(...(await collectFilesWithNode(nextPath, input, signal)));
       continue;
     }
     if (!entry.isFile()) {
@@ -212,6 +245,63 @@ async function collectFiles(
     files.push(nextPath);
   }
   return files;
+}
+
+async function defaultRunRgFiles(
+  directoryPath: string,
+  input: PreparedCodeSearchInput
+): Promise<string[] | null> {
+  const args = [
+    "--files",
+    "--hidden",
+    ...[...IGNORED_DIRECTORIES].flatMap((directory) => ["--glob", `!${directory}/**`]),
+    ...input.includeGlobs.flatMap((glob) => ["--glob", normalizePath(glob)]),
+    ...input.excludeGlobs.flatMap((glob) => ["--glob", `!${normalizePath(glob)}`])
+  ];
+
+  try {
+    const result = await execFileAsync("rg", args, {
+      cwd: directoryPath,
+      encoding: "utf8",
+      maxBuffer: 5_000_000,
+      windowsHide: true
+    });
+    return result.stdout
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => join(directoryPath, line));
+  } catch {
+    return null;
+  }
+}
+
+async function filterCandidateFiles(
+  rootPath: string,
+  files: string[],
+  input: PreparedCodeSearchInput,
+  signal: AbortSignal
+): Promise<string[]> {
+  const filtered: string[] = [];
+  for (const filePath of files) {
+    if (signal.aborted) {
+      break;
+    }
+    const relativePath = toRelativePath(rootPath, filePath);
+    if (!passesGlobFilters(relativePath, input.includeGlobs, input.excludeGlobs)) {
+      continue;
+    }
+    try {
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile() || stat.size > input.maxFileSizeBytes || isLikelyBinaryPath(filePath)) {
+        continue;
+      }
+      filtered.push(filePath);
+    } catch {
+      continue;
+    }
+  }
+  return filtered;
 }
 
 async function searchFile(
