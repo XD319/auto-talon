@@ -171,8 +171,8 @@ export class ShellExecutor implements ShellCommandExecutor {
         finish(() => {
           reject(
             new AppError({
-              code: timedOut ? "timeout" : "interrupt",
-              message: timedOut ? "Shell command timed out." : "Shell command interrupted."
+              code: "interrupt",
+              message: "Shell command interrupted."
             })
           );
         });
@@ -180,7 +180,7 @@ export class ShellExecutor implements ShellCommandExecutor {
 
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
-        onAbort();
+        child.kill();
       }, request.timeoutMs);
 
       request.signal.addEventListener("abort", onAbort, { once: true });

@@ -56,6 +56,25 @@ describe("ShellExecutor", () => {
       message: "Shell command interrupted."
     });
   });
+
+  it("returns structured timeout results with captured output", async () => {
+    const executor = new ShellExecutor({
+      shellArgs: ["-e"],
+      shellExecutable: process.execPath
+    });
+
+    const result = await executor.execute({
+      command: "process.stdout.write('started\\n'); setTimeout(() => {}, 1000);",
+      cwd: process.cwd(),
+      env: {},
+      signal: new AbortController().signal,
+      timeoutMs: 250
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBe(-1);
+    expect(result.stdout).toContain("started");
+  });
 });
 
 function createSandboxService(): SandboxService {

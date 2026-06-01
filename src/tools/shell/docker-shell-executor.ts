@@ -101,8 +101,8 @@ export class DockerShellExecutor implements ShellCommandExecutor {
         finish(() => {
           reject(
             new AppError({
-              code: timedOut ? "timeout" : "interrupt",
-              message: timedOut ? "Docker shell command timed out." : "Docker shell command interrupted."
+              code: "interrupt",
+              message: "Docker shell command interrupted."
             })
           );
         });
@@ -110,7 +110,7 @@ export class DockerShellExecutor implements ShellCommandExecutor {
 
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
-        onAbort();
+        child.kill();
       }, request.timeoutMs);
 
       request.signal.addEventListener("abort", onAbort);
