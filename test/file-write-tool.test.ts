@@ -188,6 +188,99 @@ describe("FileWriteTool", () => {
     const snapshot = await fs.readFile(rollbackContent.snapshotPath, "utf8");
     expect(snapshot.length).toBe(original.length);
   });
+
+  it("applies unified diff patches", async () => {
+    const root = await createTempDir("auto-talon-file-write-");
+    const filePath = join(root, "diff.txt");
+    await fs.writeFile(filePath, "alpha\nbeta\ngamma\n", "utf8");
+    const tool = new FileWriteTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        action: "apply_unified_diff",
+        diff: [
+          "--- a/diff.txt",
+          "+++ b/diff.txt",
+          "@@ -1,3 +1,3 @@",
+          " alpha",
+          "-beta",
+          "+delta",
+          " gamma"
+        ].join("\n"),
+        path: "."
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(filePath, "utf8")).toBe("alpha\ndelta\ngamma\n");
+  });
+
+  it("supports dry-run unified diff without writing rollback snapshots", async () => {
+    const root = await createTempDir("auto-talon-file-write-");
+    const filePath = join(root, "dry.txt");
+    await fs.writeFile(filePath, "before\n", "utf8");
+    const tool = new FileWriteTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        action: "apply_unified_diff",
+        diff: ["--- a/dry.txt", "+++ b/dry.txt", "@@ -1,1 +1,1 @@", "-before", "+after"].join("\n"),
+        dryRun: true,
+        path: "."
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(filePath, "utf8")).toBe("before\n");
+    await expect(listRollbackSnapshots(root)).resolves.toHaveLength(0);
+  });
+
+  it("renames files with rollback metadata", async () => {
+    const root = await createTempDir("auto-talon-file-write-");
+    const fromPath = join(root, "old.txt");
+    const toPath = join(root, "nested", "new.txt");
+    await fs.writeFile(fromPath, "move me\n", "utf8");
+    const tool = new FileWriteTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        action: "rename_file",
+        path: "old.txt",
+        toPath: "nested/new.txt"
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(fromPath, "utf8")).rejects.toThrow();
+    expect(await fs.readFile(toPath, "utf8")).toBe("move me\n");
+    await expect(listRollbackSnapshots(root)).resolves.toHaveLength(1);
+  });
+
+  it("deletes files and records rollback snapshots", async () => {
+    const root = await createTempDir("auto-talon-file-write-");
+    const filePath = join(root, "delete.txt");
+    await fs.writeFile(filePath, "remove me\n", "utf8");
+    const tool = new FileWriteTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        action: "delete_file",
+        path: "delete.txt"
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    await expect(fs.readFile(filePath, "utf8")).rejects.toThrow();
+    await expect(listRollbackSnapshots(root)).resolves.toHaveLength(1);
+  });
 });
 
 function createSandbox(workspaceRoot: string): SandboxService {

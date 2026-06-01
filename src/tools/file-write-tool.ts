@@ -33,14 +33,17 @@ const patchSchema = z.preprocess(
 
 const fileWriteSchema = z
   .object({
-    action: z.enum(["apply_patch", "update_file", "write_file"]),
+    action: z.enum(["apply_patch", "apply_unified_diff", "delete_file", "rename_file", "update_file", "write_file"]),
     content: z.string().optional(),
+    diff: z.string().optional(),
+    dryRun: z.boolean().default(false),
     newText: z.string().optional(),
     overwrite: z.boolean().default(true),
     path: z.string().min(1),
     patches: z.array(patchSchema).optional(),
     replaceAll: z.boolean().default(false),
-    targetText: z.string().optional()
+    targetText: z.string().optional(),
+    toPath: z.string().min(1).optional()
   })
   .superRefine((value, context) => {
     if (value.action === "write_file" && value.content === undefined) {
@@ -65,17 +68,33 @@ const fileWriteSchema = z
         message: "patches are required for apply_patch."
       });
     }
+
+    if (value.action === "apply_unified_diff" && value.diff === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "diff is required for apply_unified_diff."
+      });
+    }
+
+    if (value.action === "rename_file" && value.toPath === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "toPath is required for rename_file."
+      });
+    }
   });
 
 type PreparedFileWriteInput =
   | {
       action: "write_file";
       content: string;
+      dryRun: boolean;
       overwrite: boolean;
       plan: SandboxFileAccessPlan;
     }
   | {
       action: "update_file";
+      dryRun: boolean;
       newText: string;
       plan: SandboxFileAccessPlan;
       replaceAll: boolean;
@@ -83,6 +102,7 @@ type PreparedFileWriteInput =
     }
   | {
       action: "apply_patch";
+      dryRun: boolean;
       patches: Array<{
         afterContext?: string;
         beforeContext?: string;
@@ -92,7 +112,36 @@ type PreparedFileWriteInput =
         replaceAll: boolean;
       }>;
       plan: SandboxFileAccessPlan;
+    }
+  | {
+      action: "apply_unified_diff";
+      dryRun: boolean;
+      filePatches: UnifiedFilePatch[];
+      plans: SandboxFileAccessPlan[];
+    }
+  | {
+      action: "delete_file";
+      dryRun: boolean;
+      plan: SandboxFileAccessPlan;
+    }
+  | {
+      action: "rename_file";
+      dryRun: boolean;
+      fromPlan: SandboxFileAccessPlan;
+      overwrite: boolean;
+      toPlan: SandboxFileAccessPlan;
     };
+
+interface UnifiedFilePatch {
+  hunks: UnifiedHunk[];
+  newPath: string;
+  oldPath: string;
+}
+
+interface UnifiedHunk {
+  lines: string[];
+  oldStart: number;
+}
 
 export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, PreparedFileWriteInput> {
   public readonly name = "file_write";
@@ -109,11 +158,17 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
   public readonly inputSchemaDescriptor = {
     properties: {
       action: {
-        enum: ["write_file", "update_file", "apply_patch"],
+        enum: ["write_file", "update_file", "apply_patch", "apply_unified_diff", "delete_file", "rename_file"],
         type: "string"
       },
       content: {
         type: "string"
+      },
+      diff: {
+        type: "string"
+      },
+      dryRun: {
+        type: "boolean"
       },
       newText: {
         type: "string"
@@ -148,6 +203,9 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       },
       targetText: {
         type: "string"
+      },
+      toPath: {
+        type: "string"
       }
     },
     required: ["action", "path"],
@@ -172,6 +230,7 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
         preparedInput: {
           action: parsedInput.action,
           content: parsedInput.content ?? "",
+          dryRun: parsedInput.dryRun,
           overwrite: parsedInput.overwrite,
           plan
         },
@@ -187,12 +246,66 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
         },
         preparedInput: {
           action: parsedInput.action,
+          dryRun: parsedInput.dryRun,
           newText: parsedInput.newText ?? "",
           plan,
           replaceAll: parsedInput.replaceAll,
           targetText: parsedInput.targetText ?? ""
         },
         sandbox: plan
+      };
+    }
+
+    if (parsedInput.action === "delete_file") {
+      return {
+        governance: {
+          pathScope: plan.pathScope,
+          summary: `Delete file ${plan.resolvedPath}`
+        },
+        preparedInput: {
+          action: parsedInput.action,
+          dryRun: parsedInput.dryRun,
+          plan
+        },
+        sandbox: plan
+      };
+    }
+
+    if (parsedInput.action === "rename_file") {
+      const toPlan = this.sandboxService.prepareFileWrite(parsedInput.toPath ?? "", context.cwd);
+      return {
+        governance: {
+          pathScope: plan.pathScope === "workspace" && toPlan.pathScope === "workspace" ? "workspace" : toPlan.pathScope,
+          summary: `Rename file ${plan.resolvedPath} to ${toPlan.resolvedPath}`
+        },
+        preparedInput: {
+          action: parsedInput.action,
+          dryRun: parsedInput.dryRun,
+          fromPlan: plan,
+          overwrite: parsedInput.overwrite,
+          toPlan
+        },
+        sandbox: toPlan
+      };
+    }
+
+    if (parsedInput.action === "apply_unified_diff") {
+      const filePatches = parseUnifiedDiff(parsedInput.diff ?? "");
+      const plans = filePatches.map((patch) =>
+        this.sandboxService.prepareFileWrite(resolveUnifiedPatchPath(patch), context.cwd)
+      );
+      return {
+        governance: {
+          pathScope: plans.every((item) => item.pathScope === "workspace") ? "workspace" : (plans[0]?.pathScope ?? plan.pathScope),
+          summary: `Apply unified diff to ${plans.length} files`
+        },
+        preparedInput: {
+          action: parsedInput.action,
+          dryRun: parsedInput.dryRun,
+          filePatches,
+          plans
+        },
+        sandbox: plans[0] ?? plan
       };
     }
 
@@ -203,6 +316,7 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       },
       preparedInput: {
         action: parsedInput.action,
+        dryRun: parsedInput.dryRun,
         patches:
           parsedInput.patches?.map((patch) => {
             const preparedPatch: {
@@ -246,6 +360,18 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       return this.updateFile(input, context);
     }
 
+    if (input.action === "delete_file") {
+      return this.deleteFile(input, context);
+    }
+
+    if (input.action === "rename_file") {
+      return this.renameFile(input, context);
+    }
+
+    if (input.action === "apply_unified_diff") {
+      return this.applyUnifiedDiff(input, context);
+    }
+
     return this.applyPatch(input, context);
   }
 
@@ -262,6 +388,10 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
           message: `File ${targetPath} already exists and overwrite=false.`
         });
       }
+    }
+
+    if (input.dryRun) {
+      return fileWriteDryRunResult(targetPath, input.action, "", input.content);
     }
 
     const checkpoint = await createRollbackArtifact(targetPath, input.action, context.workspaceRoot);
@@ -344,6 +474,10 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       input.newText,
       input.replaceAll ? occurrences : [firstOccurrence]
     );
+
+    if (input.dryRun) {
+      return fileWriteDryRunResult(targetPath, input.action, originalContent, updatedContent);
+    }
 
     const checkpoint = await createRollbackArtifactFromContent(
       targetPath,
@@ -455,6 +589,10 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       });
     }
 
+    if (input.dryRun) {
+      return fileWriteDryRunResult(targetPath, input.action, originalContent, workingContent);
+    }
+
     const checkpoint = await createRollbackArtifactFromContent(
       targetPath,
       input.action,
@@ -488,11 +626,193 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
       summary: `Applied ${appliedPatchCount} patches to ${targetPath}`
     };
   }
+
+  private async deleteFile(
+    input: Extract<PreparedFileWriteInput, { action: "delete_file" }>,
+    context: ToolExecutionContext
+  ): Promise<ToolExecutionResult> {
+    const targetPath = input.plan.resolvedPath;
+    const originalContent = await fs.readFile(targetPath, "utf8");
+
+    if (input.dryRun) {
+      return fileWriteDryRunResult(targetPath, input.action, originalContent, "");
+    }
+
+    const checkpoint = await createRollbackArtifactFromContent(
+      targetPath,
+      input.action,
+      originalContent,
+      context.workspaceRoot
+    );
+
+    await fs.unlink(targetPath);
+    return {
+      artifacts: [
+        checkpoint,
+        {
+          artifactType: "file",
+          content: {
+            afterText: null,
+            beforeText: clipText(originalContent),
+            diffSummary: summarizeFileChange(originalContent, ""),
+            operation: "delete_file",
+            path: targetPath,
+            unifiedDiff: createUnifiedDiff(originalContent, "", targetPath)
+          },
+          uri: targetPath
+        }
+      ],
+      output: {
+        deleted: true,
+        path: targetPath
+      },
+      success: true,
+      summary: `Deleted ${targetPath}`
+    };
+  }
+
+  private async renameFile(
+    input: Extract<PreparedFileWriteInput, { action: "rename_file" }>,
+    context: ToolExecutionContext
+  ): Promise<ToolExecutionResult> {
+    const fromPath = input.fromPlan.resolvedPath;
+    const toPath = input.toPlan.resolvedPath;
+    const originalContent = await fs.readFile(fromPath, "utf8");
+    if (!input.overwrite && await exists(toPath)) {
+      throw new AppError({
+        code: "tool_execution_error",
+        message: `File ${toPath} already exists and overwrite=false.`
+      });
+    }
+
+    if (input.dryRun) {
+      return {
+        artifacts: [
+          {
+            artifactType: "file",
+            content: {
+              afterText: clipText(originalContent),
+              beforeText: clipText(originalContent),
+              diffSummary: summarizeFileChange(originalContent, originalContent),
+              dryRun: true,
+              operation: "rename_file",
+              path: fromPath,
+              toPath,
+              unifiedDiff: ""
+            },
+            uri: fromPath
+          }
+        ],
+        output: {
+          dryRun: true,
+          path: fromPath,
+          toPath
+        },
+        success: true,
+        summary: `Dry run: would rename ${fromPath} to ${toPath}`
+      };
+    }
+
+    const checkpoint = await createRollbackArtifactFromContent(
+      fromPath,
+      input.action,
+      originalContent,
+      context.workspaceRoot
+    );
+
+    await fs.mkdir(dirname(toPath), { recursive: true });
+    await fs.rename(fromPath, toPath);
+    return {
+      artifacts: [
+        checkpoint,
+        {
+          artifactType: "file",
+          content: {
+            afterText: clipText(originalContent),
+            beforeText: clipText(originalContent),
+            diffSummary: summarizeFileChange(originalContent, originalContent),
+            operation: "rename_file",
+            path: fromPath,
+            toPath,
+            unifiedDiff: ""
+          },
+          uri: toPath
+        }
+      ],
+      output: {
+        path: fromPath,
+        renamed: true,
+        toPath
+      },
+      success: true,
+      summary: `Renamed ${fromPath} to ${toPath}`
+    };
+  }
+
+  private async applyUnifiedDiff(
+    input: Extract<PreparedFileWriteInput, { action: "apply_unified_diff" }>,
+    context: ToolExecutionContext
+  ): Promise<ToolExecutionResult> {
+    const fileArtifacts: ArtifactDraft[] = [];
+    const rollbackArtifacts: ArtifactDraft[] = [];
+    const outputs: Array<{ path: string; updated: boolean }> = [];
+
+    for (const [index, filePatch] of input.filePatches.entries()) {
+      const plan = input.plans[index];
+      if (plan === undefined) {
+        throw new AppError({
+          code: "tool_execution_error",
+          message: "Unified diff patch did not resolve to a sandbox plan."
+        });
+      }
+      const targetPath = plan.resolvedPath;
+      const originalContent = await fs.readFile(targetPath, "utf8");
+      const updatedContent = applyUnifiedPatch(originalContent, filePatch, targetPath);
+      if (!input.dryRun) {
+        rollbackArtifacts.push(
+          await createRollbackArtifactFromContent(
+            targetPath,
+            input.action,
+            originalContent,
+            context.workspaceRoot
+          )
+        );
+        await fs.writeFile(targetPath, updatedContent, "utf8");
+      }
+      fileArtifacts.push({
+        artifactType: "file",
+        content: {
+          afterText: clipText(updatedContent),
+          beforeText: clipText(originalContent),
+          diffSummary: summarizeFileChange(originalContent, updatedContent),
+          dryRun: input.dryRun,
+          operation: "apply_unified_diff",
+          path: targetPath,
+          unifiedDiff: createUnifiedDiff(originalContent, updatedContent, targetPath)
+        },
+        uri: targetPath
+      });
+      outputs.push({
+        path: targetPath,
+        updated: true
+      });
+    }
+
+    return {
+      artifacts: [...rollbackArtifacts, ...fileArtifacts],
+      output: {
+        dryRun: input.dryRun,
+        files: outputs
+      },
+      success: true,
+      summary: `${input.dryRun ? "Dry run: would apply" : "Applied"} unified diff to ${outputs.length} files`
+    };
+  }
 }
 
 async function createRollbackArtifact(
   targetPath: string,
-  operation: "apply_patch" | "update_file" | "write_file",
+  operation: FileWriteOperation,
   workspaceRoot: string
 ): Promise<ArtifactDraft> {
   try {
@@ -516,7 +836,7 @@ async function createRollbackArtifact(
 
 async function createRollbackArtifactFromContent(
   targetPath: string,
-  operation: "apply_patch" | "update_file" | "write_file",
+  operation: FileWriteOperation,
   originalContent: string,
   workspaceRoot: string
 ): Promise<ArtifactDraft> {
@@ -533,6 +853,39 @@ async function createRollbackArtifactFromContent(
       sha256: createHash("sha256").update(originalContent, "utf8").digest("hex")
     },
     uri: `rollback:${targetPath}`
+  };
+}
+
+type FileWriteOperation = PreparedFileWriteInput["action"];
+
+function fileWriteDryRunResult(
+  targetPath: string,
+  operation: FileWriteOperation,
+  originalContent: string,
+  updatedContent: string
+): ToolExecutionResult {
+  return {
+    artifacts: [
+      {
+        artifactType: "file",
+        content: {
+          afterText: clipText(updatedContent),
+          beforeText: clipText(originalContent),
+          diffSummary: summarizeFileChange(originalContent, updatedContent),
+          dryRun: true,
+          operation,
+          path: targetPath,
+          unifiedDiff: createUnifiedDiff(originalContent, updatedContent, targetPath)
+        },
+        uri: targetPath
+      }
+    ],
+    output: {
+      dryRun: true,
+      path: targetPath
+    },
+    success: true,
+    summary: `Dry run: would ${operation} ${targetPath}`
   };
 }
 
@@ -612,6 +965,138 @@ function matchesPatchContext(
   }
 
   return true;
+}
+
+function parseUnifiedDiff(diff: string): UnifiedFilePatch[] {
+  const lines = diff.split(/\r?\n/u);
+  const patches: UnifiedFilePatch[] = [];
+  let current: UnifiedFilePatch | null = null;
+  let currentHunk: UnifiedHunk | null = null;
+
+  for (const line of lines) {
+    if (line.startsWith("--- ")) {
+      if (current !== null) {
+        patches.push(current);
+      }
+      current = {
+        hunks: [],
+        newPath: "",
+        oldPath: normalizeDiffPath(line.slice(4).trim())
+      };
+      currentHunk = null;
+      continue;
+    }
+    if (line.startsWith("+++ ")) {
+      if (current === null) {
+        throw new AppError({
+          code: "tool_validation_error",
+          message: "Unified diff has +++ before ---."
+        });
+      }
+      current.newPath = normalizeDiffPath(line.slice(4).trim());
+      continue;
+    }
+    if (line.startsWith("@@ ")) {
+      if (current === null) {
+        throw new AppError({
+          code: "tool_validation_error",
+          message: "Unified diff hunk appears before file header."
+        });
+      }
+      const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/u.exec(line);
+      if (match === null) {
+        throw new AppError({
+          code: "tool_validation_error",
+          message: `Unsupported unified diff hunk header: ${line}`
+        });
+      }
+      currentHunk = {
+        lines: [],
+        oldStart: Number(match[1])
+      };
+      current.hunks.push(currentHunk);
+      continue;
+    }
+    if (currentHunk !== null && (line.startsWith(" ") || line.startsWith("+") || line.startsWith("-") || line.startsWith("\\"))) {
+      currentHunk.lines.push(line);
+    }
+  }
+
+  if (current !== null) {
+    patches.push(current);
+  }
+  if (patches.length === 0 || patches.some((patch) => patch.newPath.length === 0 || patch.hunks.length === 0)) {
+    throw new AppError({
+      code: "tool_validation_error",
+      message: "Unified diff must include file headers and at least one hunk."
+    });
+  }
+  return patches;
+}
+
+function normalizeDiffPath(path: string): string {
+  if (path === "/dev/null") {
+    return path;
+  }
+  return path.replace(/^[ab]\//u, "");
+}
+
+function resolveUnifiedPatchPath(patch: UnifiedFilePatch): string {
+  return patch.newPath === "/dev/null" ? patch.oldPath : patch.newPath;
+}
+
+function applyUnifiedPatch(
+  originalContent: string,
+  patch: UnifiedFilePatch,
+  targetPath: string
+): string {
+  const originalLines = originalContent.split(/\r?\n/u);
+  const output: string[] = [];
+  let cursor = 0;
+
+  for (const hunk of patch.hunks) {
+    const hunkStart = Math.max(hunk.oldStart - 1, 0);
+    output.push(...originalLines.slice(cursor, hunkStart));
+    cursor = hunkStart;
+
+    for (const line of hunk.lines) {
+      if (line.startsWith("\\")) {
+        continue;
+      }
+      const prefix = line[0];
+      const value = line.slice(1);
+      if (prefix === " ") {
+        assertUnifiedLine(originalLines[cursor], value, targetPath);
+        output.push(value);
+        cursor += 1;
+        continue;
+      }
+      if (prefix === "-") {
+        assertUnifiedLine(originalLines[cursor], value, targetPath);
+        cursor += 1;
+        continue;
+      }
+      if (prefix === "+") {
+        output.push(value);
+      }
+    }
+  }
+
+  output.push(...originalLines.slice(cursor));
+  return output.join("\n");
+}
+
+function assertUnifiedLine(actual: string | undefined, expected: string, targetPath: string): void {
+  if ((actual ?? "") !== expected) {
+    throw new AppError({
+      code: "tool_execution_error",
+      details: {
+        actual,
+        expected
+      },
+      message: `Unified diff context did not match ${targetPath}. Re-read the file and regenerate the patch.`
+    });
+  }
 }
 
 function patchTargetHintDetails(hint: PatchTargetHint): Record<string, unknown> {
