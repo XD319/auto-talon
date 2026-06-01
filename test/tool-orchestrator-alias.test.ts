@@ -41,9 +41,41 @@ describe("ToolOrchestrator aliases", () => {
     expect(outcome.kind).toBe("completed");
     expect(records.get("call-alias")?.status).toBe("finished");
   });
+
+  it("resolves common test runner aliases to test_run", async () => {
+    const records = new Map<string, ToolCallRecord>();
+    const testRunTool = createShellLikeTool("test_run");
+    const orchestrator = createOrchestrator(testRunTool, records);
+
+    expect(orchestrator.describeTool("run_tests")).toMatchObject({
+      capability: "shell.execute",
+      name: "test_run"
+    });
+    expect(orchestrator.describeTool("test")).toMatchObject({
+      capability: "shell.execute",
+      name: "test_run"
+    });
+
+    const outcome = await orchestrator.execute(
+      {
+        input: { command: "npm test" },
+        iteration: 1,
+        reason: "Verify task",
+        taskId: "task-test-alias",
+        toolCallId: "call-test-alias",
+        toolName: "run_tests"
+      },
+      createContext()
+    );
+
+    expect(outcome.kind).toBe("completed");
+    expect(records.get("call-test-alias")?.status).toBe("finished");
+  });
 });
 
-function createShellLikeTool(): ToolDefinition<z.ZodObject<{ command: z.ZodString }>, { command: string }> {
+function createShellLikeTool(
+  name = "shell"
+): ToolDefinition<z.ZodObject<{ command: z.ZodString }>, { command: string }> {
   const schema = z.object({
     command: z.string()
   });
@@ -69,7 +101,7 @@ function createShellLikeTool(): ToolDefinition<z.ZodObject<{ command: z.ZodStrin
       required: ["command"],
       type: "object"
     },
-    name: "shell",
+    name,
     prepare: (input) => {
       const parsed = schema.parse(input);
       return {

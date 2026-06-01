@@ -1026,6 +1026,9 @@ function resolveToolAlias(toolName: string): string {
   if (toolName === "bash" || toolName === "Bash") {
     return "shell";
   }
+  if (toolName === "run_tests" || toolName === "test" || toolName === "tests") {
+    return "test_run";
+  }
   return toolName;
 }
 
