@@ -107,7 +107,7 @@ export class ToolOrchestrator {
   }
 
   private resolveTool(toolName: string): ToolDefinition | undefined {
-    return this.tools.get(toolName) ?? (toolName === "ask_user" ? this.tools.get("AskUserQuestion") : undefined);
+    return this.tools.get(toolName) ?? this.tools.get(resolveToolAlias(toolName));
   }
 
   public async execute(
@@ -1017,6 +1017,16 @@ function readSessionApprovalFingerprints(metadata: ToolExecutionContext["taskMet
     return [];
   }
   return fingerprints.filter((value): value is string => typeof value === "string");
+}
+
+function resolveToolAlias(toolName: string): string {
+  if (toolName === "ask_user") {
+    return "AskUserQuestion";
+  }
+  if (toolName === "bash" || toolName === "Bash") {
+    return "shell";
+  }
+  return toolName;
 }
 
 function sanitizePersistedOutput(
