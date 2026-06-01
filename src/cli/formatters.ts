@@ -477,6 +477,7 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
     `Schema Version: ${report.schemaVersion ?? "-"}`,
     `Build Fresh: ${formatTernary(report.distFresh)}`,
     `Config Files: ${report.configFiles.map((entry) => `${entry.file}=${entry.exists ? (entry.parseable ? "ok" : "invalid") : "missing"}`).join(", ")}`,
+    `Workspace Secrets: ${report.workspaceSecretFindings.length === 0 ? "none" : report.workspaceSecretFindings.map((entry) => `${entry.file}:${entry.fields.join(",")}`).join("; ")}`,
     `Experience Records: total=${report.experienceStats.total} candidate=${report.experienceStats.candidate} accepted=${report.experienceStats.accepted} promoted=${report.experienceStats.promoted} rejected=${report.experienceStats.rejected} stale=${report.experienceStats.stale}`,
     `Skills: total=${report.skillStats.total} enabled=${report.skillStats.enabled} issues=${report.skillStats.issues}`,
     `Shell: ${report.shell ?? "-"}`,

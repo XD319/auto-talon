@@ -125,6 +125,7 @@ export interface AgentDoctorReport {
   runtimeConfigSource: "defaults" | "env" | "file";
   runtimeVersion: string;
   configFiles: Array<{ exists: boolean; file: string; parseable: boolean }>;
+  workspaceSecretFindings: Array<{ file: string; fields: string[] }>;
   databaseReachable: boolean;
   distFresh: boolean | null;
   schemaVersion: number | null;

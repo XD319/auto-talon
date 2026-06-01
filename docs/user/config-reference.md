@@ -49,6 +49,11 @@ providers default to a `120000` request timeout and a `300000` stream idle
 timeout when a config layer does not explicitly set them; existing explicit
 short request timeout entries remain effective until updated.
 
+Keep provider secrets in environment variables or user config when possible.
+`talon doctor` warns when workspace `.auto-talon/provider.config.json` contains
+plaintext secret fields such as `apiKey`; the warning names only the field path
+and never prints the secret value.
+
 Runtime shell and test commands are capped by
 `.auto-talon/runtime.config.json` `workflow.maxShellTimeoutMs`, defaulting to
 `30000`. Set `AGENT_SHELL_MAX_TIMEOUT_MS` to override it for long local builds

@@ -37,6 +37,7 @@ export class RuntimeDoctorService {
     const experiences = this.dependencies.listExperiences();
     const skills = this.dependencies.skillStats();
     const configFiles = checkWorkspaceConfigFiles(this.dependencies.workspaceRoot);
+    const workspaceSecretFindings = scanWorkspaceConfigSecrets(this.dependencies.workspaceRoot);
     const databaseReachable = canOpenDatabase(this.dependencies.databasePath);
     const schemaVersion = readSchemaVersion(this.dependencies.databasePath);
     const distFresh = checkDistFreshness(this.dependencies.workspaceRoot);
@@ -58,7 +59,13 @@ export class RuntimeDoctorService {
         stale: experiences.filter((experience) => experience.status === "stale").length,
         total: experiences.length
       },
-      issues,
+      issues: [
+        ...issues,
+        ...workspaceSecretFindings.map(
+          (finding) =>
+            `Workspace config ${finding.file} contains provider secret fields (${finding.fields.join(", ")}). Move secrets to env or user config.`
+        )
+      ],
       maxRetries: this.dependencies.providerConfig.maxRetries,
       modelAvailable: providerHealth.modelAvailable,
       modelConfigured: providerHealth.modelConfigured,
@@ -72,6 +79,7 @@ export class RuntimeDoctorService {
       runtimeConfigSource: this.dependencies.runtimeConfigSource,
       runtimeVersion: this.dependencies.runtimeVersion,
       configFiles,
+      workspaceSecretFindings,
       databaseReachable,
       distFresh,
       schemaVersion,
@@ -87,6 +95,57 @@ export class RuntimeDoctorService {
       workspaceRoot: this.dependencies.workspaceRoot
     };
   }
+}
+
+function scanWorkspaceConfigSecrets(
+  workspaceRoot: string
+): Array<{ file: string; fields: string[] }> {
+  const providerConfigPath = join(workspaceRoot, ".auto-talon", "provider.config.json");
+  if (!existsSync(providerConfigPath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(providerConfigPath, "utf8")) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return [];
+    }
+    const fields = collectSecretFields(parsed, []);
+    return fields.length === 0
+      ? []
+      : [
+          {
+            fields,
+            file: "provider.config.json"
+          }
+        ];
+  } catch {
+    return [];
+  }
+}
+
+function collectSecretFields(value: unknown, path: string[]): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+
+  const fields: string[] = [];
+  for (const [key, child] of Object.entries(value)) {
+    const nextPath = [...path, key];
+    if (isSecretField(key, child)) {
+      fields.push(nextPath.join("."));
+      continue;
+    }
+    fields.push(...collectSecretFields(child, nextPath));
+  }
+  return fields;
+}
+
+function isSecretField(key: string, value: unknown): boolean {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return false;
+  }
+  return /^(apiKey|api_key|token|secret|password)$/iu.test(key);
 }
 
 function collectDoctorIssues(

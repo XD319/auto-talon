@@ -1716,6 +1716,7 @@ describe("Provider integration", () => {
       expect(doctorReport.endpointReachable).toBe(true);
       expect(doctorReport.modelConfigured).toBe(true);
       expect(doctorReport.issues).toEqual([]);
+      expect(doctorReport.workspaceSecretFindings).toEqual([]);
     } finally {
       handle.close();
       await new Promise<void>((resolve, reject) => {
@@ -1728,6 +1729,64 @@ describe("Provider integration", () => {
           resolve();
         });
       });
+    }
+  });
+
+  it("warns when workspace provider config contains plaintext secrets", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "glm",
+        providers: {
+          glm: {
+            apiKey: "workspace-secret-value",
+            model: "glm-4.5-air"
+          }
+        }
+      }),
+      "utf8"
+    );
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db"),
+        provider: {
+          builtinProviderName: "glm",
+          apiKey: "glm-test-key",
+          baseUrl: "https://glm.example.test/v4",
+          configPath: join(workspaceRoot, ".auto-talon", "provider.config.json"),
+          configSource: "env",
+          displayName: "GLM",
+          family: "openai-compatible",
+          maxRetries: 1,
+          model: "glm-4.5-air",
+          name: "glm",
+          streamIdleTimeoutMs: 300_000,
+          timeoutMs: 120_000,
+          transport: "openai-compatible"
+        }
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "ok",
+        usage: { inputTokens: 1, outputTokens: 1 }
+      }))
+    });
+
+    try {
+      const doctorReport = await handle.service.configDoctor();
+
+      expect(doctorReport.workspaceSecretFindings).toEqual([
+        {
+          fields: ["providers.glm.apiKey"],
+          file: "provider.config.json"
+        }
+      ]);
+      expect(doctorReport.issues.join("\n")).toContain("Workspace config provider.config.json contains provider secret fields");
+      expect(doctorReport.issues.join("\n")).not.toContain("workspace-secret-value");
+    } finally {
+      handle.close();
     }
   });
 
