@@ -47,7 +47,15 @@ describe("runtime config", () => {
           defaultMaxIterations: 5,
           defaultTimeoutMs: 45_000,
           workflow: {
-            maxShellTimeoutMs: 90_000
+            maxShellTimeoutMs: 90_000,
+            testCommands: [
+              {
+                category: "test",
+                command: "node check.js",
+                name: "test",
+                timeoutMs: 60_000
+              }
+            ]
           },
           tokenBudget: {
             inputLimit: 32_000,
@@ -66,6 +74,14 @@ describe("runtime config", () => {
     expect(fileConfig.allowedFetchHosts).toEqual(["github.com"]);
     expect(fileConfig.defaultMaxIterations).toBe(5);
     expect(fileConfig.workflow.maxShellTimeoutMs).toBe(90_000);
+    expect(fileConfig.workflow.testCommands).toEqual([
+      {
+        category: "test",
+        command: "node check.js",
+        name: "test",
+        timeoutMs: 60_000
+      }
+    ]);
     expect(fileConfig.tokenBudget.inputLimit).toBe(32_000);
 
     vi.stubEnv("AGENT_ALLOWED_FETCH_HOSTS", "docs.example.com,*.githubusercontent.com");

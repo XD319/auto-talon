@@ -19,7 +19,28 @@ const testRunSchema = z.object({
 
 type PreparedTestRunInput = PreparedShellInput;
 
-export class TestRunTool implements ToolDefinition<typeof testRunSchema, PreparedTestRunInput> {
+export type TestCommandConfig =
+  | string
+  | {
+      category?: "build" | "lint" | "test" | "typecheck" | "other" | undefined;
+      command: string;
+      name: string;
+      timeoutMs?: number | undefined;
+    };
+
+interface NormalizedTestCommand {
+  category: "build" | "lint" | "test" | "typecheck" | "other";
+  command: string;
+  name: string;
+  timeoutMs?: number;
+}
+
+type PreparedTestRunInputWithMetadata = PreparedTestRunInput & {
+  commandCategory: NormalizedTestCommand["category"];
+  commandName: string;
+};
+
+export class TestRunTool implements ToolDefinition<typeof testRunSchema, PreparedTestRunInputWithMetadata> {
   public readonly name = "test_run";
   public readonly description =
     "Run a configured test or build command and return structured pass/fail output for repair loops.";
@@ -32,25 +53,28 @@ export class TestRunTool implements ToolDefinition<typeof testRunSchema, Prepare
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = testRunSchema;
   private readonly failedAttemptsByTaskId = new Map<string, number>();
+  private readonly configuredCommands: NormalizedTestCommand[];
 
   public constructor(
     private readonly executor: ShellCommandExecutor,
     private readonly sandboxService: SandboxService,
-    private readonly allowedCommands: string[],
+    allowedCommands: TestCommandConfig[],
     private readonly maxRepairAttempts: number
-  ) {}
+  ) {
+    this.configuredCommands = allowedCommands.map(normalizeTestCommandConfig);
+  }
 
   public checkAvailability(): ToolAvailabilityResult {
-    return this.allowedCommands.length > 0
+    return this.configuredCommands.length > 0
       ? { available: true, reason: "test commands configured" }
       : { available: false, reason: "no test commands configured" };
   }
 
-  public get inputSchemaDescriptor(): ToolDefinition<typeof testRunSchema, PreparedTestRunInput>["inputSchemaDescriptor"] {
+  public get inputSchemaDescriptor(): ToolDefinition<typeof testRunSchema, PreparedTestRunInputWithMetadata>["inputSchemaDescriptor"] {
     return {
       properties: {
         command: {
-          enum: this.allowedCommands,
+          enum: allowedCommandInputs(this.configuredCommands),
           type: "string"
         },
         timeoutMs: {
@@ -65,37 +89,42 @@ export class TestRunTool implements ToolDefinition<typeof testRunSchema, Prepare
   public prepare(
     input: unknown,
     context: ToolExecutionContext
-  ): ToolPreparation<PreparedTestRunInput> {
+  ): ToolPreparation<PreparedTestRunInputWithMetadata> {
     const parsedInput = this.inputSchema.parse(input);
-    const command = parsedInput.command.trim();
-    if (!this.allowedCommands.includes(command)) {
+    const requestedCommand = parsedInput.command.trim();
+    const configuredCommand = resolveConfiguredCommand(requestedCommand, this.configuredCommands);
+    if (configuredCommand === null) {
       throw new AppError({
         code: "tool_validation_error",
         details: {
-          allowedCommands: this.allowedCommands
+          allowedCommands: allowedCommandInputs(this.configuredCommands)
         },
-        message: `test_run command "${command}" is not configured.`
+        message: `test_run command "${requestedCommand}" is not configured.`
       });
     }
 
     const preparedInput = this.sandboxService.prepareShellExecution({
-      command,
+      command: configuredCommand.command,
       cwd: context.cwd,
-      ...(parsedInput.timeoutMs !== undefined ? { timeoutMs: parsedInput.timeoutMs } : {})
+      ...resolveTimeoutInput(parsedInput.timeoutMs, configuredCommand.timeoutMs)
     });
 
     return {
       governance: {
         pathScope: preparedInput.sandboxPlan.pathScope,
-        summary: `Run configured test command ${command}`
+        summary: `Run configured test command ${configuredCommand.name}`
       },
-      preparedInput,
+      preparedInput: {
+        ...preparedInput,
+        commandCategory: configuredCommand.category,
+        commandName: configuredCommand.name
+      },
       sandbox: preparedInput.sandboxPlan
     };
   }
 
   public async execute(
-    input: PreparedTestRunInput,
+    input: PreparedTestRunInputWithMetadata,
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
     const result = await this.executor.execute({
@@ -116,15 +145,19 @@ export class TestRunTool implements ToolDefinition<typeof testRunSchema, Prepare
 
     const output = {
       command: input.command,
+      commandCategory: input.commandCategory,
+      commandName: input.commandName,
       durationMs: result.durationMs,
       exitCode: result.exitCode,
       failedAttempts,
+      failureCategory: passed ? null : classifyFailure(result.exitCode, result.timedOut, result.stdout, result.stderr),
       maxRepairAttempts: this.maxRepairAttempts,
       passed,
       stderr: result.stderr,
       stderrPreview: summarize(result.stderr),
       stdout: result.stdout,
       stdoutPreview: summarize(result.stdout),
+      suggestedNextStep: passed ? null : suggestNextStep(result.exitCode, result.timedOut, result.stdout, result.stderr),
       timedOut: result.timedOut
     };
 
@@ -132,7 +165,7 @@ export class TestRunTool implements ToolDefinition<typeof testRunSchema, Prepare
       return {
         details: output,
         errorCode: "tool_execution_error",
-        errorMessage: `Configured test command "${input.command}" failed after ${failedAttempts} attempts.`,
+        errorMessage: `Configured test command "${input.commandName}" failed after ${failedAttempts} attempts.`,
         success: false
       };
     }
@@ -148,9 +181,102 @@ export class TestRunTool implements ToolDefinition<typeof testRunSchema, Prepare
       output,
       success: true,
       summary: passed
-        ? `Configured test command "${input.command}" passed.`
-        : `Configured test command "${input.command}" failed; repair attempt ${failedAttempts}/${this.maxRepairAttempts}.`
+        ? `Configured test command "${input.commandName}" passed.`
+        : `Configured test command "${input.commandName}" failed; repair attempt ${failedAttempts}/${this.maxRepairAttempts}.`
     };
+  }
+}
+
+function normalizeTestCommandConfig(command: TestCommandConfig): NormalizedTestCommand {
+  if (typeof command === "string") {
+    return {
+      category: inferCommandCategory(command, command),
+      command,
+      name: command
+    };
+  }
+  return {
+    category: command.category ?? inferCommandCategory(command.name, command.command),
+    command: command.command,
+    name: command.name,
+    ...(command.timeoutMs !== undefined ? { timeoutMs: command.timeoutMs } : {})
+  };
+}
+
+function allowedCommandInputs(commands: NormalizedTestCommand[]): string[] {
+  return [...new Set(commands.flatMap((command) => [command.name, command.command]))];
+}
+
+function resolveConfiguredCommand(
+  requestedCommand: string,
+  commands: NormalizedTestCommand[]
+): NormalizedTestCommand | null {
+  return commands.find((command) => command.name === requestedCommand || command.command === requestedCommand) ?? null;
+}
+
+function resolveTimeoutInput(
+  requestedTimeoutMs: number | undefined,
+  configuredTimeoutMs: number | undefined
+): { timeoutMs?: number } {
+  const timeoutMs = requestedTimeoutMs ?? configuredTimeoutMs;
+  return timeoutMs === undefined ? {} : { timeoutMs };
+}
+
+function inferCommandCategory(
+  name: string,
+  command: string
+): NormalizedTestCommand["category"] {
+  const compact = `${name} ${command}`.toLowerCase();
+  if (compact.includes("lint")) {
+    return "lint";
+  }
+  if (compact.includes("typecheck") || compact.includes("tsc")) {
+    return "typecheck";
+  }
+  if (compact.includes("build")) {
+    return "build";
+  }
+  if (compact.includes("test") || compact.includes("vitest") || compact.includes("jest")) {
+    return "test";
+  }
+  return "other";
+}
+
+function classifyFailure(
+  exitCode: number,
+  timedOut: boolean,
+  stdout: string,
+  stderr: string
+): "assertion_failure" | "command_error" | "compile_error" | "timeout" {
+  if (timedOut) {
+    return "timeout";
+  }
+  const combined = `${stdout}\n${stderr}`.toLowerCase();
+  if (combined.includes("typescript") || combined.includes("tsc") || combined.includes("syntaxerror")) {
+    return "compile_error";
+  }
+  if (combined.includes("assert") || combined.includes("expected") || combined.includes("failed")) {
+    return "assertion_failure";
+  }
+  return exitCode === 0 ? "command_error" : "command_error";
+}
+
+function suggestNextStep(
+  exitCode: number,
+  timedOut: boolean,
+  stdout: string,
+  stderr: string
+): string {
+  const failureCategory = classifyFailure(exitCode, timedOut, stdout, stderr);
+  switch (failureCategory) {
+    case "timeout":
+      return "Inspect partial output, then rerun a narrower command or increase timeoutMs if the command is expected to be long-running.";
+    case "compile_error":
+      return "Fix the reported compile or syntax errors, then rerun this command.";
+    case "assertion_failure":
+      return "Read the failing assertion and related source, update the implementation or test, then rerun this command.";
+    case "command_error":
+      return "Inspect stdout/stderr for the command failure, fix the underlying issue, then rerun this command.";
   }
 }
 

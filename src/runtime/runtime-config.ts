@@ -15,6 +15,16 @@ const tokenBudgetConfigSchema = z.object({
   reservedOutput: z.number().int().nonnegative().optional()
 });
 
+const workflowTestCommandSchema = z.union([
+  z.string().min(1),
+  z.object({
+    category: z.enum(["build", "lint", "test", "typecheck", "other"]).optional(),
+    command: z.string().min(1),
+    name: z.string().min(1),
+    timeoutMs: z.number().int().positive().optional()
+  })
+]);
+
 const runtimeConfigFileSchema = z.object({
   allowedFetchHosts: z.array(z.string().min(1)).optional(),
   defaultMaxIterations: z.number().int().positive().optional(),
@@ -130,7 +140,7 @@ const runtimeConfigFileSchema = z.object({
           enabled: z.boolean().optional()
         })
         .optional(),
-      testCommands: z.array(z.string().min(1)).optional()
+      testCommands: z.array(workflowTestCommandSchema).optional()
     })
     .optional()
 });
@@ -144,8 +154,17 @@ export interface WorkflowRuntimeConfig {
   repoMap: {
     enabled: boolean;
   };
-  testCommands: string[];
+  testCommands: WorkflowTestCommand[];
 }
+
+export type WorkflowTestCommand =
+  | string
+  | {
+      category?: "build" | "lint" | "test" | "typecheck" | "other" | undefined;
+      command: string;
+      name: string;
+      timeoutMs?: number | undefined;
+    };
 
 export interface RuntimeConfig {
   allowedFetchHosts: string[];
@@ -489,8 +508,8 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     throw new Error("runtime tokenBudget.reservedOutput must be lower than outputLimit.");
   }
   const normalizedTestCommands = merged.workflow.testCommands
-    .map((command) => command.trim())
-    .filter(Boolean);
+    .map(normalizeWorkflowTestCommand)
+    .filter((command): command is WorkflowTestCommand => command !== null);
 
   return {
     ...merged,
@@ -681,6 +700,25 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
   }
 
   return runtimeConfigFileSchema.partial().parse(config);
+}
+
+function normalizeWorkflowTestCommand(command: WorkflowTestCommand): WorkflowTestCommand | null {
+  if (typeof command === "string") {
+    const trimmed = command.trim();
+    return trimmed.length === 0 ? null : trimmed;
+  }
+
+  const name = command.name.trim();
+  const shellCommand = command.command.trim();
+  if (name.length === 0 || shellCommand.length === 0) {
+    return null;
+  }
+  return {
+    ...(command.category !== undefined ? { category: command.category } : {}),
+    command: shellCommand,
+    name,
+    ...(command.timeoutMs !== undefined ? { timeoutMs: command.timeoutMs } : {})
+  };
 }
 
 function splitList(value: string | undefined): string[] {

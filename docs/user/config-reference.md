@@ -59,6 +59,12 @@ Runtime shell and test commands are capped by
 `30000`. Set `AGENT_SHELL_MAX_TIMEOUT_MS` to override it for long local builds
 or test suites without changing workspace config.
 
+`workflow.testCommands` accepts the existing string array form, such as
+`["npm test", "npm run build"]`, or named command entries:
+`[{ "name": "test", "command": "npm test", "category": "test", "timeoutMs": 120000 }]`.
+Use the `name` with `test_run` for stable prompts while keeping the shell
+command configurable per workspace.
+
 Streaming fallback policy: a provider that fails one streaming attempt because
 of a transient network error (DNS hiccup, `TypeError: fetch failed`, idle
 timeout, abort, etc.) falls back to a non-streaming request only for that
