@@ -1,6 +1,5 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -364,6 +363,120 @@ describe("coding workflow loop", () => {
     }
   });
 
+  it("guards code-change finals until verification runs", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    let sawVerificationGuard = false;
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db"),
+        workflow: {
+          failureGuidedRetry: {
+            enabled: true,
+            maxRepairAttempts: 2
+          },
+          repoMap: {
+            enabled: true
+          },
+          testCommands: [
+            {
+              category: "test",
+              command: "node check.js",
+              name: "test"
+            }
+          ]
+        }
+      },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        sawVerificationGuard =
+          sawVerificationGuard ||
+          input.messages.some((message) => message.content.includes("Completion verification required"));
+        if (toolMessages.length === 0) {
+          return toolCallResponse("Patch the check first.", [
+            {
+              input: {
+                action: "update_file",
+                newText: "process.exit(0);\n",
+                path: "check.js",
+                targetText: "process.exit(1);\n"
+              },
+              reason: "Make the check pass.",
+              toolCallId: "guard-write",
+              toolName: "file_write"
+            }
+          ]);
+        }
+        if (!sawVerificationGuard) {
+          return finalResponse("Implementation complete.");
+        }
+        if (!toolMessages.some((message) => message.content.includes("\"passed\":true") || message.content.includes("\"passed\": true"))) {
+          return toolCallResponse("Run verification before final.", [
+            {
+              input: {
+                command: "test"
+              },
+              reason: "Satisfy completion verification.",
+              toolCallId: "guard-test",
+              toolName: "test_run"
+            }
+          ]);
+        }
+        return finalResponse("Implementation complete and verified.");
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("implement and verify the check", workspaceRoot, handle.config);
+      runOptions.maxIterations = 10;
+      const result = await handle.service.runTask(runOptions);
+      const trace = handle.service.traceTask(result.task.taskId);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("verified");
+      expect(sawVerificationGuard).toBe(true);
+      expect(trace.some((event) => event.eventType === "completion_verification_missing")).toBe(true);
+      expect(trace.some((event) => event.eventType === "completion_verification_satisfied")).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("allows code-change finals that explicitly report unverified work", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.length === 0) {
+          return toolCallResponse("Write the change.", [
+            {
+              input: { action: "write_file", content: "changed\n", path: "unverified.txt" },
+              reason: "Create the requested file.",
+              toolCallId: "unverified-write",
+              toolName: "file_write"
+            }
+          ]);
+        }
+        return finalResponse("Change complete. Unverified: no configured verification command was available for this file-only update.");
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("write a file and explain verification", workspaceRoot, handle.config);
+      runOptions.maxIterations = 4;
+      const result = await handle.service.runTask(runOptions);
+      const trace = handle.service.traceTask(result.task.taskId);
+
+      expect(result.task.status).toBe("succeeded");
+      expect(result.output).toContain("Unverified");
+      expect(trace.some((event) => event.eventType === "completion_verification_missing")).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("allows read-only tasks to finish without file writes", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
     const handle = createApplication(workspaceRoot, {
@@ -689,7 +802,9 @@ describe("coding workflow loop", () => {
 });
 
 async function createWorkflowWorkspace(): Promise<string> {
-  const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-workflow-loop-"));
+  const tempRoot = join(process.cwd(), ".tmp-tests");
+  await fs.mkdir(tempRoot, { recursive: true });
+  const workspaceRoot = await fs.mkdtemp(join(tempRoot, "auto-talon-workflow-loop-"));
   tempPaths.push(workspaceRoot);
   await fs.writeFile(
     join(workspaceRoot, "package.json"),

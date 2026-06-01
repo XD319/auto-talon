@@ -31,6 +31,8 @@ export const TRACE_EVENT_TYPES = [
   "provider_request_succeeded",
   "provider_request_failed",
   "iteration_budget_pressure",
+  "completion_verification_missing",
+  "completion_verification_satisfied",
   "no_tools_tool_calls_ignored",
   "policy_decision",
   "approval_requested",
@@ -860,6 +862,8 @@ export type TraceEvent =
   | TraceEventBase<"provider_request_succeeded", ProviderRequestSucceededPayload>
   | TraceEventBase<"provider_request_failed", ProviderRequestFailedPayload>
   | TraceEventBase<"iteration_budget_pressure", IterationBudgetPressurePayload>
+  | TraceEventBase<"completion_verification_missing">
+  | TraceEventBase<"completion_verification_satisfied">
   | TraceEventBase<"no_tools_tool_calls_ignored", NoToolsToolCallsIgnoredPayload>
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>
   | TraceEventBase<"approval_requested", ApprovalRequestedPayload>

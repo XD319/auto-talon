@@ -128,6 +128,9 @@ interface ExecutionLoopState {
   onTaskEvent?: (event: RuntimeTaskEvent) => void;
   pendingToolCalls: ProviderToolCall[];
   completionIntentSeenAt: number | null;
+  completionVerificationGuardEmitted: boolean;
+  completionVerificationSatisfied: boolean;
+  completionVerificationSatisfiedEmitted: boolean;
   criticalBudgetPressureEmitted: boolean;
   postCompletionVerificationReads: number;
   selectedSkillContext: ContextFragment[];
@@ -345,6 +348,9 @@ export class ExecutionKernel {
         cwd: options.cwd,
         costWarnedToolNames: [],
         completionIntentSeenAt: null,
+        completionVerificationGuardEmitted: false,
+        completionVerificationSatisfied: false,
+        completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
         managedAbortController,
@@ -436,6 +442,9 @@ export class ExecutionKernel {
         cwd: resumedTask.cwd,
         costWarnedToolNames: [],
         completionIntentSeenAt: null,
+        completionVerificationGuardEmitted: false,
+        completionVerificationSatisfied: false,
+        completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
         managedAbortController,
@@ -931,12 +940,22 @@ export class ExecutionKernel {
         }
 
         if (providerResponse.kind === "final") {
+          const verificationDecision = this.evaluateFinalVerification(
+            state,
+            messages,
+            task,
+            iteration,
+            providerResponse.message
+          );
+          if (verificationDecision.kind === "guard") {
+            continue;
+          }
           return this.completeTaskSuccess(
             state,
             messages,
             availableTools,
             task,
-            providerResponse.message
+            verificationDecision.finalOutput
           );
         }
 
@@ -1070,6 +1089,28 @@ export class ExecutionKernel {
           writeToolResult
         ) {
           state.writeToolSucceeded = true;
+          state.completionVerificationSatisfied = false;
+        }
+        if (
+          outcome.kind === "completed" &&
+          isSuccessfulVerificationToolCall(toolCall.toolName, outcome.result)
+        ) {
+          state.completionVerificationSatisfied = true;
+          if (!state.completionVerificationSatisfiedEmitted) {
+            this.dependencies.traceService.record({
+              actor: "runtime.kernel",
+              eventType: "completion_verification_satisfied",
+              payload: {
+                iteration,
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName
+              },
+              stage: "completion",
+              summary: "Completion verification evidence recorded",
+              taskId: task.taskId
+            });
+            state.completionVerificationSatisfiedEmitted = true;
+          }
         }
         const toolResultOutput = toolResultOutputForModel(outcome.result);
         const toolSummary = toolResultSummary(outcome.result, toolCall.toolName);
@@ -1414,6 +1455,71 @@ export class ExecutionKernel {
     }
     state.postCompletionVerificationReads += 1;
     return "continue";
+  }
+
+  private evaluateFinalVerification(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    task: TaskRecord,
+    iteration: number,
+    finalOutput: string
+  ): { finalOutput: string; kind: "complete" } | { kind: "guard" } {
+    if (!state.writeToolSucceeded || state.completionVerificationSatisfied) {
+      return {
+        finalOutput,
+        kind: "complete"
+      };
+    }
+
+    if (mentionsUnverifiedWork(finalOutput)) {
+      this.recordCompletionVerificationMissing(task, iteration, "model_reported_unverified");
+      return {
+        finalOutput,
+        kind: "complete"
+      };
+    }
+
+    if (!state.completionVerificationGuardEmitted) {
+      const guardMessage: ConversationMessage = {
+        content:
+          "Completion verification required: workspace files were changed after the last successful verification. Before finalizing, run an appropriate configured test/build/lint/typecheck command, or clearly state the unverified items and why verification could not be run.",
+        metadata: {
+          privacyLevel: "internal",
+          retentionKind: "session",
+          sourceType: "system_prompt"
+        },
+        role: "system"
+      };
+      messages.push(guardMessage);
+      state.turnProviderMessages = messages;
+      state.completionVerificationGuardEmitted = true;
+      this.recordCompletionVerificationMissing(task, iteration, "guard_prompted");
+      return { kind: "guard" };
+    }
+
+    this.recordCompletionVerificationMissing(task, iteration, "runtime_appended_warning");
+    return {
+      finalOutput: `${finalOutput}\n\nUnverified: workspace changes were made after the last successful verification, and no verification command was recorded.`,
+      kind: "complete"
+    };
+  }
+
+  private recordCompletionVerificationMissing(
+    task: TaskRecord,
+    iteration: number,
+    reason: "guard_prompted" | "model_reported_unverified" | "runtime_appended_warning"
+  ): void {
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "completion_verification_missing",
+      payload: {
+        iteration,
+        reason
+      },
+      stage: "completion",
+      summary: "Completion verification is missing after workspace changes",
+      taskId: task.taskId
+    });
   }
 
   private async requestFinalSummaryWithoutTools(
@@ -1849,6 +1955,55 @@ function toolResultSummary(result: ToolExecutionResult, toolName: string): strin
   return result.success
     ? result.summary
     : `Tool ${toolName} failed: ${result.errorMessage}`;
+}
+
+function isSuccessfulVerificationToolCall(toolName: string, result: ToolExecutionResult): boolean {
+  if (!result.success) {
+    return false;
+  }
+  const output = result.output;
+  if (toolName === "test_run") {
+    return (
+      typeof output === "object" &&
+      output !== null &&
+      !Array.isArray(output) &&
+      (output as { passed?: unknown }).passed === true
+    );
+  }
+  if (toolName !== "shell" && toolName !== "bash" && toolName !== "Bash") {
+    return false;
+  }
+  if (typeof output !== "object" || output === null || Array.isArray(output)) {
+    return false;
+  }
+  const exitCode = (output as { exitCode?: unknown }).exitCode;
+  const command = (output as { command?: unknown }).command;
+  return exitCode === 0 && typeof command === "string" && isVerificationCommand(command);
+}
+
+function isVerificationCommand(command: string): boolean {
+  const compact = command.toLowerCase();
+  return (
+    compact.includes("test") ||
+    compact.includes("build") ||
+    compact.includes("lint") ||
+    compact.includes("typecheck") ||
+    compact.includes("tsc")
+  );
+}
+
+function mentionsUnverifiedWork(message: string): boolean {
+  const compact = message.toLowerCase();
+  return (
+    compact.includes("unverified") ||
+    compact.includes("not verified") ||
+    compact.includes("could not verify") ||
+    compact.includes("couldn't verify") ||
+    compact.includes("unable to verify") ||
+    compact.includes("未验证") ||
+    compact.includes("无法验证") ||
+    compact.includes("没有验证")
+  );
 }
 
 function hasCompletionIntent(message: string): boolean {
