@@ -91,7 +91,7 @@ export class ToolOrchestrator {
   }
 
   public describeTool(toolName: string): ProviderToolDescriptor | null {
-    const tool = this.tools.get(toolName);
+    const tool = this.resolveTool(toolName);
     if (tool === undefined) {
       return null;
     }
@@ -106,11 +106,15 @@ export class ToolOrchestrator {
     };
   }
 
+  private resolveTool(toolName: string): ToolDefinition | undefined {
+    return this.tools.get(toolName) ?? (toolName === "ask_user" ? this.tools.get("AskUserQuestion") : undefined);
+  }
+
   public async execute(
     request: ToolCallRequest,
     context: ToolExecutionContext
   ): Promise<ToolExecutionOutcome> {
-    const tool = this.tools.get(request.toolName);
+    const tool = this.resolveTool(request.toolName);
     const riskLevel = tool?.riskLevel ?? "high";
     let toolCall = this.ensureToolCallRecord(
       request,
@@ -755,6 +759,7 @@ export class ToolOrchestrator {
       options: preparedInput.options,
       placeholder: preparedInput.placeholder,
       question: preparedInput.question,
+      questions: preparedInput.questions,
       reason: preparedInput.reason,
       requesterUserId: context.userId,
       taskId: request.taskId,
@@ -812,10 +817,25 @@ export class ToolOrchestrator {
       );
     }
 
-    const output = {
+    const output: JsonObject = {
       answerOptionId: prompt.answerOptionId,
+      answers: prompt.answers ?? deriveLegacyClarifyAnswers(prompt),
       answerText: prompt.answerText,
-      promptId: prompt.promptId
+      promptId: prompt.promptId,
+      questions: prompt.questions.map((question) => ({
+        allowCustomAnswer: question.allowCustomAnswer,
+        ...(question.header !== undefined ? { header: question.header } : {}),
+        multiSelect: question.multiSelect,
+        options: question.options.map((option) => ({
+          id: option.id,
+          label: option.label,
+          ...(option.description !== undefined ? { description: option.description } : {}),
+          ...(option.preview !== undefined ? { preview: option.preview } : {})
+        })),
+        placeholder: question.placeholder,
+        question: question.question
+      })),
+      response: prompt.response ?? formatClarifyResponse(prompt)
     };
     const summary = `User answered clarify prompt "${prompt.question}"`;
     const finishedCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {
@@ -863,8 +883,35 @@ export class ToolOrchestrator {
   }
 }
 
+function deriveLegacyClarifyAnswers(prompt: ClarifyPromptRecord): Record<string, string | string[]> | null {
+  if (prompt.answerText !== null) {
+    return { [prompt.question]: prompt.answerText };
+  }
+  if (prompt.answerOptionId !== null) {
+    const option = prompt.options.find((item) => item.id === prompt.answerOptionId);
+    if (option !== undefined) {
+      return { [prompt.question]: option.label };
+    }
+  }
+  return null;
+}
+
+function formatClarifyResponse(prompt: ClarifyPromptRecord): string | null {
+  const answers = prompt.answers ?? deriveLegacyClarifyAnswers(prompt);
+  if (answers === null) {
+    return null;
+  }
+  return Object.entries(answers)
+    .map(([question, answer]) => {
+      const answerText = Array.isArray(answer) ? answer.join(", ") : answer;
+      return `${question}\nAnswer: ${answerText}`;
+    })
+    .join("\n\n");
+}
+
 function isMutationTool(tool: ToolDefinition): boolean {
   return (
+    tool.capability === "interaction.ask_user" ||
     tool.capability === "filesystem.write" ||
     tool.sideEffectLevel === "workspace_mutation" ||
     tool.sideEffectLevel === "external_mutation"

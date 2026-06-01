@@ -14,6 +14,9 @@ export interface ClarifyPromptViewModel {
   customActive: boolean;
   customLines: string[];
   prompt: ClarifyPromptRecord;
+  questionCount?: number;
+  questionIndex?: number;
+  selectedOptionIds?: string[];
   selectedIndex: number;
 }
 
@@ -44,7 +47,7 @@ function ApprovalPromptCard({ approval, selectedIndex, toolCall }: ApprovalPromp
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={1}>
-      <Text color={theme.warn}>Approval Prompt</Text>
+      <Text color={theme.warn}>Tool Permission</Text>
       <Text>
         <Text color={theme.fg}>{approval.toolName}</Text>
         <Text color={theme.muted}> [{toolCall?.riskLevel ?? "unknown"}]</Text>
@@ -69,20 +72,41 @@ function ClarifyPromptCard({
   customActive,
   customLines,
   prompt,
+  questionCount,
+  questionIndex,
+  selectedOptionIds = [],
   selectedIndex
 }: ClarifyPromptViewModel): React.ReactElement {
+  const currentQuestion = questionIndex === undefined ? null : (prompt.questions[questionIndex] ?? null);
+  const multiSelect = currentQuestion?.multiSelect === true;
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={1}>
-      <Text color={theme.warn}>Clarify Prompt</Text>
+      <Text color={theme.warn}>
+        Question
+        {questionCount !== undefined && questionCount > 1 && questionIndex !== undefined
+          ? ` ${questionIndex + 1}/${questionCount}`
+          : ""}
+      </Text>
       <Text color={theme.fg}>{prompt.question}</Text>
       {prompt.reason !== null ? <Text color={theme.muted}>reason {prompt.reason}</Text> : null}
-      <Text color={theme.muted}>arrows choose, Tab custom, Enter submit, Ctrl+C cancel</Text>
+      <Text color={theme.muted}>
+        {multiSelect
+          ? "arrows choose, Space toggle, Tab custom, Enter submit, Ctrl+C cancel"
+          : "arrows choose, Tab custom, Enter submit, Ctrl+C cancel"}
+      </Text>
       <Box marginTop={1} flexDirection="column">
         {prompt.options.map((option, index) => (
-          <Text key={option.id} color={!customActive && index === selectedIndex ? theme.emphasis : theme.fg}>
-            {!customActive && index === selectedIndex ? "> " : "  "}
-            {option.label}
-          </Text>
+          <Box key={option.id} flexDirection="column">
+            <Text color={!customActive && index === selectedIndex ? theme.emphasis : theme.fg}>
+              {!customActive && index === selectedIndex ? "> " : "  "}
+              {selectedOptionIds.includes(option.id) ? "[x] " : "    "}
+              {option.label}
+            </Text>
+            {option.description !== undefined ? (
+              <Text color={theme.muted}>    {option.description}</Text>
+            ) : null}
+            {option.preview !== undefined ? <Text color={theme.muted}>    {option.preview}</Text> : null}
+          </Box>
         ))}
       </Box>
       {prompt.allowCustomAnswer ? (

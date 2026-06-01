@@ -286,12 +286,21 @@ const clarifyAnswerSchema = z
   .object({
     answerOptionId: z.string().min(1).optional(),
     answerText: z.string().min(1).optional(),
+    answers: z.record(z.string().min(1), z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])).optional(),
+    response: z.string().min(1).optional(),
     promptId: z.string().min(1),
     reviewerId: z.string().min(1)
   })
-  .refine((value) => value.answerOptionId !== undefined || value.answerText !== undefined, {
-    message: "answerOptionId or answerText is required."
-  });
+  .refine(
+    (value) =>
+      value.answerOptionId !== undefined ||
+      value.answerText !== undefined ||
+      value.answers !== undefined ||
+      value.response !== undefined,
+    {
+      message: "answerOptionId, answerText, answers, or response is required."
+    }
+  );
 
 export class AgentApplicationService {
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {}
@@ -951,7 +960,12 @@ export class AgentApplicationService {
   public async answerClarifyPrompt(
     promptId: string,
     reviewerId: string,
-    input: { answerOptionId?: string; answerText?: string }
+    input: {
+      answerOptionId?: string;
+      answerText?: string;
+      answers?: Record<string, string | string[]>;
+      response?: string;
+    }
   ): Promise<ClarifyActionResult> {
     this.reconcileExpiredApprovals();
     const parsed = clarifyAnswerSchema.parse({
@@ -960,11 +974,13 @@ export class AgentApplicationService {
       reviewerId
     });
     const prompt = this.dependencies.clarifyService.answer({
-      promptId: parsed.promptId,
-      reviewerId: parsed.reviewerId,
-      ...(parsed.answerOptionId !== undefined ? { answerOptionId: parsed.answerOptionId } : {}),
-      ...(parsed.answerText !== undefined ? { answerText: parsed.answerText } : {})
-    });
+        promptId: parsed.promptId,
+        reviewerId: parsed.reviewerId,
+        ...(parsed.answerOptionId !== undefined ? { answerOptionId: parsed.answerOptionId } : {}),
+        ...(parsed.answerText !== undefined ? { answerText: parsed.answerText } : {}),
+        ...(parsed.answers !== undefined ? { answers: parsed.answers } : {}),
+        ...(parsed.response !== undefined ? { response: parsed.response } : {})
+      });
     const checkpoint = this.dependencies.findExecutionCheckpoint(prompt.taskId);
     if (checkpoint === null) {
       throw new AppError({
@@ -977,20 +993,19 @@ export class AgentApplicationService {
       actor: `reviewer.${reviewerId}`,
       eventType: "clarify_resolved",
       payload: {
-        answerOptionId: prompt.answerOptionId,
-        answerText: prompt.answerText,
-        promptId: prompt.promptId,
-        status: "answered"
+          answerOptionId: prompt.answerOptionId,
+          answers: prompt.answers,
+          answerText: prompt.answerText,
+          promptId: prompt.promptId,
+          response: prompt.response,
+          status: "answered"
       },
       stage: "governance",
       summary: `Clarification answered for task ${prompt.taskId}`,
       taskId: prompt.taskId
     });
 
-    const answerText =
-      prompt.answerText ??
-      prompt.options.find((item) => item.id === prompt.answerOptionId)?.label ??
-      "";
+    const answerText = formatClarifyAnswerForModel(prompt);
     const updatedCheckpoint = {
       ...checkpoint,
       messages: [
@@ -1611,6 +1626,39 @@ function summarizeText(value: string, maxLength: number): string {
 function extractMemoryKeywords(content: string): string[] {
   const matches = content.toLowerCase().match(/[a-z0-9_./:-]{3,}/gu) ?? [];
   return [...new Set(matches)].slice(0, 16);
+}
+
+function formatClarifyAnswerForModel(prompt: ClarifyPromptRecord): string {
+  if (prompt.response !== null) {
+    return prompt.response;
+  }
+  const answers = prompt.answers ?? deriveLegacyClarifyAnswers(prompt);
+  if (answers !== null) {
+    return Object.entries(answers)
+      .map(([question, answer]) => {
+        const answerText = Array.isArray(answer) ? answer.join(", ") : answer;
+        return `${question}\nAnswer: ${answerText}`;
+      })
+      .join("\n\n");
+  }
+  return (
+    prompt.answerText ??
+    prompt.options.find((item) => item.id === prompt.answerOptionId)?.label ??
+    ""
+  );
+}
+
+function deriveLegacyClarifyAnswers(prompt: ClarifyPromptRecord): Record<string, string | string[]> | null {
+  if (prompt.answerText !== null) {
+    return { [prompt.question]: prompt.answerText };
+  }
+  if (prompt.answerOptionId !== null) {
+    const option = prompt.options.find((item) => item.id === prompt.answerOptionId);
+    if (option !== undefined) {
+      return { [prompt.question]: option.label };
+    }
+  }
+  return null;
 }
 
 function isJsonObject(value: JsonValue | undefined): value is JsonObject {

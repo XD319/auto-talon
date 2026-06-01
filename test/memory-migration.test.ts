@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it } from "vitest";
 
-import { runMigrations } from "../src/storage/migrations.js";
+import { RUNTIME_SCHEMA_VERSION, runMigrations } from "../src/storage/migrations.js";
 import { SqliteMemoryRepository } from "../src/storage/repositories/memory-repository.js";
 
 describe("memory scope migration", () => {
@@ -75,7 +75,7 @@ describe("memory scope migration", () => {
       expect(migrated?.scope).toBe("profile");
       expect(migrated?.retentionPolicy.kind).toBe("profile");
       const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
-      expect(userVersion.user_version).toBe(12);
+      expect(userVersion.user_version).toBe(RUNTIME_SCHEMA_VERSION);
     } finally {
       db.close();
       rmSync(workspace, { force: true, recursive: true });

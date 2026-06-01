@@ -290,6 +290,8 @@ export interface ClarifyResolvedPayload extends JsonObject {
   status: "answered" | "timed_out";
   answerOptionId?: string | null;
   answerText?: string | null;
+  answers?: Record<string, string | string[]> | null;
+  response?: string | null;
 }
 
 export interface ClarifyCancelledPayload extends JsonObject {

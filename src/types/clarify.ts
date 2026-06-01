@@ -12,6 +12,17 @@ export type ClarifyPromptStatus = (typeof CLARIFY_PROMPT_STATUSES)[number];
 export interface ClarifyPromptOption {
   id: string;
   label: string;
+  description?: string;
+  preview?: string;
+}
+
+export interface ClarifyPromptQuestion {
+  question: string;
+  header?: string;
+  options: ClarifyPromptOption[];
+  allowCustomAnswer: boolean;
+  placeholder: string | null;
+  multiSelect: boolean;
 }
 
 export interface ClarifyPromptRecord {
@@ -22,6 +33,7 @@ export interface ClarifyPromptRecord {
   question: string;
   reason: string | null;
   options: ClarifyPromptOption[];
+  questions: ClarifyPromptQuestion[];
   allowCustomAnswer: boolean;
   placeholder: string | null;
   status: ClarifyPromptStatus;
@@ -30,6 +42,8 @@ export interface ClarifyPromptRecord {
   answeredAt: string | null;
   answerOptionId: string | null;
   answerText: string | null;
+  answers: Record<string, string | string[]> | null;
+  response: string | null;
   reviewerId: string | null;
   errorCode: RuntimeErrorCode | null;
 }
@@ -42,6 +56,7 @@ export interface ClarifyPromptDraft {
   question: string;
   reason?: string | null;
   options?: ClarifyPromptOption[];
+  questions?: ClarifyPromptQuestion[];
   allowCustomAnswer: boolean;
   placeholder?: string | null;
   requestedAt: string;
@@ -53,6 +68,8 @@ export interface ClarifyPromptUpdatePatch {
   answeredAt?: string | null;
   answerOptionId?: string | null;
   answerText?: string | null;
+  answers?: Record<string, string | string[]> | null;
+  response?: string | null;
   reviewerId?: string | null;
   errorCode?: RuntimeErrorCode | null;
 }

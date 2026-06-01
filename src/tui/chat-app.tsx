@@ -98,6 +98,9 @@ export function ChatTuiApp({
   );
   const [approvalSelectionIndex, setApprovalSelectionIndex] = React.useState(0);
   const [clarifySelectionIndex, setClarifySelectionIndex] = React.useState(0);
+  const [clarifyQuestionIndex, setClarifyQuestionIndex] = React.useState(0);
+  const [clarifyAnswers, setClarifyAnswers] = React.useState<Record<string, string | string[]>>({});
+  const [clarifyMultiSelections, setClarifyMultiSelections] = React.useState<Record<number, string[]>>({});
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
   const [transcriptScrollOffset, setTranscriptScrollOffset] = React.useState(0);
@@ -193,6 +196,9 @@ export function ChatTuiApp({
   React.useEffect(() => {
     if (controller.pendingClarifyPrompt !== null) {
       setClarifySelectionIndex(0);
+      setClarifyQuestionIndex(0);
+      setClarifyAnswers({});
+      setClarifyMultiSelections({});
       setClarifyCustomActive(false);
     }
   }, [controller.pendingClarifyPrompt?.promptId]);
@@ -655,12 +661,125 @@ export function ChatTuiApp({
     ]
   );
 
+  const activeClarifyQuestion =
+    controller.pendingClarifyPrompt?.questions[clarifyQuestionIndex] ??
+    (controller.pendingClarifyPrompt === null
+      ? null
+      : {
+          allowCustomAnswer: controller.pendingClarifyPrompt.allowCustomAnswer,
+          multiSelect: false,
+          options: controller.pendingClarifyPrompt.options,
+          placeholder: controller.pendingClarifyPrompt.placeholder,
+          question: controller.pendingClarifyPrompt.question
+        });
+  const activeClarifyPrompt =
+    controller.pendingClarifyPrompt === null || activeClarifyQuestion === null
+      ? null
+      : {
+          ...controller.pendingClarifyPrompt,
+          allowCustomAnswer: activeClarifyQuestion.allowCustomAnswer,
+          options: activeClarifyQuestion.options,
+          placeholder: activeClarifyQuestion.placeholder,
+          question: activeClarifyQuestion.question
+        };
+  const clarifyQuestionCount = controller.pendingClarifyPrompt?.questions.length ?? 0;
+  const activeClarifySelectedOptionIds = clarifyMultiSelections[clarifyQuestionIndex] ?? [];
+
+  const submitClarifyAnswer = React.useCallback(
+    (answer: string | string[], legacyOptionId?: string) => {
+      const prompt = controller.pendingClarifyPrompt;
+      const question = activeClarifyQuestion;
+      if (prompt === null || question === null) {
+        return;
+      }
+      const nextAnswers = {
+        ...clarifyAnswers,
+        [question.question]: answer
+      };
+      const response = formatClarifyResponse(nextAnswers);
+      if (prompt.questions.length <= 1) {
+        const legacyInput =
+          typeof answer === "string" && legacyOptionId !== undefined && !question.multiSelect
+            ? { answerOptionId: legacyOptionId }
+            : typeof answer === "string" && legacyOptionId === undefined
+              ? { answerText: answer }
+              : {};
+        void controller.answerPendingClarifyPrompt({
+          ...legacyInput,
+          answers: nextAnswers,
+          response
+        });
+        return;
+      }
+      if (clarifyQuestionIndex + 1 < prompt.questions.length) {
+        setClarifyAnswers(nextAnswers);
+        setClarifyQuestionIndex((current) => current + 1);
+        setClarifySelectionIndex(0);
+        setClarifyCustomActive(false);
+        return;
+      }
+      void controller.answerPendingClarifyPrompt({ answers: nextAnswers, response });
+    },
+    [
+      activeClarifyQuestion,
+      clarifyAnswers,
+      clarifyQuestionIndex,
+      controller
+    ]
+  );
+
+  const toggleActiveClarifyOption = React.useCallback(() => {
+    const question = activeClarifyQuestion;
+    if (question === null || !question.multiSelect) {
+      return;
+    }
+    const option = question.options[clarifySelectionIndex];
+    if (option === undefined) {
+      return;
+    }
+    setClarifyMultiSelections((current) => {
+      const selected = current[clarifyQuestionIndex] ?? [];
+      const nextSelected = selected.includes(option.id)
+        ? selected.filter((id) => id !== option.id)
+        : [...selected, option.id];
+      return {
+        ...current,
+        [clarifyQuestionIndex]: nextSelected
+      };
+    });
+  }, [activeClarifyQuestion, clarifyQuestionIndex, clarifySelectionIndex]);
+
+  const submitActiveClarifyOptions = React.useCallback(() => {
+    const question = activeClarifyQuestion;
+    if (question === null) {
+      return;
+    }
+    if (question.multiSelect) {
+      const selectedLabels = question.options
+        .filter((option) => activeClarifySelectedOptionIds.includes(option.id))
+        .map((option) => option.label);
+      if (selectedLabels.length > 0) {
+        submitClarifyAnswer(selectedLabels);
+      }
+      return;
+    }
+    const option = question.options[clarifySelectionIndex];
+    if (option !== undefined) {
+      submitClarifyAnswer(option.label, option.id);
+    }
+  }, [
+    activeClarifyQuestion,
+    activeClarifySelectedOptionIds,
+    clarifySelectionIndex,
+    submitClarifyAnswer
+  ]);
+
   const activePrompt =
-    controller.pendingClarifyPrompt !== null
+    activeClarifyPrompt !== null
       ? {
           kind: "clarify" as const,
           customActive: clarifyCustomActive,
-          optionCount: controller.pendingClarifyPrompt.options.length
+          optionCount: activeClarifyPrompt.options.length
         }
       : controller.pendingApproval !== null
         ? { kind: "approval" as const }
@@ -719,9 +838,9 @@ export function ChatTuiApp({
         setApprovalSelectionIndex((current) => clampSelection(current + delta, APPROVAL_ACTIONS.length));
         return;
       }
-      if (controller.pendingClarifyPrompt !== null && !clarifyCustomActive) {
+      if (activeClarifyPrompt !== null && !clarifyCustomActive) {
         setClarifySelectionIndex((current) =>
-          clampSelection(current + delta, controller.pendingClarifyPrompt!.options.length)
+          clampSelection(current + delta, activeClarifyPrompt.options.length)
         );
       }
     },
@@ -739,26 +858,24 @@ export function ChatTuiApp({
         }
         return;
       }
-      if (controller.pendingClarifyPrompt !== null) {
+      if (activeClarifyPrompt !== null) {
         if (clarifyCustomActive) {
           const answerText = value.trim();
           if (answerText.length > 0) {
-            void controller.answerPendingClarifyPrompt({ answerText });
+            submitClarifyAnswer(answerText);
           }
           return;
         }
-        const option = controller.pendingClarifyPrompt.options[clarifySelectionIndex];
-        if (option !== undefined) {
-          void controller.answerPendingClarifyPrompt({ answerOptionId: option.id });
-        }
+        submitActiveClarifyOptions();
       }
     },
     onPromptTab: () => {
-      if (controller.pendingClarifyPrompt?.allowCustomAnswer !== true) {
+      if (activeClarifyPrompt?.allowCustomAnswer !== true) {
         return;
       }
       setClarifyCustomActive((current) => !current);
     },
+    onPromptToggleSelection: toggleActiveClarifyOption,
     onExternalEditorEdit: openExternalEditor,
     onPageJump: jumpTranscript,
     onPageScroll: scrollTranscript,
@@ -864,12 +981,15 @@ export function ChatTuiApp({
               }
         }
         clarifyPrompt={
-          controller.pendingClarifyPrompt === null
+          activeClarifyPrompt === null
             ? null
             : {
                 customActive: clarifyCustomActive,
                 customLines: textInput.lines,
-                prompt: controller.pendingClarifyPrompt,
+                prompt: activeClarifyPrompt,
+                questionIndex: clarifyQuestionIndex,
+                questionCount: clarifyQuestionCount,
+                selectedOptionIds: activeClarifySelectedOptionIds,
                 selectedIndex: clarifySelectionIndex
               }
         }
@@ -1722,6 +1842,15 @@ function resolveThreadIdForList(
         ? `No thread matched prefix '${prefix}'.`
         : `Ambiguous thread prefix '${prefix}':\n${matches.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
   };
+}
+
+function formatClarifyResponse(answers: Record<string, string | string[]>): string {
+  return Object.entries(answers)
+    .map(([question, answer]) => {
+      const answerText = Array.isArray(answer) ? answer.join(", ") : answer;
+      return `${question}\nAnswer: ${answerText}`;
+    })
+    .join("\n\n");
 }
 
 function resolveNextActionByPrefix(

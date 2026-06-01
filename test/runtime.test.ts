@@ -433,6 +433,301 @@ describe("Phase 2 governance runtime", () => {
     }
   });
 
+  it("accepts legacy ask_user string options", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    let callCount = 0;
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider((input) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            kind: "tool_calls",
+            message: "Need animation preference.",
+            toolCalls: [
+              {
+                input: {
+                  options: ["Keep current", "Add more animation", "Adjust animation"],
+                  question: "How should the animation be handled?"
+                },
+                reason: "Need a preference before editing.",
+                toolCallId: "ask-string-options",
+                toolName: "ask_user"
+              }
+            ],
+            usage: {
+              inputTokens: 8,
+              outputTokens: 4
+            }
+          };
+        }
+
+        return {
+          kind: "final",
+          message: `Preference: ${input.messages.at(-1)?.content ?? "missing"}`,
+          usage: {
+            inputTokens: 6,
+            outputTokens: 3
+          }
+        };
+      })
+    });
+
+    try {
+      const options = createDefaultRunOptions("ask animation preference", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(options);
+      expect(initial.task.status).toBe("waiting_clarification");
+      const prompt = handle.service.listPendingClarifyPrompts()[0];
+      expect(prompt?.options.map((option) => option.label)).toEqual([
+        "Keep current",
+        "Add more animation",
+        "Adjust animation"
+      ]);
+
+      const resumed = await handle.service.answerClarifyPrompt(prompt?.promptId ?? "", "reviewer-clarify", {
+        answerOptionId: "q1-option-2"
+      });
+
+      expect(resumed.task.status).toBe("succeeded");
+      expect(resumed.output).toContain("Add more animation");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("accepts Claude-style AskUserQuestion multi-question payloads", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    let callCount = 0;
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider((input) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            kind: "tool_calls",
+            message: "Need product choices.",
+            toolCalls: [
+              {
+                input: {
+                  questions: [
+                    {
+                      options: [
+                        {
+                          description: "Use the quieter existing visual language.",
+                          label: "Conservative"
+                        },
+                        {
+                          description: "Make the interaction feel more expressive.",
+                          label: "Expressive"
+                        }
+                      ],
+                      question: "Which design direction should I use?"
+                    },
+                    {
+                      allowCustomAnswer: true,
+                      options: ["Desktop", "Mobile"],
+                      question: "Which viewport matters most?"
+                    }
+                  ],
+                  reason: "Need direction before implementation."
+                },
+                reason: "Ask a batched user question.",
+                toolCallId: "ask-claude-style",
+                toolName: "AskUserQuestion"
+              }
+            ],
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5
+            }
+          };
+        }
+
+        return {
+          kind: "final",
+          message: `Choices: ${input.messages.at(-1)?.content ?? "missing"}`,
+          usage: {
+            inputTokens: 6,
+            outputTokens: 3
+          }
+        };
+      })
+    });
+
+    try {
+      const options = createDefaultRunOptions("ask batched questions", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(options);
+      expect(initial.task.status).toBe("waiting_clarification");
+      const prompt = handle.service.listPendingClarifyPrompts()[0];
+      expect(prompt?.questions).toHaveLength(2);
+      expect(prompt?.questions[0]?.options[0]?.description).toBe("Use the quieter existing visual language.");
+
+      const resumed = await handle.service.answerClarifyPrompt(prompt?.promptId ?? "", "reviewer-clarify", {
+        answers: {
+          "Which design direction should I use?": "Expressive",
+          "Which viewport matters most?": "Desktop"
+        }
+      });
+
+      expect(resumed.task.status).toBe("succeeded");
+      expect(resumed.output).toContain("Which design direction should I use?");
+      expect(resumed.output).toContain("Expressive");
+      expect(resumed.output).toContain("Which viewport matters most?");
+      expect(resumed.output).toContain("Desktop");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("accepts stringified AskUserQuestion options and boolean fields", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "tool_calls",
+        message: "Need animation preference.",
+        toolCalls: [
+          {
+            input: {
+              allowCustomAnswer: "true",
+              options: JSON.stringify([
+                {
+                  description: "在背景添加闪烁的星空效果，让游戏更有氛围",
+                  id: "stars",
+                  label: "背景星空粒子动画"
+                },
+                {
+                  description: "蛇移动时添加速度线，增强运动感",
+                  id: "speed",
+                  label: "速度线/运动模糊效果"
+                }
+              ]),
+              question: "您想要添加哪些类型的动画效果？请选择一个或多个：",
+              reason: "游戏已经有了很多动画效果，我需要了解您想要添加什么类型的动画效果"
+            },
+            reason: "Ask a user question with provider-stringified fields.",
+            toolCallId: "ask-stringified-options",
+            toolName: "AskUserQuestion"
+          }
+        ],
+        usage: {
+          inputTokens: 8,
+          outputTokens: 4
+        }
+      }))
+    });
+
+    try {
+      const options = createDefaultRunOptions("add animation", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(options);
+
+      expect(initial.error).toBeUndefined();
+      expect(initial.task.status).toBe("waiting_clarification");
+      const prompt = handle.service.listPendingClarifyPrompts()[0];
+      expect(prompt?.allowCustomAnswer).toBe(true);
+      expect(prompt?.options.map((option) => option.id)).toEqual(["stars", "speed"]);
+      expect(prompt?.options[0]?.description).toBe("在背景添加闪烁的星空效果，让游戏更有氛围");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("accepts stringified AskUserQuestion questions", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "tool_calls",
+        message: "Need choices.",
+        toolCalls: [
+          {
+            input: {
+              questions: JSON.stringify([
+                {
+                  multiSelect: "true",
+                  options: ["Stars", "Speed lines"],
+                  question: "Which effects?"
+                }
+              ])
+            },
+            reason: "Ask with stringified questions.",
+            toolCallId: "ask-stringified-questions",
+            toolName: "AskUserQuestion"
+          }
+        ],
+        usage: {
+          inputTokens: 8,
+          outputTokens: 4
+        }
+      }))
+    });
+
+    try {
+      const options = createDefaultRunOptions("ask stringified questions", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(options);
+
+      expect(initial.error).toBeUndefined();
+      expect(initial.task.status).toBe("waiting_clarification");
+      const prompt = handle.service.listPendingClarifyPrompts()[0];
+      expect(prompt?.questions[0]?.multiSelect).toBe(true);
+      expect(prompt?.questions[0]?.options.map((option) => option.label)).toEqual(["Stars", "Speed lines"]);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("fails malformed stringified AskUserQuestion options with a field-specific validation error", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "tool_calls",
+        message: "Need choices.",
+        toolCalls: [
+          {
+            input: {
+              options: "[not-json",
+              question: "Which effects?"
+            },
+            reason: "Ask with malformed options.",
+            toolCallId: "ask-malformed-options",
+            toolName: "AskUserQuestion"
+          }
+        ],
+        usage: {
+          inputTokens: 8,
+          outputTokens: 4
+        }
+      }))
+    });
+
+    try {
+      const options = createDefaultRunOptions("ask malformed options", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const result = await handle.service.runTask(options);
+
+      expect(result.task.status).toBe("failed");
+      expect(result.error?.code).toBe("tool_validation_error");
+      expect(result.error?.message).toContain("options");
+    } finally {
+      handle.close();
+    }
+  });
+
   it("fails the task when a clarify prompt is cancelled", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApplication(workspaceRoot, {

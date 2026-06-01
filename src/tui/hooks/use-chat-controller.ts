@@ -87,7 +87,12 @@ export interface ChatController {
   submitPrompt: (text: string) => boolean;
   switchActiveThread: (threadId: string) => void;
   sessionApprovalFingerprints: string[];
-  answerPendingClarifyPrompt: (input: { answerOptionId?: string; answerText?: string }) => Promise<void>;
+  answerPendingClarifyPrompt: (input: {
+    answerOptionId?: string;
+    answerText?: string;
+    answers?: Record<string, string | string[]>;
+    response?: string;
+  }) => Promise<void>;
   cancelPendingClarifyPrompt: () => void;
   resolvePendingApproval: (action: "allow" | "deny", allowScope?: ApprovalAllowScope) => Promise<void>;
   summary: {
@@ -1100,7 +1105,12 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   );
 
   const answerPendingClarifyPrompt = React.useCallback(
-    async (clarifyInput: { answerOptionId?: string; answerText?: string }) => {
+    async (clarifyInput: {
+      answerOptionId?: string;
+      answerText?: string;
+      answers?: Record<string, string | string[]>;
+      response?: string;
+    }) => {
       if (pendingClarifyPrompt === null || approvalInFlightRef.current) {
         return;
       }

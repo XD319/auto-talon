@@ -13,6 +13,7 @@ import {
   validatePackContents,
   validateReleaseRepository
 } from "../src/diagnostics/index.js";
+import { RUNTIME_SCHEMA_VERSION } from "../src/storage/migrations.js";
 
 const tempPaths: string[] = [];
 
@@ -70,7 +71,7 @@ describe("release checklist helpers", () => {
 
   it("validates schema version from migrations instead of local workspace state", () => {
     expect(validateMigrationSchemaVersion()).toEqual({
-      details: "user_version=12, expected=12",
+      details: `user_version=${RUNTIME_SCHEMA_VERSION}, expected=${RUNTIME_SCHEMA_VERSION}`,
       ok: true
     });
   });

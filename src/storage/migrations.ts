@@ -66,6 +66,16 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "add runtime output events table",
     up: migrateV12,
     version: 12
+  },
+  {
+    description: "add Claude-style clarify prompt payload columns",
+    up: migrateV13,
+    version: 13
+  },
+  {
+    description: "add clarify prompt response column",
+    up: migrateV14,
+    version: 14
   }
 ];
 
@@ -790,6 +800,15 @@ function migrateV12(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_output_events_thread
       ON output_events(thread_id, sequence);
   `);
+}
+
+function migrateV13(database: DatabaseSync): void {
+  addColumnIfMissing(database, "clarify_prompts", "questions_json", "TEXT");
+  addColumnIfMissing(database, "clarify_prompts", "answers_json", "TEXT");
+}
+
+function migrateV14(database: DatabaseSync): void {
+  addColumnIfMissing(database, "clarify_prompts", "response_text", "TEXT");
 }
 
 function readUserVersion(database: DatabaseSync): number {

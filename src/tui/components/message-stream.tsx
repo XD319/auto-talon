@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Static, Text } from "ink";
+import { Box, Text } from "ink";
 
 import { sanitizeTerminalText } from "../text-sanitize.js";
 import { theme } from "../theme.js";
@@ -52,40 +52,10 @@ export function splitMessageStreamMessages(messages: ChatMessage[]): MessageStre
 }
 
 export function MessageStream({ messages }: MessageStreamProps): React.ReactElement {
-  const { dynamicMessages, stableMessages } = React.useMemo(
-    () => splitMessageStreamMessages(messages),
-    [messages]
-  );
-
-  // <Static> is append-only: items already committed to the terminal cannot be
-  // unrendered. When the transcript is replaced (clear / restoreSession / new
-  // thread) we want a fresh Static instance, so we key it on the first stable
-  // message id. Inside a single conversation that id never changes (the first
-  // user prompt anchors the transcript), so streaming updates do not force a
-  // remount. Switching to a different conversation or clearing the chat
-  // changes the first id, which mounts a new Static and gives us a clean
-  // surface to draw on.
-  const staticKey = stableMessages[0]?.id ?? "empty";
-
   return (
     <Box flexDirection="column">
-      {stableMessages.length > 0 ? (
-        <Static key={staticKey} items={stableMessages}>
-          {(message, index) => (
-            <Box key={message.id} flexDirection="column">
-              {needsTurnSeparator(stableMessages[index - 1], message) ? (
-                <Text color={theme.muted}> </Text>
-              ) : null}
-              <MessageItem message={message} />
-            </Box>
-          )}
-        </Static>
-      ) : null}
-      {dynamicMessages.map((message, index) => {
-        const previous =
-          index === 0
-            ? stableMessages[stableMessages.length - 1]
-            : dynamicMessages[index - 1];
+      {messages.map((message, index) => {
+        const previous = messages[index - 1];
         return (
           <React.Fragment key={message.id}>
             {needsTurnSeparator(previous, message) ? <Text color={theme.muted}> </Text> : null}

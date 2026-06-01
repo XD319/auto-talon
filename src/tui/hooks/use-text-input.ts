@@ -27,6 +27,7 @@ export interface UseTextInputOptions {
   onPromptMove?: (delta: -1 | 1) => void;
   onPromptSubmit?: (value: string) => void;
   onPromptShortcut?: (index: number) => void;
+  onPromptToggleSelection?: () => void;
   onExit: () => void;
   onSubmit: (text: string) => boolean | Promise<boolean>;
   onSubmitBlockedBusy?: () => void;
@@ -174,6 +175,10 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       }
       if (!clarifyPrompt.customActive && (key.downArrow || key.rightArrow)) {
         options.onPromptMove?.(1);
+        return;
+      }
+      if (!clarifyPrompt.customActive && input === " ") {
+        options.onPromptToggleSelection?.();
         return;
       }
       if (key.return) {

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { AppError } from "../core/app-error.js";
 import type {
+  ClarifyPromptQuestion,
   ClarifyPromptOption,
   ClarifyPromptRecord,
   ClarifyPromptRepository,
@@ -20,11 +21,20 @@ const clarifyAnswerSchema = z
     promptId: z.string().min(1),
     reviewerId: z.string().min(1),
     answerOptionId: z.string().min(1).optional(),
-    answerText: z.string().min(1).optional()
+    answerText: z.string().min(1).optional(),
+    answers: z.record(z.string().min(1), z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])).optional(),
+    response: z.string().min(1).optional()
   })
-  .refine((value) => value.answerOptionId !== undefined || value.answerText !== undefined, {
-    message: "answerOptionId or answerText is required."
-  });
+  .refine(
+    (value) =>
+      value.answerOptionId !== undefined ||
+      value.answerText !== undefined ||
+      value.answers !== undefined ||
+      value.response !== undefined,
+    {
+      message: "answerOptionId, answerText, answers, or response is required."
+    }
+  );
 
 const clarifyCancelSchema = z.object({
   promptId: z.string().min(1),
@@ -38,6 +48,7 @@ export interface EnsureClarifyPromptInput {
   question: string;
   reason?: string | null;
   options?: ClarifyPromptOption[];
+  questions?: ClarifyPromptQuestion[];
   allowCustomAnswer: boolean;
   placeholder?: string | null;
 }
@@ -47,6 +58,8 @@ export interface ClarifyAnswerInput {
   reviewerId: string;
   answerOptionId?: string;
   answerText?: string;
+  answers?: Record<string, string | string[]>;
+  response?: string;
 }
 
 export interface ClarifyCancelInput {
@@ -84,6 +97,17 @@ export class ClarifyService {
         question: input.question,
         reason: input.reason ?? null,
         options: input.options ?? [],
+        questions:
+          input.questions ??
+          [
+            {
+              allowCustomAnswer: input.allowCustomAnswer,
+              multiSelect: false,
+              options: input.options ?? [],
+              placeholder: input.placeholder ?? null,
+              question: input.question
+            }
+          ],
         allowCustomAnswer: input.allowCustomAnswer,
         placeholder: input.placeholder ?? null,
         requestedAt: now.toISOString(),
@@ -126,6 +150,8 @@ export class ClarifyService {
       answeredAt: this.now().toISOString(),
       answerOptionId: parsed.answerOptionId ?? null,
       answerText: parsed.answerText ?? null,
+      answers: parsed.answers ?? null,
+      response: parsed.response ?? null,
       reviewerId: parsed.reviewerId,
       errorCode: null
     });

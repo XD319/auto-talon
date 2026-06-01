@@ -15,6 +15,7 @@ interface ClarifyPromptRow {
   question: string;
   reason: string | null;
   options_json: string;
+  questions_json: string | null;
   allow_custom_answer: number;
   placeholder: string | null;
   status: ClarifyPromptRecord["status"];
@@ -23,6 +24,8 @@ interface ClarifyPromptRow {
   answered_at: string | null;
   answer_option_id: string | null;
   answer_text: string | null;
+  answers_json: string | null;
+  response_text: string | null;
   reviewer_id: string | null;
   error_code: ClarifyPromptRecord["errorCode"];
 }
@@ -42,6 +45,7 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
             question,
             reason,
             options_json,
+            questions_json,
             allow_custom_answer,
             placeholder,
             status,
@@ -50,9 +54,11 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
             answered_at,
             answer_option_id,
             answer_text,
+            answers_json,
+            response_text,
             reviewer_id,
             error_code
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -63,11 +69,14 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
         record.question,
         record.reason ?? null,
         JSON.stringify(record.options ?? []),
+        JSON.stringify(record.questions ?? defaultQuestions(record)),
         record.allowCustomAnswer ? 1 : 0,
         record.placeholder ?? null,
         "pending",
         record.requestedAt,
         record.expiresAt,
+        null,
+        null,
         null,
         null,
         null,
@@ -129,6 +138,8 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
       answeredAt: patch.answeredAt === undefined ? existing.answeredAt : patch.answeredAt,
       answerOptionId: patch.answerOptionId === undefined ? existing.answerOptionId : patch.answerOptionId,
       answerText: patch.answerText === undefined ? existing.answerText : patch.answerText,
+      answers: patch.answers === undefined ? existing.answers : patch.answers,
+      response: patch.response === undefined ? existing.response : patch.response,
       reviewerId: patch.reviewerId === undefined ? existing.reviewerId : patch.reviewerId,
       errorCode: patch.errorCode === undefined ? existing.errorCode : patch.errorCode,
       status: patch.status ?? existing.status
@@ -142,6 +153,8 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
               answered_at = ?,
               answer_option_id = ?,
               answer_text = ?,
+              answers_json = ?,
+              response_text = ?,
               reviewer_id = ?,
               error_code = ?
           WHERE prompt_id = ?
@@ -152,6 +165,8 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
         nextRecord.answeredAt,
         nextRecord.answerOptionId,
         nextRecord.answerText,
+        nextRecord.answers === null ? null : JSON.stringify(nextRecord.answers),
+        nextRecord.response,
         nextRecord.reviewerId,
         nextRecord.errorCode,
         promptId
@@ -173,6 +188,10 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
       question: row.question,
       reason: row.reason,
       options: JSON.parse(row.options_json) as ClarifyPromptRecord["options"],
+      questions:
+        row.questions_json === null
+          ? defaultQuestionsFromRow(row)
+          : (JSON.parse(row.questions_json) as ClarifyPromptRecord["questions"]),
       allowCustomAnswer: row.allow_custom_answer === 1,
       placeholder: row.placeholder,
       status: row.status,
@@ -181,8 +200,37 @@ export class SqliteClarifyPromptRepository implements ClarifyPromptRepository {
       answeredAt: row.answered_at,
       answerOptionId: row.answer_option_id,
       answerText: row.answer_text,
+      answers:
+        row.answers_json === null
+          ? null
+          : (JSON.parse(row.answers_json) as ClarifyPromptRecord["answers"]),
+      response: row.response_text,
       reviewerId: row.reviewer_id,
       errorCode: row.error_code
     };
   }
+}
+
+function defaultQuestions(record: ClarifyPromptDraft): ClarifyPromptRecord["questions"] {
+  return [
+    {
+      allowCustomAnswer: record.allowCustomAnswer,
+      multiSelect: false,
+      options: record.options ?? [],
+      placeholder: record.placeholder ?? null,
+      question: record.question
+    }
+  ];
+}
+
+function defaultQuestionsFromRow(row: ClarifyPromptRow): ClarifyPromptRecord["questions"] {
+  return [
+    {
+      allowCustomAnswer: row.allow_custom_answer === 1,
+      multiSelect: false,
+      options: JSON.parse(row.options_json) as ClarifyPromptRecord["options"],
+      placeholder: row.placeholder,
+      question: row.question
+    }
+  ];
 }
