@@ -8,7 +8,8 @@ import type {
   ToolCallRecord,
   ToolCallRepository,
   ToolDefinition,
-  ToolExecutionContext
+  ToolExecutionContext,
+  ToolExecutionResult
 } from "../src/types/index.js";
 
 describe("ToolOrchestrator aliases", () => {
@@ -71,10 +72,49 @@ describe("ToolOrchestrator aliases", () => {
     expect(outcome.kind).toBe("completed");
     expect(records.get("call-test-alias")?.status).toBe("finished");
   });
+
+  it("feeds shell execution failures back as recoverable tool results", async () => {
+    const records = new Map<string, ToolCallRecord>();
+    const failingShellTool = createShellLikeTool("shell", {
+      errorCode: "tool_execution_error",
+      errorMessage: "Command exited with code 1.",
+      success: false
+    });
+    const orchestrator = createOrchestrator(failingShellTool, records);
+
+    const outcome = await orchestrator.execute(
+      {
+        input: { command: "npm test" },
+        iteration: 1,
+        reason: "Run verification",
+        taskId: "task-shell-failure",
+        toolCallId: "call-shell-failure",
+        toolName: "bash"
+      },
+      createContext()
+    );
+
+    expect(outcome.kind).toBe("completed");
+    if (outcome.kind !== "completed") {
+      throw new Error("Expected completed recoverable shell failure.");
+    }
+    expect(outcome.result.success).toBe(false);
+    expect(records.get("call-shell-failure")).toMatchObject({
+      errorCode: "tool_execution_error",
+      status: "failed"
+    });
+  });
 });
 
 function createShellLikeTool(
-  name = "shell"
+  name = "shell",
+  result: ToolExecutionResult = {
+    output: {
+      stdout: "ok"
+    },
+    success: true,
+    summary: "executed"
+  }
 ): ToolDefinition<z.ZodObject<{ command: z.ZodString }>, { command: string }> {
   const schema = z.object({
     command: z.string()
@@ -84,15 +124,7 @@ function createShellLikeTool(
     capability: "shell.execute",
     costLevel: "moderate",
     description: "Execute shell command",
-    execute: (input) =>
-      Promise.resolve({
-        output: {
-          command: input.command,
-          stdout: "ok"
-        },
-        success: true,
-        summary: "executed"
-      }),
+    execute: () => Promise.resolve(result),
     inputSchema: schema,
     inputSchemaDescriptor: {
       properties: {

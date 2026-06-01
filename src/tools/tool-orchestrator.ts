@@ -970,7 +970,11 @@ function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "
 }
 
 function isRecoverableToolFailure(tool: ToolDefinition): boolean {
-  return tool.capability === "filesystem.read" || tool.capability === "filesystem.write";
+  return (
+    tool.capability === "filesystem.read" ||
+    tool.capability === "filesystem.write" ||
+    tool.capability === "shell.execute"
+  );
 }
 
 function toToolExecutionError(error: unknown): AppError {
