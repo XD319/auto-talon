@@ -124,6 +124,7 @@ const runtimeConfigFileSchema = z.object({
           maxRepairAttempts: z.number().int().nonnegative().optional()
         })
         .optional(),
+      maxShellTimeoutMs: z.number().int().positive().optional(),
       repoMap: z
         .object({
           enabled: z.boolean().optional()
@@ -139,6 +140,7 @@ export interface WorkflowRuntimeConfig {
     enabled: boolean;
     maxRepairAttempts: number;
   };
+  maxShellTimeoutMs: number;
   repoMap: {
     enabled: boolean;
   };
@@ -260,6 +262,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
       enabled: true,
       maxRepairAttempts: 2
     },
+    maxShellTimeoutMs: 30_000,
     repoMap: {
       enabled: true
     },
@@ -306,6 +309,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         fileConfig?.workflow?.failureGuidedRetry?.maxRepairAttempts ??
         DEFAULT_RUNTIME_CONFIG.workflow.failureGuidedRetry.maxRepairAttempts
     },
+    maxShellTimeoutMs:
+      envConfig.workflow?.maxShellTimeoutMs ??
+      fileConfig?.workflow?.maxShellTimeoutMs ??
+      DEFAULT_RUNTIME_CONFIG.workflow.maxShellTimeoutMs,
     repoMap: {
       enabled:
         envConfig.workflow?.repoMap?.enabled ??
@@ -591,6 +598,14 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
         ...(config.workflow?.failureGuidedRetry ?? {}),
         maxRepairAttempts
       }
+    };
+  }
+
+  const maxShellTimeoutMs = readPositiveIntegerEnv("AGENT_SHELL_MAX_TIMEOUT_MS");
+  if (maxShellTimeoutMs !== undefined) {
+    config.workflow = {
+      ...(config.workflow ?? {}),
+      maxShellTimeoutMs
     };
   }
 

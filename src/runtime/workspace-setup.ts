@@ -32,6 +32,7 @@ const DEFAULT_RUNTIME_CONFIG: JsonObject = {
       enabled: true,
       maxRepairAttempts: 2
     },
+    maxShellTimeoutMs: 30000,
     repoMap: {
       enabled: true
     }

@@ -311,7 +311,7 @@ export function createApplication(
       : {}),
     readRoots: config.sandbox.readRoots,
     shellNetworkAccess: config.sandbox.network === "disabled" ? "disabled" : "unrestricted",
-    maxShellTimeoutMs: 30_000,
+    maxShellTimeoutMs: config.workflow.maxShellTimeoutMs,
     workspaceRoot: config.workspaceRoot,
     writeRoots: config.sandbox.writeRoots
   });

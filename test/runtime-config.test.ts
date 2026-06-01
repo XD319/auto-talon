@@ -46,6 +46,9 @@ describe("runtime config", () => {
           allowedFetchHosts: ["github.com"],
           defaultMaxIterations: 5,
           defaultTimeoutMs: 45_000,
+          workflow: {
+            maxShellTimeoutMs: 90_000
+          },
           tokenBudget: {
             inputLimit: 32_000,
             outputLimit: 4_000,
@@ -62,14 +65,17 @@ describe("runtime config", () => {
     expect(fileConfig.configSource).toBe("file");
     expect(fileConfig.allowedFetchHosts).toEqual(["github.com"]);
     expect(fileConfig.defaultMaxIterations).toBe(5);
+    expect(fileConfig.workflow.maxShellTimeoutMs).toBe(90_000);
     expect(fileConfig.tokenBudget.inputLimit).toBe(32_000);
 
     vi.stubEnv("AGENT_ALLOWED_FETCH_HOSTS", "docs.example.com,*.githubusercontent.com");
+    vi.stubEnv("AGENT_SHELL_MAX_TIMEOUT_MS", "180000");
     vi.stubEnv("AGENT_TOKEN_INPUT_LIMIT", "128000");
     const envConfig = resolveRuntimeConfig(workspaceRoot);
 
     expect(envConfig.configSource).toBe("env");
     expect(envConfig.allowedFetchHosts).toEqual(["docs.example.com", "*.githubusercontent.com"]);
+    expect(envConfig.workflow.maxShellTimeoutMs).toBe(180_000);
     expect(envConfig.tokenBudget.inputLimit).toBe(128_000);
     expect(envConfig.tokenBudget.outputLimit).toBe(4_000);
   });

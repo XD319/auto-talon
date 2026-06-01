@@ -49,6 +49,11 @@ providers default to a `120000` request timeout and a `300000` stream idle
 timeout when a config layer does not explicitly set them; existing explicit
 short request timeout entries remain effective until updated.
 
+Runtime shell and test commands are capped by
+`.auto-talon/runtime.config.json` `workflow.maxShellTimeoutMs`, defaulting to
+`30000`. Set `AGENT_SHELL_MAX_TIMEOUT_MS` to override it for long local builds
+or test suites without changing workspace config.
+
 Streaming fallback policy: a provider that fails one streaming attempt because
 of a transient network error (DNS hiccup, `TypeError: fetch failed`, idle
 timeout, abort, etc.) falls back to a non-streaming request only for that
