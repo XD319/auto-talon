@@ -5,6 +5,8 @@ export * from "./git-tool.js";
 export * from "./ask-user-tool.js";
 export * from "./shell-tool.js";
 export * from "./skill-view-tool.js";
+export * from "./terminal-session-manager.js";
+export * from "./terminal-tools.js";
 export * from "./test-run-tool.js";
 export * from "./tool-orchestrator.js";
 export * from "./availability/index.js";

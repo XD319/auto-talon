@@ -230,7 +230,7 @@ export class ShellExecutor implements ShellCommandExecutor {
   }
 }
 
-function resolveDefaultShellConfig(): { args: string[]; executable: string } {
+export function resolveDefaultShellConfig(): { args: string[]; executable: string } {
   if (process.platform === "win32") {
     return {
       args: ["-NoProfile", "-Command"],

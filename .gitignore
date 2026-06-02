@@ -2,5 +2,6 @@ dist/
 node_modules/
 .auto-talon/
 coverage/
+.tmp-tests/
 *.tsbuildinfo
 package-lock.json

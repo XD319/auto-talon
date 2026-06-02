@@ -50,6 +50,11 @@ import {
   GitTool,
   ShellTool,
   SkillViewTool,
+  TerminalReadTool,
+  TerminalSessionManager,
+  TerminalStartTool,
+  TerminalStopTool,
+  TerminalWriteTool,
   TestRunTool,
   ToolOrchestrator,
   WebFetchTool,
@@ -339,6 +344,7 @@ export function createApplication(
   const skillContextService = new SkillContextService({
     registry: skillRegistry
   });
+  const terminalSessionManager = new TerminalSessionManager();
   const toolOrchestrator = new ToolOrchestrator({
     approvalService,
     approvalRuleStore,
@@ -356,6 +362,10 @@ export function createApplication(
       new GitTool(shellExecutor, sandboxService),
       new SkillViewTool(skillRegistry),
       new ShellTool(shellExecutor, sandboxService),
+      new TerminalStartTool(terminalSessionManager, sandboxService),
+      new TerminalReadTool(terminalSessionManager),
+      new TerminalWriteTool(terminalSessionManager),
+      new TerminalStopTool(terminalSessionManager),
       new TestRunTool(
         shellExecutor,
         sandboxService,
