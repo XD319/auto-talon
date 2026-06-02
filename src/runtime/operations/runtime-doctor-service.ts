@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import { hasLegacyShortRemoteTimeout, type ResolvedProviderConfig } from "../../providers/index.js";
 import type { ExperienceRecord, ProviderHealthCheck } from "../../types/index.js";
+import type { ShellBackend } from "../runtime-config.js";
+import { resolveDefaultShellConfig } from "../../tools/shell/shell-executor.js";
 
 export interface RuntimeDoctorServiceDependencies {
   allowedFetchHosts: string[];
@@ -15,6 +17,7 @@ export interface RuntimeDoctorServiceDependencies {
   runtimeConfigPath: string;
   runtimeConfigSource: "defaults" | "env" | "file";
   runtimeVersion: string;
+  shellBackend: ShellBackend;
   skillStats: () => {
     issues: unknown[];
     skills: unknown[];
@@ -43,6 +46,12 @@ export class RuntimeDoctorService {
     const distFresh = checkDistFreshness(this.dependencies.workspaceRoot);
     const corepackAvailable = isCommandAvailable("corepack");
     const pnpmVersion = resolveCommandVersion("pnpm");
+    const shellConfig = resolveDefaultShellConfig(this.dependencies.shellBackend);
+    const shellBackendAvailable = isShellBackendAvailable(this.dependencies.shellBackend, shellConfig.executable);
+    const shellIssues =
+      this.dependencies.shellBackend === "default" || shellBackendAvailable
+        ? []
+        : [`Shell backend ${this.dependencies.shellBackend} is not available at ${shellConfig.executable}.`];
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
@@ -64,7 +73,8 @@ export class RuntimeDoctorService {
         ...workspaceSecretFindings.map(
           (finding) =>
             `Workspace config ${finding.file} contains provider secret fields (${finding.fields.join(", ")}). Move secrets to env or user config.`
-        )
+        ),
+        ...shellIssues
       ],
       maxRetries: this.dependencies.providerConfig.maxRetries,
       modelAvailable: providerHealth.modelAvailable,
@@ -84,6 +94,9 @@ export class RuntimeDoctorService {
       distFresh,
       schemaVersion,
       shell: process.env.ComSpec,
+      shellBackend: this.dependencies.shellBackend,
+      shellBackendAvailable,
+      shellExecutable: shellConfig.executable,
       skillStats: {
         enabled: skills.skills.length,
         issues: skills.issues.length,
@@ -254,6 +267,41 @@ function isCommandAvailable(command: string): boolean {
     spawnSync(command, ["--version"], {
       encoding: "utf8",
       shell: process.platform === "win32"
+    }).status === 0
+  );
+}
+
+function isShellBackendAvailable(backend: ShellBackend, executable: string): boolean {
+  if (backend === "default") {
+    return true;
+  }
+
+  if (backend === "cmd") {
+    return (
+      spawnSync(executable, ["/d", "/s", "/c", "ver"], {
+        encoding: "utf8",
+        shell: false
+      }).status === 0
+    );
+  }
+
+  if (backend === "powershell") {
+    return (
+      spawnSync(executable, ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"], {
+        encoding: "utf8",
+        shell: false
+      }).status === 0
+    );
+  }
+
+  if (backend === "git-bash") {
+    return spawnSync(executable, ["--version"], { encoding: "utf8", shell: false }).status === 0;
+  }
+
+  return (
+    spawnSync(executable, ["--status"], {
+      encoding: "utf8",
+      shell: false
     }).status === 0
   );
 }

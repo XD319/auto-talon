@@ -1715,6 +1715,9 @@ describe("Provider integration", () => {
       expect(doctorReport.apiKeyConfigured).toBe(true);
       expect(doctorReport.endpointReachable).toBe(true);
       expect(doctorReport.modelConfigured).toBe(true);
+      expect(doctorReport.shellBackend).toBe("default");
+      expect(doctorReport.shellBackendAvailable).toBe(true);
+      expect(doctorReport.shellExecutable.length).toBeGreaterThan(0);
       expect(doctorReport.issues).toEqual([]);
       expect(doctorReport.workspaceSecretFindings).toEqual([]);
     } finally {

@@ -13,6 +13,7 @@ import type {
 } from "../experience/experience-plane.js";
 import type { ProviderCatalogEntry, ResolvedProviderConfig } from "../providers/index.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
+import type { ShellBackend } from "./runtime-config.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type {
   ApprovalRecord,
@@ -130,6 +131,9 @@ export interface AgentDoctorReport {
   distFresh: boolean | null;
   schemaVersion: number | null;
   shell: string | undefined;
+  shellBackend: "default" | "powershell" | "cmd" | "git-bash" | "wsl";
+  shellBackendAvailable: boolean;
+  shellExecutable: string;
   skillStats: {
     enabled: number;
     issues: number;
@@ -244,6 +248,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   runtimeConfigSource: "defaults" | "env" | "file";
   skillDraftManager: SkillDraftManager;
   skillRegistry: SkillRegistry;
+  shellBackend: ShellBackend;
   inboxService: InboxService;
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
@@ -1408,6 +1413,7 @@ export class AgentApplicationService {
       runtimeConfigPath: this.dependencies.runtimeConfigPath,
       runtimeConfigSource: this.dependencies.runtimeConfigSource,
       runtimeVersion: this.dependencies.runtimeVersion,
+      shellBackend: this.dependencies.shellBackend,
       skillStats: () => this.dependencies.skillRegistry.listSkills(),
       testCurrentProvider: (providerSignal) => this.testCurrentProvider(providerSignal),
       tokenBudget: this.dependencies.tokenBudget,

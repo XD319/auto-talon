@@ -635,6 +635,7 @@ export function createApplication(
     schedulerService,
     resumePacketBuilder,
     threadService,
+    shellBackend: config.workflow.shellBackend,
     tokenBudget: {
       inputLimit: config.tokenBudget.inputLimit,
       outputLimit: config.tokenBudget.outputLimit,

@@ -487,6 +487,8 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
     `Experience Records: total=${report.experienceStats.total} candidate=${report.experienceStats.candidate} accepted=${report.experienceStats.accepted} promoted=${report.experienceStats.promoted} rejected=${report.experienceStats.rejected} stale=${report.experienceStats.stale}`,
     `Skills: total=${report.skillStats.total} enabled=${report.skillStats.enabled} issues=${report.skillStats.issues}`,
     `Shell: ${report.shell ?? "-"}`,
+    `Shell Backend: ${report.shellBackend} (${report.shellBackendAvailable ? "available" : "missing"})`,
+    `Shell Executable: ${report.shellExecutable}`,
     `Issues: ${report.issues.length === 0 ? "none" : report.issues.join("; ")}`
   ].join("\n");
 }
