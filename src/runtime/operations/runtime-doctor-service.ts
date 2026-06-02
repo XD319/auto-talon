@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { hasLegacyShortRemoteTimeout, type ResolvedProviderConfig } from "../../providers/index.js";
 import type { ExperienceRecord, ProviderHealthCheck } from "../../types/index.js";
-import type { ShellBackend, WorkflowCustomShell } from "../runtime-config.js";
+import type { ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "../runtime-config.js";
 import { resolveDefaultShellConfig } from "../../tools/shell/shell-executor.js";
 
 export interface RuntimeDoctorServiceDependencies {
@@ -13,6 +13,7 @@ export interface RuntimeDoctorServiceDependencies {
   customShell: WorkflowCustomShell | null;
   databasePath: string;
   listExperiences: () => ExperienceRecord[];
+  maxShellTimeoutMs: number;
   providerConfig: ResolvedProviderConfig;
   providerName: string;
   runtimeConfigPath: string;
@@ -24,6 +25,7 @@ export interface RuntimeDoctorServiceDependencies {
     skills: unknown[];
   };
   testCurrentProvider: (signal?: AbortSignal) => Promise<ProviderHealthCheck>;
+  testCommands: WorkflowTestCommand[];
   tokenBudget: {
     inputLimit: number;
     outputLimit: number;
@@ -53,6 +55,10 @@ export class RuntimeDoctorService {
       this.dependencies.shellBackend === "default" || shellBackendAvailable
         ? []
         : [`Shell backend ${this.dependencies.shellBackend} is not available at ${shellConfig.executable}.`];
+    const testTimeoutIssues = collectTestTimeoutIssues(
+      this.dependencies.testCommands,
+      this.dependencies.maxShellTimeoutMs
+    );
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
@@ -75,7 +81,8 @@ export class RuntimeDoctorService {
           (finding) =>
             `Workspace config ${finding.file} contains provider secret fields (${finding.fields.join(", ")}). Move secrets to env or user config.`
         ),
-        ...shellIssues
+        ...shellIssues,
+        ...testTimeoutIssues
       ],
       maxRetries: this.dependencies.providerConfig.maxRetries,
       modelAvailable: providerHealth.modelAvailable,
@@ -98,6 +105,7 @@ export class RuntimeDoctorService {
       shellBackend: this.dependencies.shellBackend,
       shellBackendAvailable,
       shellExecutable: shellConfig.executable,
+      shellMaxTimeoutMs: this.dependencies.maxShellTimeoutMs,
       skillStats: {
         enabled: skills.skills.length,
         issues: skills.issues.length,
@@ -286,6 +294,17 @@ function resolveDoctorShellConfig(
     };
   }
   return resolveDefaultShellConfig(backend);
+}
+
+function collectTestTimeoutIssues(testCommands: WorkflowTestCommand[], maxShellTimeoutMs: number): string[] {
+  return testCommands.flatMap((command) => {
+    if (typeof command === "string" || command.timeoutMs === undefined || command.timeoutMs <= maxShellTimeoutMs) {
+      return [];
+    }
+    return [
+      `Configured test command ${command.name} timeout ${command.timeoutMs}ms exceeds workflow.maxShellTimeoutMs ${maxShellTimeoutMs}ms.`
+    ];
+  });
 }
 
 function isShellBackendAvailable(backend: ShellBackend, executable: string): boolean {

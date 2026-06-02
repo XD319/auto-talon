@@ -663,6 +663,7 @@ export function createApplication(
     outputService,
     auditService,
     memoryPlane,
+    maxShellTimeoutMs: config.workflow.maxShellTimeoutMs,
     experiencePlane,
     skillDraftManager,
     skillRegistry,
@@ -670,6 +671,7 @@ export function createApplication(
     commitmentService,
     nextActionService,
     threadCommitmentProjector,
+    testCommands: config.workflow.testCommands,
     assistantThreadProjectionService,
     workspaceRoot: config.workspaceRoot
   });

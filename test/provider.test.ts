@@ -1718,6 +1718,7 @@ describe("Provider integration", () => {
       expect(doctorReport.shellBackend).toBe("default");
       expect(doctorReport.shellBackendAvailable).toBe(true);
       expect(doctorReport.shellExecutable.length).toBeGreaterThan(0);
+      expect(doctorReport.shellMaxTimeoutMs).toBeGreaterThan(0);
       expect(doctorReport.issues).toEqual([]);
       expect(doctorReport.workspaceSecretFindings).toEqual([]);
     } finally {
@@ -1788,6 +1789,61 @@ describe("Provider integration", () => {
       ]);
       expect(doctorReport.issues.join("\n")).toContain("Workspace config provider.config.json contains provider secret fields");
       expect(doctorReport.issues.join("\n")).not.toContain("workspace-secret-value");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("warns when configured test timeout exceeds shell timeout limit", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        workflow: {
+          maxShellTimeoutMs: 10_000,
+          testCommands: [
+            {
+              command: "npm test",
+              name: "test",
+              timeoutMs: 20_000
+            }
+          ]
+        }
+      }),
+      "utf8"
+    );
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db"),
+        provider: {
+          apiKey: null,
+          configPath: join(workspaceRoot, ".auto-talon", "provider.config.json"),
+          configSource: "defaults",
+          displayName: "Mock",
+          family: "mock",
+          maxRetries: 0,
+          model: "mock-model",
+          name: "mock",
+          streamIdleTimeoutMs: 300_000,
+          timeoutMs: 120_000,
+          transport: "mock"
+        }
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "ok",
+        usage: { inputTokens: 1, outputTokens: 1 }
+      }))
+    });
+
+    try {
+      const doctorReport = await handle.service.configDoctor();
+
+      expect(doctorReport.shellMaxTimeoutMs).toBe(10_000);
+      expect(doctorReport.issues.join("\n")).toContain(
+        "Configured test command test timeout 20000ms exceeds workflow.maxShellTimeoutMs 10000ms"
+      );
     } finally {
       handle.close();
     }

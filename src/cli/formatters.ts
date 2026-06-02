@@ -489,6 +489,7 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
     `Shell: ${report.shell ?? "-"}`,
     `Shell Backend: ${report.shellBackend} (${report.shellBackendAvailable ? "available" : "missing"})`,
     `Shell Executable: ${report.shellExecutable}`,
+    `Shell Timeout Limit (ms): ${report.shellMaxTimeoutMs}`,
     `Issues: ${report.issues.length === 0 ? "none" : report.issues.join("; ")}`
   ].join("\n");
 }

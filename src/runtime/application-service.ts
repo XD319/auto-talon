@@ -13,7 +13,7 @@ import type {
 } from "../experience/experience-plane.js";
 import type { ProviderCatalogEntry, ResolvedProviderConfig } from "../providers/index.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
-import type { ShellBackend, WorkflowCustomShell } from "./runtime-config.js";
+import type { ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "./runtime-config.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type {
   ApprovalRecord,
@@ -134,6 +134,7 @@ export interface AgentDoctorReport {
   shellBackend: ShellBackend;
   shellBackendAvailable: boolean;
   shellExecutable: string;
+  shellMaxTimeoutMs: number;
   skillStats: {
     enabled: number;
     issues: number;
@@ -239,6 +240,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   resumePacketBuilder: ResumePacketBuilder;
   threadService: ThreadService;
   experiencePlane: ExperiencePlane;
+  maxShellTimeoutMs: number;
   memoryPlane: MemoryPlane;
   provider: Provider;
   providerCatalog: ProviderCatalogEntry[];
@@ -260,6 +262,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
     reservedOutput: number;
   };
   traceService: TraceService;
+  testCommands: WorkflowTestCommand[];
   outputService: RuntimeOutputService;
   assistantThreadProjectionService: AssistantThreadProjectionService;
   providerRouter?: ProviderRouter;
@@ -1415,8 +1418,10 @@ export class AgentApplicationService {
       runtimeConfigSource: this.dependencies.runtimeConfigSource,
       runtimeVersion: this.dependencies.runtimeVersion,
       customShell: this.dependencies.customShell,
+      maxShellTimeoutMs: this.dependencies.maxShellTimeoutMs,
       shellBackend: this.dependencies.shellBackend,
       skillStats: () => this.dependencies.skillRegistry.listSkills(),
+      testCommands: this.dependencies.testCommands,
       testCurrentProvider: (providerSignal) => this.testCurrentProvider(providerSignal),
       tokenBudget: this.dependencies.tokenBudget,
       workspaceRoot: this.dependencies.workspaceRoot
