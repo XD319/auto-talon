@@ -95,8 +95,8 @@ describe("timeline and diff observability", () => {
         path: join(workspaceRoot, "observed.txt")
       });
       expect(JSON.stringify(fileArtifact?.content)).toContain("+++ b/");
-      expect(stats?.totalRequests).toBe(2);
-      expect(stats?.tokenUsage.totalTokens).toBe(22);
+      expect(stats?.totalRequests).toBe(3);
+      expect(stats?.tokenUsage.totalTokens).toBe(29);
     } finally {
       handle.close();
     }

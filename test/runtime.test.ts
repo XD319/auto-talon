@@ -259,7 +259,8 @@ describe("Phase 2 governance runtime", () => {
 
       expect(resumed.approval.status).toBe("approved");
       expect(resumed.task.status).toBe("succeeded");
-      expect(resumed.output).toBe("governed.txt created after approval");
+      expect(resumed.output).toContain("governed.txt created after approval");
+      expect(resumed.output).toContain("Unverified: workspace changes were made");
       expect(await fs.readFile(join(workspaceRoot, "governed.txt"), "utf8")).toBe(
         "phase-2-governed"
       );
@@ -298,7 +299,8 @@ describe("Phase 2 governance runtime", () => {
 
       expect(first.task.status).toBe("succeeded");
       expect(second.task.status).toBe("succeeded");
-      expect(second.output).toBe("governed.txt created after approval");
+      expect(second.output).toContain("governed.txt created after approval");
+      expect(second.output).toContain("Unverified: workspace changes were made");
       expect(second.error).toBeUndefined();
       expect(
         handle.service

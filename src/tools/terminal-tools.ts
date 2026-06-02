@@ -10,7 +10,13 @@ import type {
 } from "../types/index.js";
 
 import type { TerminalSessionManager } from "./terminal-session-manager.js";
-import type { WorkflowLongRunningCommand } from "../runtime/runtime-config.js";
+
+interface LongRunningCommandConfig {
+  command: string;
+  cwd?: string | undefined;
+  env?: Record<string, string> | undefined;
+  name: string;
+}
 
 const terminalStartSchema = z.object({
   command: z.string().min(1).optional(),
@@ -54,7 +60,7 @@ export class TerminalStartTool implements ToolDefinition<typeof terminalStartSch
   public constructor(
     private readonly manager: TerminalSessionManager,
     private readonly sandboxService: SandboxService,
-    private readonly longRunningCommands: WorkflowLongRunningCommand[] = []
+    private readonly longRunningCommands: LongRunningCommandConfig[] = []
   ) {}
 
   public checkAvailability(): ToolAvailabilityResult {
