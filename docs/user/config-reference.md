@@ -58,8 +58,11 @@ Runtime shell and test commands are capped by
 `.auto-talon/runtime.config.json` `workflow.maxShellTimeoutMs`, defaulting to
 `30000`. Set `AGENT_SHELL_MAX_TIMEOUT_MS` to override it for long local builds
 or test suites without changing workspace config. `workflow.shellBackend`
-selects `default`, `powershell`, `cmd`, `git-bash`, or `wsl`; set
-`AGENT_SHELL_BACKEND` to override it per environment.
+selects `default`, `powershell`, `cmd`, `git-bash`, `wsl`, `docker-sh`, or
+`custom`; set `AGENT_SHELL_BACKEND` to override it per environment. When using
+`custom`, set `workflow.customShell` with `executable` and optional `args`.
+`docker-sh` reuses the Docker shell sandbox path and requires Docker to be
+available.
 
 `workflow.testCommands` accepts the existing string array form, such as
 `["npm test", "npm run build"]`, or named command entries:

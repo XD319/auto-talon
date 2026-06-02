@@ -83,11 +83,26 @@ import { SchedulerService } from "./scheduler/index.js";
 import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./threads/index.js";
 import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
-import { resolveRuntimeConfig, type WebSearchRuntimeConfig, type WorkflowRuntimeConfig } from "./runtime-config.js";
+import {
+  resolveRuntimeConfig,
+  type WebSearchRuntimeConfig,
+  type WorkflowCustomShell,
+  type WorkflowRuntimeConfig
+} from "./runtime-config.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles } from "./workspace-setup.js";
 
 export const RUNTIME_VERSION = "0.1.0";
+
+function createCustomShellExecutor(customShell: WorkflowCustomShell | null): ShellExecutor {
+  if (customShell === null) {
+    throw new Error("workflow.customShell.executable is required when workflow.shellBackend is custom.");
+  }
+  return new ShellExecutor({
+    shellArgs: customShell.args,
+    shellExecutable: customShell.executable
+  });
+}
 
 export interface AppConfig {
   approvalTtlMs: number;
@@ -322,14 +337,16 @@ export function createApplication(
     writeRoots: config.sandbox.writeRoots
   });
   const shellExecutor =
-    config.sandbox.mode === "docker"
+    config.sandbox.mode === "docker" || config.workflow.shellBackend === "docker-sh"
       ? new DockerShellExecutor({
           dockerImage: config.sandbox.dockerImage ?? "alpine:3.20",
           readRoots: config.sandbox.readRoots,
           workspaceRoot: config.workspaceRoot,
           writeRoots: config.sandbox.writeRoots
         })
-      : new ShellExecutor({ shellBackend: config.workflow.shellBackend });
+      : config.workflow.shellBackend === "custom"
+        ? createCustomShellExecutor(config.workflow.customShell)
+        : new ShellExecutor({ shellBackend: config.workflow.shellBackend });
   const skillRegistry = new SkillRegistry({
     workspaceRoot: config.workspaceRoot
   });
@@ -571,6 +588,7 @@ export function createApplication(
   });
 
   service = new AgentApplicationService({
+    customShell: config.workflow.customShell,
     databasePath: config.databasePath,
     executionKernel,
     findArtifact: (artifactId) => storage.artifacts.findById(artifactId),

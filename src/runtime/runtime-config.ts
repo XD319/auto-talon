@@ -32,7 +32,7 @@ const workflowLongRunningCommandSchema = z.object({
   name: z.string().min(1)
 });
 
-const shellBackendSchema = z.enum(["default", "powershell", "cmd", "git-bash", "wsl"]);
+const shellBackendSchema = z.enum(["default", "powershell", "cmd", "git-bash", "wsl", "docker-sh", "custom"]);
 
 const runtimeConfigFileSchema = z.object({
   allowedFetchHosts: z.array(z.string().min(1)).optional(),
@@ -145,6 +145,12 @@ const runtimeConfigFileSchema = z.object({
         .optional(),
       maxShellTimeoutMs: z.number().int().positive().optional(),
       shellBackend: shellBackendSchema.optional(),
+      customShell: z
+        .object({
+          args: z.array(z.string()).optional(),
+          executable: z.string().min(1)
+        })
+        .optional(),
       repoMap: z
         .object({
           enabled: z.boolean().optional()
@@ -163,6 +169,7 @@ export interface WorkflowRuntimeConfig {
   };
   maxShellTimeoutMs: number;
   shellBackend: ShellBackend;
+  customShell: WorkflowCustomShell | null;
   repoMap: {
     enabled: boolean;
   };
@@ -171,6 +178,11 @@ export interface WorkflowRuntimeConfig {
 }
 
 export type ShellBackend = z.infer<typeof shellBackendSchema>;
+
+export interface WorkflowCustomShell {
+  args: string[];
+  executable: string;
+}
 
 export type WorkflowTestCommand =
   | string
@@ -305,6 +317,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     },
     maxShellTimeoutMs: 30_000,
     shellBackend: "default",
+    customShell: null,
     repoMap: {
       enabled: true
     },
@@ -360,6 +373,11 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       envConfig.workflow?.shellBackend ??
       fileConfig?.workflow?.shellBackend ??
       DEFAULT_RUNTIME_CONFIG.workflow.shellBackend,
+    customShell: normalizeWorkflowCustomShell(
+      envConfig.workflow?.customShell ??
+        fileConfig?.workflow?.customShell ??
+        DEFAULT_RUNTIME_CONFIG.workflow.customShell
+    ),
     repoMap: {
       enabled:
         envConfig.workflow?.repoMap?.enabled ??
@@ -537,6 +555,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
   if (merged.tokenBudget.reservedOutput >= merged.tokenBudget.outputLimit) {
     throw new Error("runtime tokenBudget.reservedOutput must be lower than outputLimit.");
   }
+  const normalizedCustomShell = normalizeWorkflowCustomShell(merged.workflow.customShell);
+  if (merged.workflow.shellBackend === "custom" && normalizedCustomShell === null) {
+    throw new Error("runtime workflow.customShell.executable is required when workflow.shellBackend is custom.");
+  }
   const normalizedTestCommands = merged.workflow.testCommands
     .map(normalizeWorkflowTestCommand)
     .filter((command): command is WorkflowTestCommand => command !== null);
@@ -551,6 +573,7 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     configSource,
     workflow: {
       ...merged.workflow,
+      customShell: normalizedCustomShell,
       testCommands:
         normalizedTestCommands.length > 0
           ? normalizedTestCommands
@@ -784,6 +807,22 @@ function normalizeWorkflowLongRunningCommand(
     ...(cwd !== undefined && cwd.length > 0 ? { cwd } : {}),
     ...(env !== undefined && Object.keys(env).length > 0 ? { env } : {}),
     name
+  };
+}
+
+function normalizeWorkflowCustomShell(
+  command: { args?: string[] | undefined; executable: string } | null
+): WorkflowCustomShell | null {
+  if (command === null) {
+    return null;
+  }
+  const executable = command.executable.trim();
+  if (executable.length === 0) {
+    return null;
+  }
+  return {
+    args: (command.args ?? []).map((arg) => arg.trim()).filter((arg) => arg.length > 0),
+    executable
   };
 }
 

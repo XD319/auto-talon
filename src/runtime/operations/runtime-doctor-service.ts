@@ -5,11 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 
 import { hasLegacyShortRemoteTimeout, type ResolvedProviderConfig } from "../../providers/index.js";
 import type { ExperienceRecord, ProviderHealthCheck } from "../../types/index.js";
-import type { ShellBackend } from "../runtime-config.js";
+import type { ShellBackend, WorkflowCustomShell } from "../runtime-config.js";
 import { resolveDefaultShellConfig } from "../../tools/shell/shell-executor.js";
 
 export interface RuntimeDoctorServiceDependencies {
   allowedFetchHosts: string[];
+  customShell: WorkflowCustomShell | null;
   databasePath: string;
   listExperiences: () => ExperienceRecord[];
   providerConfig: ResolvedProviderConfig;
@@ -46,7 +47,7 @@ export class RuntimeDoctorService {
     const distFresh = checkDistFreshness(this.dependencies.workspaceRoot);
     const corepackAvailable = isCommandAvailable("corepack");
     const pnpmVersion = resolveCommandVersion("pnpm");
-    const shellConfig = resolveDefaultShellConfig(this.dependencies.shellBackend);
+    const shellConfig = resolveDoctorShellConfig(this.dependencies.shellBackend, this.dependencies.customShell);
     const shellBackendAvailable = isShellBackendAvailable(this.dependencies.shellBackend, shellConfig.executable);
     const shellIssues =
       this.dependencies.shellBackend === "default" || shellBackendAvailable
@@ -271,9 +272,39 @@ function isCommandAvailable(command: string): boolean {
   );
 }
 
+function resolveDoctorShellConfig(
+  backend: ShellBackend,
+  customShell: WorkflowCustomShell | null
+): { args: string[]; executable: string } {
+  if (backend === "docker-sh") {
+    return { args: ["run", "--rm", "<image>", "/bin/sh", "-lc"], executable: "docker" };
+  }
+  if (backend === "custom") {
+    return {
+      args: customShell?.args ?? [],
+      executable: customShell?.executable ?? "-"
+    };
+  }
+  return resolveDefaultShellConfig(backend);
+}
+
 function isShellBackendAvailable(backend: ShellBackend, executable: string): boolean {
   if (backend === "default") {
     return true;
+  }
+
+  if (backend === "docker-sh") {
+    return (
+      spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
+        encoding: "utf8",
+        shell: false,
+        timeout: 15_000
+      }).status === 0
+    );
+  }
+
+  if (backend === "custom") {
+    return executable !== "-" && spawnSync(executable, ["--version"], { encoding: "utf8", shell: false }).status === 0;
   }
 
   if (backend === "cmd") {

@@ -190,6 +190,47 @@ describe("runtime config", () => {
     expect(config.workflow.testCommands).toEqual(["npm test", "npm run build"]);
   });
 
+  it("normalizes custom shell backend config", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        workflow: {
+          customShell: {
+            args: ["  -lc  ", ""],
+            executable: "  bash  "
+          },
+          shellBackend: "custom"
+        }
+      }),
+      "utf8"
+    );
+
+    const config = resolveRuntimeConfig(workspaceRoot);
+    expect(config.workflow.customShell).toEqual({
+      args: ["-lc"],
+      executable: "bash"
+    });
+    expect(config.workflow.shellBackend).toBe("custom");
+  });
+
+  it("fails fast when custom shell backend has no executable", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        workflow: {
+          shellBackend: "custom"
+        }
+      }),
+      "utf8"
+    );
+
+    expect(() => resolveRuntimeConfig(workspaceRoot)).toThrow(/customShell\.executable/);
+  });
+
   it("resolves web search backend and Firecrawl key from runtime config and env", async () => {
     const workspaceRoot = await createTempWorkspace();
     await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
