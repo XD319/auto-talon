@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import { Command, InvalidArgumentError } from "commander";
 
@@ -1013,6 +1014,14 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--cwd <path>", "Workspace path", process.cwd())
     .action((commandOptions: { cwd: string }) => {
       printWorkspaceMap(commandOptions.cwd);
+    });
+
+  workspaceCommand
+    .command("changes")
+    .description("Show git status and diff summary for the current workspace")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((commandOptions: { cwd: string }) => {
+      console.log(formatWorkspaceChanges(commandOptions.cwd));
     });
 
   program
@@ -2300,6 +2309,51 @@ function printWorkspaceMap(cwd: string): void {
         : Object.entries(repoMap.scripts).map(([name, command]) => `${name}=${command}`).join("; ")
     }`
   );
+}
+
+function formatWorkspaceChanges(cwd: string): string {
+  const status = runGitReadOnly(cwd, ["status", "--short"]);
+  const diff = runGitReadOnly(cwd, ["diff", "--stat"]);
+  const stagedDiff = runGitReadOnly(cwd, ["diff", "--cached", "--stat"]);
+  if (status.error !== null) {
+    return `Workspace: ${cwd}\nGit: unavailable\nError: ${status.error}`;
+  }
+
+  return [
+    `Workspace: ${cwd}`,
+    "Git status:",
+    status.output.trim().length === 0 ? "  clean" : indent(status.output.trimEnd()),
+    "Unstaged diff:",
+    diff.output.trim().length === 0 ? "  none" : indent(diff.output.trimEnd()),
+    "Staged diff:",
+    stagedDiff.output.trim().length === 0 ? "  none" : indent(stagedDiff.output.trimEnd())
+  ].join("\n");
+}
+
+function runGitReadOnly(cwd: string, args: string[]): { error: string | null; output: string } {
+  try {
+    return {
+      error: null,
+      output: execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"]
+      })
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      error: message,
+      output: ""
+    };
+  }
+}
+
+function indent(value: string): string {
+  return value
+    .split(/\r?\n/u)
+    .map((line) => `  ${line}`)
+    .join("\n");
 }
 
 function listInboxItems(commandOptions: InboxListOptions): void {

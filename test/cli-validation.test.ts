@@ -165,6 +165,20 @@ describe("cli validation and read-only commands", () => {
     expect(result.stdout).toContain("Success: yes");
     expect(result.stdout).toContain("Provider Error Category: -");
   });
+
+  it("shows workspace git changes without initializing runtime storage", () => {
+    const workspace = createTempDir("talon-workspace-changes-");
+    spawnSync("git", ["init"], { cwd: workspace, encoding: "utf8" });
+    spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: workspace, encoding: "utf8" });
+    spawnSync("git", ["config", "user.name", "Test User"], { cwd: workspace, encoding: "utf8" });
+    const result = runCli(workspace, ["workspace", "changes"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Git status:");
+    expect(result.stdout).toContain("clean");
+    expect(result.stdout).toContain("Unstaged diff:");
+    expect(existsSync(join(workspace, ".auto-talon"))).toBe(false);
+  });
 });
 
 function createTempDir(prefix: string): string {
