@@ -16,6 +16,39 @@ import {
 import type { ToolExecutionContext } from "../src/types/index.js";
 
 describe("terminal session tools", () => {
+  it("resolves named long-running commands before sandbox preparation", () => {
+    const workspace = createWorkspace();
+    const manager = new TerminalSessionManager();
+    const sandbox = new SandboxService({
+      allowedEnvKeys: ["NODE_ENV", "PORT"],
+      allowedShellCommands: ["node"],
+      workspaceRoot: workspace
+    });
+    const context = createContext(workspace);
+    const start = new TerminalStartTool(manager, sandbox, [
+      {
+        command: "node server.cjs",
+        env: {
+          PORT: "4321"
+        },
+        name: "dev"
+      }
+    ]);
+
+    try {
+      const prepared = start.prepare({ env: { NODE_ENV: "development" }, name: "dev" }, context).preparedInput;
+
+      expect(prepared.command).toBe("node server.cjs");
+      expect(prepared.cwd).toBe(workspace);
+      expect(prepared.env).toEqual({
+        NODE_ENV: "development",
+        PORT: "4321"
+      });
+    } finally {
+      cleanupWorkspace(workspace);
+    }
+  });
+
   it("starts, reads, writes, and stops a long-running terminal session", async () => {
     const workspace = createWorkspace();
     writeFileSync(

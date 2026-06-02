@@ -67,6 +67,13 @@ selects `default`, `powershell`, `cmd`, `git-bash`, or `wsl`; set
 Use the `name` with `test_run` for stable prompts while keeping the shell
 command configurable per workspace.
 
+`workflow.longRunningCommands` defines named commands for `terminal_start`,
+for example
+`[{ "name": "dev", "command": "npm run dev", "cwd": "web", "env": { "NODE_ENV": "development" } }]`.
+Use `terminal_start` with `{ "name": "dev" }` to run the configured command
+through the same sandbox, approval, trace, and audit path as direct shell
+commands.
+
 Streaming fallback policy: a provider that fails one streaming attempt because
 of a transient network error (DNS hiccup, `TypeError: fetch failed`, idle
 timeout, abort, etc.) falls back to a non-streaming request only for that

@@ -49,6 +49,16 @@ describe("runtime config", () => {
           workflow: {
             maxShellTimeoutMs: 90_000,
             shellBackend: "git-bash",
+            longRunningCommands: [
+              {
+                command: "npm run dev",
+                cwd: "web",
+                env: {
+                  NODE_ENV: "development"
+                },
+                name: "dev"
+              }
+            ],
             testCommands: [
               {
                 category: "test",
@@ -76,6 +86,16 @@ describe("runtime config", () => {
     expect(fileConfig.defaultMaxIterations).toBe(5);
     expect(fileConfig.workflow.maxShellTimeoutMs).toBe(90_000);
     expect(fileConfig.workflow.shellBackend).toBe("git-bash");
+    expect(fileConfig.workflow.longRunningCommands).toEqual([
+      {
+        command: "npm run dev",
+        cwd: "web",
+        env: {
+          NODE_ENV: "development"
+        },
+        name: "dev"
+      }
+    ]);
     expect(fileConfig.workflow.testCommands).toEqual([
       {
         category: "test",

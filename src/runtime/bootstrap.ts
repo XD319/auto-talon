@@ -362,7 +362,7 @@ export function createApplication(
       new GitTool(shellExecutor, sandboxService),
       new SkillViewTool(skillRegistry),
       new ShellTool(shellExecutor, sandboxService),
-      new TerminalStartTool(terminalSessionManager, sandboxService),
+      new TerminalStartTool(terminalSessionManager, sandboxService, config.workflow.longRunningCommands),
       new TerminalReadTool(terminalSessionManager),
       new TerminalWriteTool(terminalSessionManager),
       new TerminalStopTool(terminalSessionManager),

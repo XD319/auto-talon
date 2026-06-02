@@ -25,6 +25,13 @@ const workflowTestCommandSchema = z.union([
   })
 ]);
 
+const workflowLongRunningCommandSchema = z.object({
+  command: z.string().min(1),
+  cwd: z.string().min(1).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  name: z.string().min(1)
+});
+
 const shellBackendSchema = z.enum(["default", "powershell", "cmd", "git-bash", "wsl"]);
 
 const runtimeConfigFileSchema = z.object({
@@ -143,6 +150,7 @@ const runtimeConfigFileSchema = z.object({
           enabled: z.boolean().optional()
         })
         .optional(),
+      longRunningCommands: z.array(workflowLongRunningCommandSchema).optional(),
       testCommands: z.array(workflowTestCommandSchema).optional()
     })
     .optional()
@@ -158,6 +166,7 @@ export interface WorkflowRuntimeConfig {
   repoMap: {
     enabled: boolean;
   };
+  longRunningCommands: WorkflowLongRunningCommand[];
   testCommands: WorkflowTestCommand[];
 }
 
@@ -171,6 +180,13 @@ export type WorkflowTestCommand =
       name: string;
       timeoutMs?: number | undefined;
     };
+
+export interface WorkflowLongRunningCommand {
+  command: string;
+  cwd?: string | undefined;
+  env?: Record<string, string> | undefined;
+  name: string;
+}
 
 export interface RuntimeConfig {
   allowedFetchHosts: string[];
@@ -292,6 +308,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     repoMap: {
       enabled: true
     },
+    longRunningCommands: [],
     testCommands: ["npm test", "npm run build"]
   }
 };
@@ -349,6 +366,8 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         fileConfig?.workflow?.repoMap?.enabled ??
         DEFAULT_RUNTIME_CONFIG.workflow.repoMap.enabled
     },
+    longRunningCommands:
+      fileConfig?.workflow?.longRunningCommands ?? DEFAULT_RUNTIME_CONFIG.workflow.longRunningCommands,
     testCommands:
       envConfig.workflow?.testCommands ??
       fileConfig?.workflow?.testCommands ??
@@ -521,6 +540,9 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
   const normalizedTestCommands = merged.workflow.testCommands
     .map(normalizeWorkflowTestCommand)
     .filter((command): command is WorkflowTestCommand => command !== null);
+  const normalizedLongRunningCommands = merged.workflow.longRunningCommands
+    .map(normalizeWorkflowLongRunningCommand)
+    .filter((command): command is WorkflowLongRunningCommand => command !== null);
 
   return {
     ...merged,
@@ -532,7 +554,8 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       testCommands:
         normalizedTestCommands.length > 0
           ? normalizedTestCommands
-          : [...DEFAULT_RUNTIME_CONFIG.workflow.testCommands]
+          : [...DEFAULT_RUNTIME_CONFIG.workflow.testCommands],
+      longRunningCommands: normalizedLongRunningCommands
     }
   };
 }
@@ -737,6 +760,30 @@ function normalizeWorkflowTestCommand(command: WorkflowTestCommand): WorkflowTes
     command: shellCommand,
     name,
     ...(command.timeoutMs !== undefined ? { timeoutMs: command.timeoutMs } : {})
+  };
+}
+
+function normalizeWorkflowLongRunningCommand(
+  command: WorkflowLongRunningCommand
+): WorkflowLongRunningCommand | null {
+  const name = command.name.trim();
+  const shellCommand = command.command.trim();
+  if (name.length === 0 || shellCommand.length === 0) {
+    return null;
+  }
+  const cwd = command.cwd?.trim();
+  const env = command.env === undefined
+    ? undefined
+    : Object.fromEntries(
+        Object.entries(command.env)
+          .map(([key, value]) => [key.trim(), value] as const)
+          .filter(([key]) => key.length > 0)
+      );
+  return {
+    command: shellCommand,
+    ...(cwd !== undefined && cwd.length > 0 ? { cwd } : {}),
+    ...(env !== undefined && Object.keys(env).length > 0 ? { env } : {}),
+    name
   };
 }
 

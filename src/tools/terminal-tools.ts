@@ -10,11 +10,15 @@ import type {
 } from "../types/index.js";
 
 import type { TerminalSessionManager } from "./terminal-session-manager.js";
+import type { WorkflowLongRunningCommand } from "../runtime/runtime-config.js";
 
 const terminalStartSchema = z.object({
-  command: z.string().min(1),
+  command: z.string().min(1).optional(),
   cwd: z.string().min(1).optional(),
-  env: z.record(z.string(), z.string()).optional()
+  env: z.record(z.string(), z.string()).optional(),
+  name: z.string().min(1).optional()
+}).refine((value) => value.command !== undefined || value.name !== undefined, {
+  message: "terminal_start requires either command or name."
 });
 
 const terminalSessionSchema = z.object({
@@ -40,15 +44,17 @@ export class TerminalStartTool implements ToolDefinition<typeof terminalStartSch
     properties: {
       command: { type: "string" },
       cwd: { type: "string" },
-      env: { type: "object" }
+      env: { type: "object" },
+      name: { type: "string" }
     },
-    required: ["command"],
+    required: [],
     type: "object"
   };
 
   public constructor(
     private readonly manager: TerminalSessionManager,
-    private readonly sandboxService: SandboxService
+    private readonly sandboxService: SandboxService,
+    private readonly longRunningCommands: WorkflowLongRunningCommand[] = []
   ) {}
 
   public checkAvailability(): ToolAvailabilityResult {
@@ -57,12 +63,26 @@ export class TerminalStartTool implements ToolDefinition<typeof terminalStartSch
 
   public prepare(input: unknown, context: ToolExecutionContext): ToolPreparation<PreparedShellInput> {
     const parsedInput = this.inputSchema.parse(input);
-    const sandboxRequest: { command: string; cwd: string; env?: Record<string, string> } = {
-      command: parsedInput.command,
-      cwd: parsedInput.cwd ?? context.cwd
+    const configuredCommand = parsedInput.name === undefined
+      ? undefined
+      : this.longRunningCommands.find((command) => command.name === parsedInput.name);
+    if (parsedInput.command === undefined && configuredCommand === undefined) {
+      throw new Error(`Unknown long-running command '${parsedInput.name ?? "-"}'.`);
+    }
+    const command = parsedInput.command ?? configuredCommand?.command;
+    if (command === undefined) {
+      throw new Error("terminal_start could not resolve a command.");
+    }
+    const env = {
+      ...(configuredCommand?.env ?? {}),
+      ...(parsedInput.env ?? {})
     };
-    if (parsedInput.env !== undefined) {
-      sandboxRequest.env = parsedInput.env;
+    const sandboxRequest: { command: string; cwd: string; env?: Record<string, string> } = {
+      command,
+      cwd: parsedInput.cwd ?? configuredCommand?.cwd ?? context.cwd
+    };
+    if (Object.keys(env).length > 0) {
+      sandboxRequest.env = env;
     }
     const preparedInput = this.sandboxService.prepareShellExecution(sandboxRequest);
 
