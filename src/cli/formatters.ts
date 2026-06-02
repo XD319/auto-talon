@@ -1,5 +1,11 @@
 import type { AgentDoctorReport, ContextTraceDebugReport, TaskTimelineReport } from "../runtime/index.js";
-import type { BetaReadinessReport, EvalReport, ReplayRunResult, ReleaseChecklistReport } from "../diagnostics/index.js";
+import type {
+  BetaReadinessReport,
+  CodingEvalReport,
+  EvalReport,
+  ReplayRunResult,
+  ReleaseChecklistReport
+} from "../diagnostics/index.js";
 import type {
   ApprovalRecord,
   AuditLogRecord,
@@ -925,6 +931,27 @@ export function formatEvalReport(report: EvalReport): string {
     `Category success: ${categoryRateSummary}`,
     `Failure reasons: ${formatFailureReasons(report.failureReasonDistribution)}`,
     `Typical failed tasks: ${typicalFailures}`
+  ].join("\n");
+}
+
+export function formatCodingEvalReport(report: CodingEvalReport): string {
+  const unverified =
+    report.unverifiedMutationTasks.length === 0
+      ? "none"
+      : report.unverifiedMutationTasks
+          .map((task) => `${task.taskFixtureId}(${task.taskId})`)
+          .join(", ");
+  return [
+    `Provider: ${report.providerName}`,
+    `Coding tasks: ${report.taskCount}`,
+    `Success rate: ${(report.successRate * 100).toFixed(1)}%`,
+    `Verification rate: ${(report.verificationRate * 100).toFixed(1)}%`,
+    `Tool failure rate: ${(report.toolFailureRate * 100).toFixed(1)}%`,
+    `Git-ready diff rate: ${(report.gitReadyDiffRate * 100).toFixed(1)}%`,
+    `Average rounds: ${report.averageRounds.toFixed(2)}`,
+    `Failure reasons: ${formatFailureReasons(report.failureReasonDistribution)}`,
+    `Unverified mutation tasks: ${unverified}`,
+    `Beta gate: ${report.betaGate.passed ? "passed" : "failed"} (success >= ${(report.betaGate.requiredSuccessRate * 100).toFixed(1)}%, mutation verification required)`
   ].join("\n");
 }
 

@@ -1,6 +1,7 @@
 import { loadSmokeTaskFixtures } from "../testing/smoke-fixtures.js";
 import { runSmokeSuite } from "../testing/smoke-harness.js";
 import type { SupportedProviderName } from "../providers/index.js";
+import type { SmokeTaskRunResult } from "../testing/index.js";
 
 export interface EvalReport {
   averageDurationMs: number;
@@ -38,6 +39,38 @@ export interface EvalOptions {
   providerName?: SupportedProviderName | "scripted-smoke";
   taskIds?: string[];
 }
+
+export interface CodingEvalReport {
+  averageRounds: number;
+  betaGate: {
+    passed: boolean;
+    requiredSuccessRate: number;
+    requiresVerificationForMutations: boolean;
+  };
+  failureReasonDistribution: Record<string, number>;
+  gitReadyDiffRate: number;
+  providerName: string;
+  successRate: number;
+  taskCount: number;
+  toolFailureRate: number;
+  unverifiedMutationTasks: Array<{
+    taskFixtureId: string;
+    taskId: string;
+  }>;
+  verificationRate: number;
+}
+
+export interface CodingEvalOptions extends EvalOptions {
+  minimumSuccessRate?: number;
+}
+
+const DEFAULT_CODING_TASK_IDS = [
+  "multi_write_then_verify",
+  "multi_fix_after_failed_verification",
+  "multi_search_patch_verify",
+  "long_cross_file_review_with_compact",
+  "long_memory_recall_followup"
+] as const;
 
 export async function runEvalReport(options: EvalOptions = {}): Promise<EvalReport> {
   const fixtures = loadSmokeTaskFixtures(options.fixturePath);
@@ -121,4 +154,57 @@ export async function runEvalReport(options: EvalOptions = {}): Promise<EvalRepo
         taskId: result.taskId
       }))
   };
+}
+
+export async function runCodingEvalReport(options: CodingEvalOptions = {}): Promise<CodingEvalReport> {
+  const fixtures = loadSmokeTaskFixtures(options.fixturePath);
+  const selectedTaskIds =
+    options.taskIds === undefined || options.taskIds.length === 0
+      ? fixtures
+          .filter((fixture) => DEFAULT_CODING_TASK_IDS.includes(fixture.taskId as (typeof DEFAULT_CODING_TASK_IDS)[number]))
+          .map((fixture) => fixture.taskId)
+      : options.taskIds;
+  const report = await runSmokeSuite({
+    autoApprove: true,
+    ...(options.fixturePath !== undefined
+      ? { fixturePath: options.fixturePath }
+      : {}),
+    providerName: options.providerName ?? "scripted-smoke",
+    taskIds: selectedTaskIds
+  });
+  const mutationTasks = report.results.filter((result) => result.writeToolCallCount > 0);
+  const verifiedMutationTasks = mutationTasks.filter((result) => result.verificationEvidenceCount > 0);
+  const unverifiedMutationTasks = mutationTasks
+    .filter((result) => result.verificationEvidenceCount === 0)
+    .map((result) => ({
+      taskFixtureId: result.taskFixture.taskId,
+      taskId: result.taskId
+    }));
+  const taskCount = report.taskCount;
+  const toolCallCount = report.results.reduce((sum, result) => sum + result.toolCallCount, 0);
+  const toolFailureCount = report.results.reduce((sum, result) => sum + result.toolCallFailureCount, 0);
+  const successRate = taskCount === 0 ? 0 : report.succeededCount / taskCount;
+  const verificationRate = mutationTasks.length === 0 ? 1 : verifiedMutationTasks.length / mutationTasks.length;
+  const requiredSuccessRate = options.minimumSuccessRate ?? 0.8;
+
+  return {
+    averageRounds: report.averageRounds,
+    betaGate: {
+      passed: successRate >= requiredSuccessRate && unverifiedMutationTasks.length === 0,
+      requiredSuccessRate,
+      requiresVerificationForMutations: true
+    },
+    failureReasonDistribution: report.failureReasons,
+    gitReadyDiffRate: mutationTasks.length === 0 ? 1 : report.results.filter(isGitReadyDiffTask).length / mutationTasks.length,
+    providerName: report.providerName,
+    successRate,
+    taskCount,
+    toolFailureRate: toolCallCount === 0 ? 0 : toolFailureCount / toolCallCount,
+    unverifiedMutationTasks,
+    verificationRate
+  };
+}
+
+function isGitReadyDiffTask(result: SmokeTaskRunResult): boolean {
+  return result.success && result.writeToolCallCount > 0 && result.failureReason === null;
 }

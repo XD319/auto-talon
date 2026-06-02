@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { runEvalReport } from "../src/diagnostics/index.js";
+import { runCodingEvalReport, runEvalReport } from "../src/diagnostics/index.js";
 import { loadSmokeTaskFixtures } from "../src/testing/index.js";
 
 describe("eval report", () => {
@@ -27,4 +27,19 @@ describe("eval report", () => {
       /maintainer validation assets/
     );
   });
+
+  it("generates a coding-focused eval report with verification gate metrics", async () => {
+    const report = await runCodingEvalReport({
+      providerName: "scripted-smoke"
+    });
+
+    expect(report.providerName).toBe("scripted-smoke");
+    expect(report.taskCount).toBeGreaterThanOrEqual(5);
+    expect(report.successRate).toBeGreaterThanOrEqual(0.8);
+    expect(report.verificationRate).toBe(1);
+    expect(report.toolFailureRate).toBeGreaterThanOrEqual(0);
+    expect(report.gitReadyDiffRate).toBeGreaterThan(0);
+    expect(report.unverifiedMutationTasks).toEqual([]);
+    expect(report.betaGate.passed).toBe(true);
+  }, 30000);
 });

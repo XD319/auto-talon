@@ -47,6 +47,8 @@ export interface SmokeTaskRunResult {
   success: boolean;
   taskFixture: SmokeTaskFixture;
   taskId: string;
+  toolCallCount: number;
+  toolCallFailureCount: number;
   tokenUsage: {
     cachedInputTokens: number;
     inputTokens: number;
@@ -57,6 +59,8 @@ export interface SmokeTaskRunResult {
   traceChecks: SmokeTraceCheckResult[];
   traceEventCount: number;
   toolCallSuccessRate: number;
+  verificationEvidenceCount: number;
+  writeToolCallCount: number;
 }
 
 export interface SmokeSuiteReport {
@@ -207,11 +211,15 @@ export async function runSmokeTask(
       success: evaluation.success,
       taskFixture,
       taskId: snapshot.task.taskId,
+      toolCallCount: snapshot.toolCalls.length,
+      toolCallFailureCount: computeToolCallFailureCount(snapshot.toolCalls),
       tokenUsage: computeTokenUsage(snapshot.trace),
       totalRounds: snapshot.task.currentIteration,
       traceChecks: evaluation.traceChecks,
       traceEventCount: snapshot.trace.length,
-      toolCallSuccessRate: computeToolCallSuccessRate(snapshot.toolCalls)
+      toolCallSuccessRate: computeToolCallSuccessRate(snapshot.toolCalls),
+      verificationEvidenceCount: computeVerificationEvidenceCount(snapshot.toolCalls, snapshot.trace),
+      writeToolCallCount: computeWriteToolCallCount(snapshot.toolCalls)
     };
   } finally {
     handle.close();
@@ -623,6 +631,81 @@ function computeToolCallSuccessRate(toolCalls: ToolCallRecord[]): number {
 
   const finishedCount = toolCalls.filter((toolCall) => toolCall.status === "finished").length;
   return finishedCount / toolCalls.length;
+}
+
+function computeToolCallFailureCount(toolCalls: ToolCallRecord[]): number {
+  return toolCalls.filter((toolCall) => toolCall.status !== "finished").length;
+}
+
+function computeWriteToolCallCount(toolCalls: ToolCallRecord[]): number {
+  return toolCalls.filter((toolCall) => isWriteToolName(toolCall.toolName)).length;
+}
+
+function computeVerificationEvidenceCount(toolCalls: ToolCallRecord[], trace: TraceEvent[]): number {
+  const toolEvidence = toolCalls.filter((toolCall) => isVerificationToolCall(toolCall)).length;
+  const readBackEvidence = countReadBackVerification(toolCalls);
+  const traceEvidence = trace.filter((event) => event.eventType === "completion_verification_satisfied").length;
+  return toolEvidence + readBackEvidence + traceEvidence;
+}
+
+function isWriteToolName(toolName: string): boolean {
+  return toolName === "file_write" || toolName === "git" || toolName.includes("write");
+}
+
+function countReadBackVerification(toolCalls: ToolCallRecord[]): number {
+  const firstWriteIndex = toolCalls.findIndex((toolCall) => isWriteToolName(toolCall.toolName));
+  if (firstWriteIndex < 0) {
+    return 0;
+  }
+  return toolCalls
+    .slice(firstWriteIndex + 1)
+    .filter(
+      (toolCall) =>
+        toolCall.status === "finished" &&
+        (toolCall.toolName === "file_read" ||
+          toolCall.toolName === "shell" ||
+          toolCall.toolName === "bash" ||
+          toolCall.toolName === "Bash" ||
+          toolCall.toolName === "test_run")
+    ).length;
+}
+
+function isVerificationToolCall(toolCall: ToolCallRecord): boolean {
+  if (toolCall.status !== "finished") {
+    return false;
+  }
+  if (toolCall.toolName === "test_run") {
+    return true;
+  }
+  if (toolCall.toolName !== "shell" && toolCall.toolName !== "bash" && toolCall.toolName !== "Bash") {
+    return false;
+  }
+  const command = readCommandFromInput(toolCall.input) ?? readCommandFromOutput(toolCall.output);
+  return command !== null && isVerificationCommand(command);
+}
+
+function readCommandFromInput(input: ToolCallRecord["input"]): string | null {
+  const command = input.command;
+  return typeof command === "string" ? command : null;
+}
+
+function readCommandFromOutput(output: ToolCallRecord["output"]): string | null {
+  if (output === null || typeof output !== "object" || Array.isArray(output)) {
+    return null;
+  }
+  const command = output.command;
+  return typeof command === "string" ? command : null;
+}
+
+function isVerificationCommand(command: string): boolean {
+  const compact = command.toLowerCase();
+  return (
+    compact.includes("test") ||
+    compact.includes("build") ||
+    compact.includes("lint") ||
+    compact.includes("typecheck") ||
+    compact.includes("tsc")
+  );
 }
 
 function computeTokenUsage(trace: TraceEvent[]): {

@@ -19,7 +19,13 @@ import {
   McpToolBridge,
   resolveMcpServerConfig
 } from "../mcp/index.js";
-import { replayTaskById, runBetaReadinessCheck, runEvalReport, runReleaseChecklist } from "../diagnostics/index.js";
+import {
+  replayTaskById,
+  runBetaReadinessCheck,
+  runCodingEvalReport,
+  runEvalReport,
+  runReleaseChecklist
+} from "../diagnostics/index.js";
 import {
   promoteProviderConfig,
   setupProviderConfig,
@@ -44,6 +50,7 @@ import {
   formatApprovalList,
   formatAuditLog,
   formatBetaReadinessReport,
+  formatCodingEvalReport,
   formatCommitmentDetail,
   formatCommitmentList,
   formatCurrentProvider,
@@ -1277,6 +1284,46 @@ export async function main(argv = process.argv): Promise<void> {
       async (commandOptions: SmokeCommandOptions) => {
         console.warn("Warning: `talon eval smoke` is a compatibility alias; use `talon smoke run`.");
         await runSmokeCommand(commandOptions);
+      }
+    );
+
+  evalCommand
+    .command("coding")
+    .option("--provider <provider>", "Provider to use: scripted-smoke or any registered provider", "scripted-smoke")
+    .option("--tasks <taskIds>", "Comma-separated coding task ids")
+    .option("--fixture <path>", "Custom fixture file path")
+    .option("--min-success-rate <number>", "Minimum acceptable coding task success rate", parseRatioOption("--min-success-rate"), 0.8)
+    .option("--json", "Print JSON instead of text")
+    .option("--output <path>", "Write the report to a file")
+    .action(
+      async (commandOptions: {
+        fixture?: string;
+        json?: boolean;
+        minSuccessRate: number;
+        output?: string;
+        provider: SupportedProviderName | "scripted-smoke";
+        tasks?: string;
+      }) => {
+        const report = await runCodingEvalReport({
+          ...(commandOptions.fixture !== undefined
+            ? { fixturePath: commandOptions.fixture }
+            : {}),
+          minimumSuccessRate: commandOptions.minSuccessRate,
+          providerName: commandOptions.provider,
+          taskIds:
+            commandOptions.tasks?.split(",").map((value) => value.trim()).filter(Boolean) ?? []
+        });
+        const output = commandOptions.json === true
+          ? JSON.stringify(report, null, 2)
+          : formatCodingEvalReport(report);
+        if (commandOptions.output !== undefined) {
+          writeFileSync(commandOptions.output, `${output}\n`, "utf8");
+        } else {
+          console.log(output);
+        }
+        if (!report.betaGate.passed) {
+          process.exitCode = 1;
+        }
       }
     );
 
