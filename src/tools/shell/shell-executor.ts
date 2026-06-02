@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 import { AppError } from "../../core/app-error.js";
 
@@ -24,6 +25,7 @@ export interface ShellExecutorConfig {
   maxOutputBytes?: number;
   shellExecutable?: string;
   shellArgs?: string[];
+  shellBackend?: "default" | "powershell" | "cmd" | "git-bash" | "wsl";
   /**
    * Host environment variables that may be forwarded into the child process.
    * Defaults to a small, safe set that does NOT include secrets.
@@ -122,7 +124,7 @@ export class ShellExecutor implements ShellCommandExecutor {
 
   public constructor(config: ShellExecutorConfig = {}) {
     this.maxOutputBytes = config.maxOutputBytes ?? 200_000;
-    const defaultShell = resolveDefaultShellConfig();
+    const defaultShell = resolveDefaultShellConfig(config.shellBackend);
     this.shellExecutable = config.shellExecutable ?? defaultShell.executable;
     this.shellArgs = config.shellArgs ?? defaultShell.args;
     this.inheritedEnvKeys = config.inheritedEnvKeys ?? DEFAULT_INHERITED_ENV_KEYS;
@@ -230,7 +232,36 @@ export class ShellExecutor implements ShellCommandExecutor {
   }
 }
 
-export function resolveDefaultShellConfig(): { args: string[]; executable: string } {
+export function resolveDefaultShellConfig(
+  backend: "default" | "powershell" | "cmd" | "git-bash" | "wsl" = "default"
+): { args: string[]; executable: string } {
+  if (backend === "cmd") {
+    return {
+      args: ["/d", "/s", "/c"],
+      executable: process.env.ComSpec ?? "cmd.exe"
+    };
+  }
+  if (backend === "powershell") {
+    return {
+      args: ["-NoProfile", "-Command"],
+      executable:
+        process.platform === "win32"
+          ? "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+          : "pwsh"
+    };
+  }
+  if (backend === "git-bash") {
+    return {
+      args: ["-lc"],
+      executable: resolveGitBashExecutable()
+    };
+  }
+  if (backend === "wsl") {
+    return {
+      args: ["--exec", "/bin/sh", "-lc"],
+      executable: "wsl.exe"
+    };
+  }
   if (process.platform === "win32") {
     return {
       args: ["-NoProfile", "-Command"],
@@ -242,6 +273,16 @@ export function resolveDefaultShellConfig(): { args: string[]; executable: strin
     args: ["-lc"],
     executable: "/bin/sh"
   };
+}
+
+function resolveGitBashExecutable(): string {
+  const candidates = [
+    process.env.GIT_BASH,
+    process.env["ProgramFiles"] === undefined ? undefined : `${process.env["ProgramFiles"]}\\Git\\bin\\bash.exe`,
+    process.env["ProgramFiles(x86)"] === undefined ? undefined : `${process.env["ProgramFiles(x86)"]}\\Git\\bin\\bash.exe`,
+    "bash"
+  ].filter((candidate): candidate is string => candidate !== undefined && candidate.length > 0);
+  return candidates.find((candidate) => candidate === "bash" || existsSync(candidate)) ?? "bash";
 }
 
 function appendWithLimit(

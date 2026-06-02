@@ -48,6 +48,7 @@ describe("runtime config", () => {
           defaultTimeoutMs: 45_000,
           workflow: {
             maxShellTimeoutMs: 90_000,
+            shellBackend: "git-bash",
             testCommands: [
               {
                 category: "test",
@@ -74,6 +75,7 @@ describe("runtime config", () => {
     expect(fileConfig.allowedFetchHosts).toEqual(["github.com"]);
     expect(fileConfig.defaultMaxIterations).toBe(5);
     expect(fileConfig.workflow.maxShellTimeoutMs).toBe(90_000);
+    expect(fileConfig.workflow.shellBackend).toBe("git-bash");
     expect(fileConfig.workflow.testCommands).toEqual([
       {
         category: "test",
@@ -85,12 +87,14 @@ describe("runtime config", () => {
     expect(fileConfig.tokenBudget.inputLimit).toBe(32_000);
 
     vi.stubEnv("AGENT_ALLOWED_FETCH_HOSTS", "docs.example.com,*.githubusercontent.com");
+    vi.stubEnv("AGENT_SHELL_BACKEND", "cmd");
     vi.stubEnv("AGENT_SHELL_MAX_TIMEOUT_MS", "180000");
     vi.stubEnv("AGENT_TOKEN_INPUT_LIMIT", "128000");
     const envConfig = resolveRuntimeConfig(workspaceRoot);
 
     expect(envConfig.configSource).toBe("env");
     expect(envConfig.allowedFetchHosts).toEqual(["docs.example.com", "*.githubusercontent.com"]);
+    expect(envConfig.workflow.shellBackend).toBe("cmd");
     expect(envConfig.workflow.maxShellTimeoutMs).toBe(180_000);
     expect(envConfig.tokenBudget.inputLimit).toBe(128_000);
     expect(envConfig.tokenBudget.outputLimit).toBe(4_000);

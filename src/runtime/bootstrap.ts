@@ -329,7 +329,7 @@ export function createApplication(
           workspaceRoot: config.workspaceRoot,
           writeRoots: config.sandbox.writeRoots
         })
-      : new ShellExecutor();
+      : new ShellExecutor({ shellBackend: config.workflow.shellBackend });
   const skillRegistry = new SkillRegistry({
     workspaceRoot: config.workspaceRoot
   });

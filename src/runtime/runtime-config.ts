@@ -25,6 +25,8 @@ const workflowTestCommandSchema = z.union([
   })
 ]);
 
+const shellBackendSchema = z.enum(["default", "powershell", "cmd", "git-bash", "wsl"]);
+
 const runtimeConfigFileSchema = z.object({
   allowedFetchHosts: z.array(z.string().min(1)).optional(),
   defaultMaxIterations: z.number().int().positive().optional(),
@@ -135,6 +137,7 @@ const runtimeConfigFileSchema = z.object({
         })
         .optional(),
       maxShellTimeoutMs: z.number().int().positive().optional(),
+      shellBackend: shellBackendSchema.optional(),
       repoMap: z
         .object({
           enabled: z.boolean().optional()
@@ -151,11 +154,14 @@ export interface WorkflowRuntimeConfig {
     maxRepairAttempts: number;
   };
   maxShellTimeoutMs: number;
+  shellBackend: ShellBackend;
   repoMap: {
     enabled: boolean;
   };
   testCommands: WorkflowTestCommand[];
 }
+
+export type ShellBackend = z.infer<typeof shellBackendSchema>;
 
 export type WorkflowTestCommand =
   | string
@@ -282,6 +288,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
       maxRepairAttempts: 2
     },
     maxShellTimeoutMs: 30_000,
+    shellBackend: "default",
     repoMap: {
       enabled: true
     },
@@ -332,6 +339,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       envConfig.workflow?.maxShellTimeoutMs ??
       fileConfig?.workflow?.maxShellTimeoutMs ??
       DEFAULT_RUNTIME_CONFIG.workflow.maxShellTimeoutMs,
+    shellBackend:
+      envConfig.workflow?.shellBackend ??
+      fileConfig?.workflow?.shellBackend ??
+      DEFAULT_RUNTIME_CONFIG.workflow.shellBackend,
     repoMap: {
       enabled:
         envConfig.workflow?.repoMap?.enabled ??
@@ -625,6 +636,14 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
     config.workflow = {
       ...(config.workflow ?? {}),
       maxShellTimeoutMs
+    };
+  }
+
+  const shellBackend = process.env.AGENT_SHELL_BACKEND?.trim();
+  if (shellBackend !== undefined && shellBackend.length > 0) {
+    config.workflow = {
+      ...(config.workflow ?? {}),
+      shellBackend: shellBackendSchema.parse(shellBackend)
     };
   }
 
