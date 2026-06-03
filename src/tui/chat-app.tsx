@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import React from "react";
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useWindowSize } from "ink";
 
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
@@ -15,14 +15,15 @@ import {
 } from "../presentation/memory-formatters.js";
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
-import { MessageStream } from "./components/message-stream.js";
 import { PromptZone } from "./components/prompt-zone.js";
+import { TranscriptPane } from "./components/transcript-pane.js";
 import { TranscriptViewer } from "./components/transcript-viewer.js";
 import { buildContextMetric, StatusBar } from "./components/status-bar.js";
 import { WelcomeHome } from "./components/welcome-home.js";
 import { editInExternalEditor } from "./external-editor.js";
 import { useChatController } from "./hooks/use-chat-controller.js";
 import { useTextInput } from "./hooks/use-text-input.js";
+import { useVirtualHistory, type VirtualHistoryController } from "./hooks/use-virtual-history.js";
 import {
   listSessionIds,
   listSessionSummaries,
@@ -103,7 +104,6 @@ export function ChatTuiApp({
   const [clarifyMultiSelections, setClarifyMultiSelections] = React.useState<Record<number, string[]>>({});
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
-  const [transcriptScrollOffset, setTranscriptScrollOffset] = React.useState(0);
   const [transcriptViewer, setTranscriptViewer] = React.useState<{
     events: RuntimeOutputEvent[];
     mode: TranscriptViewerMode;
@@ -115,6 +115,8 @@ export function ChatTuiApp({
   const historyIndexRef = React.useRef<number | null>(null);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const completionStateRef = React.useRef<{ candidates: string[]; index: number; query: string } | null>(null);
+  const virtualHistoryRef = React.useRef<VirtualHistoryController | null>(null);
+  const terminalSize = useWindowSize();
 
   const controller = useChatController({
     config,
@@ -141,9 +143,9 @@ export function ChatTuiApp({
     () => (showTodaySummary ? [] : displayMessages),
     [displayMessages, showTodaySummary]
   );
-  const visibleTranscriptMessages = React.useMemo(
-    () => sliceTranscriptMessages(transcriptMessages, transcriptScrollOffset, TRANSCRIPT_WINDOW_SIZE),
-    [transcriptMessages, transcriptScrollOffset]
+  const transcriptWidth = Math.max(
+    20,
+    terminalSize.columns > 0 ? terminalSize.columns : process.stdout.columns ?? 80
   );
   const todaySummaryText = React.useMemo(
     () => formatTodaySummary(buildTodaySummary(service, { activeThreadId: controller.activeThreadId })),
@@ -204,12 +206,6 @@ export function ChatTuiApp({
   }, [controller.pendingClarifyPrompt?.promptId]);
 
   React.useEffect(() => {
-    setTranscriptScrollOffset((current) =>
-      Math.min(current, maxTranscriptScrollOffset(transcriptMessages.length, TRANSCRIPT_WINDOW_SIZE))
-    );
-  }, [transcriptMessages.length]);
-
-  React.useEffect(() => {
     setHomeSelectionIndex((current) => clampSelection(current, homeEntries.length));
   }, [homeEntries.length]);
 
@@ -248,25 +244,14 @@ export function ChatTuiApp({
   );
 
   const scrollTranscript = React.useCallback((direction: -1 | 1, accelerated: boolean) => {
-    const delta = accelerated ? TRANSCRIPT_PAGE_SIZE * 2 : TRANSCRIPT_PAGE_SIZE;
-    setTranscriptScrollOffset((current) =>
-      clampScrollOffset(
-        current + (direction < 0 ? delta : -delta),
-        transcriptMessages.length,
-        TRANSCRIPT_WINDOW_SIZE
-      )
-    );
-  }, [transcriptMessages.length]);
+    virtualHistoryRef.current?.scrollPage(direction, accelerated);
+  }, []);
 
   const jumpTranscript = React.useCallback(
     (target: "start" | "end") => {
-      if (target === "end") {
-        setTranscriptScrollOffset(0);
-        return;
-      }
-      setTranscriptScrollOffset(maxTranscriptScrollOffset(transcriptMessages.length, TRANSCRIPT_WINDOW_SIZE));
+      virtualHistoryRef.current?.jumpTo(target);
     },
-    [transcriptMessages.length]
+    []
   );
 
   const slashSuggestions = React.useCallback(
@@ -321,6 +306,7 @@ export function ChatTuiApp({
       setSessionTitle(session.title ?? "assistant");
       setInteractionMode(session.interactionMode ?? "agent");
       setHomeSelectionIndex(0);
+      virtualHistoryRef.current?.resetToBottom();
       return true;
     },
     [controller]
@@ -389,7 +375,11 @@ export function ChatTuiApp({
       }
 
       if (text.startsWith("/thread")) {
-        return handleThreadCommand(text, controller, service);
+        const handled = handleThreadCommand(text, controller, service);
+        if (handled && /^\/thread\s+(new|switch)\b/u.test(text.trim())) {
+          virtualHistoryRef.current?.resetToBottom();
+        }
+        return handled;
       }
 
       if (text.startsWith("/next")) {
@@ -493,6 +483,7 @@ export function ChatTuiApp({
 
       if (text === "/clear") {
         controller.resetVisibleChat();
+        virtualHistoryRef.current?.resetToBottom();
         return true;
       }
 
@@ -502,6 +493,7 @@ export function ChatTuiApp({
         const nextId = randomUUID();
         setSessionId(nextId);
         controller.addSystemMessage(`Started a new assistant session. id=${nextId}`);
+        virtualHistoryRef.current?.resetToBottom();
         return true;
       }
 
@@ -581,8 +573,8 @@ export function ChatTuiApp({
           `status_line: ${controller.statusLine}`,
           `ui_status: ${controller.uiStatus.primaryLabel}`,
           `elapsed: ${controller.runDurationLabel}`,
-          `ui_scroll: terminal + transcript(offset=${transcriptScrollOffset})`,
-          `message_rows: ${controller.messages.length}`,
+          `ui_scroll: ${formatVirtualHistoryStatus(virtualHistoryRef.current)}`,
+          `message_rows: ${controller.messages.length} visible_messages: ${transcriptMessages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
           `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`
         ];
@@ -896,7 +888,7 @@ export function ChatTuiApp({
       if (!accepted) {
         return false;
       }
-      setTranscriptScrollOffset(0);
+      virtualHistoryRef.current?.resetToBottom();
       historyRef.current.push(value);
       if (historyRef.current.length > 200) {
         historyRef.current = historyRef.current.slice(-200);
@@ -943,15 +935,38 @@ export function ChatTuiApp({
           ? [{ label: `mem ${controller.usedMemoryCount}`, tone: "accent" as const }]
           : [])
       ];
+  const transcriptViewportRows = estimateTranscriptViewportRows(
+    terminalSize.rows,
+    estimateChatChromeRows({
+      activeClarifyPrompt,
+      collapsePreview: textInput.collapsePreview,
+      hasPendingApproval: controller.pendingApproval !== null,
+      inputLineCount: textInput.lines.length,
+      queuedPromptCount: controller.queuedPromptCount,
+      slashHintCount: slashHints.length,
+      valueLength: textInput.value.length
+    })
+  );
+  const virtualHistory = useVirtualHistory({
+    busy: controller.busy,
+    messages: transcriptMessages,
+    runState: controller.uiStatus.runState,
+    viewportHeight: transcriptViewportRows,
+    width: transcriptWidth
+  });
+
+  React.useEffect(() => {
+    virtualHistoryRef.current = virtualHistory;
+  }, [virtualHistory]);
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={terminalSize.rows > 0 ? terminalSize.rows : undefined}>
       <Banner
         details={[config.provider.model ?? config.provider.name, shortenPath(cwd, 20)]}
         productName="AUTOTALON"
         title={sessionTitle === "assistant" ? "Personal Assistant" : sessionTitle}
       />
-      <Box flexDirection="column">
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflowY="hidden">
         {transcriptViewer !== null ? (
           <TranscriptViewer
             events={transcriptViewer.events}
@@ -961,8 +976,8 @@ export function ChatTuiApp({
           />
         ) : showTodaySummary ? (
           <WelcomeHome selectedIndex={homeSelectionIndex} summary={welcomeHome} />
-        ) : visibleTranscriptMessages.length > 0 ? (
-          <MessageStream messages={visibleTranscriptMessages} />
+        ) : transcriptMessages.length > 0 ? (
+          <TranscriptPane viewportHeight={transcriptViewportRows} window={virtualHistory.window} />
         ) : transcriptMessages.length === 0 ? (
           <Text color={theme.muted}>No conversation yet.</Text>
         ) : null}
@@ -1047,6 +1062,19 @@ function formatChatStatusLabel(
   return label;
 }
 
+function formatVirtualHistoryStatus(history: VirtualHistoryController | null): string {
+  if (history === null) {
+    return "transcript(scroll_top=0 total=0 mode=sticky-bottom visible=0)";
+  }
+  return [
+    `scroll_top=${history.state.scrollTop}`,
+    `total=${history.window.totalHeight}`,
+    `mode=${history.state.followMode}`,
+    `visible=${history.window.items.length}`,
+    `viewport=${history.state.viewportHeight}`
+  ].join(" ");
+}
+
 function shortenPath(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `...${value.slice(-(maxLength - 3))}`;
 }
@@ -1057,29 +1085,62 @@ const APPROVAL_ACTIONS: Array<{ action: "allow" | "deny"; scope?: ApprovalAllowS
   { action: "allow", scope: "always" },
   { action: "deny" }
 ];
-const TRANSCRIPT_WINDOW_SIZE = 12;
-const TRANSCRIPT_PAGE_SIZE = 6;
+const TRANSCRIPT_FALLBACK_VIEWPORT_ROWS = 12;
+const TRANSCRIPT_CHROME_ROWS = 6;
 
-export function sliceTranscriptMessages(
-  messages: ChatMessage[],
-  scrollOffset: number,
-  windowSize: number
-): ChatMessage[] {
-  if (messages.length <= windowSize) {
-    return messages;
+export function estimateTranscriptViewportRows(
+  terminalRows: number,
+  chromeRows = TRANSCRIPT_CHROME_ROWS
+): number {
+  if (!Number.isFinite(terminalRows) || terminalRows <= 0) {
+    return TRANSCRIPT_FALLBACK_VIEWPORT_ROWS;
   }
-  const boundedOffset = clampScrollOffset(scrollOffset, messages.length, windowSize);
-  const end = messages.length - boundedOffset;
-  const start = Math.max(0, end - windowSize);
-  return messages.slice(start, end);
+  return Math.max(1, Math.floor(terminalRows) - Math.max(0, Math.floor(chromeRows)));
 }
 
-function clampScrollOffset(offset: number, messageCount: number, windowSize: number): number {
-  return Math.max(0, Math.min(offset, maxTranscriptScrollOffset(messageCount, windowSize)));
+interface ChatChromeRowsInput {
+  activeClarifyPrompt: NonNullable<ReturnType<typeof useChatController>["pendingClarifyPrompt"]> | null;
+  collapsePreview: { charCount: number; lineCount: number; previewLines: string[] } | null;
+  hasPendingApproval: boolean;
+  inputLineCount: number;
+  queuedPromptCount: number;
+  slashHintCount: number;
+  valueLength: number;
 }
 
-function maxTranscriptScrollOffset(messageCount: number, windowSize: number): number {
-  return Math.max(messageCount - windowSize, 0);
+export function estimateChatChromeRows(input: ChatChromeRowsInput): number {
+  const bannerRows = 1;
+  const statusRows = 1;
+  const promptRows = input.activeClarifyPrompt !== null
+    ? estimateClarifyPromptRows(input.activeClarifyPrompt)
+    : input.hasPendingApproval
+      ? 8
+      : estimateInputRows(input);
+  return bannerRows + promptRows + statusRows;
+}
+
+function estimateInputRows(input: ChatChromeRowsInput): number {
+  const baseRows =
+    input.valueLength === 0
+      ? 1
+      : input.collapsePreview !== null
+        ? input.collapsePreview.previewLines.length + 1 + (input.collapsePreview.lineCount > input.collapsePreview.previewLines.length ? 1 : 0)
+        : Math.max(1, input.inputLineCount);
+  const queueRows = input.queuedPromptCount > 0 ? 1 : 0;
+  const hintRows = Math.min(6, input.slashHintCount);
+  return baseRows + queueRows + hintRows;
+}
+
+function estimateClarifyPromptRows(
+  prompt: NonNullable<ReturnType<typeof useChatController>["pendingClarifyPrompt"]>
+): number {
+  const currentQuestion = prompt.questions[0];
+  const optionRows = prompt.options.reduce(
+    (sum, option) => sum + 1 + (option.description !== undefined ? 1 : 0) + (option.preview !== undefined ? 1 : 0),
+    0
+  );
+  const customRows = prompt.allowCustomAnswer ? 1 : 0;
+  return 4 + optionRows + customRows + (currentQuestion?.multiSelect === true ? 0 : 0);
 }
 
 function clampSelection(index: number, size: number): number {

@@ -17,8 +17,7 @@ import {
   handleInboxCommand,
   handleResumeCommand,
   handleScheduleCommand,
-  isLiveTranscriptMessage,
-  sliceTranscriptMessages
+  isLiveTranscriptMessage
 } from "../src/tui/chat-app.js";
 import {
   canSubmitTextInput,
@@ -36,13 +35,29 @@ import {
   toTraceActivityMessage,
   type ChatMessage
 } from "../src/tui/view-models/chat-messages.js";
-import { splitMessageStreamMessages } from "../src/tui/components/message-stream.js";
+import {
+  buildChatRenderRows,
+  findLatestCompletedAssistantStartRow,
+  measureChatMessage,
+  scrollOffsetForRowStart,
+  selectVirtualChatRows
+} from "../src/tui/components/message-stream.js";
+import { TranscriptPane } from "../src/tui/components/transcript-pane.js";
+import {
+  attachMessagesToVirtualWindow,
+  findLatestCompletedAssistantMessageId,
+  selectVirtualHistoryWindow,
+  useVirtualHistory,
+  type VirtualHistoryController
+} from "../src/tui/hooks/use-virtual-history.js";
 import type { AgentApplicationService, AppConfig } from "../src/runtime/index.js";
 import { createDefaultRunOptions } from "../src/runtime/index.js";
+import { AppError } from "../src/runtime/app-error.js";
 import type {
   ApprovalRecord,
   ClarifyPromptRecord,
   InboxItem,
+  RuntimeOutputEvent,
   RuntimeRunOptions,
   ScheduleRecord,
   ScheduleRunRecord,
@@ -150,6 +165,28 @@ describe("chat tui view-models", () => {
     expect(displayChatMessages([activity])).toEqual([]);
   });
 
+  it("collapses repeated high-value activity rows in chat mode", () => {
+    const first = toTraceActivityMessage(createTraceEvent("tool_call_finished", {
+      iteration: 1,
+      outputPreview: "ok",
+      summary: "path=D:\\talon-test\\css\\style.css",
+      toolCallId: "call-1",
+      toolName: "file_write"
+    }));
+    const second = {
+      ...toTraceActivityMessage(createTraceEvent("tool_call_finished", {
+        iteration: 2,
+        outputPreview: "ok",
+        summary: "path=D:\\talon-test\\css\\style.css",
+        toolCallId: "call-2",
+        toolName: "file_write"
+      })),
+      text: first.text
+    };
+
+    expect(displayChatMessages([first, second])).toEqual([first]);
+  });
+
   it("formats tool execution failures as user-facing task errors", () => {
     const activity = toTraceActivityMessage(createTraceEvent("tool_call_failed", {
       errorCode: "tool_execution_error",
@@ -164,7 +201,7 @@ describe("chat tui view-models", () => {
     );
   });
 
-  it("keeps the latest completed message in the live TUI region", () => {
+  it("expands chat messages into stable render rows", () => {
     const user: ChatMessage = {
       id: "user-1",
       kind: "user",
@@ -179,10 +216,31 @@ describe("chat tui view-models", () => {
       timestamp: "2026-01-01T00:00:01.000Z"
     };
 
-    const split = splitMessageStreamMessages([user, agent]);
+    const rows = buildChatRenderRows([user, agent], 40);
 
-    expect(split.stableMessages.map((message) => message.id)).toEqual(["user-1"]);
-    expect(split.dynamicMessages.map((message) => message.id)).toEqual(["agent-1"]);
+    expect(rows.map((row) => row.text)).toEqual([
+      "> prompt",
+      "",
+      "assistant",
+      "final answer"
+    ]);
+  });
+
+  it("wraps wide CJK transcript text by terminal columns", () => {
+    const agent: ChatMessage = {
+      id: "agent-cjk",
+      kind: "agent",
+      text: "中文中文中文中文中文中文",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+
+    const rows = buildChatRenderRows([agent], 20);
+
+    expect(rows.map((row) => row.text)).toEqual([
+      "assistant",
+      "中文中文中文中文中文",
+      "中文"
+    ]);
   });
 
   it("distinguishes live rows from completed transcript rows", () => {
@@ -203,29 +261,281 @@ describe("chat tui view-models", () => {
     expect(isLiveTranscriptMessage(toApprovalMessage(createApprovalRecord(), createToolCallRecord()))).toBe(true);
   });
 
-  it("slices transcript history from the bottom with a bounded offset", () => {
-    const messages: ChatMessage[] = Array.from({ length: 5 }, (_, index) => ({
-      id: `system-${index}`,
-      kind: "system" as const,
-      text: `line ${index}`,
-      timestamp: "2026-01-01T00:00:00.000Z"
+  it("virtualizes transcript rows from the bottom with a bounded row offset", () => {
+    const rows = Array.from({ length: 5 }, (_, index) => ({
+      id: `row-${index}`,
+      text: `line ${index}`
     }));
 
-    expect(sliceTranscriptMessages(messages, 0, 3).map((message) => message.id)).toEqual([
-      "system-2",
-      "system-3",
-      "system-4"
+    expect(selectVirtualChatRows(rows, 3, 0).rows.map((row) => row.id)).toEqual([
+      "row-2",
+      "row-3",
+      "row-4"
     ]);
-    expect(sliceTranscriptMessages(messages, 1, 3).map((message) => message.id)).toEqual([
-      "system-1",
-      "system-2",
-      "system-3"
+    expect(selectVirtualChatRows(rows, 3, 1).rows.map((row) => row.id)).toEqual([
+      "row-1",
+      "row-2",
+      "row-3"
     ]);
-    expect(sliceTranscriptMessages(messages, 99, 3).map((message) => message.id)).toEqual([
-      "system-0",
-      "system-1",
-      "system-2"
+    const clamped = selectVirtualChatRows(rows, 3, 99);
+    expect(clamped.rows.map((row) => row.id)).toEqual(["row-0", "row-1", "row-2"]);
+    expect(clamped.scrollOffsetRows).toBe(2);
+  });
+
+  it("can scroll inside one long assistant message", () => {
+    const agent: ChatMessage = {
+      id: "agent-long",
+      kind: "agent",
+      text: "first line\nsecond line\nthird line\nfourth line\nfifth line",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const rows = buildChatRenderRows([agent], 80);
+
+    expect(selectVirtualChatRows(rows, 3, 0).rows.map((row) => row.text)).toEqual([
+      "third line",
+      "fourth line",
+      "fifth line"
     ]);
+    expect(selectVirtualChatRows(rows, 3, 99).rows.map((row) => row.text)).toEqual([
+      "assistant",
+      "first line",
+      "second line"
+    ]);
+  });
+
+  it("can anchor the viewport to the latest completed assistant message start", () => {
+    const agent: ChatMessage = {
+      id: "agent-long",
+      kind: "agent",
+      text: "first line\nsecond line\nthird line\nfourth line\nfifth line",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const rows = buildChatRenderRows([agent], 80);
+    const latest = findLatestCompletedAssistantStartRow([agent], rows);
+
+    expect(latest).toEqual({ messageId: "agent-long", rowIndex: 0 });
+    const offset = scrollOffsetForRowStart(latest?.rowIndex ?? -1, rows.length, 3);
+
+    expect(selectVirtualChatRows(rows, 3, offset).rows.map((row) => row.text)).toEqual([
+      "assistant",
+      "first line",
+      "second line"
+    ]);
+  });
+
+  it("does not anchor completion to a still-streaming assistant message", () => {
+    const finishedReply: ChatMessage = {
+      id: "agent-finished",
+      kind: "agent",
+      text: "finished reply",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const streamingReply: ChatMessage = {
+      id: "agent-streaming",
+      kind: "agent",
+      streaming: true,
+      text: "streaming reply",
+      timestamp: "2026-01-01T00:00:01.000Z"
+    };
+    const messages = [finishedReply, streamingReply];
+    const rows = buildChatRenderRows(messages, 80);
+
+    expect(findLatestCompletedAssistantStartRow(messages, rows)).toEqual({
+      messageId: "agent-finished",
+      rowIndex: 0
+    });
+  });
+
+  it("recomputes assistant start offsets after transcript wrapping changes", () => {
+    const agent: ChatMessage = {
+      id: "agent-wrap",
+      kind: "agent",
+      text: "alpha beta gamma delta epsilon zeta eta theta",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const narrowRows = buildChatRenderRows([agent], 20);
+    const wideRows = buildChatRenderRows([agent], 80);
+    const narrowStart = findLatestCompletedAssistantStartRow([agent], narrowRows);
+    const wideStart = findLatestCompletedAssistantStartRow([agent], wideRows);
+
+    expect(narrowStart).toEqual({ messageId: "agent-wrap", rowIndex: 0 });
+    expect(wideStart).toEqual({ messageId: "agent-wrap", rowIndex: 0 });
+    expect(scrollOffsetForRowStart(narrowStart?.rowIndex ?? -1, narrowRows.length, 2)).toBeGreaterThan(0);
+    expect(scrollOffsetForRowStart(wideStart?.rowIndex ?? -1, wideRows.length, 2)).toBe(0);
+  });
+
+  it("selects a measured virtual history window by scrollTop", () => {
+    const messages: ChatMessage[] = [
+      {
+        id: "user-1",
+        kind: "user",
+        text: "prompt",
+        timestamp: "2026-01-01T00:00:00.000Z"
+      },
+      {
+        id: "agent-1",
+        kind: "agent",
+        text: "line one\nline two\nline three",
+        timestamp: "2026-01-01T00:00:01.000Z"
+      },
+      {
+        id: "user-2",
+        kind: "user",
+        text: "next",
+        timestamp: "2026-01-01T00:00:02.000Z"
+      }
+    ];
+    const measurements = messages.map((message, index) => measureChatMessage(message, 80, messages[index - 1]));
+    const rawWindow = selectVirtualHistoryWindow(measurements, 2, 3, 0);
+    const window = attachMessagesToVirtualWindow(rawWindow, messages);
+
+    expect(window.totalHeight).toBe(measurements.reduce((sum, item) => sum + item.height, 0));
+    expect(window.scrollTop).toBe(2);
+    expect(window.topSpacerRows).toBe(2);
+    expect(window.items.map((item) => item.message.id)).toEqual(["agent-1"]);
+    expect(window.items[0]?.rowStart).toBe(1);
+    expect(window.items[0]?.rowEnd).toBe(4);
+  });
+
+  it("clips rows inside one tall measured message", () => {
+    const message: ChatMessage = {
+      id: "agent-long",
+      kind: "agent",
+      text: "first\nsecond\nthird\nfourth\nfifth",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const measurement = measureChatMessage(message, 80);
+    const rawWindow = selectVirtualHistoryWindow([measurement], 2, 2, 0);
+    const window = attachMessagesToVirtualWindow(rawWindow, [message]);
+
+    expect(window.items).toHaveLength(1);
+    expect(window.items[0]?.rowStart).toBe(2);
+    expect(window.items[0]?.rowEnd).toBe(4);
+    expect(measurement.rows.slice(window.items[0]?.rowStart, window.items[0]?.rowEnd).map((row) => row.text)).toEqual([
+      "second",
+      "third"
+    ]);
+  });
+
+  it("remeasures mutable streaming messages instead of treating history as append-only", () => {
+    const streaming: ChatMessage = {
+      id: "agent-stream",
+      kind: "agent",
+      streaming: true,
+      text: "partial",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const completed: ChatMessage = {
+      ...streaming,
+      streaming: false,
+      text: "partial\nfinal line\nmore detail\nlast line"
+    };
+
+    const first = measureChatMessage(streaming, 80);
+    const next = measureChatMessage(completed, 80);
+
+    expect(first.revision).not.toBe(next.revision);
+    expect(next.height).toBeGreaterThan(first.height);
+  });
+
+  it("finds the latest completed assistant message for completion anchoring", () => {
+    const messages: ChatMessage[] = [
+      {
+        id: "agent-finished",
+        kind: "agent",
+        text: "finished",
+        timestamp: "2026-01-01T00:00:00.000Z"
+      },
+      {
+        id: "agent-streaming",
+        kind: "agent",
+        streaming: true,
+        text: "streaming",
+        timestamp: "2026-01-01T00:00:01.000Z"
+      }
+    ];
+
+    expect(findLatestCompletedAssistantMessageId(messages)).toBe("agent-finished");
+  });
+
+  it("passes only the measured transcript window to the transcript pane", () => {
+    const messages: ChatMessage[] = Array.from({ length: 12 }, (_, index) => ({
+      id: `agent-${index}`,
+      kind: "agent" as const,
+      text: `reply ${index}`,
+      timestamp: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`
+    }));
+    const measurements = messages.map((message, index) => measureChatMessage(message, 80, messages[index - 1]));
+    const rawWindow = selectVirtualHistoryWindow(measurements, 20, 4, 0);
+    const window = attachMessagesToVirtualWindow(rawWindow, messages);
+
+    expect(React.createElement(TranscriptPane, { viewportHeight: 4, window }).props.window.items.map(
+      (item: { message: ChatMessage }) => item.message.id
+    )).toEqual(["agent-10", "agent-11"]);
+    expect(window.items.flatMap((item) => item.measurement.rows.slice(item.rowStart, item.rowEnd).map((row) => row.text))).toEqual([
+      "assistant",
+      "reply 10",
+      "assistant",
+      "reply 11"
+    ]);
+  });
+
+  it("keeps manual virtual history position during streaming growth until jumping to end", async () => {
+    const stdout = new PassThrough();
+    const initialMessages: ChatMessage[] = Array.from({ length: 8 }, (_, index) => ({
+      id: `agent-${index}`,
+      kind: "agent" as const,
+      text: `reply ${index}`,
+      timestamp: `2026-01-01T00:00:${String(index).padStart(2, "0")}.000Z`
+    }));
+    let history: VirtualHistoryController | null = null;
+    let replaceMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>> | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const [messages, setMessages] = React.useState(initialMessages);
+      const instance = useVirtualHistory({
+        busy: true,
+        messages,
+        runState: "running",
+        viewportHeight: 3,
+        width: 80
+      });
+      React.useEffect(() => {
+        history = instance;
+        replaceMessages = setMessages;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => history !== null && history.state.scrollTop === history.window.maxScrollTop);
+      history?.scrollPage(-1, false);
+      await waitFor(() => history?.state.followMode === "manual");
+      const manualScrollTop = history?.state.scrollTop ?? -1;
+      replaceMessages?.((current) =>
+        current.map((message) =>
+          message.id === "agent-7" && message.kind === "agent"
+            ? { ...message, streaming: true, text: `${message.text}\nstreaming line\nlatest token` }
+            : message
+        )
+      );
+      await waitFor(() => (history?.window.totalHeight ?? 0) > initialMessages.length * 2);
+
+      expect(history?.state.followMode).toBe("manual");
+      expect(history?.state.scrollTop).toBe(manualScrollTop);
+
+      history?.jumpTo("end");
+      await waitFor(() => history?.state.followMode === "sticky-bottom");
+      expect(history?.state.scrollTop).toBe(history?.window.maxScrollTop);
+    } finally {
+      await unmountInkApp(app);
+    }
   });
 });
 
@@ -434,6 +744,62 @@ describe("use-chat-controller helpers", () => {
       const agentReplies = messages
         .filter((message): message is Extract<ChatMessage, { kind: "agent" }> => message.kind === "agent");
       expect(agentReplies.map((message) => message.text)).toEqual(["Here is the answer."]);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("preserves hidden assistant progress when a task fails before a final reply", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createMultiTurnControllerService({
+      failAfterHiddenIntermediate: true,
+      hiddenIntermediate: true
+    });
+    let submitPrompt: ChatController["submitPrompt"] | null = null;
+    let messages: ChatMessage[] = [];
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as AgentApplicationService
+      });
+
+      React.useEffect(() => {
+        submitPrompt = instance.submitPrompt;
+      }, [instance]);
+
+      React.useEffect(() => {
+        messages = instance.messages;
+      }, [instance.messages]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => submitPrompt !== null);
+      if (submitPrompt === null) {
+        throw new Error("submitPrompt should be initialized before the test submits prompts.");
+      }
+      expect(submitPrompt("research")).toBe(true);
+
+      await waitFor(() => messages.some((message) => message.kind === "error"));
+
+      const agentReplies = messages
+        .filter((message): message is Extract<ChatMessage, { kind: "agent" }> => message.kind === "agent");
+      const errors = messages
+        .filter((message): message is Extract<ChatMessage, { kind: "error" }> => message.kind === "error");
+
+      expect(agentReplies.map((message) => message.text)).toEqual(["Let me check the README first."]);
+      expect(errors[0]?.message).toBe("sandbox denied");
     } finally {
       await unmountInkApp(app);
     }
@@ -1253,6 +1619,113 @@ describe("use-chat-controller helpers", () => {
       expect(getController().messages).toMatchObject([{ kind: "user", text: "Resume me" }]);
       expect(getController().sessionApprovalFingerprints).toEqual(["resume-fingerprint"]);
       expect(getController().uiStatus.primaryLabel).toBe("session resumed");
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("hydrates failed progress from output events for legacy sessions", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const taskId = "failed-task";
+    const service = {
+      ...createIdleControllerService(),
+      outputTask(id: string): RuntimeOutputEvent[] {
+        expect(id).toBe(taskId);
+        return [
+          {
+            eventId: "output-1",
+            eventType: "assistant_turn_completed",
+            payload: {
+              display: "intermediate",
+              iteration: 1,
+              text: "Recovered hidden progress.",
+              transcriptVisibility: "hidden",
+              turnId: "turn-1"
+            },
+            sequence: 1,
+            stage: "planning",
+            taskId,
+            threadId: "thread-resume",
+            timestamp: "2026-01-01T00:00:01.000Z"
+          },
+          {
+            eventId: "output-2",
+            eventType: "error",
+            payload: {
+              code: "sandbox_denied",
+              message: "sandbox denied",
+              status: "failed"
+            },
+            sequence: 2,
+            stage: "completion",
+            taskId,
+            threadId: "thread-resume",
+            timestamp: "2026-01-01T00:00:02.000Z"
+          }
+        ];
+      }
+    };
+    let controller: ChatController | null = null;
+    let messages: ChatMessage[] = [];
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: service as unknown as AgentApplicationService
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      React.useEffect(() => {
+        messages = instance.messages;
+      }, [instance.messages]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      getController().restoreSession({
+        id: "session-resume",
+        messages: [
+          {
+            id: "user:resume",
+            kind: "user",
+            text: "Resume me",
+            timestamp: "2026-01-01T00:00:00.000Z"
+          },
+          {
+            code: "sandbox_denied",
+            id: `error:${taskId}:error-1`,
+            kind: "error",
+            message: "sandbox denied",
+            source: "runtime",
+            timestamp: "2026-01-01T00:00:02.000Z"
+          }
+        ],
+        threadId: "thread-resume",
+        updatedAt: "2026-01-01T01:00:00.000Z"
+      });
+      await waitFor(() => messages.some((message) => message.kind === "agent"));
+
+      expect(messages.map((message) => message.kind)).toEqual(["user", "agent", "error"]);
+      expect(
+        messages.find((message): message is Extract<ChatMessage, { kind: "agent" }> => message.kind === "agent")?.text
+      ).toBe("Recovered hidden progress.");
     } finally {
       await unmountInkApp(app);
     }
@@ -2151,7 +2624,10 @@ function createControllerConfig(): AppConfig {
   };
 }
 
-function createMultiTurnControllerService(config: { hiddenIntermediate?: boolean } = {}): ControllerServiceStub {
+function createMultiTurnControllerService(config: {
+  failAfterHiddenIntermediate?: boolean;
+  hiddenIntermediate?: boolean;
+} = {}): ControllerServiceStub {
   const tasks = new Map<string, TaskRecord>();
   let sequence = 0;
 
@@ -2199,6 +2675,21 @@ function createMultiTurnControllerService(config: { hiddenIntermediate?: boolean
       },
       stage: "planning"
     });
+
+    if (config.failAfterHiddenIntermediate === true) {
+      task.status = "failed";
+      task.errorCode = "sandbox_denied";
+      task.errorMessage = "sandbox denied";
+      task.finishedAt = new Date().toISOString();
+      return Promise.resolve({
+        error: new AppError({
+          code: "sandbox_denied",
+          message: "sandbox denied"
+        }),
+        output: null,
+        task
+      });
+    }
 
     emit(options, {
       eventType: "assistant_turn_started",

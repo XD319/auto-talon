@@ -9,7 +9,6 @@ import { AgentTuiApp } from "./dashboard-app.js";
 import type { TuiResolveAppConfigOptions } from "./runtime-api.js";
 import type { ChatMessage } from "./view-models/chat-messages.js";
 import { loadSession } from "./session-store.js";
-import { enterTerminalScreen } from "./terminal-screen.js";
 import { RuntimeDashboardQueryService } from "./view-models/runtime-dashboard.js";
 
 export interface StartTuiOptions {
@@ -48,7 +47,6 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
       initialThreadId = loaded?.threadId;
     }
 
-    const screen = enterTerminalScreen();
     let app: ReturnType<typeof render> | null = null;
     try {
       app = render(
@@ -67,13 +65,13 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
           service: handle.service
         }),
         {
+          alternateScreen: true,
           exitOnCtrlC: false
         }
       );
       await app.waitUntilExit();
     } finally {
       app?.unmount();
-      screen.release();
     }
   } finally {
     handle.close();
@@ -88,7 +86,6 @@ export async function startDashboardTui(
     scheduler: { autoStart: true },
     ...(sandbox !== undefined ? { sandbox } : {})
   });
-  const screen = enterTerminalScreen();
   try {
     const app = render(
       React.createElement(AgentTuiApp, {
@@ -96,13 +93,13 @@ export async function startDashboardTui(
         reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer"
       }),
       {
+        alternateScreen: true,
         exitOnCtrlC: false
       }
     );
     await app.waitUntilExit();
     app.unmount();
   } finally {
-    screen.release();
     handle.close();
   }
 }

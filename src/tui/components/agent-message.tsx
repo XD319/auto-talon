@@ -11,12 +11,9 @@ export interface AgentMessageProps {
   text: string;
 }
 
-// Maximum number of trailing lines we keep visible while a response is still
-// streaming. Anything taller risks blowing past the terminal window height,
-// which makes Ink's log-update re-render fall back to "append" mode and
-// produces visible duplication of the in-flight message on every delta. The
-// final, fully-rendered response is committed once via <Static> in
-// MessageStream, so users still see the complete answer at the end.
+// Maximum number of trailing lines we keep visible while this legacy component
+// streams a response. The main chat transcript now uses row-level virtualization
+// in MessageStream, which keeps the active frame bounded.
 const STREAMING_TAIL_LINES = 6;
 
 function tailLines(text: string, limit: number): { content: string; truncated: boolean } {

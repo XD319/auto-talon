@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const { closeApplication, createApplication, render, unmount, waitUntilExit } = vi.hoisted(() => {
   const closeApplication = vi.fn();
@@ -42,42 +42,21 @@ vi.mock("../src/tui/view-models/runtime-dashboard.js", () => ({
 
 import { startTui } from "../src/tui/index.js";
 
-const ENTER_ALT_SCREEN = "\u001b[?1049h\u001b[2J\u001b[H";
-const EXIT_ALT_SCREEN = "\u001b[?1049l";
-
 describe("chat tui terminal screen", () => {
-  let originalIsTty: boolean | undefined;
-  let writeSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    createApplication.mockClear();
-    closeApplication.mockClear();
+  it("renders with alternateScreen enabled via ink", async () => {
     render.mockClear();
     waitUntilExit.mockClear();
     unmount.mockClear();
-    originalIsTty = process.stdout.isTTY;
-    Object.defineProperty(process.stdout, "isTTY", {
-      configurable: true,
-      value: true
-    });
-    writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-  });
+    closeApplication.mockClear();
 
-  afterEach(() => {
-    writeSpy.mockRestore();
-    Object.defineProperty(process.stdout, "isTTY", {
-      configurable: true,
-      value: originalIsTty
-    });
-  });
-
-  it("runs the chat tui inside the alternate terminal screen", async () => {
     await startTui({ cwd: "D:\\workspace" });
 
-    const writes = writeSpy.mock.calls.map((call) => String(call[0]));
-    expect(writes[0]).toBe(ENTER_ALT_SCREEN);
-    expect(writes.at(-1)).toBe(EXIT_ALT_SCREEN);
     expect(render).toHaveBeenCalledTimes(1);
+    const renderOptions = render.mock.calls[0]?.[1];
+    expect(renderOptions).toMatchObject({
+      alternateScreen: true,
+      exitOnCtrlC: false
+    });
     expect(waitUntilExit).toHaveBeenCalledTimes(1);
     expect(unmount).toHaveBeenCalledTimes(1);
     expect(closeApplication).toHaveBeenCalledTimes(1);

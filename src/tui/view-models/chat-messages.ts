@@ -56,7 +56,7 @@ export type ChatMessage =
       timestamp: string;
     };
 
-export function toTraceActivityMessage(event: TraceEvent): ChatMessage {
+export function toTraceActivityMessage(event: TraceEvent): Extract<ChatMessage, { kind: "activity" }> {
   return {
     id: `activity:${event.eventId}`,
     kind: "activity",
@@ -110,11 +110,23 @@ export function toApprovalResultMessage(
 }
 
 export function displayChatMessages(messages: ChatMessage[]): ChatMessage[] {
+  const seenActivityKeys = new Set<string>();
   return messages.filter((message) => {
     if (message.kind === "approval" && message.status === "pending") {
       return false;
     }
-    return message.kind !== "activity" || isHighValueActivity(message.event);
+    if (message.kind !== "activity") {
+      return true;
+    }
+    if (!isHighValueActivity(message.event)) {
+      return false;
+    }
+    const key = activityDisplayKey(message);
+    if (seenActivityKeys.has(key)) {
+      return false;
+    }
+    seenActivityKeys.add(key);
+    return true;
   });
 }
 
@@ -225,7 +237,7 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }
 
-function isHighValueActivity(event: TraceEvent): boolean {
+export function isHighValueActivity(event: TraceEvent): boolean {
   return (
     event.eventType === "approval_requested" ||
     event.eventType === "approval_resolved" ||
@@ -239,6 +251,14 @@ function isHighValueActivity(event: TraceEvent): boolean {
     event.eventType === "tool_call_failed" ||
     (event.eventType === "tool_call_finished" && isHighValueFinishedTool(event.payload.toolName))
   );
+}
+
+export function activityDisplayKey(message: Extract<ChatMessage, { kind: "activity" }>): string {
+  return [
+    message.event.taskId,
+    message.event.eventType,
+    message.text.replace(/\s+/gu, " ").trim()
+  ].join(":");
 }
 
 function isHighValueFinishedTool(toolName: string): boolean {

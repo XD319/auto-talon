@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 
 import { Banner } from "./components/banner.js";
 import { StatusBar } from "./components/status-bar.js";
@@ -34,13 +34,14 @@ export function AgentTuiApp({
   reviewerId
 }: AgentTuiAppProps): React.ReactElement {
   const { exit } = useApp();
+  const terminalSize = useWindowSize();
   const ctrlCRequestedAtRef = React.useRef<number | null>(null);
   const controller = useDashboardController({
     queryService,
     refreshIntervalMs,
     reviewerId
   });
-  const stdoutWidth = process.stdout.columns ?? 120;
+  const stdoutWidth = terminalSize.columns > 0 ? terminalSize.columns : process.stdout.columns ?? 120;
   const compactLayout = stdoutWidth < 96;
   const leftPaneWidth = compactLayout
     ? Math.max(20, stdoutWidth - 8)
@@ -139,7 +140,7 @@ export function AgentTuiApp({
   const selectedTask = controller.snapshot.selectedTask;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={terminalSize.rows > 0 ? terminalSize.rows : undefined}>
       <Banner
         details={[
           `tasks ${controller.snapshot.summary.taskCount}`,

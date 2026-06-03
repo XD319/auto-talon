@@ -143,6 +143,21 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       return;
     }
 
+    if (key.pageUp || key.pageDown) {
+      options.onPageScroll?.(key.pageUp ? -1 : 1, key.shift === true);
+      return;
+    }
+
+    const earlyNavKey = key as { end?: boolean; home?: boolean };
+    if (earlyNavKey.home === true && key.ctrl) {
+      options.onPageJump?.("start");
+      return;
+    }
+    if (earlyNavKey.end === true && (key.ctrl || valueRef.current.length === 0)) {
+      options.onPageJump?.("end");
+      return;
+    }
+
     if (options.activePrompt?.kind === "approval") {
       if (key.upArrow || key.leftArrow) {
         options.onPromptMove?.(-1);
@@ -214,11 +229,6 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
           preferredColumnRef.current = null;
         }
       }
-      return;
-    }
-
-    if (key.pageUp || key.pageDown) {
-      options.onPageScroll?.(key.pageUp ? -1 : 1, key.shift === true);
       return;
     }
 

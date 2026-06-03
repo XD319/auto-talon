@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { TuiInteractionMode } from "../types/index.js";
-import type { ChatMessage } from "./view-models/chat-messages.js";
+import { activityDisplayKey, isHighValueActivity, type ChatMessage } from "./view-models/chat-messages.js";
 
 export interface PersistedChatSession {
   id: string;
@@ -47,7 +47,7 @@ export async function ensureDraftsDir(workspaceRoot: string): Promise<string> {
 export async function saveSession(workspaceRoot: string, session: PersistedChatSession): Promise<void> {
   const dir = await ensureSessionsDir(workspaceRoot);
   const path = join(dir, `${session.id}.json`);
-  await writeFile(path, JSON.stringify(session, null, 2), "utf8");
+  await writeFile(path, JSON.stringify(compactSessionForStorage(session), null, 2), "utf8");
 }
 
 export async function loadSession(workspaceRoot: string, sessionId: string): Promise<PersistedChatSession | null> {
@@ -79,7 +79,7 @@ export async function loadSession(workspaceRoot: string, sessionId: string): Pro
     if (typeof parsed.updatedAt !== "string") {
       return null;
     }
-    return parsed;
+    return compactSessionForStorage(parsed);
   } catch {
     return null;
   }
@@ -145,4 +145,29 @@ function firstUsefulText(values: Array<string | null | undefined>): string | nul
 function summarizeText(value: string, maxLength = 76): string {
   const normalized = value.replace(/\s+/gu, " ").trim();
   return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function compactSessionForStorage(session: PersistedChatSession): PersistedChatSession {
+  return {
+    ...session,
+    messages: compactSessionMessages(session.messages)
+  };
+}
+
+function compactSessionMessages(messages: ChatMessage[]): ChatMessage[] {
+  const seenActivityKeys = new Set<string>();
+  return messages.filter((message) => {
+    if (message.kind !== "activity") {
+      return true;
+    }
+    if (!isHighValueActivity(message.event)) {
+      return false;
+    }
+    const key = activityDisplayKey(message);
+    if (seenActivityKeys.has(key)) {
+      return false;
+    }
+    seenActivityKeys.add(key);
+    return true;
+  });
 }

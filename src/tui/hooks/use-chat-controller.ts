@@ -8,6 +8,7 @@ import type {
   ApprovalAllowScope,
   ApprovalRecord,
   ClarifyPromptRecord,
+  RuntimeOutputEvent,
   TaskRecord,
   ToolCallRecord,
   TraceEvent,
@@ -114,6 +115,8 @@ const welcomeMessage: ChatMessage = {
 };
 const STREAM_FLUSH_INTERVAL_MS = 50;
 const STREAM_FLUSH_MAX_CHARS = 1_024;
+const FAILED_PROGRESS_MAX_CHARS = 2_000;
+const FAILED_PROGRESS_MAX_TURNS = 8;
 export const TUI_ACTIVITY_TIMEOUT_MS = 900_000;
 export const TUI_INTERACTIVE_MAX_ITERATIONS = 90;
 
@@ -162,6 +165,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const streamingAgentIdRef = React.useRef<string | null>(null);
   const streamedAnyRef = React.useRef(false);
   const pendingDeltaRef = React.useRef("");
+  const hiddenAssistantProgressRef = React.useRef<string[]>([]);
+  const currentAssistantDraftRef = React.useRef("");
   const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const approvalInFlightRef = React.useRef(false);
   const submitInFlightRef = React.useRef(false);
@@ -175,6 +180,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     usage: null
   });
   const busy = busyCount > 0;
+
+  const resetAssistantProgressBuffers = React.useCallback(() => {
+    hiddenAssistantProgressRef.current = [];
+    currentAssistantDraftRef.current = "";
+  }, []);
 
   React.useEffect(() => {
     queuedPromptsRef.current = queuedPrompts;
@@ -349,7 +359,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setUsedMemoryCount(0);
     setActiveThreadId(null);
     stopTraceSubscription();
-  }, [resetTokenHudState, stopTraceSubscription]);
+    resetAssistantProgressBuffers();
+  }, [resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]);
 
   const resetVisibleChat = React.useCallback(() => {
     setMessages([welcomeMessage]);
@@ -373,7 +384,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setUsedMemoryCount(0);
     setActiveThreadId(null);
     stopTraceSubscription();
-  }, [resetTokenHudState, stopTraceSubscription]);
+    resetAssistantProgressBuffers();
+  }, [resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]);
 
   const resetVisibleChatPreserveActiveThread = React.useCallback((statusLabel = "thread selected") => {
     setMessages([welcomeMessage]);
@@ -395,11 +407,16 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     resetTokenHudState();
     setUsedMemoryCount(0);
     stopTraceSubscription();
-  }, [resetTokenHudState, stopTraceSubscription]);
+    resetAssistantProgressBuffers();
+  }, [resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]);
 
   const restoreSession = React.useCallback(
     (session: PersistedChatSession) => {
-      setMessages(session.messages.length > 0 ? session.messages : [welcomeMessage]);
+      const restoredMessages =
+        session.messages.length > 0
+          ? hydrateFailedTaskProgress(session.messages, input.service)
+          : [welcomeMessage];
+      setMessages(restoredMessages);
       setStatusLine("session resumed");
       setUiStatus({
         approvalLabel: null,
@@ -413,7 +430,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       setPendingClarifyPrompt(null);
       activeTaskIdRef.current = null;
       activeThreadIdRef.current = session.threadId ?? null;
-      seenApprovalMessageIdsRef.current = collectApprovalMessageIds(session.messages);
+      seenApprovalMessageIdsRef.current = collectApprovalMessageIds(restoredMessages);
       setSessionApprovalFingerprints(session.sessionApprovalFingerprints ?? []);
       setFileEdits([]);
       setQueuedPrompts([]);
@@ -421,8 +438,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       setUsedMemoryCount(0);
       setActiveThreadId(session.threadId ?? null);
       stopTraceSubscription();
+      resetAssistantProgressBuffers();
     },
-    [resetTokenHudState, stopTraceSubscription]
+    [input.service, resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]
   );
 
   const switchActiveThread = React.useCallback((threadId: string) => {
@@ -684,6 +702,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       startTraceSubscription(taskId);
       streamedAnyRef.current = false;
       streamingAgentIdRef.current = streamId;
+      resetAssistantProgressBuffers();
 
       setMessages((current) => [
         ...dropOnlyWelcomeMessage(current),
@@ -721,6 +740,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               // visible reasoning was frozen into history below and must stay.
               removeStreamingMessage(streamingAgentIdRef.current);
               streamedAnyRef.current = false;
+              currentAssistantDraftRef.current = "";
               streamingAgentIdRef.current = `agent:stream:${event.payload.turnId}`;
               return;
             }
@@ -729,6 +749,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               if (streamingAgentIdRef.current === null) {
                 return;
               }
+              currentAssistantDraftRef.current += event.payload.delta;
               pendingDeltaRef.current += event.payload.delta;
               if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
                 flushPendingDelta();
@@ -750,11 +771,20 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               streamedAnyRef.current = false;
               if (intermediateStreamId !== null) {
                 if (event.payload.transcriptVisibility === "hidden") {
+                  hiddenAssistantProgressRef.current = appendAssistantProgress(
+                    hiddenAssistantProgressRef.current,
+                    event.payload.text
+                  );
                   removeStreamingMessage(intermediateStreamId);
                 } else {
                   freezeIntermediateAgentMessage(intermediateStreamId, event.payload.text);
                 }
               }
+              currentAssistantDraftRef.current = "";
+              return;
+            }
+            if (event.eventType === "assistant_turn_completed" && event.payload.display === "final") {
+              currentAssistantDraftRef.current = "";
               return;
             }
             if (event.eventType === "provider_status") {
@@ -787,17 +817,23 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
           const runError = result.error;
           if (runError !== undefined) {
+            const failedProgressText = buildFailedAssistantProgressText(
+              hiddenAssistantProgressRef.current,
+              currentAssistantDraftRef.current
+            );
             cancelPendingDelta();
             removeStreamingMessage(activeStreamId);
+            const timestamp = new Date().toISOString();
             setMessages((current) => [
               ...current,
+              ...failedAssistantProgressMessage(result.task.taskId, failedProgressText, timestamp),
               {
                 code: runError.code,
                 id: `error:${result.task.taskId}:${randomUUID()}`,
                 kind: "error",
                 message: runError.message,
                 source: "runtime",
-                timestamp: new Date().toISOString()
+                timestamp
               }
             ]);
             setStatusLine(`failed: ${runError.code}`);
@@ -843,6 +879,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         } catch (error) {
           const activeStreamId = streamingAgentIdRef.current;
           streamingAgentIdRef.current = null;
+          const failedProgressText = buildFailedAssistantProgressText(
+            hiddenAssistantProgressRef.current,
+            currentAssistantDraftRef.current
+          );
           cancelPendingDelta();
           removeStreamingMessage(activeStreamId);
 
@@ -861,15 +901,17 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             return;
           }
 
+          const timestamp = new Date().toISOString();
           setMessages((current) => [
             ...current,
+            ...failedAssistantProgressMessage(activeTaskIdRef.current ?? "submit", failedProgressText, timestamp),
             {
               code: "runtime_error",
               id: `error:submit:${randomUUID()}`,
               kind: "error",
               message: error instanceof Error ? error.message : String(error),
               source: "runtime",
-              timestamp: new Date().toISOString()
+              timestamp
             }
           ]);
           setStatusLine("failed to run task");
@@ -886,6 +928,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           streamingAgentIdRef.current = null;
           streamedAnyRef.current = false;
           cancelPendingDelta();
+          resetAssistantProgressBuffers();
           endBusy();
           stopTraceSubscription();
           setTimeout(() => {
@@ -921,6 +964,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       sessionApprovalFingerprints,
       refresh,
       removeStreamingMessage,
+      resetAssistantProgressBuffers,
       shiftQueuedPrompt,
       startTraceSubscription,
       stopTraceSubscription
@@ -1543,6 +1587,131 @@ export function mergeTraceMessages(current: ChatMessage[], events: TraceEvent[])
     }
   }
   return next;
+}
+
+function hydrateFailedTaskProgress(messages: ChatMessage[], service: TuiRuntimeService): ChatMessage[] {
+  if (typeof service.outputTask !== "function") {
+    return messages;
+  }
+  const next: ChatMessage[] = [];
+  let hasAgentSinceLastUser = false;
+  for (const message of messages) {
+    if (message.kind === "user") {
+      hasAgentSinceLastUser = false;
+      next.push(message);
+      continue;
+    }
+    if (message.kind === "agent") {
+      hasAgentSinceLastUser = true;
+      next.push(message);
+      continue;
+    }
+    if (message.kind === "error" && message.source === "runtime" && !hasAgentSinceLastUser) {
+      const taskId = taskIdFromRuntimeError(message);
+      const progressText = taskId === null ? null : failedProgressTextFromOutputTask(service, taskId);
+      const [progressMessage] = failedAssistantProgressMessage(taskId ?? "restore", progressText, message.timestamp);
+      if (progressMessage !== undefined) {
+        next.push(progressMessage);
+        hasAgentSinceLastUser = true;
+      }
+    }
+    next.push(message);
+  }
+  return next;
+}
+
+function taskIdFromRuntimeError(message: Extract<ChatMessage, { kind: "error" }>): string | null {
+  const match = /^error:([^:]+):/u.exec(message.id);
+  return match?.[1] ?? null;
+}
+
+function failedProgressTextFromOutputTask(service: TuiRuntimeService, taskId: string): string | null {
+  try {
+    return failedProgressTextFromOutputEvents(service.outputTask(taskId));
+  } catch {
+    return null;
+  }
+}
+
+function failedProgressTextFromOutputEvents(events: RuntimeOutputEvent[]): string | null {
+  const hasFinalReply = events.some(
+    (event) =>
+      event.eventType === "assistant_turn_completed" &&
+      event.payload.display === "final" &&
+      event.payload.text.trim().length > 0
+  );
+  if (hasFinalReply) {
+    return null;
+  }
+  const failed = events.some(
+    (event) =>
+      event.eventType === "error" ||
+      (event.eventType === "result" && event.payload.status !== "succeeded")
+  );
+  if (!failed) {
+    return null;
+  }
+  const completedTurns = events
+    .filter(
+      (event): event is Extract<RuntimeOutputEvent, { eventType: "assistant_turn_completed" }> =>
+        event.eventType === "assistant_turn_completed" && event.payload.display === "intermediate"
+    )
+    .map((event) => event.payload.text)
+    .slice(-FAILED_PROGRESS_MAX_TURNS);
+  return buildFailedAssistantProgressText(completedTurns, "");
+}
+
+function appendAssistantProgress(current: string[], text: string): string[] {
+  const normalized = normalizeAssistantProgressText(text);
+  if (normalized.length === 0 || current.at(-1) === normalized) {
+    return current;
+  }
+  return [...current, normalized].slice(-FAILED_PROGRESS_MAX_TURNS);
+}
+
+function buildFailedAssistantProgressText(completedTurns: string[], activeDraft: string): string | null {
+  const pieces = [...completedTurns, activeDraft]
+    .map(normalizeAssistantProgressText)
+    .filter((text) => text.length > 0);
+  if (pieces.length === 0) {
+    return null;
+  }
+  return truncateFailedAssistantProgress(pieces.join("\n\n"));
+}
+
+function failedAssistantProgressMessage(
+  taskId: string,
+  text: string | null,
+  timestamp: string
+): ChatMessage[] {
+  if (text === null) {
+    return [];
+  }
+  return [
+    {
+      id: `agent:failed-progress:${taskId}:${randomUUID()}`,
+      kind: "agent",
+      streaming: false,
+      text,
+      timestamp
+    }
+  ];
+}
+
+function normalizeAssistantProgressText(value: string): string {
+  return value
+    .replace(/\r\n?/gu, "\n")
+    .replace(/[ \t]+\n/gu, "\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
+function truncateFailedAssistantProgress(value: string): string {
+  if (value.length <= FAILED_PROGRESS_MAX_CHARS) {
+    return value;
+  }
+  const marker = "[earlier assistant progress omitted]\n\n";
+  return `${marker}${value.slice(-(FAILED_PROGRESS_MAX_CHARS - marker.length)).trimStart()}`;
 }
 
 function summarizeTaskResult(task: TaskRecord): string {
