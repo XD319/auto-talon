@@ -22,6 +22,24 @@ class ScriptedProvider implements Provider {
   }
 }
 
+class StreamingScriptedProvider implements Provider {
+  public readonly name = "gateway-streaming-provider";
+
+  public async generate(input: ProviderInput): Promise<ProviderResponse> {
+    input.onTextDelta?.("live ");
+    await delay(20);
+    input.onTextDelta?.("answer");
+    return {
+      kind: "final",
+      message: "live answer",
+      usage: {
+        inputTokens: 5,
+        outputTokens: 2
+      }
+    };
+  }
+}
+
 const tempPaths: string[] = [];
 
 const APPROVAL_REQUIRED_POLICY_CONFIG: LocalPolicyConfig = {
@@ -315,6 +333,50 @@ describe("Phase 5 gateway adapters", () => {
       expect(eventsResponse.ok).toBe(true);
       expect(body).toContain("\"kind\":\"trace\"");
       expect(body).toContain("\"kind\":\"audit\"");
+      expect(body).toContain("event: done");
+    } finally {
+      await gatewayHandle.manager.stopAll();
+      handle.close();
+    }
+  });
+
+  it("streams live task output through the webhook task stream endpoint", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new StreamingScriptedProvider()
+    });
+    const port = await getFreePort();
+    const gatewayHandle = await startLocalWebhookGateway(handle, {
+      host: "127.0.0.1",
+      port
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/tasks/stream`, {
+        body: JSON.stringify({
+          requester: {
+            externalSessionId: "stream-live-session",
+            externalUserId: "stream-live-user",
+            externalUserLabel: null
+          },
+          taskInput: "stream live answer"
+        }),
+        headers: {
+          "Content-Type": "application/json"
+        },
+        method: "POST"
+      });
+      const body = await response.text();
+
+      expect(response.ok).toBe(true);
+      expect(body).toContain("event: output.assistant_turn_delta");
+      expect(body).toContain("\"delta\":\"live \"");
+      expect(body).toContain("\"delta\":\"answer\"");
+      expect(body).toContain("event: gateway.result");
+      expect(body).toContain("event: done");
     } finally {
       await gatewayHandle.manager.stopAll();
       handle.close();
@@ -533,4 +595,10 @@ async function getFreePort(): Promise<number> {
     });
   });
   return port;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

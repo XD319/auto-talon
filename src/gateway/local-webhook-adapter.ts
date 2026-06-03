@@ -6,6 +6,7 @@ import type {
   AdapterCapabilityName,
   AdapterDescriptor,
   GatewayRuntimeApi,
+  GatewayTaskEvent,
   GatewayTaskRequest,
   InboundMessageAdapter,
   JsonObject,
@@ -13,6 +14,7 @@ import type {
 } from "../types/index.js";
 
 const MAX_REQUEST_BODY_BYTES = 256_000;
+const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 
 export interface LocalWebhookAdapterOptions {
   adapterId?: string;
@@ -134,6 +136,64 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/tasks/stream") {
+      const payload = parseGatewayTaskRequest(await readJsonBody<unknown>(request));
+      const abortController = new AbortController();
+      let closed = false;
+
+      response.writeHead(200, {
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no"
+      });
+
+      const keepalive = setInterval(() => {
+        writeSseComment(response, "keepalive");
+      }, SSE_KEEPALIVE_INTERVAL_MS);
+
+      const closeStream = (): void => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        clearInterval(keepalive);
+        response.end();
+      };
+
+      response.on("close", () => {
+        if (!closed) {
+          abortController.abort(new DOMException("SSE client disconnected.", "AbortError"));
+        }
+        closeStream();
+      });
+
+      try {
+        const result = await this.runtimeApi.submitTask(this.descriptor, payload, {
+          onEvent: (event) => {
+            writeSseEvent(response, gatewayTaskEventName(event), event);
+          },
+          signal: abortController.signal
+        });
+        writeSseEvent(response, "gateway.result", {
+          kind: "gateway_result",
+          result
+        });
+        writeSseEvent(response, "done", {
+          kind: "done",
+          taskId: result.result.taskId
+        });
+      } catch (error) {
+        writeSseEvent(response, "error", {
+          kind: "error",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        closeStream();
+      }
+      return;
+    }
+
     if (request.method === "GET" && /^\/tasks\/[^/]+$/.test(url.pathname)) {
       const taskId = url.pathname.split("/")[2] ?? "";
       const snapshot = this.runtimeApi.getTaskSnapshot(taskId);
@@ -157,34 +217,66 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
       response.writeHead(200, {
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
-        "Content-Type": "text/event-stream"
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no"
       });
 
       for (const trace of snapshot.trace) {
-        response.write(`data: ${JSON.stringify({ kind: "trace", taskId, trace })}\n\n`);
+        const event = { kind: "trace" as const, taskId, trace };
+        writeSseEvent(response, gatewayTaskEventName(event), event);
       }
       for (const audit of snapshot.audit) {
-        response.write(`data: ${JSON.stringify({ kind: "audit", taskId, audit })}\n\n`);
+        const event = { kind: "audit" as const, taskId, audit };
+        writeSseEvent(response, gatewayTaskEventName(event), event);
       }
       for (const notice of snapshot.notices) {
-        response.write(`data: ${JSON.stringify({ kind: "gateway_notice", taskId, notice })}\n\n`);
+        const event = { kind: "gateway_notice" as const, taskId, notice };
+        writeSseEvent(response, gatewayTaskEventName(event), event);
       }
       for (const output of snapshot.output) {
-        response.write(`data: ${JSON.stringify({ kind: "output", taskId, output })}\n\n`);
+        const event = { kind: "output" as const, taskId, output };
+        writeSseEvent(response, gatewayTaskEventName(event), event);
       }
 
       if (isTerminalStatus(snapshot.task.status)) {
+        writeSseEvent(response, "done", {
+          kind: "done",
+          taskId
+        });
         response.end();
         return;
       }
 
-      const unsubscribe = this.runtimeApi.subscribeToTaskEvents(taskId, (event) => {
-        response.write(`data: ${JSON.stringify(event)}\n\n`);
+      let closed = false;
+      let unsubscribe = (): void => {};
+      const keepalive = setInterval(() => {
+        writeSseComment(response, "keepalive");
+      }, SSE_KEEPALIVE_INTERVAL_MS);
+      const closeStream = (emitDone: boolean): void => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        clearInterval(keepalive);
+        unsubscribe();
+        if (emitDone) {
+          writeSseEvent(response, "done", {
+            kind: "done",
+            taskId
+          });
+        }
+        response.end();
+      };
+
+      unsubscribe = this.runtimeApi.subscribeToTaskEvents(taskId, (event) => {
+        writeSseEvent(response, gatewayTaskEventName(event), event);
+        if (isTerminalGatewayTaskEvent(event)) {
+          closeStream(true);
+        }
       });
 
       request.on("close", () => {
-        unsubscribe();
-        response.end();
+        closeStream(false);
       });
       return;
     }
@@ -264,6 +356,39 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
 
 function isTerminalStatus(status: string): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalGatewayTaskEvent(event: GatewayTaskEvent): boolean {
+  return event.kind === "output" && (event.output.eventType === "result" || event.output.eventType === "error");
+}
+
+function gatewayTaskEventName(event: GatewayTaskEvent): string {
+  switch (event.kind) {
+    case "output":
+      return `output.${event.output.eventType}`;
+    case "trace":
+      return `trace.${event.trace.eventType}`;
+    case "audit":
+      return `audit.${event.audit.action}`;
+    case "gateway_notice":
+      return "gateway.notice";
+    case "progress":
+      return "progress";
+  }
+}
+
+function writeSseEvent(response: ServerResponse, eventName: string, payload: unknown): void {
+  if (response.writableEnded || response.destroyed) {
+    return;
+  }
+  response.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+}
+
+function writeSseComment(response: ServerResponse, comment: string): void {
+  if (response.writableEnded || response.destroyed) {
+    return;
+  }
+  response.write(`: ${comment}\n\n`);
 }
 
 async function readJsonBody<T>(request: IncomingMessage): Promise<T> {

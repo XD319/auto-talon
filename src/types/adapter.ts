@@ -146,6 +146,11 @@ export interface GatewayTaskLaunchResult {
   sessionBinding: GatewaySessionBinding;
 }
 
+export interface GatewayTaskStreamObserver {
+  onEvent(event: GatewayTaskEvent): void;
+  signal?: AbortSignal;
+}
+
 export interface GatewayScheduleCreateRequest {
   agentProfileId?: "executor" | "planner" | "reviewer";
   cron?: string | null;
@@ -213,7 +218,11 @@ export interface GatewayRuntimeApi {
   runScheduleNow(scheduleId: string): ScheduleRunRecord;
   scheduleStatus(): ScheduleStatusSummary;
   showSchedule(scheduleId: string): ScheduleRecord | null;
-  submitTask(adapter: AdapterDescriptor, request: GatewayTaskRequest): Promise<GatewayTaskLaunchResult>;
+  submitTask(
+    adapter: AdapterDescriptor,
+    request: GatewayTaskRequest,
+    observer?: GatewayTaskStreamObserver
+  ): Promise<GatewayTaskLaunchResult>;
   subscribeToCompletion(taskId: string, listener: (event: GatewayTaskEvent) => void): () => void;
   subscribeToInbox(filter: GatewayInboxFilter, listener: (event: InboxDeliveryEvent) => void): () => void;
   subscribeToTaskEvents(taskId: string, listener: (event: GatewayTaskEvent) => void): () => void;

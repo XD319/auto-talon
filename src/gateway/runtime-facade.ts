@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { AuditService } from "../audit/audit-service.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { AgentApplicationService } from "../runtime/application-service.js";
@@ -11,6 +13,7 @@ import type {
   GatewayTaskEvent,
   GatewayTaskLaunchResult,
   GatewayTaskRequest,
+  GatewayTaskStreamObserver,
   GatewayTaskSnapshot,
   GatewayTaskResultView,
   JsonObject,
@@ -61,7 +64,8 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
 
   public async submitTask(
     adapter: AdapterDescriptor,
-    request: GatewayTaskRequest
+    request: GatewayTaskRequest,
+    observer?: GatewayTaskStreamObserver
   ): Promise<GatewayTaskLaunchResult> {
     if (this.dependencies.guard !== undefined) {
       const decision = await this.dependencies.guard.evaluate(adapter.adapterId, request);
@@ -83,6 +87,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       request.taskInput,
       request.cwd ?? this.dependencies.defaultCwd
     );
+    runOptions.taskId ??= randomUUID();
     runOptions.userId = continuation?.runtimeUserId ?? identityBinding.runtimeUserId;
     runOptions.agentProfileId = request.agentProfileId ?? runOptions.agentProfileId;
     runOptions.metadata = {
@@ -102,6 +107,25 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
 
     if (request.timeoutMs !== undefined) {
       runOptions.timeoutMs = request.timeoutMs;
+    }
+    if (observer?.signal !== undefined && runOptions.signal === undefined) {
+      runOptions.signal = observer.signal;
+    }
+    if (observer !== undefined) {
+      const priorOutputEvent = runOptions.onOutputEvent;
+      runOptions.onOutputEvent = (event) => {
+        priorOutputEvent?.(event);
+        observer.onEvent({
+          kind: "output",
+          output: event,
+          taskId: event.taskId
+        });
+      };
+      observer.onEvent({
+        kind: "progress",
+        detail: "Task accepted",
+        taskId: runOptions.taskId
+      });
     }
 
     const run = await this.dependencies.applicationService.runTask(runOptions);
@@ -201,6 +225,11 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       sessionBinding
     };
     this.emitCompletion(run.task.taskId, {
+      kind: "progress",
+      detail: `Task moved to ${run.task.status}`,
+      taskId: run.task.taskId
+    });
+    observer?.onEvent({
       kind: "progress",
       detail: `Task moved to ${run.task.status}`,
       taskId: run.task.taskId

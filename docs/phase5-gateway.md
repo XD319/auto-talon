@@ -101,10 +101,12 @@ Endpoints:
 
 - `POST /tasks`
   - submit a task request
+- `POST /tasks/stream`
+  - submit a task request and stream live runtime output over SSE
 - `GET /tasks/:taskId`
   - fetch task result, notices, trace, audit, and adapter source
 - `GET /tasks/:taskId/events`
-  - fetch SSE event history and subscribe when the task is still live
+  - fetch named SSE event history and subscribe when the task is still live
 
 ## Identity And Session Mapping
 
