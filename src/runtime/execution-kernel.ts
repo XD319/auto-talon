@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import { createManagedAbortController, throwIfAborted } from "./abort-controller.js";
 import { AppError, toAppError } from "./app-error.js";
-import { computeCostUsd } from "./budget/cost-calculator.js";
 import {
   buildFilteredContextDebugFragments,
   ExecutionContextAssembler
@@ -12,7 +11,6 @@ import {
   buildReviewerTracePayload,
   createToolFeedbackMessage,
   createToolFeedbackMessageWithNotice,
-  DEDUPLICATABLE_CAPABILITIES,
   emitTaskEvent,
   estimateTokenCount,
   injectResumeContextMessages,
@@ -20,7 +18,6 @@ import {
   providerUsageToJson,
   readThreadResumeMemoryContext,
   readThreadResumeMessages,
-  rebuildSignaturesFromMessages,
   rebuildTurnProviderMessages,
   sleepWithAbort,
   summarizeText,
@@ -28,6 +25,12 @@ import {
   toConversationRole,
   toolCallSignature
 } from "./kernel-support.js";
+import {
+  BudgetRecorder,
+  CheckpointManager,
+  CompletionController,
+  isSuccessfulVerificationToolCall as isSuccessfulVerificationToolExecution
+} from "./kernel/index.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
@@ -110,9 +113,6 @@ export interface ExecutionKernelDependencies {
   workspaceRoot: string;
 }
 
-const PROGRESS_GUARD_THRESHOLD = 3;
-const POST_COMPLETION_VERIFICATION_READ_LIMIT = 1;
-
 interface ExecutionLoopState {
   costWarnedToolNames: string[];
   cumulativeToolCallCount: number;
@@ -147,8 +147,31 @@ interface ExecutionLoopState {
 
 export class ExecutionKernel {
   private readonly contextAssembler = new ExecutionContextAssembler();
+  private readonly budgetRecorder: BudgetRecorder;
+  private readonly checkpointManager: CheckpointManager;
+  private readonly completionController: CompletionController;
 
-  public constructor(private readonly dependencies: ExecutionKernelDependencies) {}
+  public constructor(private readonly dependencies: ExecutionKernelDependencies) {
+    this.budgetRecorder = new BudgetRecorder({
+      mode: dependencies.routingMode ?? "balanced",
+      recordTrace: (event) => dependencies.traceService.record(event),
+      taskRepository: dependencies.taskRepository,
+      ...(dependencies.budgetPricing !== undefined
+        ? { budgetPricing: dependencies.budgetPricing }
+        : {}),
+      ...(dependencies.budgetService !== undefined
+        ? { budgetService: dependencies.budgetService }
+        : {})
+    });
+    this.checkpointManager = new CheckpointManager({
+      executionCheckpointRepository: dependencies.executionCheckpointRepository,
+      toolOrchestrator: dependencies.toolOrchestrator
+    });
+    this.completionController = new CompletionController({
+      describeTool: (toolName) => dependencies.toolOrchestrator.describeTool(toolName),
+      recordTrace: (event) => dependencies.traceService.record(event)
+    });
+  }
 
   private async planRecall(
     input: Parameters<RecallPlanner["plan"]>[0]
@@ -403,13 +426,8 @@ export class ExecutionKernel {
       });
     }
 
-    const checkpoint = this.dependencies.executionCheckpointRepository.findByTaskId(taskId);
-    if (checkpoint === null) {
-      throw new AppError({
-        code: "task_not_resumable",
-        message: `Task ${taskId} has no execution checkpoint to resume.`
-      });
-    }
+    const resumeCheckpoint = this.checkpointManager.loadForResume(task);
+    const checkpoint = resumeCheckpoint.checkpoint;
 
     const runMetadata = this.dependencies.runMetadataRepository.findByTaskId(taskId);
     if (runMetadata === null) {
@@ -433,11 +451,6 @@ export class ExecutionKernel {
     });
 
     try {
-      const isDeduplicatable = (toolName: string): boolean => {
-        const descriptor = this.dependencies.toolOrchestrator.describeTool(toolName);
-        return descriptor !== null && DEDUPLICATABLE_CAPABILITIES.has(descriptor.capability);
-      };
-
       return await this.executeLoop({
         cwd: resumedTask.cwd,
         costWarnedToolNames: [],
@@ -458,12 +471,12 @@ export class ExecutionKernel {
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
-        toolCallSignatures: rebuildSignaturesFromMessages(checkpoint.messages, isDeduplicatable),
+        toolCallSignatures: resumeCheckpoint.toolCallSignatures,
         turnFilteredFragments: [],
         turnProviderMessages: checkpoint.messages,
         tokenBudget: resumedTask.tokenBudget,
         warningBudgetPressureEmitted: false,
-        writeToolSucceeded: false
+        writeToolSucceeded: resumeCheckpoint.writeToolSucceeded
       });
     } catch (error) {
       resumedTask = this.dependencies.taskRepository.findById(taskId) ?? resumedTask;
@@ -487,7 +500,7 @@ export class ExecutionKernel {
       return task;
     }
 
-    this.dependencies.executionCheckpointRepository.delete(taskId);
+    this.checkpointManager.delete(taskId);
     const failedTask = this.dependencies.taskRepository.update(taskId, {
       errorCode: error.code,
       errorMessage: error.message,
@@ -525,7 +538,7 @@ export class ExecutionKernel {
       return task;
     }
 
-    this.dependencies.executionCheckpointRepository.delete(taskId);
+    this.checkpointManager.delete(taskId);
     const failedTask = this.dependencies.taskRepository.update(taskId, {
       errorCode: error.code,
       errorMessage: error.message,
@@ -561,7 +574,11 @@ export class ExecutionKernel {
       iteration <= state.maxIterations;
       iteration += 1
     ) {
-      this.maybeInjectIterationBudgetPressure(state, iteration);
+      this.completionController.maybeInjectIterationBudgetPressure(
+        state,
+        task.taskId,
+        iteration
+      );
       throwIfAborted(
         state.managedAbortController.abortController.signal,
         state.managedAbortController.getReason()
@@ -790,27 +807,8 @@ export class ExecutionKernel {
         });
         state.managedAbortController.touchActivity("assistant_turn_completed");
 
-        const visibleReasoningText = providerResponse.message.trim();
-        if (providerResponse.kind === "tool_calls" && visibleReasoningText.length === 0) {
-          state.silentToolTurns += 1;
-        } else {
-          state.silentToolTurns = 0;
-        }
-        if (
-          providerResponse.kind === "tool_calls" &&
-          state.silentToolTurns >= PROGRESS_GUARD_THRESHOLD
-        ) {
-          messages.push({
-            content:
-              `progress guard: you have made ${state.silentToolTurns} consecutive tool-call rounds at iterations ${iteration - state.silentToolTurns + 1}-${iteration} without writing any visible reasoning text. Stop calling tools and answer the user's request based on what you already know. If the original question was conceptual or general-knowledge, answer directly without further tool use.`,
-            metadata: {
-              privacyLevel: "internal",
-              retentionKind: "session",
-              sourceType: "system_prompt"
-            },
-            role: "system"
-          });
-          state.silentToolTurns = 0;
+        if (providerResponse.kind === "tool_calls") {
+          this.completionController.observeProviderToolTurn(state, messages, iteration, providerResponse);
         }
 
         this.dependencies.traceService.record({
@@ -853,47 +851,14 @@ export class ExecutionKernel {
         });
 
         const resolvedProviderName = providerResponse.metadata?.providerName ?? activeProvider.name;
-        const pricing = this.dependencies.budgetPricing?.[resolvedProviderName];
-        const costUsd = computeCostUsd(providerResponse.usage, pricing);
-        state.tokenBudget = {
-          ...state.tokenBudget,
-          usedCostUsd: (state.tokenBudget.usedCostUsd ?? 0) + (costUsd ?? 0),
-          usedInput: (state.tokenBudget.usedInput ?? 0) + providerResponse.usage.inputTokens,
-          usedOutput: (state.tokenBudget.usedOutput ?? 0) + providerResponse.usage.outputTokens
-        };
-        task = this.dependencies.taskRepository.update(task.taskId, {
+        const budgetResult = this.budgetRecorder.record({
+          providerName: resolvedProviderName,
+          providerResponse,
+          task,
           tokenBudget: state.tokenBudget
         });
-        this.dependencies.traceService.record({
-          actor: "runtime.budget",
-          eventType: "cost_report",
-          payload: {
-            cachedInputTokens: providerResponse.usage.cachedInputTokens ?? 0,
-            costUsd,
-            inputTokens: providerResponse.usage.inputTokens,
-            mode: this.dependencies.routingMode ?? "balanced",
-            outputTokens: providerResponse.usage.outputTokens,
-            providerName: resolvedProviderName,
-            taskId: task.taskId,
-            threadId: task.threadId ?? null
-          },
-          stage: "control",
-          summary: "Cost usage recorded",
-          taskId: task.taskId
-        });
-        const budgetDecision = this.dependencies.budgetService?.recordUsage({
-          costUsd,
-          mode: this.dependencies.routingMode ?? "balanced",
-          taskId: task.taskId,
-          threadId: task.threadId ?? null,
-          usage: providerResponse.usage
-        });
-        if (budgetDecision?.action === "hard_abort") {
-          throw new AppError({
-            code: "budget_exceeded",
-            message: budgetDecision.reasons.join("; ") || "Budget hard limit exceeded."
-          });
-        }
+        task = budgetResult.task;
+        state.tokenBudget = budgetResult.tokenBudget;
 
         if (task.agentProfileId === "reviewer") {
           this.dependencies.traceService.record({
@@ -940,7 +905,7 @@ export class ExecutionKernel {
         }
 
         if (providerResponse.kind === "final") {
-          const verificationDecision = this.evaluateFinalVerification(
+          const verificationDecision = this.completionController.evaluateFinalVerification(
             state,
             messages,
             task,
@@ -959,7 +924,7 @@ export class ExecutionKernel {
           );
         }
 
-        const postCompletionDecision = this.evaluatePostCompletionToolCalls(
+        const postCompletionDecision = this.completionController.evaluatePostCompletionToolCalls(
           state,
           iteration,
           providerResponse
@@ -1033,14 +998,13 @@ export class ExecutionKernel {
             toolCallId: toolCall.toolCallId,
             toolName: toolCall.toolName
           });
-          this.dependencies.executionCheckpointRepository.save({
+          this.checkpointManager.save({
             iteration,
             memoryContext: state.memoryContext,
             messages,
             pendingToolCalls: pendingToolCalls.slice(toolIndex),
             pendingClarifyPromptId: null,
-            taskId: task.taskId,
-            updatedAt: new Date().toISOString()
+            taskId: task.taskId
           });
 
           return {
@@ -1062,14 +1026,13 @@ export class ExecutionKernel {
             toolCallId: toolCall.toolCallId,
             toolName: toolCall.toolName
           });
-          this.dependencies.executionCheckpointRepository.save({
+          this.checkpointManager.save({
             iteration,
             memoryContext: state.memoryContext,
             messages,
             pendingClarifyPromptId: outcome.prompt.promptId,
             pendingToolCalls: pendingToolCalls.slice(toolIndex),
-            taskId: task.taskId,
-            updatedAt: new Date().toISOString()
+            taskId: task.taskId
           });
 
           return {
@@ -1093,7 +1056,7 @@ export class ExecutionKernel {
         }
         if (
           outcome.kind === "completed" &&
-          isSuccessfulVerificationToolCall(toolCall.toolName, outcome.result)
+          isSuccessfulVerificationToolExecution(toolCall.toolName, outcome.result)
         ) {
           state.completionVerificationSatisfied = true;
           if (!state.completionVerificationSatisfiedEmitted) {
@@ -1116,7 +1079,9 @@ export class ExecutionKernel {
         const toolSummary = toolResultSummary(outcome.result, toolCall.toolName);
         const structuredOutputSummary = summarizeToolOutput(toolResultOutput);
         const isDeduplicatable =
-          toolDescriptor !== null && DEDUPLICATABLE_CAPABILITIES.has(toolDescriptor.capability);
+          toolDescriptor !== null &&
+          (toolDescriptor.capability === "filesystem.read" ||
+            toolDescriptor.capability === "network.fetch_public_readonly");
         const signature = isDeduplicatable
           ? toolCallSignature(toolCall.toolName, toolCall.input)
           : null;
@@ -1125,7 +1090,7 @@ export class ExecutionKernel {
         const duplicateNotice =
           priorCall === null
             ? null
-            : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments — synthesize from the prior result and answer the user.`;
+            : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments �?synthesize from the prior result and answer the user.`;
         const finishedSummary =
           priorCall === null
             ? `${toolSummary} | ${structuredOutputSummary}`
@@ -1190,7 +1155,7 @@ export class ExecutionKernel {
       }
 
       pendingToolCalls = [];
-      this.dependencies.executionCheckpointRepository.delete(task.taskId);
+      this.checkpointManager.delete(task.taskId);
       state.turnProviderMessages = rebuildTurnProviderMessages(messages, state.turnProviderMessages);
 
       task = this.dependencies.taskRepository.update(task.taskId, {
@@ -1385,143 +1350,6 @@ export class ExecutionKernel {
     );
   }
 
-  private maybeInjectIterationBudgetPressure(state: ExecutionLoopState, iteration: number): void {
-    const ratio = iteration / Math.max(1, state.maxIterations);
-    const tier = ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : null;
-    if (tier === null) {
-      return;
-    }
-    if (tier === "warning" && state.warningBudgetPressureEmitted) {
-      return;
-    }
-    if (tier === "critical" && state.criticalBudgetPressureEmitted) {
-      return;
-    }
-    if (tier === "warning") {
-      state.warningBudgetPressureEmitted = true;
-    } else {
-      state.criticalBudgetPressureEmitted = true;
-    }
-    const remainingIterations = Math.max(0, state.maxIterations - iteration + 1);
-    const pressureMessage: ConversationMessage = {
-      content:
-        tier === "critical"
-          ? `Iteration budget critical: ${remainingIterations}/${state.maxIterations} loop iterations remain. Stop nonessential tool calls now and provide the final answer as soon as possible.`
-          : `Iteration budget warning: ${remainingIterations}/${state.maxIterations} loop iterations remain. Begin converging; use tools only if they are required to finish the user's request.`,
-      metadata: {
-        privacyLevel: "internal",
-        retentionKind: "session",
-        sourceType: "system_prompt"
-      },
-      role: "system"
-    };
-    state.messages.push(pressureMessage);
-    if (state.turnProviderMessages !== state.messages) {
-      state.turnProviderMessages.push(pressureMessage);
-    }
-    this.dependencies.traceService.record({
-      actor: "runtime.loop",
-      eventType: "iteration_budget_pressure",
-      payload: {
-        iteration,
-        maxIterations: state.maxIterations,
-        remainingIterations,
-        tier
-      },
-      stage: "control",
-      summary: `Iteration budget pressure: ${tier}`,
-      taskId: state.task.taskId
-    });
-  }
-
-  private evaluatePostCompletionToolCalls(
-    state: ExecutionLoopState,
-    iteration: number,
-    providerResponse: Extract<ProviderResponse, { kind: "tool_calls" }>
-  ): "continue" | "summarize" {
-    if (!state.writeToolSucceeded || !allToolCallsAreReads(providerResponse.toolCalls)) {
-      return "continue";
-    }
-
-    if (state.completionIntentSeenAt === null && hasCompletionIntent(providerResponse.message)) {
-      state.completionIntentSeenAt = iteration;
-    }
-    if (state.completionIntentSeenAt === null) {
-      return "continue";
-    }
-
-    if (state.postCompletionVerificationReads >= POST_COMPLETION_VERIFICATION_READ_LIMIT) {
-      return "summarize";
-    }
-    state.postCompletionVerificationReads += 1;
-    return "continue";
-  }
-
-  private evaluateFinalVerification(
-    state: ExecutionLoopState,
-    messages: ConversationMessage[],
-    task: TaskRecord,
-    iteration: number,
-    finalOutput: string
-  ): { finalOutput: string; kind: "complete" } | { kind: "guard" } {
-    if (!state.writeToolSucceeded || state.completionVerificationSatisfied) {
-      return {
-        finalOutput,
-        kind: "complete"
-      };
-    }
-
-    if (mentionsUnverifiedWork(finalOutput)) {
-      this.recordCompletionVerificationMissing(task, iteration, "model_reported_unverified");
-      return {
-        finalOutput,
-        kind: "complete"
-      };
-    }
-
-    if (!state.completionVerificationGuardEmitted) {
-      const guardMessage: ConversationMessage = {
-        content:
-          "Completion verification required: workspace files were changed after the last successful verification. Before finalizing, run an appropriate configured test/build/lint/typecheck command, or clearly state the unverified items and why verification could not be run.",
-        metadata: {
-          privacyLevel: "internal",
-          retentionKind: "session",
-          sourceType: "system_prompt"
-        },
-        role: "system"
-      };
-      messages.push(guardMessage);
-      state.turnProviderMessages = messages;
-      state.completionVerificationGuardEmitted = true;
-      this.recordCompletionVerificationMissing(task, iteration, "guard_prompted");
-      return { kind: "guard" };
-    }
-
-    this.recordCompletionVerificationMissing(task, iteration, "runtime_appended_warning");
-    return {
-      finalOutput: `${finalOutput}\n\nUnverified: workspace changes were made after the last successful verification, and no verification command was recorded.`,
-      kind: "complete"
-    };
-  }
-
-  private recordCompletionVerificationMissing(
-    task: TaskRecord,
-    iteration: number,
-    reason: "guard_prompted" | "model_reported_unverified" | "runtime_appended_warning"
-  ): void {
-    this.dependencies.traceService.record({
-      actor: "runtime.kernel",
-      eventType: "completion_verification_missing",
-      payload: {
-        iteration,
-        reason
-      },
-      stage: "completion",
-      summary: "Completion verification is missing after workspace changes",
-      taskId: task.taskId
-    });
-  }
-
   private async requestFinalSummaryWithoutTools(
     state: ExecutionLoopState,
     messages: ConversationMessage[],
@@ -1642,7 +1470,7 @@ export class ExecutionKernel {
     task: TaskRecord,
     finalOutput: string
   ): RuntimeRunResult {
-    this.dependencies.executionCheckpointRepository.delete(task.taskId);
+    this.checkpointManager.delete(task.taskId);
     const completedTask = this.dependencies.taskRepository.update(task.taskId, {
       finalOutput,
       finishedAt: new Date().toISOString(),
@@ -1815,7 +1643,7 @@ export class ExecutionKernel {
       });
     }
 
-    this.dependencies.executionCheckpointRepository.delete(task.taskId);
+    this.checkpointManager.delete(task.taskId);
     this.dependencies.taskRepository.update(task.taskId, {
       errorCode: error.code,
       errorMessage: error.message,
@@ -1926,19 +1754,6 @@ export class ExecutionKernel {
   }
 }
 
-function allToolCallsAreReads(toolCalls: ProviderToolCall[]): boolean {
-  return toolCalls.length > 0 && toolCalls.every((call) => isReadOnlyToolName(call.toolName));
-}
-
-function isReadOnlyToolName(toolName: string): boolean {
-  return (
-    toolName.includes("read") ||
-    toolName.includes("search") ||
-    toolName.includes("fetch") ||
-    toolName.includes("view")
-  );
-}
-
 function toolResultOutputForModel(result: ToolExecutionResult): unknown {
   if (result.success) {
     return result.output;
@@ -1955,84 +1770,5 @@ function toolResultSummary(result: ToolExecutionResult, toolName: string): strin
   return result.success
     ? result.summary
     : `Tool ${toolName} failed: ${result.errorMessage}`;
-}
-
-function isSuccessfulVerificationToolCall(toolName: string, result: ToolExecutionResult): boolean {
-  if (!result.success) {
-    return false;
-  }
-  const output = result.output;
-  if (toolName === "test_run") {
-    return (
-      typeof output === "object" &&
-      output !== null &&
-      !Array.isArray(output) &&
-      (output as { passed?: unknown }).passed === true
-    );
-  }
-  if (toolName !== "shell" && toolName !== "bash" && toolName !== "Bash") {
-    return false;
-  }
-  if (typeof output !== "object" || output === null || Array.isArray(output)) {
-    return false;
-  }
-  const exitCode = (output as { exitCode?: unknown }).exitCode;
-  const command = (output as { command?: unknown }).command;
-  return exitCode === 0 && typeof command === "string" && isVerificationCommand(command);
-}
-
-function isVerificationCommand(command: string): boolean {
-  const compact = command.toLowerCase();
-  return (
-    compact.includes("test") ||
-    compact.includes("build") ||
-    compact.includes("lint") ||
-    compact.includes("typecheck") ||
-    compact.includes("tsc")
-  );
-}
-
-function mentionsUnverifiedWork(message: string): boolean {
-  const compact = message.toLowerCase();
-  return (
-    compact.includes("unverified") ||
-    compact.includes("not verified") ||
-    compact.includes("could not verify") ||
-    compact.includes("couldn't verify") ||
-    compact.includes("unable to verify") ||
-    compact.includes("未验证") ||
-    compact.includes("无法验证") ||
-    compact.includes("没有验证")
-  );
-}
-
-function hasCompletionIntent(message: string): boolean {
-  const compact = message.replace(/\s+/gu, " ").trim().toLowerCase();
-  if (compact.length === 0) {
-    return false;
-  }
-  const planningSignals = [
-    "让我",
-    "我需要",
-    "需要我继续",
-    "let me",
-    "need to",
-    "what's missing",
-    "this tool call"
-  ];
-  if (planningSignals.some((signal) => compact.includes(signal))) {
-    return false;
-  }
-  const completionSignals = [
-    /已完成/u,
-    /第一阶段[^。.!?]{0,30}完成/u,
-    /基础框架搭建[^。.!?]{0,30}完成/u,
-    /完成情况/u,
-    /all files are complete/u,
-    /complete and functional/u,
-    /completed the .*task/u,
-    /implementation is complete/u
-  ];
-  return completionSignals.some((pattern) => pattern.test(compact));
 }
 

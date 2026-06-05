@@ -74,6 +74,7 @@ import type {
   ThreadCommitmentProjector
 } from "./commitments/index.js";
 import { FileRollbackService, ProviderStatsService, RuntimeDoctorService } from "./operations/index.js";
+import { ScheduleFacade, ThreadFacade } from "./facades/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
 
@@ -313,53 +314,23 @@ const clarifyAnswerSchema = z
   );
 
 export class AgentApplicationService {
-  public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {}
+  private readonly scheduleFacade: ScheduleFacade;
+  private readonly threadFacade: ThreadFacade;
+
+  public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {
+    this.threadFacade = new ThreadFacade(
+      dependencies,
+      (threadId, taskId, output) => this.projectAssistantOutput(threadId, taskId, output)
+    );
+    this.scheduleFacade = new ScheduleFacade(dependencies);
+  }
 
   public async runTask(options: RuntimeRunOptions): Promise<RunTaskResult> {
-    try {
-      const resolvedThread = this.dependencies.threadService.getOrCreateThread({
-        agentProfileId: options.agentProfileId,
-        cwd: options.cwd,
-        ownerUserId: options.userId,
-        providerName: this.dependencies.provider.name,
-        ...(options.threadId !== undefined ? { threadId: options.threadId } : {}),
-        title: options.taskInput.slice(0, 80)
-      });
-      const result = await this.dependencies.executionKernel.run({
-        ...options,
-        threadId: resolvedThread.threadId
-      });
-      this.projectAssistantOutput(result.task.threadId ?? null, result.task.taskId, result.output ?? null);
-      return {
-        output: result.output,
-        task: result.task
-      };
-    } catch (error) {
-      const appError =
-        error instanceof AppError
-          ? error
-          : new AppError({
-              code: "provider_error",
-              message: error instanceof Error ? error.message : "Unknown runtime error"
-            });
-
-      const taskId =
-        typeof appError.details?.taskId === "string" ? appError.details.taskId : null;
-      const task = taskId === null ? null : this.dependencies.findTask(taskId);
-      if (task === null) {
-        throw appError;
-      }
-
-      return {
-        error: appError,
-        output: null,
-        task
-      };
-    }
+    return this.threadFacade.runTask(options);
   }
 
   public listTasks(): TaskRecord[] {
-    return this.dependencies.listTasks();
+    return this.threadFacade.listTasks();
   }
 
   public createThread(input: {
@@ -369,22 +340,11 @@ export class AgentApplicationService {
     providerName?: string;
     title?: string;
   }): ThreadRecord {
-    return this.dependencies.threadService.createThread({
-      agentProfileId: input.agentProfileId,
-      cwd: input.cwd,
-      ownerUserId: input.ownerUserId,
-      providerName: input.providerName ?? this.dependencies.provider.name,
-      threadId: randomUUID(),
-      title: input.title?.trim().length ? input.title : "Untitled thread"
-    });
+    return this.threadFacade.createThread(input);
   }
 
   public listThreads(status?: ThreadRecord["status"]): ThreadRecord[] {
-    const threads = this.dependencies.listThreads();
-    if (status === undefined) {
-      return threads;
-    }
-    return threads.filter((thread) => thread.status === status);
+    return this.threadFacade.listThreads(status);
   }
 
   public showThread(threadId: string): {
@@ -397,48 +357,19 @@ export class AgentApplicationService {
     lineage: ThreadLineageRecord[];
     scheduleRuns: ScheduleRunRecord[];
   } {
-    const thread = this.dependencies.findThread(threadId);
-    if (thread === null) {
-      return {
-        commitments: [],
-        inboxItems: [],
-        lineage: [],
-        nextActions: [],
-        runs: [],
-        scheduleRuns: [],
-        state: {
-          activeNextActions: [],
-          blockedReason: null,
-          currentObjective: null,
-          nextAction: null,
-          openCommitments: [],
-          pendingDecision: null
-        },
-        thread: null
-      };
-    }
-    return {
-      commitments: this.dependencies.commitmentService.list({ threadId }),
-      inboxItems: this.dependencies.listInboxItems({ threadId }),
-      nextActions: this.dependencies.nextActionService.list({ threadId }),
-      thread,
-      runs: this.dependencies.listThreadRuns(threadId),
-      lineage: this.dependencies.listThreadLineage(threadId),
-      scheduleRuns: this.dependencies.listScheduleRunsByThread(threadId),
-      state: this.dependencies.threadCommitmentProjector.project(threadId)
-    };
+    return this.threadFacade.showThread(threadId);
   }
 
   public archiveThread(threadId: string): ThreadRecord {
-    return this.dependencies.threadService.archiveThread(threadId);
+    return this.threadFacade.archiveThread(threadId);
   }
 
   public listThreadSnapshots(threadId: string): ThreadSessionMemoryRecord[] {
-    return this.dependencies.listThreadSessionMemories(threadId);
+    return this.threadFacade.listThreadSnapshots(threadId);
   }
 
   public showThreadSnapshot(snapshotId: string): ThreadSessionMemoryRecord | null {
-    return this.dependencies.findThreadSessionMemory(snapshotId);
+    return this.threadFacade.showThreadSnapshot(snapshotId);
   }
 
   public searchThreadSnapshots(input: {
@@ -447,7 +378,7 @@ export class AgentApplicationService {
     threadId?: string;
     excludeThreadId?: string | null;
   }): SessionSearchHit[] {
-    return this.dependencies.searchThreadSessionMemories(input);
+    return this.threadFacade.searchThreadSnapshots(input);
   }
 
   public async continueThread(
@@ -455,27 +386,14 @@ export class AgentApplicationService {
     input: string,
     overrides?: Partial<RuntimeRunOptions>
   ): Promise<RunTaskResult> {
-    const options = this.dependencies.resumePacketBuilder.buildResumePacket(threadId, input, overrides);
-    return this.runTask(options);
+    return this.threadFacade.continueThread(threadId, input, overrides);
   }
 
   public async continueLatest(
     input: string | undefined,
     overrides?: Partial<RuntimeRunOptions>
   ): Promise<RunTaskResult> {
-    const ownerUserId = overrides?.userId ?? process.env.USERNAME ?? process.env.USER ?? "local-user";
-    const latest = this.dependencies.threadService.findLatestThread(ownerUserId);
-    if (latest === null) {
-      throw new Error("No threads found for current user.");
-    }
-    const resolvedInput =
-      input ??
-      this.dependencies.threadCommitmentProjector.project(latest.threadId).nextAction?.title ??
-      null;
-    if (resolvedInput === null) {
-      throw new Error("No next action found for latest thread. Provide an explicit task input.");
-    }
-    return this.continueThread(latest.threadId, resolvedInput, overrides);
+    return this.threadFacade.continueLatest(input, overrides);
   }
 
   public listCommitments(query: CommitmentListQuery = {}): CommitmentRecord[] {
@@ -1135,55 +1053,55 @@ export class AgentApplicationService {
   }
 
   public startScheduler(): void {
-    this.dependencies.schedulerService.start();
+    this.scheduleFacade.startScheduler();
   }
 
   public stopScheduler(): void {
-    this.dependencies.schedulerService.stop();
+    this.scheduleFacade.stopScheduler();
   }
 
   public createSchedule(input: CreateScheduleInput): ScheduleRecord {
-    return this.dependencies.schedulerService.createSchedule(input);
+    return this.scheduleFacade.createSchedule(input);
   }
 
   public updateSchedule(scheduleId: string, input: UpdateScheduleInput): ScheduleRecord {
-    return this.dependencies.schedulerService.updateSchedule(scheduleId, input);
+    return this.scheduleFacade.updateSchedule(scheduleId, input);
   }
 
   public listSchedules(query?: ScheduleListQuery): ScheduleRecord[] {
-    return this.dependencies.schedulerService.listSchedules(query);
+    return this.scheduleFacade.listSchedules(query);
   }
 
   public showSchedule(scheduleId: string): ScheduleRecord | null {
-    return this.dependencies.schedulerService.showSchedule(scheduleId);
+    return this.scheduleFacade.showSchedule(scheduleId);
   }
 
   public listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[] {
-    return this.dependencies.schedulerService.listScheduleRuns(scheduleId, query);
+    return this.scheduleFacade.listScheduleRuns(scheduleId, query);
   }
 
   public scheduleStatus(): ReturnType<SchedulerService["status"]> {
-    return this.dependencies.schedulerService.status();
+    return this.scheduleFacade.scheduleStatus();
   }
 
   public async tickScheduleOnce(): Promise<void> {
-    await this.dependencies.schedulerService.tickOnce();
+    await this.scheduleFacade.tickScheduleOnce();
   }
 
   public archiveSchedule(scheduleId: string): ScheduleRecord {
-    return this.dependencies.schedulerService.archiveSchedule(scheduleId);
+    return this.scheduleFacade.archiveSchedule(scheduleId);
   }
 
   public pauseSchedule(scheduleId: string): ScheduleRecord {
-    return this.dependencies.schedulerService.pauseSchedule(scheduleId);
+    return this.scheduleFacade.pauseSchedule(scheduleId);
   }
 
   public resumeSchedule(scheduleId: string): ScheduleRecord {
-    return this.dependencies.schedulerService.resumeSchedule(scheduleId);
+    return this.scheduleFacade.resumeSchedule(scheduleId);
   }
 
   public runScheduleNow(scheduleId: string): ScheduleRunRecord {
-    return this.dependencies.schedulerService.runNow(scheduleId);
+    return this.scheduleFacade.runScheduleNow(scheduleId);
   }
 
   public listArtifacts(taskId: string): ArtifactRecord[] {
