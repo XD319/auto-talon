@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import React from "react";
-import { Box, Text, useApp, useWindowSize } from "ink";
+import { Box, useApp } from "ink";
 
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
@@ -16,14 +16,12 @@ import {
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
 import { PromptZone } from "./components/prompt-zone.js";
-import { TranscriptPane } from "./components/transcript-pane.js";
-import { TranscriptViewer } from "./components/transcript-viewer.js";
 import { buildContextMetric, StatusBar } from "./components/status-bar.js";
 import { WelcomeHome } from "./components/welcome-home.js";
 import { editInExternalEditor } from "./external-editor.js";
 import { useChatController } from "./hooks/use-chat-controller.js";
+import { useScrollbackTranscript } from "./hooks/use-scrollback-transcript.js";
 import { useTextInput } from "./hooks/use-text-input.js";
-import { useVirtualHistory, type VirtualHistoryController } from "./hooks/use-virtual-history.js";
 import {
   listSessionIds,
   listSessionSummaries,
@@ -39,8 +37,7 @@ import {
   longestCommonPrefix,
   type SlashSuggestion
 } from "./slash-commands.js";
-import { theme } from "./theme.js";
-import { displayChatMessages, type ChatMessage } from "./view-models/chat-messages.js";
+import { type ChatMessage } from "./view-models/chat-messages.js";
 import { buildWelcomeHome, type WelcomeHomeEntry } from "./view-models/welcome-home.js";
 import {
   buildTodaySummary,
@@ -49,8 +46,8 @@ import {
   formatTodaySummary,
   resolveRuntimeUserId
 } from "./view-models/today-summary.js";
-import type { RuntimeOutputEvent } from "../types/index.js";
-import { outputEventsToMarkdown, type TranscriptViewerMode } from "./view-models/transcript-output.js";
+import { formatTranscriptForPrint } from "./view-models/scrollback-transcript.js";
+import { outputEventsToMarkdown } from "./view-models/transcript-output.js";
 
 export interface ChatTuiAppProps {
   config: TuiAppConfig;
@@ -104,19 +101,12 @@ export function ChatTuiApp({
   const [clarifyMultiSelections, setClarifyMultiSelections] = React.useState<Record<number, string[]>>({});
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
-  const [transcriptViewer, setTranscriptViewer] = React.useState<{
-    events: RuntimeOutputEvent[];
-    mode: TranscriptViewerMode;
-    query: string;
-    scope: string;
-  } | null>(null);
   const [sessionSummaries, setSessionSummaries] = React.useState<ChatSessionSummary[]>([]);
   const historyRef = React.useRef<string[]>([]);
   const historyIndexRef = React.useRef<number | null>(null);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const completionStateRef = React.useRef<{ candidates: string[]; index: number; query: string } | null>(null);
-  const virtualHistoryRef = React.useRef<VirtualHistoryController | null>(null);
-  const terminalSize = useWindowSize();
+  const scrollbackRef = React.useRef<ReturnType<typeof useScrollbackTranscript> | null>(null);
 
   const controller = useChatController({
     config,
@@ -127,25 +117,20 @@ export function ChatTuiApp({
       : {}),
     ...(initialThreadId !== undefined ? { initialThreadId } : {}),
     interactionMode,
+    onOutputEvent: (event) => scrollbackRef.current?.onOutputEvent(event),
+    onTraceEvent: (event) => scrollbackRef.current?.onTraceEvent(event),
     reviewerId,
     service
   });
 
-  const displayMessages = React.useMemo(
-    () => displayChatMessages(controller.messages),
-    [controller.messages]
-  );
+  const scrollback = useScrollbackTranscript(controller.messages);
+  React.useEffect(() => {
+    scrollbackRef.current = scrollback;
+  }, [scrollback]);
+
   const showTodaySummary = React.useMemo(
     () => shouldShowHomeSummary(controller.messages),
     [controller.messages]
-  );
-  const transcriptMessages = React.useMemo(
-    () => (showTodaySummary ? [] : displayMessages),
-    [displayMessages, showTodaySummary]
-  );
-  const transcriptWidth = Math.max(
-    20,
-    terminalSize.columns > 0 ? terminalSize.columns : process.stdout.columns ?? 80
   );
   const todaySummaryText = React.useMemo(
     () => formatTodaySummary(buildTodaySummary(service, { activeThreadId: controller.activeThreadId })),
@@ -243,17 +228,6 @@ export function ChatTuiApp({
     [config.workspaceRoot]
   );
 
-  const scrollTranscript = React.useCallback((direction: -1 | 1, accelerated: boolean) => {
-    virtualHistoryRef.current?.scrollPage(direction, accelerated);
-  }, []);
-
-  const jumpTranscript = React.useCallback(
-    (target: "start" | "end") => {
-      virtualHistoryRef.current?.jumpTo(target);
-    },
-    []
-  );
-
   const slashSuggestions = React.useCallback(
     (value: string): SlashSuggestion[] => {
       if (!value.startsWith("/")) {
@@ -306,7 +280,6 @@ export function ChatTuiApp({
       setSessionTitle(session.title ?? "assistant");
       setInteractionMode(session.interactionMode ?? "agent");
       setHomeSelectionIndex(0);
-      virtualHistoryRef.current?.resetToBottom();
       return true;
     },
     [controller]
@@ -339,9 +312,9 @@ export function ChatTuiApp({
             "Workflow: /resume [session] /inbox [show] /thread [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
             "Session: /mode [agent|plan] /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
-            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | PgUp/PgDn transcript scroll",
+            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history",
             "Saved sessions: use `talon tui --resume <id>` to restore transcript files from .auto-talon/sessions.",
-            "Transcript stays in the TUI viewport; PgUp/PgDn reviews recent turns."
+            "Transcript is written to terminal scrollback; use your terminal scrollbar or mouse wheel to review history."
           ].join("\n")
         );
         return true;
@@ -375,11 +348,7 @@ export function ChatTuiApp({
       }
 
       if (text.startsWith("/thread")) {
-        const handled = handleThreadCommand(text, controller, service);
-        if (handled && /^\/thread\s+(new|switch)\b/u.test(text.trim())) {
-          virtualHistoryRef.current?.resetToBottom();
-        }
-        return handled;
+        return handleThreadCommand(text, controller, service);
       }
 
       if (text.startsWith("/next")) {
@@ -431,11 +400,7 @@ export function ChatTuiApp({
 
       if (text === "/transcript" || text.startsWith("/transcript ")) {
         const args = text.trim().split(/\s+/u).slice(1);
-        const command = args[0] ?? "open";
-        if (command === "close") {
-          setTranscriptViewer(null);
-          return true;
-        }
+        const command = args[0] ?? "print";
         const currentEvents =
           controller.activeThreadId !== null
             ? service.outputThread(controller.activeThreadId)
@@ -466,14 +431,19 @@ export function ChatTuiApp({
             );
           return true;
         }
-        const mode = command === "detail" ? "detail" : command === "final" ? "final" : transcriptViewer?.mode ?? "final";
-        const query = command === "search" ? args.slice(1).join(" ") : "";
-        setTranscriptViewer({
-          events: currentEvents,
-          mode,
-          query,
-          scope
-        });
+        if (command === "print" || command === "final" || command === "detail" || command === "search") {
+          const mode = command === "detail" ? "detail" : "final";
+          const query = command === "search" ? args.slice(1).join(" ") : "";
+          scrollback.print(
+            formatTranscriptForPrint(currentEvents, {
+              mode,
+              ...(query.length > 0 ? { query } : {}),
+              title: `Transcript ${scope}`
+            })
+          );
+          return true;
+        }
+        controller.addSystemMessage("Usage: /transcript [print|final|detail|search <query>|export [md|json]]");
         return true;
       }
 
@@ -483,7 +453,6 @@ export function ChatTuiApp({
 
       if (text === "/clear") {
         controller.resetVisibleChat();
-        virtualHistoryRef.current?.resetToBottom();
         return true;
       }
 
@@ -493,7 +462,6 @@ export function ChatTuiApp({
         const nextId = randomUUID();
         setSessionId(nextId);
         controller.addSystemMessage(`Started a new assistant session. id=${nextId}`);
-        virtualHistoryRef.current?.resetToBottom();
         return true;
       }
 
@@ -573,8 +541,8 @@ export function ChatTuiApp({
           `status_line: ${controller.statusLine}`,
           `ui_status: ${controller.uiStatus.primaryLabel}`,
           `elapsed: ${controller.runDurationLabel}`,
-          `ui_scroll: ${formatVirtualHistoryStatus(virtualHistoryRef.current)}`,
-          `message_rows: ${controller.messages.length} visible_messages: ${transcriptMessages.length}`,
+          "ui_scroll: native_terminal_scrollback",
+          `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
           `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`
         ];
@@ -649,7 +617,7 @@ export function ChatTuiApp({
       interactionMode,
       sessionId,
       sessionTitle,
-      transcriptViewer
+      scrollback
     ]
   );
 
@@ -869,8 +837,6 @@ export function ChatTuiApp({
     },
     onPromptToggleSelection: toggleActiveClarifyOption,
     onExternalEditorEdit: openExternalEditor,
-    onPageJump: jumpTranscript,
-    onPageScroll: scrollTranscript,
     onTabComplete: completeInput,
     onSubmit: (value) => {
       if (value.trim() === "/edit") {
@@ -888,7 +854,6 @@ export function ChatTuiApp({
       if (!accepted) {
         return false;
       }
-      virtualHistoryRef.current?.resetToBottom();
       historyRef.current.push(value);
       if (historyRef.current.length > 200) {
         historyRef.current = historyRef.current.slice(-200);
@@ -935,53 +900,15 @@ export function ChatTuiApp({
           ? [{ label: `mem ${controller.usedMemoryCount}`, tone: "accent" as const }]
           : [])
       ];
-  const transcriptViewportRows = estimateTranscriptViewportRows(
-    terminalSize.rows,
-    estimateChatChromeRows({
-      activeClarifyPrompt,
-      collapsePreview: textInput.collapsePreview,
-      hasPendingApproval: controller.pendingApproval !== null,
-      inputLineCount: textInput.lines.length,
-      queuedPromptCount: controller.queuedPromptCount,
-      slashHintCount: slashHints.length,
-      valueLength: textInput.value.length
-    })
-  );
-  const virtualHistory = useVirtualHistory({
-    busy: controller.busy,
-    messages: transcriptMessages,
-    runState: controller.uiStatus.runState,
-    viewportHeight: transcriptViewportRows,
-    width: transcriptWidth
-  });
-
-  React.useEffect(() => {
-    virtualHistoryRef.current = virtualHistory;
-  }, [virtualHistory]);
 
   return (
-    <Box flexDirection="column" height={terminalSize.rows > 0 ? terminalSize.rows : undefined}>
+    <Box flexDirection="column">
       <Banner
         details={[config.provider.model ?? config.provider.name, shortenPath(cwd, 20)]}
         productName="AUTOTALON"
         title={sessionTitle === "assistant" ? "Personal Assistant" : sessionTitle}
       />
-      <Box flexDirection="column" flexGrow={1} flexShrink={1} overflowY="hidden">
-        {transcriptViewer !== null ? (
-          <TranscriptViewer
-            events={transcriptViewer.events}
-            mode={transcriptViewer.mode}
-            query={transcriptViewer.query}
-            title={`Transcript ${transcriptViewer.scope}`}
-          />
-        ) : showTodaySummary ? (
-          <WelcomeHome selectedIndex={homeSelectionIndex} summary={welcomeHome} />
-        ) : transcriptMessages.length > 0 ? (
-          <TranscriptPane viewportHeight={transcriptViewportRows} window={virtualHistory.window} />
-        ) : transcriptMessages.length === 0 ? (
-          <Text color={theme.muted}>No conversation yet.</Text>
-        ) : null}
-      </Box>
+      {showTodaySummary ? <WelcomeHome selectedIndex={homeSelectionIndex} summary={welcomeHome} /> : null}
       <PromptZone
         approvalPrompt={
           controller.pendingApproval === null
@@ -1062,19 +989,6 @@ function formatChatStatusLabel(
   return label;
 }
 
-function formatVirtualHistoryStatus(history: VirtualHistoryController | null): string {
-  if (history === null) {
-    return "transcript(scroll_top=0 total=0 mode=sticky-bottom visible=0)";
-  }
-  return [
-    `scroll_top=${history.state.scrollTop}`,
-    `total=${history.window.totalHeight}`,
-    `mode=${history.state.followMode}`,
-    `visible=${history.window.items.length}`,
-    `viewport=${history.state.viewportHeight}`
-  ].join(" ");
-}
-
 function shortenPath(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `...${value.slice(-(maxLength - 3))}`;
 }
@@ -1085,18 +999,6 @@ const APPROVAL_ACTIONS: Array<{ action: "allow" | "deny"; scope?: ApprovalAllowS
   { action: "allow", scope: "always" },
   { action: "deny" }
 ];
-const TRANSCRIPT_FALLBACK_VIEWPORT_ROWS = 12;
-const TRANSCRIPT_CHROME_ROWS = 6;
-
-export function estimateTranscriptViewportRows(
-  terminalRows: number,
-  chromeRows = TRANSCRIPT_CHROME_ROWS
-): number {
-  if (!Number.isFinite(terminalRows) || terminalRows <= 0) {
-    return TRANSCRIPT_FALLBACK_VIEWPORT_ROWS;
-  }
-  return Math.max(1, Math.floor(terminalRows) - Math.max(0, Math.floor(chromeRows)));
-}
 
 interface ChatChromeRowsInput {
   activeClarifyPrompt: NonNullable<ReturnType<typeof useChatController>["pendingClarifyPrompt"]> | null;
@@ -1158,13 +1060,6 @@ function clampSelection(index: number, size: number): number {
 
 function shouldShowHomeSummary(messages: ChatMessage[]): boolean {
   return messages.every((message) => message.id === "system:welcome");
-}
-
-export function isLiveTranscriptMessage(message: ChatMessage): boolean {
-  return (
-    (message.kind === "agent" && message.streaming === true) ||
-    (message.kind === "approval" && message.status === "pending")
-  );
 }
 
 function parseSlashInput(text: string): { args: string[]; command: string; rest: string } {

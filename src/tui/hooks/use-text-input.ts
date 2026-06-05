@@ -31,8 +31,6 @@ export interface UseTextInputOptions {
   onExit: () => void;
   onSubmit: (text: string) => boolean | Promise<boolean>;
   onSubmitBlockedBusy?: () => void;
-  onPageScroll?: (direction: -1 | 1, accelerated: boolean) => void;
-  onPageJump?: (target: "start" | "end") => void;
   /** Return replacement value, or null to leave input unchanged. */
   onTabComplete?: (value: string) => string | null;
   onExternalEditorEdit?: (value: string) => Promise<string>;
@@ -143,18 +141,10 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       return;
     }
 
-    if (key.pageUp || key.pageDown) {
-      options.onPageScroll?.(key.pageUp ? -1 : 1, key.shift === true);
-      return;
-    }
-
     const earlyNavKey = key as { end?: boolean; home?: boolean };
-    if (earlyNavKey.home === true && key.ctrl) {
-      options.onPageJump?.("start");
-      return;
-    }
     if (earlyNavKey.end === true && (key.ctrl || valueRef.current.length === 0)) {
-      options.onPageJump?.("end");
+      setCursorIndex(value.length);
+      preferredColumnRef.current = null;
       return;
     }
 
@@ -328,20 +318,12 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
 
     const navKey = key as { end?: boolean; home?: boolean };
     if (navKey.home === true) {
-      if (key.ctrl) {
-        options.onPageJump?.("start");
-        return;
-      }
       setCursorIndex(getLineStartIndex(value, cursorIndex));
       preferredColumnRef.current = null;
       return;
     }
 
     if (navKey.end === true) {
-      if (key.ctrl) {
-        options.onPageJump?.("end");
-        return;
-      }
       setCursorIndex(getLineEndIndex(value, cursorIndex));
       preferredColumnRef.current = null;
       return;

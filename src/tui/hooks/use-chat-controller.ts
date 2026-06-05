@@ -34,6 +34,8 @@ export interface UseChatControllerOptions {
   initialSessionApprovalFingerprints?: string[];
   initialThreadId?: string;
   interactionMode?: TuiInteractionMode;
+  onOutputEvent?: (event: RuntimeOutputEvent) => void;
+  onTraceEvent?: (event: TraceEvent) => void;
   reviewerId: string;
   service: TuiRuntimeService;
 }
@@ -271,6 +273,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     (taskId: string) => {
       stopTraceSubscription();
       activeTraceUnsubscribeRef.current = input.service.subscribeToTaskTrace(taskId, (event) => {
+        input.onTraceEvent?.(event);
         lastSequenceByTaskRef.current[taskId] = Math.max(
           lastSequenceByTaskRef.current[taskId] ?? 0,
           event.sequence
@@ -284,7 +287,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         }
       });
     },
-    [input.service, recordFileWrite, stopTraceSubscription]
+    [input, recordFileWrite, stopTraceSubscription]
   );
 
   const addSystemMessage = React.useCallback((text: string) => {
@@ -588,6 +591,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         return;
       }
       lastSequenceByTaskRef.current[taskId] = unseen.at(-1)?.sequence ?? lastSeen;
+      for (const event of unseen) {
+        input.onTraceEvent?.(event);
+      }
       setMessages((current) => mergeTraceMessages(current, unseen));
       for (const event of unseen) {
         if (event.eventType === "memory_recalled") {
@@ -598,7 +604,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         }
       }
     },
-    [input.service, recordFileWrite]
+    [input, recordFileWrite]
   );
 
   const removeStreamingMessage = React.useCallback((id: string | null) => {
@@ -733,6 +739,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             sessionApprovalFingerprints
           };
           runOptions.onOutputEvent = (event) => {
+            input.onOutputEvent?.(event);
             if (event.eventType === "assistant_turn_started") {
               cancelPendingDelta();
               // Only the still-streaming placeholder for the previous turn (if any)
@@ -960,6 +967,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       input.config,
       input.cwd,
       input.interactionMode,
+      input.onOutputEvent,
       input.service,
       sessionApprovalFingerprints,
       refresh,

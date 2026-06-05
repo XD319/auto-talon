@@ -40,16 +40,35 @@ vi.mock("../src/tui/view-models/runtime-dashboard.js", () => ({
   RuntimeDashboardQueryService: class RuntimeDashboardQueryService {}
 }));
 
-import { startTui } from "../src/tui/index.js";
+import { startDashboardTui, startTui } from "../src/tui/index.js";
 
 describe("chat tui terminal screen", () => {
-  it("renders with alternateScreen enabled via ink", async () => {
+  it("renders chat without alternate screen so stdout uses native terminal scrollback", async () => {
     render.mockClear();
     waitUntilExit.mockClear();
     unmount.mockClear();
     closeApplication.mockClear();
 
     await startTui({ cwd: "D:\\workspace" });
+
+    expect(render).toHaveBeenCalledTimes(1);
+    const renderOptions = render.mock.calls[0]?.[1];
+    expect(renderOptions).toMatchObject({
+      alternateScreen: false,
+      exitOnCtrlC: false
+    });
+    expect(waitUntilExit).toHaveBeenCalledTimes(1);
+    expect(unmount).toHaveBeenCalledTimes(1);
+    expect(closeApplication).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the dashboard in alternate screen mode", async () => {
+    render.mockClear();
+    waitUntilExit.mockClear();
+    unmount.mockClear();
+    closeApplication.mockClear();
+
+    await startDashboardTui({ cwd: "D:\\workspace" });
 
     expect(render).toHaveBeenCalledTimes(1);
     const renderOptions = render.mock.calls[0]?.[1];

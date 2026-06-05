@@ -65,7 +65,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
           service: handle.service
         }),
         {
-          alternateScreen: true,
+          alternateScreen: false,
           exitOnCtrlC: false
         }
       );
