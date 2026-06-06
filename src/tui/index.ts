@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import React from "react";
 import { render } from "ink";
 
@@ -24,12 +24,12 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {})
   });
   try {
-    const sessionId = options.resumeSessionId ?? randomUUID();
+    const transcriptId = options.resumeSessionId ?? randomUUID();
     let initialMessages = undefined;
     let initialSessionApprovalFingerprints = undefined;
     let initialSessionTitle = undefined;
     let initialInteractionMode = undefined;
-    let initialThreadId = undefined;
+    let initialRuntimeSessionId = undefined;
     if (options.resumeSessionId !== undefined) {
       const loaded = await loadSession(handle.config.workspaceRoot, options.resumeSessionId);
       const missing: ChatMessage[] = [
@@ -44,7 +44,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
       initialSessionApprovalFingerprints = loaded?.sessionApprovalFingerprints;
       initialSessionTitle = loaded?.title;
       initialInteractionMode = loaded?.interactionMode;
-      initialThreadId = loaded?.threadId;
+      initialRuntimeSessionId = loaded?.sessionId;
     }
 
     let app: ReturnType<typeof render> | null = null;
@@ -59,8 +59,10 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
             : {}),
           ...(initialSessionTitle !== undefined ? { initialSessionTitle } : {}),
           ...(initialInteractionMode !== undefined ? { initialInteractionMode } : {}),
-          ...(initialThreadId !== undefined ? { initialThreadId } : {}),
-          initialSessionId: sessionId,
+          initialTranscriptId: transcriptId,
+          ...(initialRuntimeSessionId !== undefined
+            ? { initialRuntimeSessionId }
+            : {}),
           reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer",
           service: handle.service
         }),

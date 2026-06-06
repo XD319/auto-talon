@@ -281,7 +281,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
         externalUserLabel: string | null;
       };
       runAt?: string | null;
-      threadId?: string | null;
+      sessionId?: string | null;
       timezone?: string | null;
       deliveryTargets?: Array<"inbox" | "origin">;
     }
@@ -294,12 +294,12 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     const ownerUserId = continuation?.runtimeUserId ?? identityBinding.runtimeUserId;
     const cwd = request.cwd ?? this.dependencies.defaultCwd;
     const runOptions = this.dependencies.createRunOptions(request.input, cwd);
-    const threadId =
-      request.threadId === undefined
+    const sessionId =
+      request.sessionId === undefined
         ? continuation === null
           ? null
-          : this.dependencies.applicationService.showTask(continuation.previousTaskId).task?.threadId ?? null
-        : request.threadId;
+          : this.dependencies.applicationService.showTask(continuation.previousTaskId).task?.sessionId ?? null
+        : request.sessionId;
     const metadata: JsonObject = {
       ...(request.metadata ?? {}),
       gateway: {
@@ -330,7 +330,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       ...(request.cron !== undefined ? { cron: request.cron } : {}),
       ...(request.every !== undefined ? { every: request.every } : {}),
       ...(request.runAt !== undefined ? { runAt: request.runAt } : {}),
-      ...(threadId !== null ? { threadId } : {}),
+      ...(sessionId !== null ? { sessionId } : {}),
       ...(request.timezone !== undefined ? { timezone: request.timezone } : {})
     });
 

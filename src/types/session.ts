@@ -2,14 +2,14 @@ import type { JsonObject } from "./common.js";
 import type { AgentProfileId } from "./profile.js";
 import type { TaskStatus } from "./task.js";
 
-export const THREAD_STATUSES = ["active", "archived", "deleted"] as const;
+export const SESSION_STATUSES = ["active", "archived", "deleted"] as const;
 
-export type ThreadStatus = (typeof THREAD_STATUSES)[number];
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
 
-export interface ThreadRecord {
-  threadId: string;
+export interface SessionRecord {
+  sessionId: string;
   title: string;
-  status: ThreadStatus;
+  status: SessionStatus;
   ownerUserId: string;
   cwd: string;
   agentProfileId: AgentProfileId;
@@ -20,8 +20,8 @@ export interface ThreadRecord {
   metadata: JsonObject;
 }
 
-export interface ThreadDraft {
-  threadId: string;
+export interface SessionDraft {
+  sessionId: string;
   title: string;
   ownerUserId: string;
   cwd: string;
@@ -30,16 +30,16 @@ export interface ThreadDraft {
   metadata?: JsonObject;
 }
 
-export interface ThreadUpdatePatch {
+export interface SessionUpdatePatch {
   title?: string;
-  status?: ThreadStatus;
+  status?: SessionStatus;
   archivedAt?: string | null;
   metadata?: JsonObject;
 }
 
-export interface ThreadRunRecord {
+export interface SessionTaskRecord {
   runId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string;
   runNumber: number;
   input: string;
@@ -50,9 +50,9 @@ export interface ThreadRunRecord {
   metadata: JsonObject;
 }
 
-export interface ThreadRunDraft {
+export interface SessionTaskDraft {
   runId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string;
   input: string;
   status: TaskStatus;
@@ -61,24 +61,24 @@ export interface ThreadRunDraft {
   metadata?: JsonObject;
 }
 
-export const THREAD_LINEAGE_EVENT_TYPES = ["compress", "branch", "merge", "archive"] as const;
+export const SESSION_LINEAGE_EVENT_TYPES = ["compress", "branch", "merge", "archive"] as const;
 
-export type ThreadLineageEventType = (typeof THREAD_LINEAGE_EVENT_TYPES)[number];
+export type SessionLineageEventType = (typeof SESSION_LINEAGE_EVENT_TYPES)[number];
 
-export interface ThreadLineageRecord {
+export interface SessionLineageRecord {
   lineageId: string;
-  threadId: string;
-  eventType: ThreadLineageEventType;
+  sessionId: string;
+  eventType: SessionLineageEventType;
   sourceRunId: string | null;
   targetRunId: string | null;
   createdAt: string;
   payload: JsonObject;
 }
 
-export interface ThreadLineageDraft {
+export interface SessionLineageDraft {
   lineageId: string;
-  threadId: string;
-  eventType: ThreadLineageEventType;
+  sessionId: string;
+  eventType: SessionLineageEventType;
   sourceRunId?: string | null;
   targetRunId?: string | null;
   payload?: JsonObject;

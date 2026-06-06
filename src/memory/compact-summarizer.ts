@@ -234,7 +234,7 @@ function buildSummaryTask(input: SessionCompactInput): {
   startedAt: string | null;
   status: "running";
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   tokenBudget: {
     inputLimit: number;
     outputLimit: number;
@@ -261,7 +261,7 @@ function buildSummaryTask(input: SessionCompactInput): {
     startedAt: null,
     status: "running",
     taskId: input.taskId,
-    threadId: null,
+    sessionId: null,
     tokenBudget: {
       inputLimit: 2_000,
       outputLimit: 800,

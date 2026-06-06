@@ -26,7 +26,7 @@ export interface InboxItem {
   inboxId: string;
   userId: string;
   taskId: string | null;
-  threadId: string | null;
+  sessionId: string | null;
   scheduleRunId: string | null;
   approvalId: string | null;
   experienceId: string | null;
@@ -50,7 +50,7 @@ export interface InboxItemDraft {
   inboxId?: string;
   userId: string;
   taskId?: string | null;
-  threadId?: string | null;
+  sessionId?: string | null;
   scheduleRunId?: string | null;
   approvalId?: string | null;
   experienceId?: string | null;
@@ -81,7 +81,7 @@ export interface InboxItemUpdatePatch {
 export interface InboxListQuery {
   userId?: string;
   taskId?: string;
-  threadId?: string;
+  sessionId?: string;
   category?: InboxCategory;
   status?: InboxStatus;
   statuses?: InboxStatus[];

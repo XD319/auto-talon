@@ -25,7 +25,7 @@ export interface RuntimeOutputEventBase<
   sequence: number;
   stage: RuntimeOutputStage;
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   timestamp: string;
 }
 
@@ -108,5 +108,5 @@ export type RuntimeOutputEvent =
   | RuntimeOutputEventBase<"result", ResultOutputPayload>
   | RuntimeOutputEventBase<"error", ErrorOutputPayload>;
 
-export type RuntimeOutputEventDraft = Omit<RuntimeOutputEvent, "eventId" | "sequence" | "threadId" | "timestamp"> &
-  Partial<Pick<RuntimeOutputEvent, "eventId" | "threadId" | "timestamp">>;
+export type RuntimeOutputEventDraft = Omit<RuntimeOutputEvent, "eventId" | "sequence" | "sessionId" | "timestamp"> &
+  Partial<Pick<RuntimeOutputEvent, "eventId" | "sessionId" | "timestamp">>;

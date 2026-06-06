@@ -1,4 +1,4 @@
-import type { JsonObject } from "./common.js";
+﻿import type { JsonObject } from "./common.js";
 import type { RuntimeErrorCode } from "./error.js";
 import type { PathScope, PrivacyLevel, ToolCapability, ToolRiskLevel } from "./governance.js";
 import type { MemoryScope, MemoryStatus, MemorySourceType } from "./memory.js";
@@ -69,7 +69,7 @@ export const TRACE_EVENT_TYPES = [
   "memory_written",
   "memory_write_rejected",
   "session_compacted",
-  "thread_session_memory_written",
+  "session_summary_written",
   "schedule_created",
   "schedule_updated",
   "schedule_archived",
@@ -506,7 +506,7 @@ export interface MemoryWrittenPayload extends JsonObject {
 
 export interface MemoryWriteRejectedPayload extends JsonObject {
   scope: MemoryScope;
-  reason: "working_scope_moved_to_thread_session_memory";
+  reason: "working_scope_moved_to_session_summary";
 }
 
 export interface SessionCompactedPayload extends JsonObject {
@@ -516,9 +516,9 @@ export interface SessionCompactedPayload extends JsonObject {
   summarizerId?: string;
 }
 
-export interface ThreadSessionMemoryWrittenPayload extends JsonObject {
-  sessionMemoryId: string;
-  threadId: string;
+export interface SessionSummaryWrittenPayload extends JsonObject {
+  sessionSummaryId: string;
+  sessionId: string;
   trigger: "compact" | "manual" | "resume" | "final";
   goal: string;
 }
@@ -571,7 +571,7 @@ export interface ScheduleRunFinishedPayload extends JsonObject {
   attemptNumber: number;
   status: "completed" | "waiting_approval" | "blocked" | "cancelled";
   taskId: string | null;
-  threadId: string | null;
+  sessionId: string | null;
 }
 
 export interface ScheduleRunFailedPayload extends JsonObject {
@@ -636,7 +636,7 @@ export interface SkillPromotionSuggestedPayload extends JsonObject {
 
 export interface RouteDecisionPayload extends JsonObject {
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   mode: RoutingMode;
   kind: RouteKind;
   tier: "cheap" | "balanced" | "quality" | null;
@@ -646,8 +646,8 @@ export interface RouteDecisionPayload extends JsonObject {
 
 export interface BudgetWarningPayload extends JsonObject {
   taskId: string;
-  threadId: string | null;
-  scope: "task" | "thread";
+  sessionId: string | null;
+  scope: "task" | "session";
   mode: RoutingMode;
   usedInput: number;
   usedOutput: number;
@@ -658,8 +658,8 @@ export interface BudgetWarningPayload extends JsonObject {
 
 export interface BudgetExceededPayload extends JsonObject {
   taskId: string;
-  threadId: string | null;
-  scope: "task" | "thread";
+  sessionId: string | null;
+  scope: "task" | "session";
   mode: RoutingMode;
   usedInput: number;
   usedOutput: number;
@@ -670,7 +670,7 @@ export interface BudgetExceededPayload extends JsonObject {
 
 export interface CostReportPayload extends JsonObject {
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   providerName: string;
   mode: RoutingMode;
   inputTokens: number;
@@ -720,7 +720,7 @@ export interface InboxItemDonePayload extends JsonObject {
 
 export interface CommitmentCreatedPayload extends JsonObject {
   commitmentId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
   status: string;
   title: string;
@@ -728,7 +728,7 @@ export interface CommitmentCreatedPayload extends JsonObject {
 
 export interface CommitmentUpdatedPayload extends JsonObject {
   commitmentId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
   status: string;
   blockedReason: string | null;
@@ -737,33 +737,33 @@ export interface CommitmentUpdatedPayload extends JsonObject {
 
 export interface CommitmentBlockedPayload extends JsonObject {
   commitmentId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
   blockedReason: string;
 }
 
 export interface CommitmentUnblockedPayload extends JsonObject {
   commitmentId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
 }
 
 export interface CommitmentCompletedPayload extends JsonObject {
   commitmentId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
 }
 
 export interface CommitmentCancelledPayload extends JsonObject {
   commitmentId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
 }
 
 export interface NextActionCreatedPayload extends JsonObject {
   nextActionId: string;
   commitmentId: string | null;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
   status: string;
   title: string;
@@ -772,7 +772,7 @@ export interface NextActionCreatedPayload extends JsonObject {
 export interface NextActionUpdatedPayload extends JsonObject {
   nextActionId: string;
   commitmentId: string | null;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
   status: string;
   blockedReason: string | null;
@@ -781,7 +781,7 @@ export interface NextActionUpdatedPayload extends JsonObject {
 export interface NextActionBlockedPayload extends JsonObject {
   nextActionId: string;
   commitmentId: string | null;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
   blockedReason: string;
 }
@@ -789,7 +789,7 @@ export interface NextActionBlockedPayload extends JsonObject {
 export interface NextActionDonePayload extends JsonObject {
   nextActionId: string;
   commitmentId: string | null;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
 }
 
@@ -797,7 +797,7 @@ export interface WorkerDispatchedPayload extends JsonObject {
   workerId: string;
   workerKind: "summarizer" | "retrieval";
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   timeoutMs: number;
 }
 
@@ -805,7 +805,7 @@ export interface WorkerSucceededPayload extends JsonObject {
   workerId: string;
   workerKind: "summarizer" | "retrieval";
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   durationMs: number;
   outputSummary: string;
 }
@@ -814,7 +814,7 @@ export interface WorkerFailedPayload extends JsonObject {
   workerId: string;
   workerKind: "summarizer" | "retrieval";
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   durationMs: number;
   errorMessage: string;
   retriable: boolean;
@@ -824,7 +824,7 @@ export interface WorkerTimeoutPayload extends JsonObject {
   workerId: string;
   workerKind: "summarizer" | "retrieval";
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   timeoutMs: number;
 }
 
@@ -832,7 +832,7 @@ export interface WorkerRetriedPayload extends JsonObject {
   workerId: string;
   workerKind: "summarizer" | "retrieval";
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   attemptNumber: number;
   maxAttempts: number;
   delayMs: number;
@@ -900,7 +900,7 @@ export type TraceEvent =
   | TraceEventBase<"memory_written", MemoryWrittenPayload>
   | TraceEventBase<"memory_write_rejected", MemoryWriteRejectedPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
-  | TraceEventBase<"thread_session_memory_written", ThreadSessionMemoryWrittenPayload>
+  | TraceEventBase<"session_summary_written", SessionSummaryWrittenPayload>
   | TraceEventBase<"schedule_created", ScheduleCreatedPayload>
   | TraceEventBase<"schedule_updated", ScheduleUpdatedPayload>
   | TraceEventBase<"schedule_archived", ScheduleArchivedPayload>

@@ -1,15 +1,15 @@
-import type { JsonObject } from "./common.js";
+﻿import type { JsonObject } from "./common.js";
 
-export const THREAD_SESSION_MEMORY_TRIGGERS = ["compact", "manual", "resume", "final"] as const;
+export const SESSION_SUMMARY_TRIGGERS = ["compact", "manual", "resume", "final"] as const;
 
-export type ThreadSessionMemoryTrigger = (typeof THREAD_SESSION_MEMORY_TRIGGERS)[number];
+export type SessionSummaryTrigger = (typeof SESSION_SUMMARY_TRIGGERS)[number];
 
-export interface ThreadSessionMemoryRecord {
-  sessionMemoryId: string;
-  threadId: string;
+export interface SessionSummaryRecord {
+  sessionSummaryId: string;
+  sessionId: string;
   runId: string | null;
   taskId: string | null;
-  trigger: ThreadSessionMemoryTrigger;
+  trigger: SessionSummaryTrigger;
   summary: string;
   goal: string;
   decisions: string[];
@@ -19,12 +19,12 @@ export interface ThreadSessionMemoryRecord {
   metadata: JsonObject;
 }
 
-export interface ThreadSessionMemoryDraft {
-  sessionMemoryId?: string;
-  threadId: string;
+export interface SessionSummaryDraft {
+  sessionSummaryId?: string;
+  sessionId: string;
   runId?: string | null;
   taskId?: string | null;
-  trigger: ThreadSessionMemoryTrigger;
+  trigger: SessionSummaryTrigger;
   summary: string;
   goal: string;
   decisions: string[];
@@ -34,8 +34,8 @@ export interface ThreadSessionMemoryDraft {
 }
 
 export interface SessionSearchHit {
-  sessionMemoryId: string;
-  threadId: string;
+  sessionSummaryId: string;
+  sessionId: string;
   score: number;
   summary: string;
   goal: string;

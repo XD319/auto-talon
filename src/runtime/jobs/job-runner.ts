@@ -69,7 +69,7 @@ export class JobRunner {
         finishedAt: result.task.finishedAt ?? new Date().toISOString(),
         status: mappedStatus,
         taskId: result.task.taskId,
-        threadId: result.task.threadId ?? null
+        sessionId: result.task.sessionId ?? null
       });
 
       if (mappedStatus === "failed") {
@@ -99,7 +99,7 @@ export class JobRunner {
             scheduleId: next.scheduleId,
             status: mappedStatus,
             taskId: next.taskId,
-            threadId: next.threadId
+            sessionId: next.sessionId
           },
           stage: "completion",
           summary: `Schedule run ${run.runId} ${mappedStatus}`,

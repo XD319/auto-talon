@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 
 import { AuditService } from "../src/audit/audit-service.js";
 import { BudgetService } from "../src/runtime/budget/budget-service.js";
 import { ContextCompactor } from "../src/runtime/context/context-compactor.js";
-import { ThreadSessionMemoryService } from "../src/runtime/context/thread-session-memory-service.js";
+import { SessionSummaryService } from "../src/runtime/context/session-summary-service.js";
 import { RetrievalWorker } from "../src/runtime/workers/retrieval-worker.js";
 import { SummarizerWorker } from "../src/runtime/workers/summarizer-worker.js";
 import { WorkerDispatcher } from "../src/runtime/workers/worker-dispatcher.js";
@@ -34,7 +34,7 @@ function createTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     startedAt: "2026-04-24T10:00:00.000Z",
     status: "running",
     taskId: "task-worker-1",
-    threadId: "thread-worker-1",
+    sessionId: "session-worker-1",
     tokenBudget: {
       inputLimit: 10_000,
       outputLimit: 4_000,
@@ -54,7 +54,7 @@ function createRequest<TInput>(overrides: Partial<WorkerRequest<TInput>> = {}): 
     input: {} as TInput,
     maxAttempts: 2,
     taskId: "task-worker-1",
-    threadId: "thread-worker-1",
+    sessionId: "session-worker-1",
     timeoutMs: 20,
     workerId: "worker-1",
     workerKind: "retrieval",
@@ -138,7 +138,7 @@ describe("worker dispatcher", () => {
     const budgetService = new BudgetService(
       {
         task: { softInputTokens: 1 },
-        thread: { softInputTokens: 1 }
+        session: { softInputTokens: 1 }
       },
       traceService,
       auditService
@@ -148,7 +148,7 @@ describe("worker dispatcher", () => {
       costUsd: 0,
       mode: "balanced",
       taskId: "task-worker-1",
-      threadId: "thread-worker-1",
+      sessionId: "session-worker-1",
       usage: { inputTokens: 5, outputTokens: 0 }
     });
     try {
@@ -165,23 +165,23 @@ describe("worker dispatcher", () => {
 });
 
 describe("summarizer worker", () => {
-  it("creates thread session memory when compaction is triggered", async () => {
+  it("creates session session memory when compaction is triggered", async () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     const traceService = new TraceService(storage.traces);
-    const threadSessionMemoryService = new ThreadSessionMemoryService({
-      repository: storage.threadSessionMemories,
+    const sessionSummaryService = new SessionSummaryService({
+      repository: storage.sessionSummaries,
       traceService
     });
     const worker = new SummarizerWorker({
       contextCompactor: new ContextCompactor(),
-      threadSessionMemoryService
+      sessionSummaryService
     });
-    storage.threads.create({
+    storage.sessions.create({
       agentProfileId: "executor",
       cwd: "/repo",
       ownerUserId: "u1",
       providerName: "mock",
-      threadId: "thread-worker-1",
+      sessionId: "session-worker-1",
       title: "worker thread"
     });
     const task = createTask();
@@ -205,9 +205,9 @@ describe("summarizer worker", () => {
         task
       });
       expect(result.compacted).toBe(true);
-      expect(result.sessionMemory?.threadId).toBe(task.threadId);
+      expect(result.sessionSummary?.sessionId).toBe(task.sessionId);
       expect(
-        traceService.listByTaskId(task.taskId).some((event) => event.eventType === "thread_session_memory_written")
+        traceService.listByTaskId(task.taskId).some((event) => event.eventType === "session_summary_written")
       ).toBe(true);
     } finally {
       storage.close();
@@ -238,7 +238,7 @@ describe("retrieval worker", () => {
     const task = createTask();
     const result = await worker.execute({
       task,
-      threadCommitmentState: null,
+      sessionCommitmentState: null,
       tokenBudget: task.tokenBudget,
       toolPlan: []
     });

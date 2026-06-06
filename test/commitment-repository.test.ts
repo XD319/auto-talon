@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { StorageManager } from "../src/storage/database.js";
 
@@ -6,12 +6,12 @@ describe("commitment repositories", () => {
   it("creates and updates commitments and next actions", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: process.cwd(),
         ownerUserId: "u1",
         providerName: "test-provider",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "Thread one"
       });
 
@@ -19,7 +19,7 @@ describe("commitment repositories", () => {
         ownerUserId: "u1",
         source: "manual",
         summary: "summary",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "Ship feature"
       });
       expect(commitment.status).toBe("open");
@@ -34,7 +34,7 @@ describe("commitment repositories", () => {
         commitmentId: commitment.commitmentId,
         source: "manual",
         status: "active",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "Ask approval"
       });
       expect(action.status).toBe("active");

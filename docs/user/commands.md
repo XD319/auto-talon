@@ -1,9 +1,9 @@
-# Commands
+﻿# Commands
 
 Core:
 
 - `talon run`
-- `talon continue --last|--thread <id> [task]`
+- `talon continue --last|--session <id> [task]`
 - `talon tui`
 - `talon ops`
 - `talon dashboard` (compatibility alias of `talon ops`)
@@ -14,7 +14,7 @@ Core:
 Operational:
 
 - `talon task list|show|timeline`
-- `talon thread list|show|archive|snapshots <thread_id>|snapshot <snapshot_id>`
+- `talon session list|show|archive <session_id>`
 - `talon schedule create|list|show|edit|pause|resume|run-now|runs|remove|status|tick|run`
 - `talon inbox [--status <status>]`
 - `talon inbox list|show|done|dismiss`
@@ -30,7 +30,7 @@ Operational:
 Subsystems:
 
 - `talon provider list|current|status|setup|use|promote|test|smoke|stats|route`
-- `talon budget show --task <id>|--thread <id>`
+- `talon budget show --task <id>|--session <id>`
 - `talon memory list|show|search|snapshot|review|guide|add|forget|why|review-queue`
 - `talon experience list|show|review|promote|search`
 - `talon skills list|view|enable|disable|draft|promote|rollback`
@@ -50,15 +50,15 @@ Maintainer diagnostics for source checkouts:
 
 TUI slash commands (chat mode):
 
-- `/thread` (alias of `/thread summary`)
-- `/thread new [title]`
-- `/thread list`
-- `/thread switch <thread-id-prefix>`
-- `/thread summary [thread-id-prefix]`
-- `/next list [thread-id-prefix]`
+- `/session` (alias of `/session summary`)
+- `/session new [title]`
+- `/session list`
+- `/session switch <session-id-prefix>`
+- `/session summary [session-id-prefix]`
+- `/next list [session-id-prefix]`
 - `/next done <next-action-id-prefix>`
 - `/next block <next-action-id-prefix> <reason...>`
-- `/commitments list [thread-id-prefix]`
+- `/commitments list [session-id-prefix]`
 - `/commitments done <commitment-id-prefix>`
 - `/commitments block <commitment-id-prefix> <reason...>`
 - `/schedule list [active|paused|completed|archived|all]`

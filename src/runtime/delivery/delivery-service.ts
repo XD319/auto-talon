@@ -57,7 +57,7 @@ function matchesFilter(event: InboxDeliveryEvent, filter: InboxListQuery): boole
   if (filter.taskId !== undefined && item.taskId !== filter.taskId) {
     return false;
   }
-  if (filter.threadId !== undefined && item.threadId !== filter.threadId) {
+  if (filter.sessionId !== undefined && item.sessionId !== filter.sessionId) {
     return false;
   }
   if (filter.category !== undefined && item.category !== filter.category) {

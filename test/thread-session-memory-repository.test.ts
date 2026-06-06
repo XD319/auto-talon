@@ -1,28 +1,28 @@
-import { DatabaseSync } from "node:sqlite";
+﻿import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it } from "vitest";
 
 import { runMigrations } from "../src/storage/migrations.js";
 import { StorageManager } from "../src/storage/database.js";
-import { ThreadSessionMemoryService } from "../src/runtime/context/thread-session-memory-service.js";
+import { SessionSummaryService } from "../src/runtime/context/session-summary-service.js";
 import type { TraceService } from "../src/tracing/trace-service.js";
 import type { TraceEvent, TraceEventDraft } from "../src/types/index.js";
 
-describe("thread session memory repository", () => {
+describe("session session memory repository", () => {
   it("emits compact trace metadata from persisted session memory", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     const trace: TraceEvent[] = [];
     try {
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: "/tmp/workspace",
         ownerUserId: "u1",
         providerName: "mock",
-        threadId: "thread-memory-trace",
-        title: "thread memory trace"
+        sessionId: "session-memory-trace",
+        title: "session memory trace"
       });
-      const service = new ThreadSessionMemoryService({
-        repository: storage.threadSessionMemories,
+      const service = new SessionSummaryService({
+        repository: storage.sessionSummaries,
         traceService: {
           record(event: TraceEventDraft) {
             const persisted = {
@@ -48,7 +48,7 @@ describe("thread session memory repository", () => {
         openLoops: [],
         summary: "compact memory",
         taskId: "task-compact",
-        threadId: "thread-memory-trace",
+        sessionId: "session-memory-trace",
         trigger: "compact"
       });
 
@@ -65,55 +65,55 @@ describe("thread session memory repository", () => {
   it("writes events, upserts current, and keeps history order", async () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: "/tmp/workspace",
         ownerUserId: "u1",
         providerName: "mock",
-        threadId: "thread-memory-1",
-        title: "thread memory"
+        sessionId: "session-memory-1",
+        title: "session memory"
       });
 
-      const first = storage.threadSessionMemories.create({
+      const first = storage.sessionSummaries.create({
         decisions: ["choose plan A"],
         goal: "Ship feature",
         nextActions: ["implement api"],
         openLoops: ["pending benchmark"],
         summary: "first memory",
         taskId: "task-1",
-        threadId: "thread-memory-1",
+        sessionId: "session-memory-1",
         trigger: "manual"
       });
       await new Promise((resolve) => {
         setTimeout(resolve, 1);
       });
-      const second = storage.threadSessionMemories.create({
+      const second = storage.sessionSummaries.create({
         decisions: ["switch to plan B"],
         goal: "Ship feature",
         nextActions: ["update docs"],
         openLoops: [],
         summary: "second memory",
         taskId: "task-2",
-        threadId: "thread-memory-1",
+        sessionId: "session-memory-1",
         trigger: "final"
       });
 
-      const latest = storage.threadSessionMemories.findLatestByThread("thread-memory-1");
-      const history = storage.threadSessionMemories.listByThread("thread-memory-1");
+      const latest = storage.sessionSummaries.findLatestBySession("session-memory-1");
+      const history = storage.sessionSummaries.listBySession("session-memory-1");
       const currentRows = storage.database
-        .prepare("SELECT thread_id, session_memory_id FROM thread_session_memories_current")
-        .all() as Array<{ session_memory_id: string; thread_id: string }>;
+        .prepare("SELECT session_id, session_memory_id FROM session_summaries_current")
+        .all() as Array<{ session_memory_id: string; session_id: string }>;
       const eventRows = storage.database
-        .prepare("SELECT session_memory_id FROM thread_session_memory_events WHERE thread_id = ?")
-        .all("thread-memory-1") as Array<{ session_memory_id: string }>;
+        .prepare("SELECT session_memory_id FROM session_summary_events WHERE session_id = ?")
+        .all("session-memory-1") as Array<{ session_memory_id: string }>;
 
-      expect(latest?.sessionMemoryId).toBe(second.sessionMemoryId);
+      expect(latest?.sessionSummaryId).toBe(second.sessionSummaryId);
       expect(latest?.trigger).toBe("final");
-      expect(history.map((item) => item.sessionMemoryId)).toEqual([second.sessionMemoryId, first.sessionMemoryId]);
+      expect(history.map((item) => item.sessionSummaryId)).toEqual([second.sessionSummaryId, first.sessionSummaryId]);
       expect(currentRows).toEqual([
         {
-          session_memory_id: second.sessionMemoryId,
-          thread_id: "thread-memory-1"
+          session_memory_id: second.sessionSummaryId,
+          session_id: "session-memory-1"
         }
       ]);
       expect(eventRows).toHaveLength(2);
@@ -122,12 +122,12 @@ describe("thread session memory repository", () => {
     }
   });
 
-  it("backfills events and current from legacy thread_session_memory data", () => {
+  it("backfills events and current from legacy session_summary data", () => {
     const database = new DatabaseSync(":memory:");
     try {
       database.exec(`
-        CREATE TABLE threads (
-          thread_id TEXT PRIMARY KEY,
+        CREATE TABLE sessions (
+          session_id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
           status TEXT NOT NULL,
           owner_user_id TEXT NOT NULL,
@@ -139,9 +139,9 @@ describe("thread session memory repository", () => {
           archived_at TEXT,
           metadata_json TEXT NOT NULL
         );
-        CREATE TABLE thread_session_memory (
+        CREATE TABLE session_summary (
           session_memory_id TEXT PRIMARY KEY,
-          thread_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
           run_id TEXT,
           task_id TEXT,
           trigger TEXT NOT NULL,
@@ -155,7 +155,7 @@ describe("thread session memory repository", () => {
         );
         CREATE TABLE session_index (
           session_memory_id TEXT PRIMARY KEY,
-          thread_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
           summary TEXT NOT NULL,
           goal TEXT NOT NULL,
           decisions TEXT NOT NULL,
@@ -169,28 +169,28 @@ describe("thread session memory repository", () => {
 
       database
         .prepare(
-          `INSERT INTO threads (
-            thread_id, title, status, owner_user_id, cwd, agent_profile_id, provider_name, created_at, updated_at, metadata_json
+          `INSERT INTO sessions (
+            session_id, title, status, owner_user_id, cwd, agent_profile_id, provider_name, created_at, updated_at, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run("thread-a", "A", "active", "u1", "/tmp", "executor", "mock", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "{}");
+        .run("session-a", "A", "active", "u1", "/tmp", "executor", "mock", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "{}");
       database
         .prepare(
-          `INSERT INTO threads (
-            thread_id, title, status, owner_user_id, cwd, agent_profile_id, provider_name, created_at, updated_at, metadata_json
+          `INSERT INTO sessions (
+            session_id, title, status, owner_user_id, cwd, agent_profile_id, provider_name, created_at, updated_at, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run("thread-b", "B", "active", "u1", "/tmp", "executor", "mock", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "{}");
+        .run("session-b", "B", "active", "u1", "/tmp", "executor", "mock", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "{}");
 
       const insertLegacy = database.prepare(
-        `INSERT INTO thread_session_memory (
-          session_memory_id, thread_id, run_id, task_id, trigger, summary, goal,
+        `INSERT INTO session_summary (
+          session_memory_id, session_id, run_id, task_id, trigger, summary, goal,
           decisions_json, open_loops_json, next_actions_json, created_at, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       insertLegacy.run(
         "legacy-1",
-        "thread-a",
+        "session-a",
         null,
         "task-1",
         "manual",
@@ -204,7 +204,7 @@ describe("thread session memory repository", () => {
       );
       insertLegacy.run(
         "legacy-2",
-        "thread-a",
+        "session-a",
         null,
         "task-2",
         "final",
@@ -218,7 +218,7 @@ describe("thread session memory repository", () => {
       );
       insertLegacy.run(
         "legacy-3",
-        "thread-b",
+        "session-b",
         null,
         "task-3",
         "manual",
@@ -234,14 +234,14 @@ describe("thread session memory repository", () => {
       runMigrations(database);
 
       const eventCount = database
-        .prepare("SELECT COUNT(*) AS count FROM thread_session_memory_events")
+        .prepare("SELECT COUNT(*) AS count FROM session_summary_events")
         .get() as { count: number };
       const currentCount = database
-        .prepare("SELECT COUNT(*) AS count FROM thread_session_memories_current")
+        .prepare("SELECT COUNT(*) AS count FROM session_summaries_current")
         .get() as { count: number };
       const currentForThreadA = database
-        .prepare("SELECT session_memory_id FROM thread_session_memories_current WHERE thread_id = ?")
-        .get("thread-a") as { session_memory_id: string };
+        .prepare("SELECT session_memory_id FROM session_summaries_current WHERE session_id = ?")
+        .get("session-a") as { session_memory_id: string };
 
       expect(eventCount.count).toBe(3);
       expect(currentCount.count).toBe(2);

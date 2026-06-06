@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { ContextCompactor } from "../src/runtime/context/context-compactor.js";
 import type { ProviderToolDescriptor, TaskRecord } from "../src/types/index.js";
@@ -23,7 +23,7 @@ describe("context compactor", () => {
       startedAt: "2026-01-01T00:00:01.000Z",
       status: "running",
       taskId: "task-1",
-      threadId: "thread-1",
+      sessionId: "session-1",
       tokenBudget: { inputLimit: 1000, outputLimit: 500, reservedOutput: 100, usedInput: 0, usedOutput: 0 },
       updatedAt: "2026-01-01T00:00:01.000Z"
     };
@@ -38,7 +38,7 @@ describe("context compactor", () => {
       }
     ];
 
-    const sessionMemory = compactor.buildSessionMemory({
+    const sessionSummary = compactor.buildSessionSummary({
       availableTools,
       compact: {
         maxMessagesBeforeCompact: 6,
@@ -67,22 +67,22 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionMemory.goal).toContain("My long-running objective");
-    expect(sessionMemory.decisions.join(" ")).toContain("Next Actions");
-    expect(sessionMemory.openLoops.join(" ")).toContain("tc-1");
-    expect(sessionMemory.nextActions.length).toBeGreaterThan(0);
-    expect(sessionMemory.decisions.every((item) => item.length <= 123)).toBe(true);
-    expect(sessionMemory.nextActions.every((item) => item.length <= 123)).toBe(true);
-    expect(sessionMemory.nextActions.length).toBeLessThanOrEqual(3);
-    expect(sessionMemory.summary).toContain("completedWork=");
-    expect(sessionMemory.summary).toContain("filesTouched=");
-    expect(sessionMemory.summary).toContain("commandsRun=");
-    expect(sessionMemory.summary).toContain("blockers=");
-    expect(sessionMemory.summary).toContain("[REDACTED_EMAIL]");
-    expect(sessionMemory.summary).toContain("token=[REDACTED]");
+    expect(sessionSummary.goal).toContain("My long-running objective");
+    expect(sessionSummary.decisions.join(" ")).toContain("Next Actions");
+    expect(sessionSummary.openLoops.join(" ")).toContain("tc-1");
+    expect(sessionSummary.nextActions.length).toBeGreaterThan(0);
+    expect(sessionSummary.decisions.every((item) => item.length <= 123)).toBe(true);
+    expect(sessionSummary.nextActions.every((item) => item.length <= 123)).toBe(true);
+    expect(sessionSummary.nextActions.length).toBeLessThanOrEqual(3);
+    expect(sessionSummary.summary).toContain("completedWork=");
+    expect(sessionSummary.summary).toContain("filesTouched=");
+    expect(sessionSummary.summary).toContain("commandsRun=");
+    expect(sessionSummary.summary).toContain("blockers=");
+    expect(sessionSummary.summary).toContain("[REDACTED_EMAIL]");
+    expect(sessionSummary.summary).toContain("token=[REDACTED]");
     expect(
-      Array.isArray(sessionMemory.metadata?.toolCapabilitySummary) &&
-        sessionMemory.metadata.toolCapabilitySummary.includes("Shell")
+      Array.isArray(sessionSummary.metadata?.toolCapabilitySummary) &&
+        sessionSummary.metadata.toolCapabilitySummary.includes("Shell")
     ).toBe(true);
   });
 
@@ -90,7 +90,7 @@ describe("context compactor", () => {
     const compactor = new ContextCompactor();
     const task = createTask("task-summary");
 
-    const sessionMemory = compactor.buildSessionMemory({
+    const sessionSummary = compactor.buildSessionSummary({
       availableTools: [],
       compact: {
         maxMessagesBeforeCompact: 4,
@@ -109,7 +109,7 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionMemory.nextActions).toEqual([]);
+    expect(sessionSummary.nextActions).toEqual([]);
   });
 
   it("falls back to originalGoal when no user messages remain after multiple compactions", () => {
@@ -119,7 +119,7 @@ describe("context compactor", () => {
       input: "Complete phase 2 of the snake game development plan"
     };
 
-    const sessionMemory = compactor.buildSessionMemory({
+    const sessionSummary = compactor.buildSessionSummary({
       availableTools: [],
       compact: {
         maxMessagesBeforeCompact: 3,
@@ -142,12 +142,12 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionMemory.summary).toContain("goal=Complete phase 2 of the snake game development plan");
-    expect(sessionMemory.summary).toContain(
+    expect(sessionSummary.summary).toContain("goal=Complete phase 2 of the snake game development plan");
+    expect(sessionSummary.summary).toContain(
       "latest_user_request=Complete phase 2 of the snake game development plan"
     );
-    expect(sessionMemory.summary).not.toContain("goal=[n/a]");
-    expect(sessionMemory.summary).not.toContain("latest_user_request=[n/a]");
+    expect(sessionSummary.summary).not.toContain("goal=[n/a]");
+    expect(sessionSummary.summary).not.toContain("latest_user_request=[n/a]");
   });
 
   it("prefers in-window user message over originalGoal when both are present", () => {
@@ -157,7 +157,7 @@ describe("context compactor", () => {
       input: "outdated original goal"
     };
 
-    const sessionMemory = compactor.buildSessionMemory({
+    const sessionSummary = compactor.buildSessionSummary({
       availableTools: [],
       compact: {
         maxMessagesBeforeCompact: 4,
@@ -173,8 +173,8 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionMemory.summary).toContain("goal=newer user instruction");
-    expect(sessionMemory.summary).toContain("latest_user_request=newer user instruction");
+    expect(sessionSummary.summary).toContain("goal=newer user instruction");
+    expect(sessionSummary.summary).toContain("latest_user_request=newer user instruction");
   });
 });
 
@@ -196,8 +196,9 @@ function createTask(taskId: string): TaskRecord {
     startedAt: "2026-01-01T00:00:01.000Z",
     status: "running",
     taskId,
-    threadId: "thread-1",
+    sessionId: "session-1",
     tokenBudget: { inputLimit: 1000, outputLimit: 500, reservedOutput: 100, usedInput: 0, usedOutput: 0 },
     updatedAt: "2026-01-01T00:00:01.000Z"
   };
 }
+

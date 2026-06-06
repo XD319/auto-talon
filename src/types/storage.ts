@@ -1,21 +1,20 @@
-import type { GatewaySessionBinding } from "./adapter.js";
+﻿import type { GatewaySessionBinding } from "./adapter.js";
 import type { GatewaySessionBindingDraft } from "./gateway.js";
 import type {
-  ThreadDraft,
-  ThreadLineageDraft,
-  ThreadLineageRecord,
-  ThreadRecord,
-  ThreadRunDraft,
-  ThreadRunRecord,
-  ThreadStatus,
-  ThreadUpdatePatch
-} from "./thread.js";
+  SessionDraft,
+  SessionLineageDraft,
+  SessionLineageRecord,
+  SessionRecord,
+  SessionTaskDraft,
+  SessionTaskRecord,
+  SessionStatus,
+  SessionUpdatePatch
+} from "./session.js";
 import type {
   SessionSearchHit,
-  ThreadSessionMemoryDraft,
-  ThreadSessionMemoryRecord
-} from "./thread-session-memory.js";
-import type { ThreadSnapshotDraft, ThreadSnapshotRecord } from "./thread-snapshot.js";
+  SessionSummaryDraft,
+  SessionSummaryRecord
+} from "./session-summary.js";
 import type { ApprovalDraft, ApprovalRecord, ApprovalUpdatePatch } from "./approval.js";
 import type { ClarifyPromptDraft, ClarifyPromptRecord, ClarifyPromptUpdatePatch } from "./clarify.js";
 import type { AuditLogDraft, AuditLogRecord } from "./audit.js";
@@ -38,6 +37,7 @@ import type { ArtifactDraft, ArtifactRecord, ToolCallRecord } from "./tool.js";
 import type { TraceEvent } from "./trace.js";
 import type { RuntimeOutputEvent } from "./output.js";
 import type { RunMetadataRecord, TaskDraft, TaskRecord, TaskStatus } from "./task.js";
+import type { SessionTranscriptEventDraft, SessionTranscriptEventRecord } from "./session-transcript.js";
 import type { RuntimeErrorCode } from "./error.js";
 import type {
   ScheduleDraft,
@@ -87,49 +87,49 @@ export interface TaskRepository {
   update(taskId: string, patch: TaskUpdatePatch): TaskRecord;
 }
 
-export interface ThreadListQuery {
+export interface SessionListQuery {
   ownerUserId?: string;
-  status?: ThreadStatus;
+  status?: SessionStatus;
 }
 
-export interface ThreadRepository {
-  create(thread: ThreadDraft): ThreadRecord;
-  findById(threadId: string): ThreadRecord | null;
-  list(query?: ThreadListQuery): ThreadRecord[];
-  update(threadId: string, patch: ThreadUpdatePatch): ThreadRecord;
-  findLatestByOwner(ownerUserId: string): ThreadRecord | null;
+export interface SessionRepository {
+  create(session: SessionDraft): SessionRecord;
+  getOrCreate(session: SessionDraft): SessionRecord;
+  findById(sessionId: string): SessionRecord | null;
+  list(query?: SessionListQuery): SessionRecord[];
+  update(sessionId: string, patch: SessionUpdatePatch): SessionRecord;
+  findLatestByOwner(ownerUserId: string): SessionRecord | null;
 }
 
-export interface ThreadRunRepository {
-  create(record: ThreadRunDraft): ThreadRunRecord;
-  findByTaskId(taskId: string): ThreadRunRecord | null;
-  listByThreadId(threadId: string): ThreadRunRecord[];
-  findLatestByThreadId(threadId: string): ThreadRunRecord | null;
+export interface SessionTaskRepository {
+  create(record: SessionTaskDraft): SessionTaskRecord;
+  findByTaskId(taskId: string): SessionTaskRecord | null;
+  listBySessionId(sessionId: string): SessionTaskRecord[];
+  findLatestBySessionId(sessionId: string): SessionTaskRecord | null;
 }
 
-export interface ThreadLineageRepository {
-  append(record: ThreadLineageDraft): ThreadLineageRecord;
-  listByThreadId(threadId: string): ThreadLineageRecord[];
+export interface SessionLineageRepository {
+  append(record: SessionLineageDraft): SessionLineageRecord;
+  listBySessionId(sessionId: string): SessionLineageRecord[];
 }
 
-export interface ThreadSnapshotRepository {
-  create(record: ThreadSnapshotDraft): ThreadSnapshotRecord;
-  findById(snapshotId: string): ThreadSnapshotRecord | null;
-  findLatestByThread(threadId: string): ThreadSnapshotRecord | null;
-  listByThread(threadId: string): ThreadSnapshotRecord[];
-}
-
-export interface ThreadSessionMemoryRepository {
-  create(record: ThreadSessionMemoryDraft): ThreadSessionMemoryRecord;
-  findById(sessionMemoryId: string): ThreadSessionMemoryRecord | null;
-  findLatestByThread(threadId: string): ThreadSessionMemoryRecord | null;
-  listByThread(threadId: string): ThreadSessionMemoryRecord[];
-  search(input: { limit: number; query: string; threadId: string }): SessionSearchHit[];
+export interface SessionSummaryRepository {
+  create(record: SessionSummaryDraft): SessionSummaryRecord;
+  findById(sessionSummaryId: string): SessionSummaryRecord | null;
+  findLatestBySession(sessionId: string): SessionSummaryRecord | null;
+  listBySession(sessionId: string): SessionSummaryRecord[];
+  search(input: { limit: number; query: string; sessionId: string }): SessionSearchHit[];
   searchGlobal(input: {
     limit: number;
     query: string;
-    excludeThreadId?: string | null;
+    excludeSessionId?: string | null;
   }): SessionSearchHit[];
+}
+
+export interface SessionTranscriptRepository {
+  append(record: SessionTranscriptEventDraft): SessionTranscriptEventRecord;
+  listBySessionId(sessionId: string): SessionTranscriptEventRecord[];
+  listByTaskId(taskId: string): SessionTranscriptEventRecord[];
 }
 
 export interface ScheduleRepository {
@@ -146,7 +146,7 @@ export interface ScheduleRunRepository {
   list(query?: ScheduleRunListQuery): ScheduleRunRecord[];
   listByScheduleId(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[];
   listByTaskId(taskId: string): ScheduleRunRecord[];
-  listByThreadId(threadId: string): ScheduleRunRecord[];
+  listBySessionId(sessionId: string): ScheduleRunRecord[];
   claimDue(now: string, limit: number): ScheduleRunRecord[];
   update(runId: string, patch: ScheduleRunUpdatePatch): ScheduleRunRecord;
 }
@@ -181,7 +181,7 @@ export interface TraceRepository {
 export interface RuntimeOutputRepository {
   append(event: Omit<RuntimeOutputEvent, "sequence">): RuntimeOutputEvent;
   listByTaskId(taskId: string): RuntimeOutputEvent[];
-  listByThreadId(threadId: string): RuntimeOutputEvent[];
+  listBySessionId(sessionId: string): RuntimeOutputEvent[];
 }
 
 export interface ToolCallRepository {
@@ -265,3 +265,4 @@ export interface GatewaySessionRepository {
   listByExternalSession(adapterId: string, externalSessionId: string): GatewaySessionBinding[];
   findByTaskId(taskId: string): GatewaySessionBinding | null;
 }
+

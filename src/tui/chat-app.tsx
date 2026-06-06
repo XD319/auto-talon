@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import React from "react";
@@ -41,8 +41,8 @@ import { type ChatMessage } from "./view-models/chat-messages.js";
 import { buildWelcomeHome, type WelcomeHomeEntry } from "./view-models/welcome-home.js";
 import {
   buildTodaySummary,
-  formatThreadDetailForTui,
-  formatThreadRecapForTui,
+  formatSessionDetailForTui,
+  formatSessionRecapForTui,
   formatTodaySummary,
   resolveRuntimeUserId
 } from "./view-models/today-summary.js";
@@ -54,16 +54,16 @@ export interface ChatTuiAppProps {
   cwd: string;
   initialMessages?: ChatMessage[];
   initialSessionApprovalFingerprints?: string[];
-  initialSessionId: string;
   initialSessionTitle?: string;
   initialInteractionMode?: TuiInteractionMode;
-  initialThreadId?: string;
+  initialRuntimeSessionId?: string;
+  initialTranscriptId?: string;
   reviewerId: string;
   service: TuiRuntimeService;
 }
 
 interface ScheduleCommandController {
-  activeThreadId: string | null;
+  activeSessionId: string | null;
   addSystemMessage: (text: string) => void;
 }
 
@@ -81,16 +81,17 @@ export function ChatTuiApp({
   cwd,
   initialMessages,
   initialSessionApprovalFingerprints,
-  initialSessionId,
   initialSessionTitle,
   initialInteractionMode,
-  initialThreadId,
+  initialRuntimeSessionId,
+  initialTranscriptId,
   reviewerId,
   service
 }: ChatTuiAppProps): React.ReactElement {
   const { exit } = useApp();
+  const resolvedTranscriptId = React.useMemo(() => initialTranscriptId ?? randomUUID(), [initialTranscriptId]);
   const [sessionTitle, setSessionTitle] = React.useState(initialSessionTitle ?? "assistant");
-  const [sessionId, setSessionId] = React.useState(initialSessionId);
+  const [sessionId, setSessionId] = React.useState(resolvedTranscriptId);
   const [interactionMode, setInteractionMode] = React.useState<TuiInteractionMode>(
     initialInteractionMode ?? "agent"
   );
@@ -115,7 +116,7 @@ export function ChatTuiApp({
     ...(initialSessionApprovalFingerprints !== undefined
       ? { initialSessionApprovalFingerprints }
       : {}),
-    ...(initialThreadId !== undefined ? { initialThreadId } : {}),
+    ...(initialRuntimeSessionId !== undefined ? { initialSessionId: initialRuntimeSessionId } : {}),
     interactionMode,
     onOutputEvent: (event) => scrollbackRef.current?.onOutputEvent(event),
     onTraceEvent: (event) => scrollbackRef.current?.onTraceEvent(event),
@@ -133,8 +134,8 @@ export function ChatTuiApp({
     [controller.messages]
   );
   const todaySummaryText = React.useMemo(
-    () => formatTodaySummary(buildTodaySummary(service, { activeThreadId: controller.activeThreadId })),
-    [controller.activeThreadId, service]
+    () => formatTodaySummary(buildTodaySummary(service, { activeSessionId: controller.activeSessionId })),
+    [controller.activeSessionId, service]
   );
   const welcomeHome = React.useMemo(
     () => buildWelcomeHome(sessionSummaries, sessionId),
@@ -163,7 +164,7 @@ export function ChatTuiApp({
         messages: controller.messages,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title: sessionTitle,
-        ...(controller.activeThreadId !== null ? { threadId: controller.activeThreadId } : {}),
+        ...(controller.activeSessionId !== null ? { sessionId: controller.activeSessionId } : {}),
         updatedAt: new Date().toISOString()
       }).then(refreshSessionSummaries);
     }, 600);
@@ -172,7 +173,7 @@ export function ChatTuiApp({
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [config.workspaceRoot, controller.activeThreadId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, interactionMode, refreshSessionSummaries, sessionId, sessionTitle]);
+  }, [config.workspaceRoot, controller.activeSessionId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, interactionMode, refreshSessionSummaries, sessionId, sessionTitle]);
 
   React.useEffect(() => {
     if (controller.pendingApproval !== null) {
@@ -233,10 +234,10 @@ export function ChatTuiApp({
       if (!value.startsWith("/")) {
         return [];
       }
-      const dynamicSuggestions = buildDynamicSlashSuggestions(value, controller.activeThreadId, service);
+      const dynamicSuggestions = buildDynamicSlashSuggestions(value, controller.activeSessionId, service);
       return getMatchingSuggestions(value, [...STATIC_SLASH_SUGGESTIONS, ...dynamicSuggestions]);
     },
-    [controller.activeThreadId, service]
+    [controller.activeSessionId, service]
   );
 
   const completeInput = React.useCallback(
@@ -308,8 +309,8 @@ export function ChatTuiApp({
       if (text === "/help") {
         controller.addSystemMessage(
           [
-            "Most used: /resume /today /inbox /thread new <title> /schedule create <when> | <prompt>",
-            "Workflow: /resume [session] /inbox [show] /thread [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
+            "Most used: /resume /today /inbox /session new <title> /schedule create <when> | <prompt>",
+            "Workflow: /resume [session] /inbox [show] /session [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
             "Session: /mode [agent|plan] /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history",
@@ -347,8 +348,8 @@ export function ChatTuiApp({
         return handleInboxCommand(text, controller, service);
       }
 
-      if (text.startsWith("/thread")) {
-        return handleThreadCommand(text, controller, service);
+      if (text.startsWith("/session")) {
+        return handleSessionCommand(text, controller, service);
       }
 
       if (text.startsWith("/next")) {
@@ -402,14 +403,14 @@ export function ChatTuiApp({
         const args = text.trim().split(/\s+/u).slice(1);
         const command = args[0] ?? "print";
         const currentEvents =
-          controller.activeThreadId !== null
-            ? service.outputThread(controller.activeThreadId)
+          controller.activeSessionId !== null
+            ? service.outputSession(controller.activeSessionId)
             : controller.activeTaskId !== null
               ? service.outputTask(controller.activeTaskId)
               : [];
         const scope =
-          controller.activeThreadId !== null
-            ? `thread ${controller.activeThreadId.slice(0, 8)}`
+          controller.activeSessionId !== null
+            ? `session ${controller.activeSessionId.slice(0, 8)}`
             : controller.activeTaskId !== null
               ? `task ${controller.activeTaskId.slice(0, 8)}`
               : "current session";
@@ -533,7 +534,7 @@ export function ChatTuiApp({
           `provider: ${config.provider.name}`,
           `reviewer: ${reviewerId}`,
           `mode: ${interactionMode}`,
-          `thread: ${controller.activeThreadId ?? "(none)"}`,
+          `session: ${controller.activeSessionId ?? "(none)"}`,
           `busy: ${controller.busy}`,
           `active_task: ${controller.activeTaskId ?? "(none)"}`,
           `tasks: ${controller.summary.tasks} running: ${controller.summary.runningTasks} approvals: ${controller.summary.pendingApprovals}`,
@@ -879,8 +880,8 @@ export function ChatTuiApp({
     ? []
     : [
         ...(controller.uiStatus.runState === "running" ? [controller.runDurationLabel] : []),
-        ...(controller.uiStatus.runState !== "running" && controller.activeThreadId !== null
-          ? [`thread ${controller.activeThreadId.slice(0, 8)}`]
+        ...(controller.uiStatus.runState !== "running" && controller.activeSessionId !== null
+          ? [`session ${controller.activeSessionId.slice(0, 8)}`]
           : []),
         `mode ${interactionMode}`
       ];
@@ -1073,21 +1074,21 @@ function parseSlashInput(text: string): { args: string[]; command: string; rest:
 
 function buildDynamicSlashSuggestions(
   value: string,
-  activeThreadId: string | null,
+  activeSessionId: string | null,
   service: TuiRuntimeService
 ): SlashSuggestion[] {
   const parsed = parseSlashInput(value);
   const userId = resolveRuntimeUserId();
 
-  if (parsed.command === "/thread" && (parsed.args[0] === "switch" || parsed.args[0] === "summary")) {
+  if (parsed.command === "/session" && (parsed.args[0] === "switch" || parsed.args[0] === "summary")) {
     return service
-      .listThreads("active")
+      .listSessions("active")
       .filter((item) => item.ownerUserId === userId)
       .map((item) => ({
         description: item.title,
-        insertText: `/thread ${parsed.args[0]} ${item.threadId.slice(0, 8)}`,
-        key: `thread:${item.threadId}`,
-        label: `/thread ${parsed.args[0]} ${item.threadId.slice(0, 8)}`,
+        insertText: `/session ${parsed.args[0]} ${item.sessionId.slice(0, 8)}`,
+        key: `session:${item.sessionId}`,
+        label: `/session ${parsed.args[0]} ${item.sessionId.slice(0, 8)}`,
         rank: 1
       }));
   }
@@ -1123,7 +1124,7 @@ function buildDynamicSlashSuggestions(
   }
 
   if (parsed.command === "/next" && (parsed.args[0] === "done" || parsed.args[0] === "block")) {
-    const items = activeThreadId === null ? service.listNextActions() : service.listNextActions({ threadId: activeThreadId });
+    const items = activeSessionId === null ? service.listNextActions() : service.listNextActions({ sessionId: activeSessionId });
     return items.map((item) => ({
       description: item.title,
       insertText: `/next ${parsed.args[0]} ${item.nextActionId.slice(0, 8)}`,
@@ -1134,7 +1135,7 @@ function buildDynamicSlashSuggestions(
   }
 
   if (parsed.command === "/commitments" && (parsed.args[0] === "done" || parsed.args[0] === "block")) {
-    const items = activeThreadId === null ? service.listCommitments() : service.listCommitments({ threadId: activeThreadId });
+    const items = activeSessionId === null ? service.listCommitments() : service.listCommitments({ sessionId: activeSessionId });
     return items.map((item) => ({
       description: item.title,
       insertText: `/commitments ${parsed.args[0]} ${item.commitmentId.slice(0, 8)}`,
@@ -1313,7 +1314,7 @@ export function handleInboxCommand(
 
 function formatInboxDetailForTui(item: InboxItem): string {
   const links = [
-    item.threadId === null ? null : `thread=${item.threadId}`,
+    item.sessionId === null ? null : `session=${item.sessionId}`,
     item.taskId === null ? null : `task=${item.taskId}`,
     item.approvalId === null ? null : `approval=${item.approvalId}`,
     item.scheduleRunId === null ? null : `schedule_run=${item.scheduleRunId}`,
@@ -1330,38 +1331,38 @@ function formatInboxDetailForTui(item: InboxItem): string {
   ].join("\n");
 }
 
-function handleThreadCommand(text: string, controller: ReturnType<typeof useChatController>, service: TuiRuntimeService): boolean {
+function handleSessionCommand(text: string, controller: ReturnType<typeof useChatController>, service: TuiRuntimeService): boolean {
   const parsed = parseSlashInput(text);
   const sub = parsed.args[0] ?? "summary";
-  if (parsed.command !== "/thread") {
+  if (parsed.command !== "/session") {
     controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
     return true;
   }
 
   if (sub === "new") {
-    const title = parsed.rest.slice("new".length).trim() || "Untitled thread";
-    const threadId = controller.createAndActivateThread(title);
-    controller.resetVisibleChatPreserveActiveThread("thread created");
-    controller.addSystemMessage(`Switched to new thread ${threadId.slice(0, 8)} | ${title}`);
-    controller.addSystemMessage(formatThreadRecapForTui(service, threadId));
+    const title = parsed.rest.slice("new".length).trim() || "Untitled session";
+    const sessionId = controller.createAndActivateSession(title);
+    controller.resetVisibleChatPreserveActiveSession("session created");
+    controller.addSystemMessage(`Switched to new session ${sessionId.slice(0, 8)} | ${title}`);
+    controller.addSystemMessage(formatSessionRecapForTui(service, sessionId));
     return true;
   }
 
   if (sub === "switch") {
     const prefix = parsed.args[1] ?? "";
     if (prefix.length === 0) {
-      controller.addSystemMessage("Usage: /thread switch <thread-id-prefix>");
+      controller.addSystemMessage("Usage: /session switch <session-id-prefix>");
       return true;
     }
     const userId = resolveRuntimeUserId();
     const candidates = service
-      .listThreads("active")
-      .filter((item) => item.ownerUserId === userId && item.threadId.startsWith(prefix));
+      .listSessions("active")
+      .filter((item) => item.ownerUserId === userId && item.sessionId.startsWith(prefix));
     if (candidates.length !== 1) {
       controller.addSystemMessage(
         candidates.length === 0
-          ? `No thread matched prefix '${prefix}'.`
-          : `Ambiguous thread prefix '${prefix}':\n${candidates.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
+          ? `No session matched prefix '${prefix}'.`
+          : `Ambiguous session prefix '${prefix}':\n${candidates.map((item) => `- ${item.sessionId.slice(0, 8)} | ${item.title}`).join("\n")}`
       );
       return true;
     }
@@ -1369,25 +1370,25 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
     if (match === undefined) {
       return true;
     }
-    controller.switchActiveThread(match.threadId);
-    controller.resetVisibleChatPreserveActiveThread("thread selected");
-    controller.addSystemMessage(`Switched active thread to ${match.threadId.slice(0, 8)} | ${match.title}`);
-    controller.addSystemMessage(formatThreadRecapForTui(service, match.threadId));
+    controller.switchActiveSession(match.sessionId);
+    controller.resetVisibleChatPreserveActiveSession("session selected");
+    controller.addSystemMessage(`Switched active session to ${match.sessionId.slice(0, 8)} | ${match.title}`);
+    controller.addSystemMessage(formatSessionRecapForTui(service, match.sessionId));
     return true;
   }
 
   if (sub === "list") {
     const userId = resolveRuntimeUserId();
-    const threads = service
-      .listThreads("active")
+    const sessions = service
+      .listSessions("active")
       .filter((item) => item.ownerUserId === userId)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 20);
     controller.addSystemMessage(
-      threads.length === 0
-        ? `Active threads (user=${userId}): none`
-        : `Active threads (user=${userId}, showing ${threads.length}):\n${threads
-            .map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title} [${item.status}]`)
+      sessions.length === 0
+        ? `Active sessions (user=${userId}): none`
+        : `Active sessions (user=${userId}, showing ${sessions.length}):\n${sessions
+            .map((item) => `- ${item.sessionId.slice(0, 8)} | ${item.title} [${item.status}]`)
             .join("\n")}`
     );
     return true;
@@ -1398,28 +1399,28 @@ function handleThreadCommand(text: string, controller: ReturnType<typeof useChat
     if (maybePrefix.length > 0) {
       const userId = resolveRuntimeUserId();
       const candidates = service
-        .listThreads("active")
-        .filter((item) => item.ownerUserId === userId && item.threadId.startsWith(maybePrefix));
+        .listSessions("active")
+        .filter((item) => item.ownerUserId === userId && item.sessionId.startsWith(maybePrefix));
       if (candidates.length !== 1) {
         controller.addSystemMessage(
           candidates.length === 0
-            ? `No thread matched prefix '${maybePrefix}'.`
-            : `Ambiguous thread prefix '${maybePrefix}':\n${candidates.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
+            ? `No session matched prefix '${maybePrefix}'.`
+            : `Ambiguous session prefix '${maybePrefix}':\n${candidates.map((item) => `- ${item.sessionId.slice(0, 8)} | ${item.title}`).join("\n")}`
         );
         return true;
       }
-      controller.addSystemMessage(formatThreadDetailForTui(service, candidates[0]!.threadId));
+      controller.addSystemMessage(formatSessionDetailForTui(service, candidates[0]!.sessionId));
       return true;
     }
-    if (controller.activeThreadId !== null) {
-      controller.addSystemMessage(formatThreadDetailForTui(service, controller.activeThreadId));
+    if (controller.activeSessionId !== null) {
+      controller.addSystemMessage(formatSessionDetailForTui(service, controller.activeSessionId));
     } else {
-      return handleThreadCommand("/thread list", controller, service);
+      return handleSessionCommand("/session list", controller, service);
     }
     return true;
   }
 
-  controller.addSystemMessage("Usage: /thread [new [title]|list|switch <thread-id-prefix>|summary [thread-id-prefix]]");
+  controller.addSystemMessage("Usage: /session [new [title]|list|switch <session-id-prefix>|summary [session-id-prefix]]");
   return true;
 }
 
@@ -1536,7 +1537,7 @@ export function handleScheduleCommand(
         ownerUserId: resolveRuntimeUserId(),
         providerName: options.providerName,
         ...(parsed.cron !== undefined ? { cron: parsed.cron } : {}),
-        ...(controller.activeThreadId !== null ? { threadId: controller.activeThreadId } : {}),
+        ...(controller.activeSessionId !== null ? { sessionId: controller.activeSessionId } : {}),
         ...(parsed.every !== undefined ? { every: parsed.every } : {}),
         ...(parsed.runAt !== undefined ? { runAt: parsed.runAt } : {})
       });
@@ -1545,7 +1546,7 @@ export function handleScheduleCommand(
       );
     } catch (error) {
       controller.addSystemMessage(
-        `${error instanceof Error ? error.message : String(error)}\nExample: /schedule create 每周 | prepare weekly review`
+        `${error instanceof Error ? error.message : String(error)}\nExample: /schedule create 姣忓懆 | prepare weekly review`
       );
     }
     return true;
@@ -1657,19 +1658,19 @@ function handleNextActionCommand(text: string, controller: ReturnType<typeof use
   }
   const sub = args[0] ?? "list";
   if (sub === "list") {
-    const requestedThreadPrefix = args[1] ?? "";
-    const threadId = resolveThreadIdForList(controller.activeThreadId, requestedThreadPrefix, service);
-    if (threadId.kind === "error") {
-      controller.addSystemMessage(threadId.message);
+    const requestedSessionPrefix = args[1] ?? "";
+    const sessionId = resolveSessionIdForList(controller.activeSessionId, requestedSessionPrefix, service);
+    if (sessionId.kind === "error") {
+      controller.addSystemMessage(sessionId.message);
       return true;
     }
-    const resolvedThreadId = threadId.threadId;
+    const resolvedSessionId = sessionId.sessionId;
     const query =
-      resolvedThreadId === null
+      resolvedSessionId === null
         ? { statuses: ["active", "pending", "blocked"] as Array<"active" | "pending" | "blocked"> }
-        : { threadId: resolvedThreadId };
+        : { sessionId: resolvedSessionId };
     const items = service.listNextActions(query).slice(0, 20);
-    const scope = resolvedThreadId === null ? `user=${resolveRuntimeUserId()}` : `thread=${resolvedThreadId.slice(0, 8)}`;
+    const scope = resolvedSessionId === null ? `user=${resolveRuntimeUserId()}` : `session=${resolvedSessionId.slice(0, 8)}`;
     controller.addSystemMessage(
       items.length === 0
         ? `Next actions (${scope}): none`
@@ -1684,7 +1685,7 @@ function handleNextActionCommand(text: string, controller: ReturnType<typeof use
     controller.addSystemMessage(sub === "block" ? "Usage: /next block <next-action-id-prefix> <reason...>" : "Usage: /next done <next-action-id-prefix>");
     return true;
   }
-  const matches = resolveNextActionByPrefix(prefix, controller.activeThreadId, service);
+  const matches = resolveNextActionByPrefix(prefix, controller.activeSessionId, service);
   if (matches.kind !== "one") {
     controller.addSystemMessage(matches.message);
     return true;
@@ -1704,7 +1705,7 @@ function handleNextActionCommand(text: string, controller: ReturnType<typeof use
     controller.addSystemMessage(`Next action blocked: ${updated.nextActionId.slice(0, 8)} | ${updated.title}`);
     return true;
   }
-  controller.addSystemMessage("Usage: /next [list [thread-id-prefix]|done <next-action-id-prefix>|block <next-action-id-prefix> <reason...>]");
+  controller.addSystemMessage("Usage: /next [list [session-id-prefix]|done <next-action-id-prefix>|block <next-action-id-prefix> <reason...>]");
   return true;
 }
 
@@ -1716,24 +1717,24 @@ function handleCommitmentCommand(text: string, controller: ReturnType<typeof use
   }
   const sub = args[0] ?? "list";
   if (sub === "list") {
-    const requestedThreadPrefix = args[1] ?? "";
-    const threadId = resolveThreadIdForList(controller.activeThreadId, requestedThreadPrefix, service);
-    if (threadId.kind === "error") {
-      controller.addSystemMessage(threadId.message);
+    const requestedSessionPrefix = args[1] ?? "";
+    const sessionId = resolveSessionIdForList(controller.activeSessionId, requestedSessionPrefix, service);
+    if (sessionId.kind === "error") {
+      controller.addSystemMessage(sessionId.message);
       return true;
     }
-    const resolvedThreadId = threadId.threadId;
+    const resolvedSessionId = sessionId.sessionId;
     const query =
-      resolvedThreadId === null
+      resolvedSessionId === null
         ? {
             ownerUserId: resolveRuntimeUserId(),
             statuses: ["open", "in_progress", "blocked", "waiting_decision"] as Array<
               "open" | "in_progress" | "blocked" | "waiting_decision"
             >
           }
-        : { threadId: resolvedThreadId };
+        : { sessionId: resolvedSessionId };
     const items = service.listCommitments(query).slice(0, 20);
-    const scope = resolvedThreadId === null ? `user=${resolveRuntimeUserId()}` : `thread=${resolvedThreadId.slice(0, 8)}`;
+    const scope = resolvedSessionId === null ? `user=${resolveRuntimeUserId()}` : `session=${resolvedSessionId.slice(0, 8)}`;
     controller.addSystemMessage(
       items.length === 0
         ? `Commitments (${scope}): none`
@@ -1752,7 +1753,7 @@ function handleCommitmentCommand(text: string, controller: ReturnType<typeof use
     );
     return true;
   }
-  const matches = resolveCommitmentByPrefix(prefix, controller.activeThreadId, service);
+  const matches = resolveCommitmentByPrefix(prefix, controller.activeSessionId, service);
   if (matches.kind !== "one") {
     controller.addSystemMessage(matches.message);
     return true;
@@ -1772,31 +1773,31 @@ function handleCommitmentCommand(text: string, controller: ReturnType<typeof use
     controller.addSystemMessage(`Commitment blocked: ${updated.commitmentId.slice(0, 8)} | ${updated.title}`);
     return true;
   }
-  controller.addSystemMessage("Usage: /commitments [list [thread-id-prefix]|done <commitment-id-prefix>|block <commitment-id-prefix> <reason...>]");
+  controller.addSystemMessage("Usage: /commitments [list [session-id-prefix]|done <commitment-id-prefix>|block <commitment-id-prefix> <reason...>]");
   return true;
 }
 
-function resolveThreadIdForList(
-  activeThreadId: string | null,
+function resolveSessionIdForList(
+  activeSessionId: string | null,
   prefix: string,
   service: TuiRuntimeService
-): { kind: "ok"; threadId: string | null } | { kind: "error"; message: string } {
+): { kind: "ok"; sessionId: string | null } | { kind: "error"; message: string } {
   if (prefix.length === 0) {
-    return { kind: "ok", threadId: activeThreadId };
+    return { kind: "ok", sessionId: activeSessionId };
   }
   const userId = resolveRuntimeUserId();
   const matches = service
-    .listThreads("active")
-    .filter((item) => item.ownerUserId === userId && item.threadId.startsWith(prefix));
+    .listSessions("active")
+    .filter((item) => item.ownerUserId === userId && item.sessionId.startsWith(prefix));
   if (matches.length === 1) {
-    return { kind: "ok", threadId: matches[0]!.threadId };
+    return { kind: "ok", sessionId: matches[0]!.sessionId };
   }
   return {
     kind: "error",
     message:
       matches.length === 0
-        ? `No thread matched prefix '${prefix}'.`
-        : `Ambiguous thread prefix '${prefix}':\n${matches.map((item) => `- ${item.threadId.slice(0, 8)} | ${item.title}`).join("\n")}`
+        ? `No session matched prefix '${prefix}'.`
+        : `Ambiguous session prefix '${prefix}':\n${matches.map((item) => `- ${item.sessionId.slice(0, 8)} | ${item.title}`).join("\n")}`
   };
 }
 
@@ -1811,17 +1812,17 @@ function formatClarifyResponse(answers: Record<string, string | string[]>): stri
 
 function resolveNextActionByPrefix(
   prefix: string,
-  activeThreadId: string | null,
+  activeSessionId: string | null,
   service: TuiRuntimeService
 ):
   | { item: ReturnType<TuiRuntimeService["listNextActions"]>[number]; kind: "one" }
   | { kind: "error"; message: string } {
-  const items = activeThreadId === null ? service.listNextActions() : service.listNextActions({ threadId: activeThreadId });
+  const items = activeSessionId === null ? service.listNextActions() : service.listNextActions({ sessionId: activeSessionId });
   const matches = items.filter((item) => item.nextActionId.startsWith(prefix));
   if (matches.length === 1) {
     return { item: matches[0]!, kind: "one" };
   }
-  if (matches.length === 0 && activeThreadId !== null) {
+  if (matches.length === 0 && activeSessionId !== null) {
     const globalMatches = service.listNextActions().filter((item) => item.nextActionId.startsWith(prefix));
     if (globalMatches.length === 1) {
       return { item: globalMatches[0]!, kind: "one" };
@@ -1847,17 +1848,17 @@ function resolveNextActionByPrefix(
 
 function resolveCommitmentByPrefix(
   prefix: string,
-  activeThreadId: string | null,
+  activeSessionId: string | null,
   service: TuiRuntimeService
 ):
   | { item: ReturnType<TuiRuntimeService["listCommitments"]>[number]; kind: "one" }
   | { kind: "error"; message: string } {
-  const items = activeThreadId === null ? service.listCommitments() : service.listCommitments({ threadId: activeThreadId });
+  const items = activeSessionId === null ? service.listCommitments() : service.listCommitments({ sessionId: activeSessionId });
   const matches = items.filter((item) => item.commitmentId.startsWith(prefix));
   if (matches.length === 1) {
     return { item: matches[0]!, kind: "one" };
   }
-  if (matches.length === 0 && activeThreadId !== null) {
+  if (matches.length === 0 && activeSessionId !== null) {
     const globalMatches = service.listCommitments().filter((item) => item.commitmentId.startsWith(prefix));
     if (globalMatches.length === 1) {
       return { item: globalMatches[0]!, kind: "one" };

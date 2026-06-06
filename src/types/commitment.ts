@@ -17,7 +17,7 @@ export type CommitmentSource = (typeof COMMITMENT_SOURCES)[number];
 
 export interface CommitmentRecord {
   commitmentId: string;
-  threadId: string;
+  sessionId: string;
   taskId: string | null;
   ownerUserId: string;
   title: string;
@@ -36,7 +36,7 @@ export interface CommitmentRecord {
 
 export interface CommitmentDraft {
   commitmentId?: string;
-  threadId: string;
+  sessionId: string;
   taskId?: string | null;
   ownerUserId: string;
   title: string;
@@ -66,7 +66,7 @@ export interface CommitmentUpdatePatch {
 }
 
 export interface CommitmentListQuery {
-  threadId?: string;
+  sessionId?: string;
   ownerUserId?: string;
   status?: CommitmentStatus;
   statuses?: CommitmentStatus[];
@@ -83,7 +83,7 @@ export type NextActionSource = (typeof NEXT_ACTION_SOURCES)[number];
 
 export interface NextActionRecord {
   nextActionId: string;
-  threadId: string;
+  sessionId: string;
   commitmentId: string | null;
   taskId: string | null;
   title: string;
@@ -102,7 +102,7 @@ export interface NextActionRecord {
 
 export interface NextActionDraft {
   nextActionId?: string;
-  threadId: string;
+  sessionId: string;
   commitmentId?: string | null;
   taskId?: string | null;
   title: string;
@@ -133,14 +133,14 @@ export interface NextActionUpdatePatch {
 }
 
 export interface NextActionListQuery {
-  threadId?: string;
+  sessionId?: string;
   commitmentId?: string;
   status?: NextActionStatus;
   statuses?: NextActionStatus[];
   limit?: number;
 }
 
-export interface ThreadCommitmentState {
+export interface SessionCommitmentState {
   currentObjective: CommitmentRecord | null;
   nextAction: NextActionRecord | null;
   blockedReason: string | null;

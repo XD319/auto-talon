@@ -1,32 +1,32 @@
-import type {
+﻿import type {
   CommitmentRecord,
   NextActionRecord,
-  ThreadCommitmentState
+  SessionCommitmentState
 } from "../../types/index.js";
 
 import type { CommitmentService } from "./commitment-service.js";
 import type { NextActionService } from "./next-action-service.js";
-import type { ThreadSessionMemoryService } from "../context/thread-session-memory-service.js";
+import type { SessionSummaryService } from "../context/session-summary-service.js";
 
-export interface ThreadCommitmentProjectorDependencies {
+export interface SessionCommitmentProjectorDependencies {
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
-  threadSessionMemoryService: ThreadSessionMemoryService;
+  sessionSummaryService: SessionSummaryService;
 }
 
-export class ThreadCommitmentProjector {
-  public constructor(private readonly dependencies: ThreadCommitmentProjectorDependencies) {}
+export class SessionCommitmentProjector {
+  public constructor(private readonly dependencies: SessionCommitmentProjectorDependencies) {}
 
-  public project(threadId: string): ThreadCommitmentState {
+  public project(sessionId: string): SessionCommitmentState {
     const commitments = this.dependencies.commitmentService.list({
       statuses: ["open", "in_progress", "blocked", "waiting_decision"],
-      threadId
+      sessionId
     });
     const nextActions = this.dependencies.nextActionService.list({
       statuses: ["active", "blocked", "pending"],
-      threadId
+      sessionId
     });
-    const latestSessionMemory = this.dependencies.threadSessionMemoryService.findLatestByThread(threadId);
+    const latestSessionSummary = this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
     const currentObjective = pickCurrentObjective(commitments);
     const nextAction = pickNextAction(nextActions);
     return {
@@ -34,12 +34,12 @@ export class ThreadCommitmentProjector {
       blockedReason:
         nextAction?.blockedReason ??
         currentObjective?.blockedReason ??
-        latestSessionMemory?.openLoops[0] ??
+        latestSessionSummary?.openLoops[0] ??
         null,
       currentObjective,
       nextAction,
       openCommitments: commitments,
-      pendingDecision: currentObjective?.pendingDecision ?? latestSessionMemory?.decisions[0] ?? null
+      pendingDecision: currentObjective?.pendingDecision ?? latestSessionSummary?.decisions[0] ?? null
     };
   }
 }

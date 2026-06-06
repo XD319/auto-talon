@@ -65,7 +65,7 @@ describe("tool exposure planner", () => {
       },
       iteration: 1,
       taskId: "task-1",
-      threadId: null
+      sessionId: null
     });
     expect(plan.tools.map((tool) => tool.name)).toEqual(["file_read", "shell"]);
   });
@@ -107,7 +107,7 @@ describe("tool exposure planner", () => {
       },
       iteration: 1,
       taskId: "task-2",
-      threadId: null
+      sessionId: null
     });
 
     expect(plan.tools.map((tool) => tool.name)).toEqual(["file_read"]);

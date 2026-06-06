@@ -2,7 +2,7 @@
   ProviderToolDescriptor,
   SessionCompactInput,
   TaskRecord,
-  ThreadSessionMemoryDraft
+  SessionSummaryDraft
 } from "../../types/index.js";
 import {
   collectStructuredSummaryFields,
@@ -10,17 +10,17 @@ import {
   redactSensitiveSummary
 } from "../../memory/compact-summarizer.js";
 
-export interface BuildSessionMemoryInput {
+export interface BuildSessionSummaryInput {
   task: TaskRecord;
   compact: SessionCompactInput & {
     reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" | "iteration_count";
   };
   availableTools: ProviderToolDescriptor[];
-  trigger?: ThreadSessionMemoryDraft["trigger"];
+  trigger?: SessionSummaryDraft["trigger"];
 }
 
 export class ContextCompactor {
-  public buildSessionMemory(input: BuildSessionMemoryInput): ThreadSessionMemoryDraft {
+  public buildSessionSummary(input: BuildSessionSummaryInput): SessionSummaryDraft {
     const goal = redactSensitiveSummary(
       summarize(
       input.compact.messages.find((message) => message.role === "user")?.content ?? input.task.input,
@@ -70,44 +70,44 @@ export class ContextCompactor {
       runId: null,
       summary,
       taskId: input.task.taskId,
-      threadId: input.task.threadId ?? "",
+      sessionId: input.task.sessionId ?? "",
       trigger: input.trigger ?? "compact"
     };
   }
 
-  public buildSnapshot(input: BuildSessionMemoryInput): {
+  public buildSnapshot(input: BuildSessionSummaryInput): {
     activeMemoryIds: string[];
     blockedReason: string | null;
     goal: string;
-    metadata: ThreadSessionMemoryDraft["metadata"];
+    metadata: SessionSummaryDraft["metadata"];
     nextActions: string[];
     openLoops: string[];
     runId: string | null;
     snapshotId: string;
     summary: string;
     taskId: string | null;
-    threadId: string;
+    sessionId: string;
     toolCapabilitySummary: string[];
-    trigger: ThreadSessionMemoryDraft["trigger"];
+    trigger: SessionSummaryDraft["trigger"];
   } {
-    const sessionMemory = this.buildSessionMemory(input);
-    const toolCapabilitySummary = Array.isArray(sessionMemory.metadata?.toolCapabilitySummary)
-      ? sessionMemory.metadata.toolCapabilitySummary.filter((item): item is string => typeof item === "string")
+    const sessionSummary = this.buildSessionSummary(input);
+    const toolCapabilitySummary = Array.isArray(sessionSummary.metadata?.toolCapabilitySummary)
+      ? sessionSummary.metadata.toolCapabilitySummary.filter((item): item is string => typeof item === "string")
       : [];
     return {
       activeMemoryIds: [],
-      blockedReason: sessionMemory.openLoops[0] ?? null,
-      goal: sessionMemory.goal,
-      metadata: sessionMemory.metadata,
-      nextActions: sessionMemory.nextActions,
-      openLoops: sessionMemory.openLoops,
-      runId: sessionMemory.runId ?? null,
-      snapshotId: sessionMemory.sessionMemoryId ?? "session-memory-compat",
-      summary: sessionMemory.summary,
-      taskId: sessionMemory.taskId ?? null,
-      threadId: sessionMemory.threadId,
+      blockedReason: sessionSummary.openLoops[0] ?? null,
+      goal: sessionSummary.goal,
+      metadata: sessionSummary.metadata,
+      nextActions: sessionSummary.nextActions,
+      openLoops: sessionSummary.openLoops,
+      runId: sessionSummary.runId ?? null,
+      snapshotId: sessionSummary.sessionSummaryId ?? "session-memory-compat",
+      summary: sessionSummary.summary,
+      taskId: sessionSummary.taskId ?? null,
+      sessionId: sessionSummary.sessionId,
       toolCapabilitySummary,
-      trigger: sessionMemory.trigger
+      trigger: sessionSummary.trigger
     };
   }
 }

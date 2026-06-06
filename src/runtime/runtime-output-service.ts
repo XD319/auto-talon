@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import { formatToolCallFailureForUser } from "../presentation/tool-failure-formatters.js";
 import type {
@@ -22,7 +22,7 @@ export class RuntimeOutputService {
     const persisted = this.repository.append({
       ...draft,
       eventId: draft.eventId ?? randomUUID(),
-      threadId: draft.threadId ?? task?.threadId ?? null,
+      sessionId: draft.sessionId ?? task?.sessionId ?? null,
       timestamp: draft.timestamp ?? new Date().toISOString()
     } as Omit<RuntimeOutputEvent, "sequence">);
     for (const listener of this.listeners) {
@@ -35,8 +35,8 @@ export class RuntimeOutputService {
     return this.repository.listByTaskId(taskId);
   }
 
-  public listByThreadId(threadId: string): RuntimeOutputEvent[] {
-    return this.repository.listByThreadId(threadId);
+  public listBySessionId(sessionId: string): RuntimeOutputEvent[] {
+    return this.repository.listBySessionId(sessionId);
   }
 
   public subscribe(listener: (event: RuntimeOutputEvent) => void): () => void {

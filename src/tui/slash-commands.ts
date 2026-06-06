@@ -1,4 +1,4 @@
-export interface SlashSuggestion {
+﻿export interface SlashSuggestion {
   description: string;
   insertText: string;
   key: string;
@@ -10,11 +10,11 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/today", "today", "Show today's summary"),
   suggestion("/inbox", "inbox", "List pending inbox items"),
   suggestion("/inbox show ", "inbox-show", "Show inbox details by prefix"),
-  suggestion("/thread", "thread", "Thread commands"),
-  suggestion("/thread new ", "thread-new", "Create and switch to a new thread"),
-  suggestion("/thread list", "thread-list", "List active threads"),
-  suggestion("/thread switch ", "thread-switch", "Switch to a thread by prefix"),
-  suggestion("/thread summary ", "thread-summary", "Show thread details"),
+  suggestion("/session", "session", "Session commands"),
+  suggestion("/session new ", "session-new", "Create and switch to a new session"),
+  suggestion("/session list", "session-list", "List active sessions"),
+  suggestion("/session switch ", "session-switch", "Switch to a session by prefix"),
+  suggestion("/session summary ", "session-summary", "Show session details"),
   suggestion("/next", "next", "Next action commands"),
   suggestion("/next list", "next-list", "List next actions"),
   suggestion("/next done ", "next-done", "Mark a next action done"),
@@ -38,7 +38,7 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/mode agent", "mode-agent", "Use normal agent mode"),
   suggestion("/ops", "ops", "Open ops guidance"),
   suggestion("/status", "status", "Show TUI status"),
-  suggestion("/clear", "clear", "Clear conversation and exit active thread"),
+  suggestion("/clear", "clear", "Clear conversation and exit active session"),
   suggestion("/new", "new", "Start a fresh assistant session"),
   suggestion("/stop", "stop", "Interrupt the current task"),
   suggestion("/history", "history", "Show recent prompts"),

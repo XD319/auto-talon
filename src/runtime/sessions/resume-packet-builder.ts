@@ -1,16 +1,16 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import type { AppConfig } from "../bootstrap.js";
 import type {
   ContextFragment,
   JsonObject,
   RuntimeRunOptions,
-  ThreadSessionMemoryRecord
+  SessionSummaryRecord
 } from "../../types/index.js";
-import type { ThreadStateProjector } from "./thread-state-projector.js";
+import type { SessionStateProjector } from "./session-state-projector.js";
 
 export interface ResumePacketBuilderDependencies {
-  stateProjector: ThreadStateProjector;
+  stateProjector: SessionStateProjector;
   config: AppConfig;
 }
 
@@ -18,22 +18,22 @@ export class ResumePacketBuilder {
   public constructor(private readonly dependencies: ResumePacketBuilderDependencies) {}
 
   public buildResumePacket(
-    threadId: string,
+    sessionId: string,
     newInput: string,
     overrides?: Partial<RuntimeRunOptions>
-  ): RuntimeRunOptions & { threadId: string } {
-    const projection = this.dependencies.stateProjector.projectState(threadId);
+  ): RuntimeRunOptions & { sessionId: string } {
+    const projection = this.dependencies.stateProjector.projectState(sessionId);
     const metadata: JsonObject = {
       ...(overrides?.metadata ?? {}),
-      threadResume: {
+      sessionResume: {
         blockedReason: projection.commitmentState.blockedReason,
         commitments: projection.commitmentState.openCommitments,
         contextMessages: projection.messages,
-        memoryContext: buildThreadResumeMemoryContext(projection.sessionMemory),
+        memoryContext: buildSessionResumeMemoryContext(projection.sessionSummary),
         nextAction: projection.commitmentState.nextAction,
         pendingDecision: projection.commitmentState.pendingDecision,
         projectedMessageCount: projection.messages.length,
-        sessionMemory: projection.sessionMemory
+        sessionSummary: projection.sessionSummary
       } as unknown as JsonObject
     };
     return {
@@ -49,7 +49,7 @@ export class ResumePacketBuilder {
       ...(overrides?.signal !== undefined ? { signal: overrides.signal } : {}),
       taskInput: newInput,
       ...(overrides?.taskId !== undefined ? { taskId: overrides.taskId } : {}),
-      threadId,
+      sessionId,
       ...(overrides?.timeoutMode !== undefined ? { timeoutMode: overrides.timeoutMode } : {}),
       timeoutMs: overrides?.timeoutMs ?? this.dependencies.config.defaultTimeoutMs,
       tokenBudget: overrides?.tokenBudget ?? this.dependencies.config.tokenBudget,
@@ -59,53 +59,53 @@ export class ResumePacketBuilder {
   }
 }
 
-function buildThreadResumeMemoryContext(
-  sessionMemory: ThreadSessionMemoryRecord | null
+function buildSessionResumeMemoryContext(
+  sessionSummary: SessionSummaryRecord | null
 ): ContextFragment[] {
-  if (sessionMemory === null) {
+  if (sessionSummary === null) {
     return [];
   }
 
   const fragments: ContextFragment[] = [];
-  const trimmedGoal = normalizeSummary(sessionMemory.goal, 220);
+  const trimmedGoal = normalizeSummary(sessionSummary.goal, 220);
   if (trimmedGoal.length > 0) {
     fragments.push(
-      createResumeFragment("Thread goal", "thread_resume_goal", trimmedGoal, sessionMemory.createdAt)
+      createResumeFragment("Session goal", "session_resume_goal", trimmedGoal, sessionSummary.createdAt)
     );
   }
 
-  const decisions = dedupeCompact(sessionMemory.decisions, 3, 180);
+  const decisions = dedupeCompact(sessionSummary.decisions, 3, 180);
   if (decisions.length > 0) {
     fragments.push(
       createResumeFragment(
-        "Thread decisions",
-        "thread_resume_decisions",
+        "Session decisions",
+        "session_resume_decisions",
         decisions.join(" | "),
-        sessionMemory.createdAt
+        sessionSummary.createdAt
       )
     );
   }
 
-  const openLoops = dedupeCompact(sessionMemory.openLoops, 3, 180);
+  const openLoops = dedupeCompact(sessionSummary.openLoops, 3, 180);
   if (openLoops.length > 0) {
     fragments.push(
       createResumeFragment(
-        "Thread open loops",
-        "thread_resume_open_loops",
+        "Session open loops",
+        "session_resume_open_loops",
         openLoops.join(" | "),
-        sessionMemory.createdAt
+        sessionSummary.createdAt
       )
     );
   }
 
-  const nextActions = dedupeCompact(sessionMemory.nextActions, 3, 180);
+  const nextActions = dedupeCompact(sessionSummary.nextActions, 3, 180);
   if (nextActions.length > 0) {
     fragments.push(
       createResumeFragment(
-        "Thread next actions",
-        "thread_resume_next_actions",
+        "Session next actions",
+        "session_resume_next_actions",
         nextActions.join(" | "),
-        sessionMemory.createdAt
+        sessionSummary.createdAt
       )
     );
   }
@@ -122,13 +122,13 @@ function createResumeFragment(
   void createdAt;
   return {
     confidence: 0.97,
-    explanation: "thread resume packet fragment",
+    explanation: "session resume packet fragment",
     fragmentId: randomUUID(),
-    memoryId: `thread_resume:${memoryIdSuffix}`,
+    memoryId: `session_resume:${memoryIdSuffix}`,
     privacyLevel: "internal",
     retentionPolicy: {
       kind: "working",
-      reason: "Thread resume context is injected only for active continuation runs.",
+      reason: "Session resume context is injected only for active continuation runs.",
       ttlDays: null
     },
     scope: "working",

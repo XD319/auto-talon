@@ -1,4 +1,4 @@
-export type BudgetScope = "task" | "thread";
+export type BudgetScope = "task" | "session";
 export type BudgetStatus = "within" | "soft" | "hard";
 export type BudgetLimitKind = "input" | "output" | "cost";
 

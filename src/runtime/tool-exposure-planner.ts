@@ -1,4 +1,4 @@
-import { checkToolAvailability } from "../tools/availability/index.js";
+﻿import { checkToolAvailability } from "../tools/availability/index.js";
 import { evaluateToolExposure } from "../tools/policy/index.js";
 import type { ToolOrchestrator } from "../tools/tool-orchestrator.js";
 import type { TraceService } from "../tracing/trace-service.js";
@@ -13,7 +13,7 @@ export interface ToolExposurePlannerDependencies {
 
 export interface ToolExposurePlannerInput {
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   context: ToolExecutionContext;
   iteration: number;
 }
@@ -26,8 +26,8 @@ export class ToolExposurePlanner {
     const availability = await checkToolAvailability(tools, input.context);
     const budgetDowngradeActive =
       this.dependencies.budgetService?.isDowngradeActive("task", input.taskId) === true ||
-      (input.threadId !== null &&
-        this.dependencies.budgetService?.isDowngradeActive("thread", input.threadId) === true);
+      (input.sessionId !== null &&
+        this.dependencies.budgetService?.isDowngradeActive("session", input.sessionId) === true);
     const decisions = evaluateToolExposure({
       availability,
       budgetDowngradeActive,

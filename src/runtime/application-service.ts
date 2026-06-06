@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
@@ -50,11 +50,11 @@ import type {
   ScheduleRunRecord,
   SessionSearchHit,
   TaskRecord,
-  ThreadLineageRecord,
-  ThreadRecord,
-  ThreadRunRecord,
-  ThreadSessionMemoryRecord,
-  ThreadCommitmentState,
+  SessionLineageRecord,
+  SessionRecord,
+  SessionTaskRecord,
+  SessionSummaryRecord,
+  SessionCommitmentState,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -64,17 +64,17 @@ import type { MemoryPlane } from "../memory/memory-plane.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import type { ExecutionKernel } from "./execution-kernel.js";
-import type { ResumePacketBuilder, ThreadService } from "./threads/index.js";
+import type { ResumePacketBuilder, SessionService } from "./sessions/index.js";
 import type { CreateScheduleInput, SchedulerService, UpdateScheduleInput } from "./scheduler/index.js";
 import type { InboxService } from "./inbox/index.js";
 import type {
-  AssistantThreadProjectionService,
+  AssistantSessionProjectionService,
   CommitmentService,
   NextActionService,
-  ThreadCommitmentProjector
+  SessionCommitmentProjector
 } from "./commitments/index.js";
 import { FileRollbackService, ProviderStatsService, RuntimeDoctorService } from "./operations/index.js";
-import { ScheduleFacade, ThreadFacade } from "./facades/index.js";
+import { ScheduleFacade, SessionFacade } from "./facades/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
 
@@ -161,8 +161,8 @@ export interface ContextTraceDebugReport {
   reviewerTrace:
     | Extract<TraceEvent, { eventType: "reviewer_trace" }>["payload"]
     | null;
-  latestThreadSessionMemory:
-    | Extract<TraceEvent, { eventType: "thread_session_memory_written" }>["payload"]
+  latestSessionSummary:
+    | Extract<TraceEvent, { eventType: "session_summary_written" }>["payload"]
     | null;
   task: TaskRecord | null;
 }
@@ -190,28 +190,28 @@ export interface RuntimeReadModel {
   listPendingClarifyPrompts(): ClarifyPromptRecord[];
   listMemories(): MemoryRecord[];
   listTasks(): TaskRecord[];
-  listThreadLineage(threadId: string): ThreadLineageRecord[];
-  listThreadRuns(threadId: string): ThreadRunRecord[];
-  listThreadSessionMemories(threadId: string): ThreadSessionMemoryRecord[];
-  searchThreadSessionMemories(input: {
+  listSessionLineage(sessionId: string): SessionLineageRecord[];
+  listSessionTasks(sessionId: string): SessionTaskRecord[];
+  listSessionSummaries(sessionId: string): SessionSummaryRecord[];
+  searchSessionSummaries(input: {
     limit: number;
     query: string;
-    threadId?: string;
-    excludeThreadId?: string | null;
+    sessionId?: string;
+    excludeSessionId?: string | null;
   }): SessionSearchHit[];
-  findThreadSessionMemory(sessionMemoryId: string): ThreadSessionMemoryRecord | null;
+  findSessionSummary(sessionSummaryId: string): SessionSummaryRecord | null;
   listSchedules(query?: ScheduleListQuery): ScheduleRecord[];
   findSchedule(scheduleId: string): ScheduleRecord | null;
   listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[];
   listScheduleRunsByTask(taskId: string): ScheduleRunRecord[];
-  listScheduleRunsByThread(threadId: string): ScheduleRunRecord[];
+  listScheduleRunsBySession(sessionId: string): ScheduleRunRecord[];
   listInboxItems(query?: InboxListQuery): InboxItem[];
   findInboxItem(inboxId: string): InboxItem | null;
-  listThreads(): ThreadRecord[];
-  findThread(threadId: string): ThreadRecord | null;
+  listSessions(): SessionRecord[];
+  findSession(sessionId: string): SessionRecord | null;
   listToolCalls(taskId: string): ToolCallRecord[];
   listOutputEvents(taskId: string): RuntimeOutputEvent[];
-  listThreadOutputEvents(threadId: string): RuntimeOutputEvent[];
+  listSessionOutputEvents(sessionId: string): RuntimeOutputEvent[];
   listTrace(taskId: string): TraceEvent[];
   findExecutionCheckpoint(taskId: string): ExecutionCheckpointRecord | null;
   saveExecutionCheckpoint(record: ExecutionCheckpointRecord): ExecutionCheckpointRecord;
@@ -239,7 +239,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   executionKernel: ExecutionKernel;
   schedulerService: SchedulerService;
   resumePacketBuilder: ResumePacketBuilder;
-  threadService: ThreadService;
+  sessionService: SessionService;
   experiencePlane: ExperiencePlane;
   maxShellTimeoutMs: number;
   memoryPlane: MemoryPlane;
@@ -256,7 +256,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   inboxService: InboxService;
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
-  threadCommitmentProjector: ThreadCommitmentProjector;
+  sessionCommitmentProjector: SessionCommitmentProjector;
   tokenBudget: {
     inputLimit: number;
     outputLimit: number;
@@ -265,7 +265,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   traceService: TraceService;
   testCommands: WorkflowTestCommand[];
   outputService: RuntimeOutputService;
-  assistantThreadProjectionService: AssistantThreadProjectionService;
+  assistantSessionProjectionService: AssistantSessionProjectionService;
   providerRouter?: ProviderRouter;
   budgetService?: BudgetService;
   workspaceRoot: string;
@@ -315,85 +315,97 @@ const clarifyAnswerSchema = z
 
 export class AgentApplicationService {
   private readonly scheduleFacade: ScheduleFacade;
-  private readonly threadFacade: ThreadFacade;
+  private readonly sessionFacade: SessionFacade;
 
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {
-    this.threadFacade = new ThreadFacade(
+    this.sessionFacade = new SessionFacade(
       dependencies,
-      (threadId, taskId, output) => this.projectAssistantOutput(threadId, taskId, output)
+      (sessionId, taskId, output) => this.projectAssistantOutput(sessionId, taskId, output)
     );
     this.scheduleFacade = new ScheduleFacade(dependencies);
   }
 
   public async runTask(options: RuntimeRunOptions): Promise<RunTaskResult> {
-    return this.threadFacade.runTask(options);
+    return this.sessionFacade.runTask(options);
   }
 
   public listTasks(): TaskRecord[] {
-    return this.threadFacade.listTasks();
+    return this.sessionFacade.listTasks();
   }
 
-  public createThread(input: {
-    agentProfileId: ThreadRecord["agentProfileId"];
+  public createSession(input: {
+    agentProfileId: SessionRecord["agentProfileId"];
     cwd: string;
     ownerUserId: string;
     providerName?: string;
     title?: string;
-  }): ThreadRecord {
-    return this.threadFacade.createThread(input);
+  }): SessionRecord {
+    return this.sessionFacade.createSession(input);
   }
 
-  public listThreads(status?: ThreadRecord["status"]): ThreadRecord[] {
-    return this.threadFacade.listThreads(status);
+  public listSessions(status?: SessionRecord["status"]): SessionRecord[] {
+    return this.sessionFacade.listSessions(status);
   }
 
-  public showThread(threadId: string): {
+  public showSession(sessionId: string): {
     commitments: CommitmentRecord[];
     inboxItems: InboxItem[];
     nextActions: NextActionRecord[];
-    state: ThreadCommitmentState;
-    thread: ThreadRecord | null;
-    runs: ThreadRunRecord[];
-    lineage: ThreadLineageRecord[];
+    state: SessionCommitmentState;
+    session: SessionRecord | null;
+    tasks: SessionTaskRecord[];
+    lineage: SessionLineageRecord[];
     scheduleRuns: ScheduleRunRecord[];
   } {
-    return this.threadFacade.showThread(threadId);
+    return this.sessionFacade.showSession(sessionId);
   }
 
-  public archiveThread(threadId: string): ThreadRecord {
-    return this.threadFacade.archiveThread(threadId);
+  public archiveSession(sessionId: string): SessionRecord {
+    return this.sessionFacade.archiveSession(sessionId);
   }
 
-  public listThreadSnapshots(threadId: string): ThreadSessionMemoryRecord[] {
-    return this.threadFacade.listThreadSnapshots(threadId);
+  public listSessionSummaries(sessionId: string): SessionSummaryRecord[] {
+    return this.sessionFacade.listSessionSummaries(sessionId);
   }
 
-  public showThreadSnapshot(snapshotId: string): ThreadSessionMemoryRecord | null {
-    return this.threadFacade.showThreadSnapshot(snapshotId);
+  public showSessionSummary(snapshotId: string): SessionSummaryRecord | null {
+    return this.sessionFacade.showSessionSummary(snapshotId);
   }
 
-  public searchThreadSnapshots(input: {
+  public searchSessionSummaries(input: {
     limit: number;
     query: string;
-    threadId?: string;
-    excludeThreadId?: string | null;
+    sessionId?: string;
+    excludeSessionId?: string | null;
   }): SessionSearchHit[] {
-    return this.threadFacade.searchThreadSnapshots(input);
+    return this.sessionFacade.searchSessionSummaries(input);
   }
 
-  public async continueThread(
-    threadId: string,
+  public ensureRuntimeSession(
+    sessionId: string,
+    input?: {
+      agentProfileId?: SessionRecord["agentProfileId"];
+      cwd?: string;
+      ownerUserId?: string;
+      title?: string;
+    }
+  ): SessionRecord {
+    return this.sessionFacade.ensureRuntimeSession(sessionId, input);
+  }
+
+  public async continueSession(
+    sessionId: string,
     input: string,
     overrides?: Partial<RuntimeRunOptions>
   ): Promise<RunTaskResult> {
-    return this.threadFacade.continueThread(threadId, input, overrides);
+    return this.sessionFacade.continueSession(sessionId, input, overrides);
   }
 
   public async continueLatest(
     input: string | undefined,
     overrides?: Partial<RuntimeRunOptions>
   ): Promise<RunTaskResult> {
-    return this.threadFacade.continueLatest(input, overrides);
+    return this.sessionFacade.continueLatest(input, overrides);
   }
 
   public listCommitments(query: CommitmentListQuery = {}): CommitmentRecord[] {
@@ -452,8 +464,8 @@ export class AgentApplicationService {
     return this.dependencies.nextActionService.cancel(nextActionId);
   }
 
-  public reorderNextActions(threadId: string, orderedIds: string[]): NextActionRecord[] {
-    return this.dependencies.nextActionService.reorder(threadId, orderedIds);
+  public reorderNextActions(sessionId: string, orderedIds: string[]): NextActionRecord[] {
+    return this.dependencies.nextActionService.reorder(sessionId, orderedIds);
   }
 
   public listMemories(): MemoryRecord[] {
@@ -813,7 +825,7 @@ export class AgentApplicationService {
     if (approval.status === "approved") {
       try {
         const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
-        this.projectAssistantOutput(result.task.threadId ?? null, result.task.taskId, result.output ?? null);
+        this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
         return {
           approval,
           output: result.output,
@@ -954,7 +966,7 @@ export class AgentApplicationService {
 
     try {
       const result = await this.dependencies.executionKernel.resumeTask(prompt.taskId);
-      this.projectAssistantOutput(result.task.threadId ?? null, result.task.taskId, result.output ?? null);
+      this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
       return {
         output: result.output,
         prompt,
@@ -1116,7 +1128,7 @@ export class AgentApplicationService {
     return this.dependencies.providerConfig;
   }
 
-  public providerStats(groupBy: "provider" | "thread" | "task" | "mode" = "provider"): ProviderStatsSnapshot | null | JsonObject {
+  public providerStats(groupBy: "provider" | "session" | "task" | "mode" = "provider"): ProviderStatsSnapshot | null | JsonObject {
     return new ProviderStatsService({
       listTasks: () => this.dependencies.listTasks(),
       listTrace: (taskId) => this.dependencies.listTrace(taskId),
@@ -1124,11 +1136,11 @@ export class AgentApplicationService {
     }).providerStats(groupBy);
   }
 
-  public budgetReport(scope: "task" | "thread", id: string): Record<string, unknown> {
+  public budgetReport(scope: "task" | "session", id: string): Record<string, unknown> {
     const state =
       scope === "task"
         ? this.dependencies.budgetService?.getTaskState(id)
-        : this.dependencies.budgetService?.getThreadState(id);
+        : this.dependencies.budgetService?.getSessionState(id);
     return {
       scope,
       id,
@@ -1158,8 +1170,8 @@ export class AgentApplicationService {
     return this.dependencies.listOutputEvents(taskId);
   }
 
-  public outputThread(threadId: string): RuntimeOutputEvent[] {
-    return this.dependencies.listThreadOutputEvents(threadId);
+  public outputSession(sessionId: string): RuntimeOutputEvent[] {
+    return this.dependencies.listSessionOutputEvents(sessionId);
   }
 
   public subscribeToTaskOutput(
@@ -1218,17 +1230,17 @@ export class AgentApplicationService {
   }
 
   private projectAssistantOutput(
-    threadId: string | null,
+    sessionId: string | null,
     taskId: string,
     output: string | null
   ): void {
-    if (threadId === null || output === null || output.trim().length === 0) {
+    if (sessionId === null || output === null || output.trim().length === 0) {
       return;
     }
-    this.dependencies.assistantThreadProjectionService.project({
+    this.dependencies.assistantSessionProjectionService.project({
       output,
       taskId,
-      threadId
+      sessionId
     });
   }
 
@@ -1276,16 +1288,16 @@ export class AgentApplicationService {
         (event): event is Extract<TraceEvent, { eventType: "reviewer_trace" }> =>
           event.eventType === "reviewer_trace"
       )?.payload ?? null;
-    const latestThreadSessionMemory = [...trace]
+    const latestSessionSummary = [...trace]
       .reverse()
       .find(
-        (event): event is Extract<TraceEvent, { eventType: "thread_session_memory_written" }> =>
-          event.eventType === "thread_session_memory_written"
+        (event): event is Extract<TraceEvent, { eventType: "session_summary_written" }> =>
+          event.eventType === "session_summary_written"
       )?.payload ?? null;
 
     return {
       contextAssembly,
-      latestThreadSessionMemory,
+      latestSessionSummary,
       memoryRecall,
       reviewerTrace,
       task
@@ -1704,3 +1716,4 @@ function contextFragmentToMemoryRecord(
     updatedAt: timestamp
   };
 }
+

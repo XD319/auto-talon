@@ -16,7 +16,7 @@ export function formatMemoryList(memories: MemoryRecord[]): string {
 export function formatMemoryGuide(): string {
   return [
     "Memory layers:",
-    "- working | runtime-only context for the current task/thread; read-only, not manually persisted",
+    "- working | runtime-only context for the current task/session; read-only, not manually persisted",
     "- project | reusable knowledge for the current workspace",
     "- profile | reusable user/profile preferences across tasks",
     "Use `talon memory show <scope>` to inspect a scope."

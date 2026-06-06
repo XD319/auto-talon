@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+﻿import type { DatabaseSync } from "node:sqlite";
 
 import type { RuntimeOutputEvent, RuntimeOutputRepository } from "../../types/index.js";
 
@@ -11,7 +11,7 @@ interface RuntimeOutputRow {
   sequence: number;
   stage: RuntimeOutputEvent["stage"];
   task_id: string;
-  thread_id: string | null;
+  session_id: string | null;
   timestamp: string;
 }
 
@@ -25,7 +25,7 @@ export class SqliteRuntimeOutputRepository implements RuntimeOutputRepository {
           INSERT INTO output_events (
             event_id,
             task_id,
-            thread_id,
+            session_id,
             timestamp,
             event_type,
             stage,
@@ -36,7 +36,7 @@ export class SqliteRuntimeOutputRepository implements RuntimeOutputRepository {
       .run(
         event.eventId,
         event.taskId,
-        event.threadId,
+        event.sessionId,
         event.timestamp,
         event.eventType,
         event.stage,
@@ -56,11 +56,11 @@ export class SqliteRuntimeOutputRepository implements RuntimeOutputRepository {
     return this.list("task_id", taskId);
   }
 
-  public listByThreadId(threadId: string): RuntimeOutputEvent[] {
-    return this.list("thread_id", threadId);
+  public listBySessionId(sessionId: string): RuntimeOutputEvent[] {
+    return this.list("session_id", sessionId);
   }
 
-  private list(column: "task_id" | "thread_id", value: string): RuntimeOutputEvent[] {
+  private list(column: "task_id" | "session_id", value: string): RuntimeOutputEvent[] {
     const rows = this.database
       .prepare(`SELECT * FROM output_events WHERE ${column} = ? ORDER BY sequence ASC`)
       .all(value) as unknown as RuntimeOutputRow[];
@@ -75,7 +75,7 @@ export class SqliteRuntimeOutputRepository implements RuntimeOutputRepository {
       sequence: row.sequence,
       stage: row.stage,
       taskId: row.task_id,
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       timestamp: row.timestamp
     } as RuntimeOutputEvent;
   }

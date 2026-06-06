@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+﻿import type { DatabaseSync } from "node:sqlite";
 
 import type {
   JsonObject,
@@ -22,7 +22,7 @@ interface ScheduleRunRow {
   started_at: string | null;
   finished_at: string | null;
   task_id: string | null;
-  thread_id: string | null;
+  session_id: string | null;
   error_code: string | null;
   error_message: string | null;
   trigger: ScheduleRunTrigger;
@@ -37,7 +37,7 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
       .prepare(
         `INSERT INTO schedule_runs (
           run_id, schedule_id, attempt_number, status, scheduled_at, started_at, finished_at,
-          task_id, thread_id, error_code, error_message, trigger, metadata_json
+          task_id, session_id, error_code, error_message, trigger, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
@@ -49,7 +49,7 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
         record.startedAt ?? null,
         record.finishedAt ?? null,
         record.taskId ?? null,
-        record.threadId ?? null,
+        record.sessionId ?? null,
         record.errorCode ?? null,
         record.errorMessage ?? null,
         record.trigger,
@@ -115,10 +115,10 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
-  public listByThreadId(threadId: string): ScheduleRunRecord[] {
+  public listBySessionId(sessionId: string): ScheduleRunRecord[] {
     const rows = this.database
-      .prepare("SELECT * FROM schedule_runs WHERE thread_id = ? ORDER BY scheduled_at DESC, run_id DESC")
-      .all(threadId) as unknown as ScheduleRunRow[];
+      .prepare("SELECT * FROM schedule_runs WHERE session_id = ? ORDER BY scheduled_at DESC, run_id DESC")
+      .all(sessionId) as unknown as ScheduleRunRow[];
     return rows.map((row) => this.mapRow(row));
   }
 
@@ -170,7 +170,7 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
       ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
       ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
       ...(patch.taskId !== undefined ? { taskId: patch.taskId } : {}),
-      ...(patch.threadId !== undefined ? { threadId: patch.threadId } : {}),
+      ...(patch.sessionId !== undefined ? { sessionId: patch.sessionId } : {}),
       ...(patch.errorCode !== undefined ? { errorCode: patch.errorCode } : {}),
       ...(patch.errorMessage !== undefined ? { errorMessage: patch.errorMessage } : {}),
       ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {})
@@ -178,7 +178,7 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
     this.database
       .prepare(
         `UPDATE schedule_runs
-         SET status = ?, started_at = ?, finished_at = ?, task_id = ?, thread_id = ?, error_code = ?,
+         SET status = ?, started_at = ?, finished_at = ?, task_id = ?, session_id = ?, error_code = ?,
              error_message = ?, metadata_json = ?
          WHERE run_id = ?`
       )
@@ -187,7 +187,7 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
         next.startedAt,
         next.finishedAt,
         next.taskId,
-        next.threadId,
+        next.sessionId,
         next.errorCode,
         next.errorMessage,
         serializeJsonValue(next.metadata),
@@ -206,7 +206,7 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
       startedAt: row.started_at,
       finishedAt: row.finished_at,
       taskId: row.task_id,
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       errorCode: row.error_code,
       errorMessage: row.error_message,
       trigger: row.trigger,

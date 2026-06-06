@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import React from "react";
 
@@ -32,7 +32,7 @@ export interface UseChatControllerOptions {
   cwd: string;
   initialMessages?: ChatMessage[];
   initialSessionApprovalFingerprints?: string[];
-  initialThreadId?: string;
+  initialSessionId?: string;
   interactionMode?: TuiInteractionMode;
   onOutputEvent?: (event: RuntimeOutputEvent) => void;
   onTraceEvent?: (event: TraceEvent) => void;
@@ -67,11 +67,11 @@ export interface QueuedPromptEntry {
 
 export interface ChatController {
   activeTaskId: string | null;
-  activeThreadId: string | null;
+  activeSessionId: string | null;
   addSystemMessage: (text: string) => void;
   busy: boolean;
   clearConversation: () => void;
-  createAndActivateThread: (title?: string) => string;
+  createAndActivateSession: (title?: string) => string;
   fileEdits: FileEditEntry[];
   formatDiffSummary: () => string;
   hasPendingApproval: boolean;
@@ -83,12 +83,12 @@ export interface ChatController {
   queuedPrompts: QueuedPromptEntry[];
   requestInterrupt: () => boolean;
   resetVisibleChat: () => void;
-  resetVisibleChatPreserveActiveThread: (statusLabel?: string) => void;
+  resetVisibleChatPreserveActiveSession: (statusLabel?: string) => void;
   restoreSession: (session: PersistedChatSession) => void;
   runDurationLabel: string;
   statusLine: string;
   submitPrompt: (text: string) => boolean;
-  switchActiveThread: (threadId: string) => void;
+  switchActiveSession: (sessionId: string) => void;
   sessionApprovalFingerprints: string[];
   answerPendingClarifyPrompt: (input: {
     answerOptionId?: string;
@@ -137,7 +137,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const [pendingApproval, setPendingApproval] = React.useState<ApprovalRecord | null>(null);
   const [pendingClarifyPrompt, setPendingClarifyPrompt] = React.useState<ClarifyPromptRecord | null>(null);
   const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
-  const [activeThreadId, setActiveThreadId] = React.useState<string | null>(input.initialThreadId ?? null);
+  const [activeSessionId, setActiveSessionId] = React.useState<string | null>(input.initialSessionId ?? null);
   const [sessionApprovalFingerprints, setSessionApprovalFingerprints] = React.useState<string[]>(
     input.initialSessionApprovalFingerprints ?? []
   );
@@ -161,7 +161,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const startedAtRef = React.useRef(Date.now());
   const activeAbortControllerRef = React.useRef<AbortController | null>(null);
   const activeTaskIdRef = React.useRef<string | null>(null);
-  const activeThreadIdRef = React.useRef<string | null>(input.initialThreadId ?? null);
+  const activeSessionIdRef = React.useRef<string | null>(input.initialSessionId ?? null);
   const lastSequenceByTaskRef = React.useRef<Record<string, number>>({});
   const activeTraceUnsubscribeRef = React.useRef<(() => void) | null>(null);
   const streamingAgentIdRef = React.useRef<string | null>(null);
@@ -353,14 +353,14 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setPendingApproval(null);
     setPendingClarifyPrompt(null);
     activeTaskIdRef.current = null;
-    activeThreadIdRef.current = null;
+    activeSessionIdRef.current = null;
     seenApprovalMessageIdsRef.current.clear();
     setSessionApprovalFingerprints([]);
     setFileEdits([]);
     setQueuedPrompts([]);
     resetTokenHudState();
     setUsedMemoryCount(0);
-    setActiveThreadId(null);
+    setActiveSessionId(null);
     stopTraceSubscription();
     resetAssistantProgressBuffers();
   }, [resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]);
@@ -379,18 +379,18 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     setPendingApproval(null);
     setPendingClarifyPrompt(null);
     activeTaskIdRef.current = null;
-    activeThreadIdRef.current = null;
+    activeSessionIdRef.current = null;
     seenApprovalMessageIdsRef.current.clear();
     setFileEdits([]);
     setQueuedPrompts([]);
     resetTokenHudState();
     setUsedMemoryCount(0);
-    setActiveThreadId(null);
+    setActiveSessionId(null);
     stopTraceSubscription();
     resetAssistantProgressBuffers();
   }, [resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]);
 
-  const resetVisibleChatPreserveActiveThread = React.useCallback((statusLabel = "thread selected") => {
+  const resetVisibleChatPreserveActiveSession = React.useCallback((statusLabel = "session selected") => {
     setMessages([welcomeMessage]);
     setStatusLine(statusLabel);
     setUiStatus({
@@ -413,8 +413,30 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     resetAssistantProgressBuffers();
   }, [resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]);
 
+  const ensureRuntimeSession = React.useCallback(
+    (sessionId: string, title?: string) => {
+      input.service.ensureRuntimeSession(sessionId, {
+        agentProfileId: input.config.defaultProfileId,
+        cwd: input.cwd,
+        ownerUserId: process.env.USERNAME ?? process.env.USER ?? "local-user",
+        ...(title !== undefined ? { title } : {})
+      });
+    },
+    [input.config.defaultProfileId, input.cwd, input.service]
+  );
+
+  React.useEffect(() => {
+    if (input.initialSessionId === undefined) {
+      return;
+    }
+    ensureRuntimeSession(input.initialSessionId);
+  }, [ensureRuntimeSession, input.initialSessionId]);
+
   const restoreSession = React.useCallback(
     (session: PersistedChatSession) => {
+      if (session.sessionId !== undefined) {
+        ensureRuntimeSession(session.sessionId, session.title);
+      }
       const restoredMessages =
         session.messages.length > 0
           ? hydrateFailedTaskProgress(session.messages, input.service)
@@ -432,39 +454,39 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       setPendingApproval(null);
       setPendingClarifyPrompt(null);
       activeTaskIdRef.current = null;
-      activeThreadIdRef.current = session.threadId ?? null;
+      activeSessionIdRef.current = session.sessionId ?? null;
       seenApprovalMessageIdsRef.current = collectApprovalMessageIds(restoredMessages);
       setSessionApprovalFingerprints(session.sessionApprovalFingerprints ?? []);
       setFileEdits([]);
       setQueuedPrompts([]);
       resetTokenHudState();
       setUsedMemoryCount(0);
-      setActiveThreadId(session.threadId ?? null);
+      setActiveSessionId(session.sessionId ?? null);
       stopTraceSubscription();
       resetAssistantProgressBuffers();
     },
-    [input.service, resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]
+    [ensureRuntimeSession, input.service, resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]
   );
 
-  const switchActiveThread = React.useCallback((threadId: string) => {
-    activeThreadIdRef.current = threadId;
-    setActiveThreadId(threadId);
+  const switchActiveSession = React.useCallback((sessionId: string) => {
+    activeSessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
   }, []);
 
-  const createAndActivateThread = React.useCallback(
-    (title = "Untitled thread"): string => {
+  const createAndActivateSession = React.useCallback(
+    (title = "Untitled session"): string => {
       const userId = process.env.USERNAME ?? process.env.USER ?? "local-user";
-      const thread = input.service.createThread({
+      const session = input.service.createSession({
         agentProfileId: input.config.defaultProfileId,
         cwd: input.cwd,
         ownerUserId: userId,
         providerName: input.config.provider.name,
         title
       });
-      switchActiveThread(thread.threadId);
-      return thread.threadId;
+      switchActiveSession(session.sessionId);
+      return session.sessionId;
     },
-    [input.config.defaultProfileId, input.config.provider.name, input.cwd, input.service, switchActiveThread]
+    [input.config.defaultProfileId, input.config.provider.name, input.cwd, input.service, switchActiveSession]
   );
 
   const refresh = React.useCallback(() => {
@@ -472,11 +494,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       const tasks = input.service.listTasks();
       const approvals = visiblePendingRecords(input.service.listPendingApprovals(), input.service, {
         activeTaskId: activeTaskIdRef.current,
-        activeThreadId: activeThreadIdRef.current
+        activeSessionId: activeSessionIdRef.current
       });
       const clarifyPrompts = visiblePendingRecords(input.service.listPendingClarifyPrompts(), input.service, {
         activeTaskId: activeTaskIdRef.current,
-        activeThreadId: activeThreadIdRef.current
+        activeSessionId: activeSessionIdRef.current
       });
       const runningTasks = tasks.filter((task) => task.status === "running").length;
       const nextSummary = {
@@ -804,10 +826,14 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             }
           };
 
+          const activeSessionId = activeSessionIdRef.current;
+          if (activeSessionId !== null) {
+            ensureRuntimeSession(activeSessionId, text.slice(0, 80));
+          }
           const result =
-            activeThreadIdRef.current === null
+            activeSessionId === null
               ? await input.service.runTask(runOptions)
-              : await input.service.continueThread(activeThreadIdRef.current, text, {
+              : await input.service.continueSession(activeSessionId, text, {
                   ...runOptions,
                   cwd: input.cwd,
                   taskId
@@ -815,8 +841,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           flushPendingDelta();
           activeTaskIdRef.current = result.task.taskId;
           setActiveTaskId(result.task.taskId);
-          activeThreadIdRef.current = result.task.threadId ?? null;
-          setActiveThreadId(result.task.threadId ?? null);
+          activeSessionIdRef.current = result.task.sessionId ?? null;
+          setActiveSessionId(result.task.sessionId ?? null);
           appendNewTraceEvents(result.task.taskId);
 
           const activeStreamId = streamingAgentIdRef.current;
@@ -962,6 +988,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       beginBusy,
       cancelPendingDelta,
       endBusy,
+      ensureRuntimeSession,
       finalizeStreamingAgentMessage,
       flushPendingDelta,
       input.config,
@@ -1317,11 +1344,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   return {
     activeTaskId,
-    activeThreadId,
+    activeSessionId,
     addSystemMessage,
     busy,
     clearConversation,
-    createAndActivateThread,
+    createAndActivateSession,
     fileEdits,
     formatDiffSummary,
     hasPendingApproval: pendingApproval !== null,
@@ -1333,7 +1360,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     queuedPrompts,
     requestInterrupt,
     resetVisibleChat,
-    resetVisibleChatPreserveActiveThread,
+    resetVisibleChatPreserveActiveSession,
     restoreSession,
     sessionApprovalFingerprints,
     answerPendingClarifyPrompt,
@@ -1342,7 +1369,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     runDurationLabel,
     statusLine,
     submitPrompt,
-    switchActiveThread,
+    switchActiveSession,
     summary,
     tokenHud,
     uiStatus,
@@ -1498,10 +1525,10 @@ function dropOnlyWelcomeMessage(messages: ChatMessage[]): ChatMessage[] {
 function visiblePendingRecords<T extends ApprovalRecord | ClarifyPromptRecord>(
   records: T[],
   service: Pick<TuiRuntimeService, "showTask">,
-  state: { activeTaskId: string | null; activeThreadId: string | null }
+  state: { activeTaskId: string | null; activeSessionId: string | null }
 ): T[] {
-  if (state.activeThreadId !== null) {
-    return records.filter((record) => taskThreadId(service, record.taskId) === state.activeThreadId);
+  if (state.activeSessionId !== null) {
+    return records.filter((record) => taskSessionId(service, record.taskId) === state.activeSessionId);
   }
   if (state.activeTaskId !== null) {
     return records.filter((record) => record.taskId === state.activeTaskId);
@@ -1509,11 +1536,11 @@ function visiblePendingRecords<T extends ApprovalRecord | ClarifyPromptRecord>(
   return [];
 }
 
-function taskThreadId(
+function taskSessionId(
   service: Pick<TuiRuntimeService, "showTask">,
   taskId: string
 ): string | null {
-  return service.showTask(taskId).task?.threadId ?? null;
+  return service.showTask(taskId).task?.sessionId ?? null;
 }
 
 function usageSinceSessionStart(

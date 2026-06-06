@@ -1,21 +1,21 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import type {
   JsonObject,
   SessionSearchHit,
-  ThreadSessionMemoryDraft,
-  ThreadSessionMemoryRecord,
-  ThreadSessionMemoryRepository
+  SessionSummaryDraft,
+  SessionSummaryRecord,
+  SessionSummaryRepository
 } from "../../types/index.js";
 import { parseJsonValue, serializeJsonValue } from "./json.js";
 
-interface ThreadSessionMemoryEventRow {
+interface SessionSummaryEventRow {
   session_memory_id: string;
-  thread_id: string;
+  session_id: string;
   run_id: string | null;
   task_id: string | null;
-  trigger: ThreadSessionMemoryRecord["trigger"];
+  trigger: SessionSummaryRecord["trigger"];
   summary: string;
   goal: string;
   decisions_json: string;
@@ -27,7 +27,7 @@ interface ThreadSessionMemoryEventRow {
 
 interface SessionIndexRow {
   session_memory_id: string;
-  thread_id: string;
+  session_id: string;
   summary: string;
   goal: string;
   decisions: string;
@@ -39,11 +39,11 @@ interface SessionIndexRow {
 
 type SqlParameter = string | number | bigint | Buffer | Uint8Array | null;
 
-export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryRepository {
+export class SqliteSessionSummaryRepository implements SessionSummaryRepository {
   public constructor(private readonly database: DatabaseSync) {}
 
-  public create(record: ThreadSessionMemoryDraft): ThreadSessionMemoryRecord {
-    const sessionMemoryId = record.sessionMemoryId ?? randomUUID();
+  public create(record: SessionSummaryDraft): SessionSummaryRecord {
+    const sessionSummaryId = record.sessionSummaryId ?? randomUUID();
     const createdAt = new Date().toISOString();
     const decisionsJson = serializeJsonValue(record.decisions);
     const openLoopsJson = serializeJsonValue(record.openLoops);
@@ -54,14 +54,14 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
     try {
       this.database
         .prepare(
-          `INSERT INTO thread_session_memory_events (
-            session_memory_id, thread_id, run_id, task_id, trigger, summary, goal,
+          `INSERT INTO session_summary_events (
+            session_memory_id, session_id, run_id, task_id, trigger, summary, goal,
             decisions_json, open_loops_json, next_actions_json, created_at, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
-          sessionMemoryId,
-          record.threadId,
+          sessionSummaryId,
+          record.sessionId,
           record.runId ?? null,
           record.taskId ?? null,
           record.trigger,
@@ -76,11 +76,11 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
 
       this.database
         .prepare(
-          `INSERT INTO thread_session_memories_current (
-            thread_id, session_memory_id, summary, goal,
+          `INSERT INTO session_summaries_current (
+            session_id, session_memory_id, summary, goal,
             decisions_json, open_loops_json, next_actions_json, updated_at, metadata_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(thread_id) DO UPDATE SET
+          ON CONFLICT(session_id) DO UPDATE SET
             session_memory_id = excluded.session_memory_id,
             summary = excluded.summary,
             goal = excluded.goal,
@@ -91,8 +91,8 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
             metadata_json = excluded.metadata_json`
         )
         .run(
-          record.threadId,
-          sessionMemoryId,
+          record.sessionId,
+          sessionSummaryId,
           record.summary,
           record.goal,
           decisionsJson,
@@ -113,12 +113,12 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
       this.database
         .prepare(
           `INSERT OR REPLACE INTO session_index (
-            session_memory_id, thread_id, summary, goal, decisions, open_loops, next_actions, keywords, created_at
+            session_memory_id, session_id, summary, goal, decisions, open_loops, next_actions, keywords, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
-          sessionMemoryId,
-          record.threadId,
+          sessionSummaryId,
+          record.sessionId,
           record.summary,
           record.goal,
           record.decisions.join("\n"),
@@ -133,25 +133,25 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
       throw error;
     }
 
-    const created = this.findById(sessionMemoryId);
+    const created = this.findById(sessionSummaryId);
     if (created === null) {
-      throw new Error(`Thread session memory ${sessionMemoryId} was not persisted.`);
+      throw new Error(`Session summary ${sessionSummaryId} was not persisted.`);
     }
     return created;
   }
 
-  public findById(sessionMemoryId: string): ThreadSessionMemoryRecord | null {
+  public findById(sessionSummaryId: string): SessionSummaryRecord | null {
     const row = this.database
-      .prepare("SELECT * FROM thread_session_memory_events WHERE session_memory_id = ?")
-      .get(sessionMemoryId) as ThreadSessionMemoryEventRow | undefined;
+      .prepare("SELECT * FROM session_summary_events WHERE session_memory_id = ?")
+      .get(sessionSummaryId) as SessionSummaryEventRow | undefined;
     return row === undefined ? null : this.mapRow(row);
   }
 
-  public findLatestByThread(threadId: string): ThreadSessionMemoryRecord | null {
+  public findLatestBySession(sessionId: string): SessionSummaryRecord | null {
     const row = this.database
       .prepare(
         `SELECT
-          current.thread_id,
+          current.session_id,
           current.session_memory_id,
           events.run_id,
           events.task_id,
@@ -163,26 +163,26 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
           current.next_actions_json,
           current.updated_at AS created_at,
           current.metadata_json
-        FROM thread_session_memories_current AS current
-        LEFT JOIN thread_session_memory_events AS events
+        FROM session_summaries_current AS current
+        LEFT JOIN session_summary_events AS events
           ON events.session_memory_id = current.session_memory_id
-        WHERE current.thread_id = ?
+        WHERE current.session_id = ?
         LIMIT 1`
       )
-      .get(threadId) as ThreadSessionMemoryEventRow | undefined;
+      .get(sessionId) as SessionSummaryEventRow | undefined;
     return row === undefined ? null : this.mapRow(row);
   }
 
-  public listByThread(threadId: string): ThreadSessionMemoryRecord[] {
+  public listBySession(sessionId: string): SessionSummaryRecord[] {
     const rows = this.database
       .prepare(
-        "SELECT * FROM thread_session_memory_events WHERE thread_id = ? ORDER BY created_at DESC, session_memory_id DESC"
+        "SELECT * FROM session_summary_events WHERE session_id = ? ORDER BY created_at DESC, session_memory_id DESC"
       )
-      .all(threadId) as unknown as ThreadSessionMemoryEventRow[];
+      .all(sessionId) as unknown as SessionSummaryEventRow[];
     return rows.map((row) => this.mapRow(row));
   }
 
-  public search(input: { limit: number; query: string; threadId: string }): SessionSearchHit[] {
+  public search(input: { limit: number; query: string; sessionId: string }): SessionSearchHit[] {
     const rows = this.searchFts(input) ?? this.searchFallback(input);
     return rows.map((row) => this.mapSearchRow(row));
   }
@@ -190,28 +190,28 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
   public searchGlobal(input: {
     limit: number;
     query: string;
-    excludeThreadId?: string | null;
+    excludeSessionId?: string | null;
   }): SessionSearchHit[] {
     const rows = this.searchGlobalFts(input) ?? this.searchGlobalFallback(input);
     return rows.map((row) => this.mapSearchRow(row));
   }
 
-  private searchFts(input: { limit: number; query: string; threadId: string }): SessionIndexRow[] | null {
-    const whereClause = "thread_id = ? AND session_index MATCH ?";
-    const parameters: SqlParameter[] = [input.threadId, input.query, input.limit];
+  private searchFts(input: { limit: number; query: string; sessionId: string }): SessionIndexRow[] | null {
+    const whereClause = "session_id = ? AND session_index MATCH ?";
+    const parameters: SqlParameter[] = [input.sessionId, input.query, input.limit];
     return this.searchFtsWithQuery(whereClause, parameters);
   }
 
   private searchGlobalFts(input: {
     limit: number;
     query: string;
-    excludeThreadId?: string | null;
+    excludeSessionId?: string | null;
   }): SessionIndexRow[] | null {
     const whereClauses = ["session_index MATCH ?"];
     const parameters: SqlParameter[] = [input.query];
-    if (input.excludeThreadId !== undefined && input.excludeThreadId !== null) {
-      whereClauses.push("thread_id != ?");
-      parameters.push(input.excludeThreadId);
+    if (input.excludeSessionId !== undefined && input.excludeSessionId !== null) {
+      whereClauses.push("session_id != ?");
+      parameters.push(input.excludeSessionId);
     }
     parameters.push(input.limit);
     return this.searchFtsWithQuery(whereClauses.join(" AND "), parameters);
@@ -223,7 +223,7 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
         .prepare(
           `SELECT
             session_memory_id,
-            thread_id,
+            session_id,
             summary,
             goal,
             decisions,
@@ -242,26 +242,26 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
     }
   }
 
-  private searchFallback(input: { limit: number; query: string; threadId: string }): SessionIndexRow[] {
+  private searchFallback(input: { limit: number; query: string; sessionId: string }): SessionIndexRow[] {
     return this.searchFallbackByScope({
       limit: input.limit,
       query: input.query,
-      whereClause: "thread_id = ?",
-      whereParams: [input.threadId]
+      whereClause: "session_id = ?",
+      whereParams: [input.sessionId]
     });
   }
 
   private searchGlobalFallback(input: {
     limit: number;
     query: string;
-    excludeThreadId?: string | null;
+    excludeSessionId?: string | null;
   }): SessionIndexRow[] {
-    const hasExclude = input.excludeThreadId !== undefined && input.excludeThreadId !== null;
+    const hasExclude = input.excludeSessionId !== undefined && input.excludeSessionId !== null;
     return this.searchFallbackByScope({
       limit: input.limit,
       query: input.query,
-      whereClause: hasExclude ? "thread_id != ?" : "1=1",
-      whereParams: hasExclude ? [input.excludeThreadId as string] : []
+      whereClause: hasExclude ? "session_id != ?" : "1=1",
+      whereParams: hasExclude ? [input.excludeSessionId as string] : []
     });
   }
 
@@ -276,7 +276,7 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
       .prepare(
         `SELECT
           session_memory_id,
-          thread_id,
+          session_id,
           summary,
           goal,
           decisions,
@@ -325,13 +325,13 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
       nextActions: splitLines(row.next_actions),
       openLoops: splitLines(row.open_loops),
       score: row.score,
-      sessionMemoryId: row.session_memory_id,
+      sessionSummaryId: row.session_memory_id,
       summary: row.summary,
-      threadId: row.thread_id
+      sessionId: row.session_id
     };
   }
 
-  private mapRow(row: ThreadSessionMemoryEventRow): ThreadSessionMemoryRecord {
+  private mapRow(row: SessionSummaryEventRow): SessionSummaryRecord {
     return {
       createdAt: row.created_at,
       decisions: parseJsonValue<string[]>(row.decisions_json),
@@ -340,10 +340,10 @@ export class SqliteThreadSessionMemoryRepository implements ThreadSessionMemoryR
       nextActions: parseJsonValue<string[]>(row.next_actions_json),
       openLoops: parseJsonValue<string[]>(row.open_loops_json),
       runId: row.run_id,
-      sessionMemoryId: row.session_memory_id,
+      sessionSummaryId: row.session_memory_id,
       summary: row.summary,
       taskId: row.task_id,
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       trigger: row.trigger
     };
   }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { DeliveryService } from "../src/runtime/delivery/delivery-service.js";
 import { InboxCollector } from "../src/runtime/inbox/inbox-collector.js";
@@ -33,12 +33,12 @@ describe("inbox collector", () => {
         traceService
       });
 
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: process.cwd(),
         ownerUserId: "u1",
         providerName: "test-provider",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "Thread one"
       });
       storage.tasks.create({
@@ -51,7 +51,7 @@ describe("inbox collector", () => {
         requesterUserId: "u1",
         status: "succeeded",
         taskId: "task-1",
-        threadId: "thread-1",
+        sessionId: "session-1",
         tokenBudget: {
           inputLimit: 1000,
           outputLimit: 1000,
@@ -140,7 +140,7 @@ describe("inbox collector", () => {
           blockedReason: "awaiting user decision",
           commitmentId: "commitment-1",
           taskId: "task-1",
-          threadId: "thread-1"
+          sessionId: "session-1"
         },
         stage: "planning",
         summary: "commitment blocked",
@@ -155,7 +155,7 @@ describe("inbox collector", () => {
           reasons: ["soft cost limit reached"],
           scope: "task",
           taskId: "task-1",
-          threadId: "thread-1",
+          sessionId: "session-1",
           usedCostUsd: 0.1,
           usedInput: 100,
           usedOutput: 20
@@ -173,7 +173,7 @@ describe("inbox collector", () => {
           reasons: ["hard cost limit reached"],
           scope: "task",
           taskId: "task-1",
-          threadId: "thread-1",
+          sessionId: "session-1",
           usedCostUsd: 0.2,
           usedInput: 200,
           usedOutput: 40
@@ -252,12 +252,12 @@ describe("inbox collector", () => {
         traceService
       });
 
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: process.cwd(),
         ownerUserId: "u1",
         providerName: "test-provider",
-        threadId: "thread-routine",
+        sessionId: "session-routine",
         title: "Routine thread"
       });
       storage.tasks.create({
@@ -270,7 +270,7 @@ describe("inbox collector", () => {
         requesterUserId: "u1",
         status: "succeeded",
         taskId: "task-success",
-        threadId: "thread-routine",
+        sessionId: "session-routine",
         tokenBudget: {
           inputLimit: 1000,
           outputLimit: 1000,
@@ -290,7 +290,7 @@ describe("inbox collector", () => {
         requesterUserId: "u1",
         status: "failed",
         taskId: "task-fail-standalone",
-        threadId: null,
+        sessionId: null,
         tokenBudget: {
           inputLimit: 1000,
           outputLimit: 1000,
@@ -310,7 +310,7 @@ describe("inbox collector", () => {
         requesterUserId: "u1",
         status: "failed",
         taskId: "task-fail-threaded",
-        threadId: "thread-routine",
+        sessionId: "session-routine",
         tokenBudget: {
           inputLimit: 1000,
           outputLimit: 1000,
@@ -329,7 +329,7 @@ describe("inbox collector", () => {
         ownerUserId: "u1",
         providerName: "test-provider",
         scheduleId: "schedule-success",
-        threadId: "thread-routine"
+        sessionId: "session-routine"
       });
       storage.schedules.create({
         agentProfileId: "executor",
@@ -340,7 +340,7 @@ describe("inbox collector", () => {
         ownerUserId: "u1",
         providerName: "test-provider",
         scheduleId: "schedule-standalone",
-        threadId: null
+        sessionId: null
       });
       storage.schedules.create({
         agentProfileId: "executor",
@@ -351,7 +351,7 @@ describe("inbox collector", () => {
         ownerUserId: "u1",
         providerName: "test-provider",
         scheduleId: "schedule-threaded",
-        threadId: "thread-routine"
+        sessionId: "session-routine"
       });
       storage.scheduleRuns.create({
         attemptNumber: 1,
@@ -360,7 +360,7 @@ describe("inbox collector", () => {
         scheduledAt: "2026-01-01T10:00:00.000Z",
         status: "completed",
         taskId: "task-success",
-        threadId: "thread-routine",
+        sessionId: "session-routine",
         trigger: "manual"
       });
       storage.scheduleRuns.create({
@@ -379,7 +379,7 @@ describe("inbox collector", () => {
         scheduledAt: "2026-01-01T10:00:00.000Z",
         status: "failed",
         taskId: "task-fail-threaded",
-        threadId: "thread-routine",
+        sessionId: "session-routine",
         trigger: "manual"
       });
 
@@ -414,7 +414,7 @@ describe("inbox collector", () => {
           scheduleId: "schedule-success",
           status: "completed",
           taskId: "task-success",
-          threadId: "thread-routine"
+          sessionId: "session-routine"
         },
         stage: "completion",
         summary: "routine success",
@@ -483,7 +483,7 @@ describe("inbox collector", () => {
       const threadedItems = storage.inbox.list({ taskId: "task-fail-threaded", userId: "u1" });
       expect(threadedItems.some((item) => item.category === "task_failed")).toBe(false);
       expect(threadedItems.some((item) => item.category === "task_blocked")).toBe(true);
-      const blockedActions = storage.nextActions.list({ threadId: "thread-routine" });
+      const blockedActions = storage.nextActions.list({ sessionId: "session-routine" });
       expect(blockedActions.some((item) => item.title === "Follow up failed routine: Threaded routine")).toBe(true);
     } finally {
       storage.close();

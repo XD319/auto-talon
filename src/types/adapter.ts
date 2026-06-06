@@ -162,7 +162,7 @@ export interface GatewayScheduleCreateRequest {
   name: string;
   requester: GatewayRequesterIdentity;
   runAt?: string | null;
-  threadId?: string | null;
+  sessionId?: string | null;
   timezone?: string | null;
   deliveryTargets?: ScheduleDeliveryTarget[];
 }
@@ -179,7 +179,7 @@ export interface GatewayScheduleUpdateRequest {
   metadata?: JsonObject;
   name?: string;
   runAt?: string | null;
-  threadId?: string | null;
+  sessionId?: string | null;
   timezone?: string | null;
 }
 

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+﻿import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 
@@ -18,9 +18,9 @@ class SimpleProvider implements Provider {
   }
 }
 
-describe("thread continuation", () => {
-  it("reuses thread id across runs and continue --last path", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "talon-thread-"));
+describe("session continuation", () => {
+  it("reuses session id across runs and continue --last path", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "talon-session-"));
     const handle = createApplication(workspace, {
       config: { databasePath: join(workspace, "runtime.db") },
       provider: new SimpleProvider()
@@ -28,15 +28,15 @@ describe("thread continuation", () => {
     try {
       const first = createDefaultRunOptions("first", workspace, handle.config);
       const firstResult = await handle.service.runTask(first);
-      expect(firstResult.task.threadId).toBeTruthy();
+      expect(firstResult.task.sessionId).toBeTruthy();
 
-      const continued = await handle.service.continueThread(firstResult.task.threadId!, "second", {
+      const continued = await handle.service.continueSession(firstResult.task.sessionId!, "second", {
         cwd: workspace
       });
-      expect(continued.task.threadId).toBe(firstResult.task.threadId);
+      expect(continued.task.sessionId).toBe(firstResult.task.sessionId);
 
       const latest = await handle.service.continueLatest("third", { cwd: workspace, userId: first.userId });
-      expect(latest.task.threadId).toBe(firstResult.task.threadId);
+      expect(latest.task.sessionId).toBe(firstResult.task.sessionId);
     } finally {
       handle.close();
       rmSync(workspace, { force: true, recursive: true });

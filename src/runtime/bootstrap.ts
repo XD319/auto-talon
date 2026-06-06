@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+﻿import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -64,7 +64,7 @@ import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
 
 import { AgentApplicationService } from "./application-service.js";
-import { ContextCompactor, SessionSearchService, ThreadSessionMemoryService } from "./context/index.js";
+import { ContextCompactor, SessionSearchService, SessionSummaryService } from "./context/index.js";
 import { BudgetService } from "./budget/index.js";
 import { ExecutionKernel } from "./execution-kernel.js";
 import { RuntimeOutputService } from "./runtime-output-service.js";
@@ -72,15 +72,15 @@ import { RecallBudgetPolicy, RecallPlanner } from "./retrieval/index.js";
 import { DeliveryService } from "./delivery/index.js";
 import { InboxCollector, InboxService } from "./inbox/index.js";
 import {
-  AssistantThreadProjectionService,
+  AssistantSessionProjectionService,
   CommitmentCollector,
   CommitmentService,
   NextActionService,
-  ThreadCommitmentProjector
+  SessionCommitmentProjector
 } from "./commitments/index.js";
 import { JobRunner } from "./jobs/index.js";
 import { SchedulerService } from "./scheduler/index.js";
-import { ResumePacketBuilder, ThreadService, ThreadStateProjector } from "./threads/index.js";
+import { ResumePacketBuilder, SessionService, SessionStateProjector } from "./sessions/index.js";
 import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import {
@@ -147,7 +147,7 @@ export interface AppConfig {
   };
   budget: {
     task: BudgetLimits;
-    thread: BudgetLimits;
+    session: BudgetLimits;
     pricing: Record<
       string,
       { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number | undefined }
@@ -241,7 +241,7 @@ export interface AppRuntimeHandle {
     auditService: AuditService;
     createRunOptions: (taskInput: string, cwd: string) => RuntimeRunOptions;
     skillRegistry: SkillRegistry;
-    threadService: ThreadService;
+    sessionService: SessionService;
     toolOrchestrator: ToolOrchestrator;
     traceService: TraceService;
     storage: StorageManager;
@@ -430,15 +430,15 @@ export function createApplication(
     maxCandidatesPerScope: config.recall.maxCandidatesPerScope,
     memoryPlane,
     sessionSearchService: new SessionSearchService({
-      repository: storage.threadSessionMemories
+      repository: storage.sessionSummaries
     }),
     skillContextService,
     traceService
   });
   const contextCompactor = new ContextCompactor();
   const compactPolicy = new CompactTriggerPolicy();
-  const threadSessionMemoryService = new ThreadSessionMemoryService({
-    repository: storage.threadSessionMemories,
+  const sessionSummaryService = new SessionSummaryService({
+    repository: storage.sessionSummaries,
     traceService
   });
   const workerDispatcher = new WorkerDispatcher({
@@ -448,7 +448,7 @@ export function createApplication(
   });
   const summarizerWorker = new SummarizerWorker({
     contextCompactor,
-    threadSessionMemoryService
+    sessionSummaryService
   });
   const retrievalWorker = new RetrievalWorker({
     recallPlanner
@@ -479,20 +479,20 @@ export function createApplication(
     traceService
   });
   inboxCollector.start();
-  const threadCommitmentProjector = new ThreadCommitmentProjector({
+  const sessionCommitmentProjector = new SessionCommitmentProjector({
     commitmentService,
     nextActionService,
-    threadSessionMemoryService
+    sessionSummaryService
   });
   const commitmentCollector = new CommitmentCollector({
     commitmentService,
     findTask: (taskId) => storage.tasks.findById(taskId),
     nextActionService,
-    threadSessionMemoryService,
+    sessionSummaryService,
     traceService
   });
   commitmentCollector.start();
-  const assistantThreadProjectionService = new AssistantThreadProjectionService({
+  const assistantSessionProjectionService = new AssistantSessionProjectionService({
     commitmentService,
     nextActionService
   });
@@ -511,7 +511,7 @@ export function createApplication(
     budgetService,
     executionCheckpointRepository: storage.checkpoints,
     contextCompactor,
-    getThreadCommitmentState: (threadId) => threadCommitmentProjector.project(threadId),
+    getSessionCommitmentState: (sessionId) => sessionCommitmentProjector.project(sessionId),
     memoryPlane,
     recallPlanner,
     provider,
@@ -519,13 +519,14 @@ export function createApplication(
     runMetadataRepository: storage.runMetadata,
     routingMode: config.routing.mode,
     runtimeVersion: config.runtimeVersion,
-    threadSessionMemoryService,
+    sessionSummaryService,
     workerDispatcher,
     summarizerWorker,
     retrievalWorker,
     taskRepository: storage.tasks,
-    threadLineageRepository: storage.threadLineage,
-    threadRunRepository: storage.threadRuns,
+    sessionLineageRepository: storage.sessionLineage,
+    sessionTaskRepository: storage.sessionTasks,
+    sessionTranscriptRepository: storage.sessionTranscripts,
     toolExposurePlanner,
     toolOrchestrator,
     traceService,
@@ -533,18 +534,18 @@ export function createApplication(
     workflow: config.workflow,
     workspaceRoot: config.workspaceRoot
   });
-  const threadService = new ThreadService({
-    threadLineageRepository: storage.threadLineage,
-    threadRepository: storage.threads,
-    threadRunRepository: storage.threadRuns
+  const sessionService = new SessionService({
+    sessionLineageRepository: storage.sessionLineage,
+    sessionRepository: storage.sessions,
+    sessionTaskRepository: storage.sessionTasks
   });
-  const threadStateProjector = new ThreadStateProjector({
-    commitmentProjector: threadCommitmentProjector,
-    threadSessionMemoryService
+  const sessionStateProjector = new SessionStateProjector({
+    commitmentProjector: sessionCommitmentProjector,
+    sessionSummaryService
   });
   const resumePacketBuilder = new ResumePacketBuilder({
     config,
-    stateProjector: threadStateProjector
+    stateProjector: sessionStateProjector
   });
   let service: AgentApplicationService | null = null;
   const jobRunner = new JobRunner({
@@ -567,7 +568,7 @@ export function createApplication(
           }
         },
         taskInput: schedule.input,
-        ...(schedule.threadId !== null ? { threadId: schedule.threadId } : {}),
+        ...(schedule.sessionId !== null ? { sessionId: schedule.sessionId } : {}),
         timeoutMs: config.defaultTimeoutMs,
         tokenBudget: {
           ...config.tokenBudget,
@@ -609,34 +610,34 @@ export function createApplication(
     clarifyService,
     findTask: (taskId) => storage.tasks.findById(taskId),
     listTasks: () => storage.tasks.list(),
-    findThread: (threadId) => storage.threads.findById(threadId),
+    findSession: (sessionId) => storage.sessions.findById(sessionId),
     findInboxItem: (inboxId) => storage.inbox.findById(inboxId),
     findSchedule: (scheduleId) => storage.schedules.findById(scheduleId),
-    listThreads: () => storage.threads.list(),
+    listSessions: () => storage.sessions.list(),
     listSchedules: (query) => storage.schedules.list(query),
     listScheduleRuns: (scheduleId, query) => storage.scheduleRuns.listByScheduleId(scheduleId, query),
     listScheduleRunsByTask: (taskId) => storage.scheduleRuns.listByTaskId(taskId),
-    listScheduleRunsByThread: (threadId) => storage.scheduleRuns.listByThreadId(threadId),
+    listScheduleRunsBySession: (sessionId) => storage.scheduleRuns.listBySessionId(sessionId),
     listInboxItems: (query) => storage.inbox.list(query),
-    listThreadRuns: (threadId) => storage.threadRuns.listByThreadId(threadId),
-    listThreadSessionMemories: (threadId) => storage.threadSessionMemories.listByThread(threadId),
-    searchThreadSessionMemories: (input) =>
-      input.threadId !== undefined
-        ? storage.threadSessionMemories.search({
+    listSessionTasks: (sessionId) => storage.sessionTasks.listBySessionId(sessionId),
+    listSessionSummaries: (sessionId) => storage.sessionSummaries.listBySession(sessionId),
+    searchSessionSummaries: (input) =>
+      input.sessionId !== undefined
+        ? storage.sessionSummaries.search({
             limit: input.limit,
             query: input.query,
-            threadId: input.threadId
+            sessionId: input.sessionId
           })
-        : storage.threadSessionMemories.searchGlobal({
-            excludeThreadId: input.excludeThreadId ?? null,
+        : storage.sessionSummaries.searchGlobal({
+            excludeSessionId: input.excludeSessionId ?? null,
             limit: input.limit,
             query: input.query
           }),
-    findThreadSessionMemory: (sessionMemoryId) => storage.threadSessionMemories.findById(sessionMemoryId),
-    listThreadLineage: (threadId) => storage.threadLineage.listByThreadId(threadId),
+    findSessionSummary: (sessionSummaryId) => storage.sessionSummaries.findById(sessionSummaryId),
+    listSessionLineage: (sessionId) => storage.sessionLineage.listBySessionId(sessionId),
     listToolCalls: (taskId) => storage.toolCalls.listByTaskId(taskId),
     listOutputEvents: (taskId) => storage.outputs.listByTaskId(taskId),
-    listThreadOutputEvents: (threadId) => storage.outputs.listByThreadId(threadId),
+    listSessionOutputEvents: (sessionId) => storage.outputs.listBySessionId(sessionId),
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     findExecutionCheckpoint: (taskId) => storage.checkpoints.findByTaskId(taskId),
     saveExecutionCheckpoint: (record) => storage.checkpoints.save(record),
@@ -652,7 +653,7 @@ export function createApplication(
     runtimeVersion: config.runtimeVersion,
     schedulerService,
     resumePacketBuilder,
-    threadService,
+    sessionService,
     shellBackend: config.workflow.shellBackend,
     tokenBudget: {
       inputLimit: config.tokenBudget.inputLimit,
@@ -670,9 +671,9 @@ export function createApplication(
     inboxService,
     commitmentService,
     nextActionService,
-    threadCommitmentProjector,
+    sessionCommitmentProjector,
     testCommands: config.workflow.testCommands,
-    assistantThreadProjectionService,
+    assistantSessionProjectionService,
     workspaceRoot: config.workspaceRoot
   });
   if (options.scheduler?.autoStart === true) {
@@ -700,7 +701,7 @@ export function createApplication(
       mcpClientManager,
       skillRegistry,
       storage,
-      threadService,
+      sessionService,
       toolOrchestrator,
       traceService
     },

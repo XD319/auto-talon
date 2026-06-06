@@ -1,12 +1,12 @@
-import type { TuiRuntimeService } from "../runtime-api.js";
+﻿import type { TuiRuntimeService } from "../runtime-api.js";
 import type {
   ApprovalRecord,
   CommitmentRecord,
   InboxItem,
   NextActionRecord,
   ScheduleRecord,
-  ThreadRunRecord,
-  ThreadRecord
+  SessionTaskRecord,
+  SessionRecord
 } from "../../types/index.js";
 
 export interface TodaySummarySection<TItem> {
@@ -20,12 +20,12 @@ export interface TodaySummaryViewModel {
   inbox: TodaySummarySection<InboxItem>;
   nextActions: TodaySummarySection<NextActionRecord>;
   pendingApprovals: TodaySummarySection<ApprovalRecord>;
-  threads: TodaySummarySection<ThreadRecord>;
+  sessions: TodaySummarySection<SessionRecord>;
   userId: string;
 }
 
 export interface BuildTodaySummaryOptions {
-  activeThreadId?: string | null;
+  activeSessionId?: string | null;
   limit?: number;
 }
 
@@ -40,14 +40,14 @@ export function buildTodaySummary(
   options: BuildTodaySummaryOptions = {}
 ): TodaySummaryViewModel {
   const userId = resolveRuntimeUserId();
-  const activeThreadId = options.activeThreadId ?? null;
+  const activeSessionId = options.activeSessionId ?? null;
   const limit = options.limit ?? DEFAULT_LIMIT;
 
-  const threadsAll = service
-    .listThreads("active")
+  const sessionsAll = service
+    .listSessions("active")
     .filter((item) => item.ownerUserId === userId)
     .sort((left, right) => byIsoDesc(left.updatedAt, right.updatedAt));
-  const threadIds = new Set(threadsAll.map((item) => item.threadId));
+  const sessionIds = new Set(sessionsAll.map((item) => item.sessionId));
 
   const inboxAll = service
     .listInbox({ status: "pending", userId })
@@ -62,8 +62,8 @@ export function buildTodaySummary(
 
   const nextActionsAll = service
     .listNextActions({ statuses: ["active", "pending"] })
-    .filter((item) => threadIds.has(item.threadId))
-    .sort((left, right) => compareNextAction(left, right, activeThreadId));
+    .filter((item) => sessionIds.has(item.sessionId))
+    .sort((left, right) => compareNextAction(left, right, activeSessionId));
 
   const pendingApprovalsAll = service
     .listPendingApprovals()
@@ -74,12 +74,12 @@ export function buildTodaySummary(
     .sort(compareDueRoutine);
 
   return {
-    commitments: { items: prioritizeByThread(commitmentsAll, activeThreadId).slice(0, limit), total: commitmentsAll.length },
+    commitments: { items: prioritizeBySession(commitmentsAll, activeSessionId).slice(0, limit), total: commitmentsAll.length },
     dueRoutines: { items: dueRoutinesAll.slice(0, limit), total: dueRoutinesAll.length },
     inbox: { items: inboxAll.slice(0, limit), total: inboxAll.length },
     nextActions: { items: nextActionsAll.slice(0, limit), total: nextActionsAll.length },
     pendingApprovals: { items: pendingApprovalsAll.slice(0, limit), total: pendingApprovalsAll.length },
-    threads: { items: prioritizeByThread(threadsAll, activeThreadId).slice(0, limit), total: threadsAll.length },
+    sessions: { items: prioritizeBySession(sessionsAll, activeSessionId).slice(0, limit), total: sessionsAll.length },
     userId
   };
 }
@@ -100,10 +100,10 @@ export function formatTodaySummary(summary: TodaySummaryViewModel): string {
       (item) => `${item.inboxId.slice(0, 8)} | ${item.title} [${item.status}]`
     ),
     formatSection(
-      "Threads",
-      summary.threads.total,
-      summary.threads.items,
-      (item) => `${item.threadId.slice(0, 8)} | ${item.title} [${item.status}]`
+      "Sessions",
+      summary.sessions.total,
+      summary.sessions.items,
+      (item) => `${item.sessionId.slice(0, 8)} | ${item.title} [${item.status}]`
     ),
     formatSection(
       "Commitments",
@@ -126,23 +126,23 @@ export function formatTodaySummary(summary: TodaySummaryViewModel): string {
   ].join("\n");
 }
 
-export function formatThreadDetailForTui(
+export function formatSessionDetailForTui(
   service: TuiRuntimeService,
-  threadId: string
+  sessionId: string
 ): string {
-  const detail = service.showThread(threadId);
-  if (detail.thread === null) {
-    return `Thread ${threadId} not found.`;
+  const detail = service.showSession(sessionId);
+  if (detail.session === null) {
+    return `Session ${sessionId} not found.`;
   }
-  const recentRuns = [...detail.runs].sort((left, right) => byIsoDesc(left.createdAt, right.createdAt)).slice(0, 3);
+  const recentRuns = [...detail.tasks].sort((left, right) => byIsoDesc(left.createdAt, right.createdAt)).slice(0, 3);
   const recentScheduleRuns = [...detail.scheduleRuns]
     .sort((left, right) => byIsoDesc(left.scheduledAt, right.scheduledAt))
     .slice(0, 2);
-  const recentInboxItems = detail.inboxItems.filter(isUsefulThreadInboxItem).slice(0, 2);
+  const recentInboxItems = detail.inboxItems.filter(isUsefulSessionInboxItem).slice(0, 2);
   const lines = [
-    `Thread ${detail.thread.threadId} | ${detail.thread.title}`,
-    `status=${detail.thread.status} updatedAt=${detail.thread.updatedAt}`,
-    `counts: runs=${detail.runs.length} commitments=${detail.commitments.length} next_actions=${detail.nextActions.length} inbox=${detail.inboxItems.length} schedules=${detail.scheduleRuns.length}`
+    `Session ${detail.session.sessionId} | ${detail.session.title}`,
+    `status=${detail.session.status} updatedAt=${detail.session.updatedAt}`,
+    `counts: tasks=${detail.tasks.length} commitments=${detail.commitments.length} next_actions=${detail.nextActions.length} inbox=${detail.inboxItems.length} schedules=${detail.scheduleRuns.length}`
   ];
   if (detail.state.currentObjective !== null) {
     lines.push(`objective: ${detail.state.currentObjective.title} [${detail.state.currentObjective.status}]`);
@@ -155,8 +155,8 @@ export function formatThreadDetailForTui(
   }
   if (
     detail.state.pendingDecision !== null &&
-    !matchesThreadStateText(detail.state.pendingDecision, [
-      detail.thread.title,
+    !matchesSessionStateText(detail.state.pendingDecision, [
+      detail.session.title,
       detail.state.currentObjective?.title,
       detail.state.nextAction?.title
     ])
@@ -167,7 +167,7 @@ export function formatThreadDetailForTui(
     lines.push(formatPreviewSection("recent inbox", recentInboxItems, (item) => `${item.title} [${item.status}]`));
   }
   if (recentRuns.length > 0) {
-    lines.push(formatPreviewSection("recent runs", recentRuns, (run) => `#${run.runNumber} ${run.status} | ${summarizeText(run.input)}`));
+    lines.push(formatPreviewSection("recent tasks", recentRuns, (run) => `#${run.runNumber} ${run.status} | ${summarizeText(run.input)}`));
   }
   if (recentScheduleRuns.length > 0) {
     lines.push(
@@ -183,22 +183,22 @@ export function formatThreadDetailForTui(
   ].join("\n");
 }
 
-export function formatThreadRecapForTui(
-  service: Pick<TuiRuntimeService, "showThread">,
-  threadId: string
+export function formatSessionRecapForTui(
+  service: Pick<TuiRuntimeService, "showSession">,
+  sessionId: string
 ): string {
-  const detail = service.showThread(threadId);
-  if (detail.thread === null) {
-    return `Thread ${threadId} not found.`;
+  const detail = service.showSession(sessionId);
+  if (detail.session === null) {
+    return `Session ${sessionId} not found.`;
   }
 
-  const recentRuns = [...detail.runs]
+  const recentRuns = [...detail.tasks]
     .filter(isConversationRecapRun)
     .sort((left, right) => byIsoDesc(left.createdAt, right.createdAt))
     .slice(0, 3)
     .reverse();
-  const focusLines = formatThreadFocusLines(detail);
-  const lines = [`Thread ${detail.thread.threadId.slice(0, 8)} | ${detail.thread.title}`];
+  const focusLines = formatSessionFocusLines(detail);
+  const lines = [`Session ${detail.session.sessionId} | ${detail.session.title}`];
 
   if (recentRuns.length === 0) {
     lines.push("No previous conversation yet.");
@@ -244,8 +244,8 @@ function summarizeText(value: string, maxLength = 72): string {
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
-function formatRunRecapLine(run: ThreadRunRecord): string {
-  const output = threadRunFinalOutput(run);
+function formatRunRecapLine(run: SessionTaskRecord): string {
+  const output = sessionTaskFinalOutput(run);
   const userLine = `You: ${summarizeText(run.input, 120)}`;
   if (output !== null) {
     return `${userLine}\n- AutoTalon: ${summarizeText(output, 160)}`;
@@ -253,12 +253,12 @@ function formatRunRecapLine(run: ThreadRunRecord): string {
   return `${userLine}\n- AutoTalon: ${formatRunStatus(run.status)}`;
 }
 
-function threadRunFinalOutput(run: ThreadRunRecord): string | null {
+function sessionTaskFinalOutput(run: SessionTaskRecord): string | null {
   const finalOutput = run.summary.finalOutput;
   return typeof finalOutput === "string" && finalOutput.trim().length > 0 ? finalOutput : null;
 }
 
-function formatRunStatus(status: ThreadRunRecord["status"]): string {
+function formatRunStatus(status: SessionTaskRecord["status"]): string {
   switch (status) {
     case "succeeded":
       return "Completed.";
@@ -279,10 +279,10 @@ function formatRunStatus(status: ThreadRunRecord["status"]): string {
   }
 }
 
-function formatThreadFocusLines(
-  detail: ReturnType<TuiRuntimeService["showThread"]>
+function formatSessionFocusLines(
+  detail: ReturnType<TuiRuntimeService["showSession"]>
 ): string[] {
-  if (detail.thread === null) {
+  if (detail.session === null) {
     return [];
   }
   const candidates: string[] = [];
@@ -291,13 +291,13 @@ function formatThreadFocusLines(
   }
   if (
     detail.state.currentObjective !== null &&
-    shouldShowFocusText(detail.state.currentObjective.title, [detail.thread.title], detail.runs)
+    shouldShowFocusText(detail.state.currentObjective.title, [detail.session.title], detail.tasks)
   ) {
     candidates.push(`Objective: ${summarizeText(detail.state.currentObjective.title, 120)}`);
   }
   if (
     detail.state.nextAction !== null &&
-    shouldShowFocusText(detail.state.nextAction.title, [detail.thread.title, detail.state.currentObjective?.title], detail.runs)
+    shouldShowFocusText(detail.state.nextAction.title, [detail.session.title, detail.state.currentObjective?.title], detail.tasks)
   ) {
     candidates.push(`Next: ${summarizeText(detail.state.nextAction.title, 120)}`);
   }
@@ -305,8 +305,8 @@ function formatThreadFocusLines(
     detail.state.pendingDecision !== null &&
     shouldShowFocusText(
       detail.state.pendingDecision,
-      [detail.thread.title, detail.state.currentObjective?.title, detail.state.nextAction?.title],
-      detail.runs
+      [detail.session.title, detail.state.currentObjective?.title, detail.state.nextAction?.title],
+      detail.tasks
     )
   ) {
     candidates.push(`Decision needed: ${summarizeText(detail.state.pendingDecision, 120)}`);
@@ -314,8 +314,8 @@ function formatThreadFocusLines(
   return candidates;
 }
 
-function isConversationRecapRun(run: ThreadRunRecord): boolean {
-  if (threadRunFinalOutput(run) !== null) {
+function isConversationRecapRun(run: SessionTaskRecord): boolean {
+  if (sessionTaskFinalOutput(run) !== null) {
     return true;
   }
   return run.status === "failed" || run.status === "cancelled" || run.status === "waiting_approval" || run.status === "waiting_clarification";
@@ -324,10 +324,10 @@ function isConversationRecapRun(run: ThreadRunRecord): boolean {
 function shouldShowFocusText(
   value: string,
   duplicateCandidates: Array<string | null | undefined>,
-  runs: ThreadRunRecord[]
+  runs: SessionTaskRecord[]
 ): boolean {
   const normalized = value.replace(/\s+/gu, " ").trim();
-  if (normalized.length === 0 || matchesThreadStateText(normalized, duplicateCandidates)) {
+  if (normalized.length === 0 || matchesSessionStateText(normalized, duplicateCandidates)) {
     return false;
   }
   if (looksLikeAssistantMarkdownFragment(normalized) || appearsInRunOutput(normalized, runs)) {
@@ -340,18 +340,18 @@ function looksLikeAssistantMarkdownFragment(value: string): boolean {
   return value.includes("**") || value.includes("##") || value.startsWith("- ") || value.startsWith("* ");
 }
 
-function appearsInRunOutput(value: string, runs: ThreadRunRecord[]): boolean {
+function appearsInRunOutput(value: string, runs: SessionTaskRecord[]): boolean {
   const needle = normalizeForContentMatch(value);
   if (needle.length < 12) {
     return false;
   }
   return runs.some((run) => {
-    const output = threadRunFinalOutput(run);
+    const output = sessionTaskFinalOutput(run);
     return output !== null && normalizeForContentMatch(output).includes(needle);
   });
 }
 
-function isUsefulThreadInboxItem(item: InboxItem): boolean {
+function isUsefulSessionInboxItem(item: InboxItem): boolean {
   if (item.category !== "task_completed") {
     return true;
   }
@@ -359,7 +359,7 @@ function isUsefulThreadInboxItem(item: InboxItem): boolean {
   return title !== "task completed" && !title.startsWith("routine completed:");
 }
 
-function matchesThreadStateText(value: string, candidates: Array<string | null | undefined>): boolean {
+function matchesSessionStateText(value: string, candidates: Array<string | null | undefined>): boolean {
   const normalized = normalizeForComparison(value);
   if (normalized.length === 0) {
     return true;
@@ -382,17 +382,17 @@ function normalizeForContentMatch(value: string): string {
 function compareNextAction(
   left: NextActionRecord,
   right: NextActionRecord,
-  activeThreadId: string | null
+  activeSessionId: string | null
 ): number {
-  if (activeThreadId !== null) {
-    const leftActive = left.threadId === activeThreadId;
-    const rightActive = right.threadId === activeThreadId;
+  if (activeSessionId !== null) {
+    const leftActive = left.sessionId === activeSessionId;
+    const rightActive = right.sessionId === activeSessionId;
     if (leftActive !== rightActive) {
       return leftActive ? -1 : 1;
     }
   }
-  if (left.threadId !== right.threadId) {
-    return left.threadId.localeCompare(right.threadId);
+  if (left.sessionId !== right.sessionId) {
+    return left.sessionId.localeCompare(right.sessionId);
   }
   if (left.rank !== right.rank) {
     return left.rank - right.rank;
@@ -400,16 +400,16 @@ function compareNextAction(
   return byIsoDesc(left.updatedAt, right.updatedAt);
 }
 
-function prioritizeByThread<TItem extends { threadId: string }>(
+function prioritizeBySession<TItem extends { sessionId: string }>(
   items: TItem[],
-  activeThreadId: string | null
+  activeSessionId: string | null
 ): TItem[] {
-  if (activeThreadId === null) {
+  if (activeSessionId === null) {
     return items;
   }
   return [...items].sort((left, right) => {
-    const leftActive = left.threadId === activeThreadId;
-    const rightActive = right.threadId === activeThreadId;
+    const leftActive = left.sessionId === activeSessionId;
+    const rightActive = right.sessionId === activeSessionId;
     if (leftActive !== rightActive) {
       return leftActive ? -1 : 1;
     }

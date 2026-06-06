@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+﻿import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +16,7 @@ class FailingScheduledProvider implements Provider {
 }
 
 describe("schedule failure e2e", () => {
-  it("blocks the bound thread when a scheduled routine fails", async () => {
+  it("blocks the bound session when a scheduled routine fails", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "talon-schedule-failure-e2e-"));
     const handle = createApplication(workspace, {
       config: { databasePath: join(workspace, "runtime.db") },
@@ -24,7 +24,7 @@ describe("schedule failure e2e", () => {
       scheduler: { autoStart: true }
     });
     try {
-      const thread = handle.service.createThread({
+      const session = handle.service.createSession({
         agentProfileId: "executor",
         cwd: workspace,
         ownerUserId: "local-user",
@@ -39,7 +39,7 @@ describe("schedule failure e2e", () => {
         name: "Threaded routine",
         ownerUserId: "local-user",
         providerName: handle.config.provider.name,
-        threadId: thread.threadId
+        sessionId: session.sessionId
       });
       handle.service.runScheduleNow(schedule.scheduleId);
 
@@ -47,7 +47,7 @@ describe("schedule failure e2e", () => {
       const runs = handle.service.listScheduleRuns(schedule.scheduleId, { tail: 20 });
       expect(runs.some((run) => run.status === "failed")).toBe(true);
 
-      const threadView = handle.service.showThread(thread.threadId);
+      const threadView = handle.service.showSession(session.sessionId);
       expect(threadView.state.blockedReason).toContain("routine exploded");
       expect(
         threadView.nextActions.some((item) => item.title === "Follow up failed routine: Threaded routine")

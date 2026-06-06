@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+﻿import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FeishuAdapter } from "../src/gateway/index.js";
 import type {
@@ -1622,7 +1622,7 @@ function createRuntimeApi(overrides: Partial<GatewayRuntimeApi> = {}): GatewayRu
       startedAt: null,
       status: "queued",
       taskId: null,
-      threadId: null,
+      sessionId: null,
       trigger: "manual"
     })),
     scheduleStatus: vi.fn(() => ({
@@ -1683,7 +1683,7 @@ function createScheduleRecord(overrides: Partial<ScheduleRecord> = {}): Schedule
     runAt: null,
     scheduleId: "schedule-12345678",
     status: "active",
-    threadId: null,
+    sessionId: null,
     timezone: null,
     updatedAt: new Date().toISOString(),
     ...overrides
@@ -1709,7 +1709,7 @@ function createInboxItem(overrides: Partial<InboxItem> = {}): InboxItem {
     status: "pending",
     summary: "summary",
     taskId: null,
-    threadId: null,
+    sessionId: null,
     title: "title",
     updatedAt: new Date().toISOString(),
     userId: "feishu-im:open",

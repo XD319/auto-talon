@@ -56,7 +56,7 @@ export class BudgetRecorder {
         outputTokens: input.providerResponse.usage.outputTokens,
         providerName: input.providerName,
         taskId: task.taskId,
-        threadId: task.threadId ?? null
+        sessionId: task.sessionId ?? null
       },
       stage: "control",
       summary: "Cost usage recorded",
@@ -66,7 +66,7 @@ export class BudgetRecorder {
       costUsd,
       mode: this.dependencies.mode,
       taskId: task.taskId,
-      threadId: task.threadId ?? null,
+      sessionId: task.sessionId ?? null,
       usage: input.providerResponse.usage
     });
     if (budgetDecision?.action === "hard_abort") {

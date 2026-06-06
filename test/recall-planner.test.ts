@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { RecallBudgetPolicy } from "../src/runtime/retrieval/recall-budget-policy.js";
 import { RecallPlanner } from "../src/runtime/retrieval/recall-planner.js";
@@ -17,7 +17,7 @@ function createTask(): TaskRecord {
     input: "fix flaky sqlite tests",
     maxIterations: 10,
     metadata: {
-      threadResume: {
+      sessionResume: {
         goal: "stabilize migration workflow"
       }
     },
@@ -26,7 +26,7 @@ function createTask(): TaskRecord {
     startedAt: "2026-04-23T10:00:00.000Z",
     status: "running",
     taskId: "task-1",
-    threadId: "thread-1",
+    sessionId: "session-1",
     tokenBudget: {
       inputLimit: 8_000,
       outputLimit: 2_000,
@@ -120,7 +120,7 @@ describe("RecallPlanner", () => {
 
     const result = planner.plan({
       task: createTask(),
-      threadCommitmentState: null,
+      sessionCommitmentState: null,
       tokenBudget: createTask().tokenBudget,
       toolPlan: ["shell", "test_run"]
     });
@@ -175,7 +175,7 @@ describe("RecallPlanner", () => {
     neutralTask.input = "fix flaky sqlite tests quickly";
     planner.plan({
       task: neutralTask,
-      threadCommitmentState: null,
+      sessionCommitmentState: null,
       tokenBudget: neutralTask.tokenBudget,
       toolPlan: ["shell"]
     });
@@ -184,7 +184,7 @@ describe("RecallPlanner", () => {
     historicalTask.input = "remember what we did last time for sqlite flakes";
     planner.plan({
       task: historicalTask,
-      threadCommitmentState: null,
+      sessionCommitmentState: null,
       tokenBudget: historicalTask.tokenBudget,
       toolPlan: ["shell"]
     });
@@ -192,7 +192,7 @@ describe("RecallPlanner", () => {
     expect(globalSearchCalls).toBe(1);
   });
 
-  it("reserves same-thread session memory before generic memories", () => {
+  it("reserves same-session session memory before generic memories", () => {
     const planner = new RecallPlanner({
       budgetPolicy: new RecallBudgetPolicy({ budgetRatio: 0.03 }),
       enabled: true,
@@ -250,11 +250,11 @@ describe("RecallPlanner", () => {
         searchAsContext: () => [
           {
             confidence: 0.62,
-            explanation: "thread session hit",
-            fragmentId: "thread-local-fragment",
-            memoryId: "session:thread-local",
+            explanation: "session session hit",
+            fragmentId: "session-local-fragment",
+            memoryId: "session:session-local",
             privacyLevel: "internal",
-            retentionPolicy: { kind: "working", reason: "thread recall", ttlDays: null },
+            retentionPolicy: { kind: "working", reason: "session recall", ttlDays: null },
             scope: "working",
             sourceType: "system",
             status: "verified",
@@ -274,12 +274,12 @@ describe("RecallPlanner", () => {
 
     const result = planner.plan({
       task: createTask(),
-      threadCommitmentState: null,
+      sessionCommitmentState: null,
       tokenBudget: createTask().tokenBudget,
       toolPlan: ["shell"]
     });
 
-    expect(result.fragments.some((fragment) => fragment.memoryId === "session:thread-local")).toBe(true);
-    expect(result.explain.items.some((item) => item.reason.includes("reserved_thread_local"))).toBe(true);
+    expect(result.fragments.some((fragment) => fragment.memoryId === "session:session-local")).toBe(true);
+    expect(result.explain.items.some((item) => item.reason.includes("reserved_session_local"))).toBe(true);
   });
 });

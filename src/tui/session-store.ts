@@ -10,7 +10,7 @@ export interface PersistedChatSession {
   messages: ChatMessage[];
   sessionApprovalFingerprints?: string[];
   title?: string;
-  threadId?: string;
+  sessionId?: string;
   updatedAt: string;
 }
 
@@ -18,7 +18,7 @@ export interface ChatSessionSummary {
   id: string;
   label: string;
   preview: string | null;
-  threadId: string | null;
+  sessionId: string | null;
   updatedAt: string;
 }
 
@@ -63,7 +63,7 @@ export async function loadSession(workspaceRoot: string, sessionId: string): Pro
     ) {
       return null;
     }
-    if (parsed.threadId !== undefined && typeof parsed.threadId !== "string") {
+    if (parsed.sessionId !== undefined && typeof parsed.sessionId !== "string") {
       return null;
     }
     if (
@@ -109,7 +109,7 @@ export function summarizeSession(session: PersistedChatSession): ChatSessionSumm
     id: session.id,
     label: firstUsefulText([displaySessionTitle(session.title), prompt]) ?? UNTITLED_SESSION_LABEL,
     preview: prompt,
-    threadId: session.threadId ?? null,
+    sessionId: session.sessionId ?? null,
     updatedAt: session.updatedAt
   };
 }

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import type { ExperiencePlane } from "../../experience/experience-plane.js";
 import { createProfileScopeKey } from "../../memory/memory-plane.js";
@@ -9,8 +9,8 @@ import type {
   MemoryRecallResult,
   RecallExplainPayload,
   TaskRecord,
-  ThreadSessionMemoryRecord,
-  ThreadCommitmentState,
+  SessionSummaryRecord,
+  SessionCommitmentState,
   TokenBudget
 } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
@@ -30,11 +30,11 @@ export interface RecallPlannerDependencies {
     recordRecall: (taskId: string, recall: MemoryRecallResult) => void;
   };
   sessionSearchService?: {
-    searchAsContext: (input: { limit: number; query: string; threadId: string }) => ContextFragment[];
+    searchAsContext: (input: { limit: number; query: string; sessionId: string }) => ContextFragment[];
     searchGlobalAsContext: (input: {
       limit: number;
       query: string;
-      excludeThreadId?: string | null;
+      excludeSessionId?: string | null;
     }) => ContextFragment[];
   };
   skillContextService: SkillContextService;
@@ -47,7 +47,7 @@ export interface RecallPlannerDependencies {
 export interface RecallPlanningInput {
   task: TaskRecord;
   tokenBudget: TokenBudget;
-  threadCommitmentState?: ThreadCommitmentState | null;
+  sessionCommitmentState?: SessionCommitmentState | null;
   toolPlan?: string[];
 }
 
@@ -65,7 +65,7 @@ export class RecallPlanner {
     if (!this.dependencies.enabled) {
       return this.planLegacy(input);
     }
-    const enrichedQuery = buildEnrichedQuery(input.task, input.threadCommitmentState, input.toolPlan);
+    const enrichedQuery = buildEnrichedQuery(input.task, input.sessionCommitmentState, input.toolPlan);
     const budget = this.dependencies.budgetPolicy.computeBudget(input.tokenBudget);
     const memoryRecall = this.dependencies.memoryPlane.recall({
       limit: this.dependencies.maxCandidatesPerScope,
@@ -97,29 +97,29 @@ export class RecallPlanner {
       .slice(0, this.dependencies.maxCandidatesPerScope)
       .map((candidate) => toSkillCandidate(candidate.metadata, candidate.score));
 
-    const threadId = input.task.threadId;
+    const sessionId = input.task.sessionId;
     const sessionFragments =
-      threadId === null || threadId === undefined
+      sessionId === null || sessionId === undefined
         ? []
         : this.dependencies.sessionSearchService
             ?.searchAsContext({
               limit: this.dependencies.maxCandidatesPerScope,
               query: enrichedQuery,
-              threadId
+              sessionId
             })
             ?? [];
     const globalSessionFragments =
       this.dependencies.sessionSearchService === undefined || !hasHistoricalRecallSignal(enrichedQuery)
         ? []
         : this.dependencies.sessionSearchService.searchGlobalAsContext({
-            excludeThreadId: threadId ?? null,
+            excludeSessionId: sessionId ?? null,
             limit: this.dependencies.maxCandidatesPerScope,
             query: enrichedQuery
           });
-    const threadLocalSessionCandidates = sessionFragments.map((fragment) =>
+    const sessionLocalCandidates = sessionFragments.map((fragment) =>
       toSessionCandidate(fragment, {
         scoreBoost: 0.35,
-        source: "thread_local"
+        source: "session_local"
       })
     );
     const globalSessionCandidates = globalSessionFragments.map((fragment) =>
@@ -132,28 +132,28 @@ export class RecallPlanner {
       ...memoryCandidates,
       ...experienceCandidates,
       ...skillCandidates,
-      ...threadLocalSessionCandidates,
+      ...sessionLocalCandidates,
       ...globalSessionCandidates
     ];
-    const reservedThreadLocal = reserveThreadLocalCandidates(
-      threadLocalSessionCandidates,
+    const reservedSessionLocal = reserveSessionLocalCandidates(
+      sessionLocalCandidates,
       budget.totalTokenBudget,
       2
     );
-    const reservedIds = new Set(reservedThreadLocal.selected.map((item) => item.id));
+    const reservedIds = new Set(reservedSessionLocal.selected.map((item) => item.id));
     const remainingCandidates = allCandidates.filter((candidate) => !reservedIds.has(candidate.id));
     const remainingSelection = this.selector.select(remainingCandidates, {
       scopeWeights: budget.scopeWeights,
-      tokenBudget: Math.max(0, budget.totalTokenBudget - reservedThreadLocal.tokenUsed)
+      tokenBudget: Math.max(0, budget.totalTokenBudget - reservedSessionLocal.tokenUsed)
     });
     const selection = {
-      selected: [...reservedThreadLocal.selected, ...remainingSelection.selected],
+      selected: [...reservedSessionLocal.selected, ...remainingSelection.selected],
       selectedFragments: [
-        ...reservedThreadLocal.selectedFragments,
+        ...reservedSessionLocal.selectedFragments,
         ...remainingSelection.selectedFragments
       ],
-      skipped: [...reservedThreadLocal.skipped, ...remainingSelection.skipped],
-      tokenUsed: reservedThreadLocal.tokenUsed + remainingSelection.tokenUsed
+      skipped: [...reservedSessionLocal.skipped, ...remainingSelection.skipped],
+      tokenUsed: reservedSessionLocal.tokenUsed + remainingSelection.tokenUsed
     };
 
     const explain: RecallExplainPayload = {
@@ -161,7 +161,7 @@ export class RecallPlanner {
         memoryCandidates.length +
         experienceCandidates.length +
         skillCandidates.length +
-        threadLocalSessionCandidates.length +
+        sessionLocalCandidates.length +
         globalSessionCandidates.length,
       enrichedQuery,
       items: [...selection.selected, ...selection.skipped].map((item) => ({
@@ -203,20 +203,20 @@ export class RecallPlanner {
     });
     this.dependencies.memoryPlane.recordRecall(input.task.taskId, memoryRecall);
     const skillFragments = this.dependencies.skillContextService.buildContext(input.task);
-    const threadId = input.task.threadId;
+    const sessionId = input.task.sessionId;
     const localSessionFragments =
-      threadId === null || threadId === undefined
+      sessionId === null || sessionId === undefined
         ? []
         : this.dependencies.sessionSearchService?.searchAsContext({
             limit: 3,
             query: input.task.input,
-            threadId
+            sessionId
           }) ?? [];
     const globalSessionFragments =
       this.dependencies.sessionSearchService === undefined || !hasHistoricalRecallSignal(input.task.input)
         ? []
         : this.dependencies.sessionSearchService.searchGlobalAsContext({
-            excludeThreadId: threadId ?? null,
+            excludeSessionId: sessionId ?? null,
             limit: 3,
             query: input.task.input
           });
@@ -357,10 +357,10 @@ function toSessionCandidate(
   fragment: ContextFragment,
   options: {
     scoreBoost?: number;
-    source?: "thread_local" | "global";
+    source?: "session_local" | "global";
   } = {}
 ): ScoredRecallCandidate {
-  const source = options.source ?? "thread_local";
+  const source = options.source ?? "session_local";
   const scoreBoost = options.scoreBoost ?? 0;
   const score = Number((fragment.confidence + scoreBoost).toFixed(4));
   return {
@@ -373,7 +373,7 @@ function toSessionCandidate(
   };
 }
 
-function reserveThreadLocalCandidates(
+function reserveSessionLocalCandidates(
   candidates: ScoredRecallCandidate[],
   tokenBudget: number,
   minSlots: number
@@ -438,7 +438,7 @@ function reserveThreadLocalCandidates(
     tokenUsed += cost;
     selected.push({
       id: candidate.id,
-      reason: `${candidate.reason}; reserved_thread_local`,
+      reason: `${candidate.reason}; reserved_session_local`,
       scope: candidate.scope,
       score: candidate.score,
       selected: true,
@@ -451,16 +451,16 @@ function reserveThreadLocalCandidates(
 
 function buildEnrichedQuery(
   task: TaskRecord,
-  threadCommitmentState: ThreadCommitmentState | null | undefined,
+  sessionCommitmentState: SessionCommitmentState | null | undefined,
   toolPlan: string[] | undefined
 ): string {
-  const sessionMemory = readThreadSessionMemory(task.metadata);
-  const sessionGoal = sessionMemory?.goal ?? readLegacyThreadResumeGoal(task.metadata);
-  const sessionDecisions = sessionMemory?.decisions.join(" ") ?? "";
-  const sessionNextActions = sessionMemory?.nextActions.join(" ") ?? "";
-  const currentObjective = threadCommitmentState?.currentObjective?.title ?? "";
-  const nextAction = threadCommitmentState?.nextAction?.title ?? "";
-  const activeActions = (threadCommitmentState?.activeNextActions ?? []).map((action) => action.title).join(" ");
+  const sessionSummary = readSessionSummary(task.metadata);
+  const sessionGoal = sessionSummary?.goal ?? readLegacySessionResumeGoal(task.metadata);
+  const sessionDecisions = sessionSummary?.decisions.join(" ") ?? "";
+  const sessionNextActions = sessionSummary?.nextActions.join(" ") ?? "";
+  const currentObjective = sessionCommitmentState?.currentObjective?.title ?? "";
+  const nextAction = sessionCommitmentState?.nextAction?.title ?? "";
+  const activeActions = (sessionCommitmentState?.activeNextActions ?? []).map((action) => action.title).join(" ");
   return [
     task.input,
     sessionGoal,
@@ -475,31 +475,31 @@ function buildEnrichedQuery(
     .join(" ");
 }
 
-function readThreadSessionMemory(metadata: TaskRecord["metadata"]): ThreadSessionMemoryRecord | null {
-  const threadResume = metadata.threadResume;
-  if (typeof threadResume !== "object" || threadResume === null) {
+function readSessionSummary(metadata: TaskRecord["metadata"]): SessionSummaryRecord | null {
+  const sessionResume = metadata.sessionResume;
+  if (typeof sessionResume !== "object" || sessionResume === null) {
     return null;
   }
-  const sessionMemory = (threadResume as Record<string, unknown>).sessionMemory;
-  if (typeof sessionMemory !== "object" || sessionMemory === null) {
+  const sessionSummary = (sessionResume as Record<string, unknown>).sessionSummary;
+  if (typeof sessionSummary !== "object" || sessionSummary === null) {
     return null;
   }
-  const candidate = sessionMemory as Partial<ThreadSessionMemoryRecord>;
+  const candidate = sessionSummary as Partial<SessionSummaryRecord>;
   return typeof candidate.goal === "string" &&
     typeof candidate.summary === "string" &&
     Array.isArray(candidate.decisions) &&
     Array.isArray(candidate.openLoops) &&
     Array.isArray(candidate.nextActions)
-    ? (candidate as ThreadSessionMemoryRecord)
+    ? (candidate as SessionSummaryRecord)
     : null;
 }
 
-function readLegacyThreadResumeGoal(metadata: TaskRecord["metadata"]): string {
-  const threadResume = metadata.threadResume;
-  if (typeof threadResume !== "object" || threadResume === null) {
+function readLegacySessionResumeGoal(metadata: TaskRecord["metadata"]): string {
+  const sessionResume = metadata.sessionResume;
+  if (typeof sessionResume !== "object" || sessionResume === null) {
     return "";
   }
-  const goal = (threadResume as Record<string, unknown>).goal;
+  const goal = (sessionResume as Record<string, unknown>).goal;
   return typeof goal === "string" ? goal : "";
 }
 
@@ -513,3 +513,4 @@ const HISTORICAL_RECALL_SIGNAL_PATTERN =
 function hasHistoricalRecallSignal(query: string): boolean {
   return HISTORICAL_RECALL_SIGNAL_PATTERN.test(query.toLowerCase());
 }
+

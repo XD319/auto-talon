@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+﻿import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 import { Command, InvalidArgumentError } from "commander";
@@ -86,11 +86,11 @@ import {
   formatTask,
   formatTaskList,
   formatTaskTimeline,
-  formatThreadDetail,
-  formatThreadList,
-  formatThreadSnapshot,
-  formatThreadSnapshotList,
-  formatThreadSessionSearchHits,
+  formatSessionDetail,
+  formatSessionList,
+  formatSessionSummary,
+  formatSessionSummaryList,
+  formatSessionSummarySearchHits,
   formatTrace,
   formatTraceContextDebug,
   summarizeAudit,
@@ -125,7 +125,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--profile <profile>", "Agent profile", "executor")
-    .option("--thread <threadId>", "Reuse an existing thread id")
+    .option("--session <sessionId>", "Reuse an existing session id")
     .option("--max-iterations <number>", "Maximum loop iterations", parsePositiveIntegerOption("--max-iterations"))
     .option("--timeout-ms <number>", "Task timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
     .option("--json-events", "Write runtime output events as NDJSON on stderr")
@@ -136,8 +136,8 @@ export async function main(argv = process.argv): Promise<void> {
       try {
         const runOptions = createDefaultRunOptions(task, commandOptions.cwd, handle.config);
         runOptions.agentProfileId = commandOptions.profile as typeof runOptions.agentProfileId;
-        if (commandOptions.thread !== undefined) {
-          runOptions.threadId = commandOptions.thread;
+        if (commandOptions.session !== undefined) {
+          runOptions.sessionId = commandOptions.session;
         }
         if (commandOptions.maxIterations !== undefined) {
           runOptions.maxIterations = commandOptions.maxIterations;
@@ -165,30 +165,30 @@ export async function main(argv = process.argv): Promise<void> {
 
   program
     .command("continue")
-    .argument("[task]", "Task prompt to continue in a thread")
-    .option("--last", "Continue the latest thread for current user")
-    .option("--thread <threadId>", "Continue a specific thread id")
+    .argument("[task]", "Task prompt to continue in a session")
+    .option("--last", "Continue the latest session for current user")
+    .option("--session <sessionId>", "Continue a specific session id")
     .option("--cwd <path>", "Working directory", process.cwd())
     .option("--json-events", "Write runtime output events as NDJSON on stderr")
-    .action(async (task: string | undefined, commandOptions: { cwd: string; jsonEvents?: boolean; last?: boolean; thread?: string }) => {
+    .action(async (task: string | undefined, commandOptions: { cwd: string; jsonEvents?: boolean; last?: boolean; session?: string }) => {
       const handle = createApplication(commandOptions.cwd);
       try {
-        const threadInput =
-          commandOptions.thread !== undefined && task === undefined
-            ? handle.service.listNextActions({ threadId: commandOptions.thread, statuses: ["active", "pending"] })[0]
+        const sessionInput =
+          commandOptions.session !== undefined && task === undefined
+            ? handle.service.listNextActions({ sessionId: commandOptions.session, statuses: ["active", "pending"] })[0]
                 ?.title
             : task;
         const result =
-          commandOptions.thread !== undefined
+          commandOptions.session !== undefined
             ? await (async () => {
-                const threadId = commandOptions.thread;
-                if (threadId === undefined) {
-                  throw new Error("Thread id is required.");
+                const sessionId = commandOptions.session;
+                if (sessionId === undefined) {
+                  throw new Error("Session id is required.");
                 }
-                if (threadInput === undefined) {
+                if (sessionInput === undefined) {
                   throw new Error("No task input or next action found.");
                 }
-                return handle.service.continueThread(threadId, threadInput, {
+                return handle.service.continueSession(sessionId, sessionInput, {
                   cwd: commandOptions.cwd,
                   onOutputEvent: createCliOutputListener(commandOptions.jsonEvents === true)
                 });
@@ -203,7 +203,7 @@ export async function main(argv = process.argv): Promise<void> {
                   onOutputEvent: createCliOutputListener(commandOptions.jsonEvents === true)
                 });
         console.log(`Task ID: ${result.task.taskId}`);
-        console.log(`Thread ID: ${result.task.threadId ?? "-"}`);
+        console.log(`Session ID: ${result.task.sessionId ?? "-"}`);
         console.log(`Status: ${result.task.status}`);
         if (result.output !== null) {
           console.log(result.output);
@@ -215,35 +215,35 @@ export async function main(argv = process.argv): Promise<void> {
 
   const taskCommand = program.command("task").description("Inspect persisted tasks");
 
-  const threadCommand = program.command("thread").description("Inspect persisted threads");
-  threadCommand
+  const sessionCommand = program.command("session").description("Inspect persisted sessions");
+  sessionCommand
     .command("list")
     .option("--status <status>", "Filter status: active | archived | deleted")
     .option("--json", "Print JSON")
     .action((commandOptions: { json?: boolean; status?: "active" | "archived" | "deleted" }) => {
       const handle = createApplication(process.cwd());
       try {
-        const threads = handle.service.listThreads(commandOptions.status);
+        const sessions = handle.service.listSessions(commandOptions.status);
         console.log(
-          commandOptions.json === true ? JSON.stringify(threads, null, 2) : formatThreadList(threads)
+          commandOptions.json === true ? JSON.stringify(sessions, null, 2) : formatSessionList(sessions)
         );
       } finally {
         handle.close();
       }
     });
-  threadCommand.command("show").argument("<thread_id>", "Thread identifier").action((threadId: string) => {
+  sessionCommand.command("show").argument("<session_id>", "Session identifier").action((sessionId: string) => {
     const handle = createApplication(process.cwd());
     try {
-      const result = handle.service.showThread(threadId);
-      if (result.thread === null) {
-        console.error(`Thread ${threadId} not found.`);
+      const result = handle.service.showSession(sessionId);
+      if (result.session === null) {
+        console.error(`Session ${sessionId} not found.`);
         process.exitCode = 1;
         return;
       }
       console.log(
-        formatThreadDetail(
-          result.thread,
-          result.runs,
+        formatSessionDetail(
+          result.session,
+          result.tasks,
           result.lineage,
           result.inboxItems,
           result.commitments,
@@ -255,39 +255,39 @@ export async function main(argv = process.argv): Promise<void> {
       handle.close();
     }
   });
-  threadCommand.command("archive").argument("<thread_id>", "Thread identifier").action((threadId: string) => {
+  sessionCommand.command("archive").argument("<session_id>", "Session identifier").action((sessionId: string) => {
     const handle = createApplication(process.cwd());
     try {
-      const thread = handle.service.archiveThread(threadId);
-      console.log(`Archived thread: ${thread.threadId}`);
+      const session = handle.service.archiveSession(sessionId);
+      console.log(`Archived session: ${session.sessionId}`);
     } finally {
       handle.close();
     }
   });
-  threadCommand
-    .command("snapshots")
-    .argument("<thread_id>", "Thread identifier")
-    .action((threadId: string) => {
+  sessionCommand
+    .command("summaries")
+    .argument("<session_id>", "Session identifier")
+    .action((sessionId: string) => {
       const handle = createApplication(process.cwd());
       try {
-        console.log(formatThreadSnapshotList(handle.service.listThreadSnapshots(threadId)));
+        console.log(formatSessionSummaryList(handle.service.listSessionSummaries(sessionId)));
       } finally {
         handle.close();
       }
     });
-  threadCommand
-    .command("snapshot")
-    .argument("<snapshot_id>", "Snapshot identifier")
-    .action((snapshotId: string) => {
+  sessionCommand
+    .command("summary")
+    .argument("<summary_id>", "Session summary identifier")
+    .action((summaryId: string) => {
       const handle = createApplication(process.cwd());
       try {
-        const snapshot = handle.service.showThreadSnapshot(snapshotId);
-        if (snapshot === null) {
-          console.error(`Thread snapshot ${snapshotId} not found.`);
+        const summary = handle.service.showSessionSummary(summaryId);
+        if (summary === null) {
+          console.error(`Session summary ${summaryId} not found.`);
           process.exitCode = 1;
           return;
         }
-        console.log(formatThreadSnapshot(snapshot));
+        console.log(formatSessionSummary(summary));
       } finally {
         handle.close();
       }
@@ -341,7 +341,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--at <iso>", "One-shot run time in ISO-8601")
     .option("--cron <expression>", "Cron expression")
     .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
-    .option("--thread <thread_id>", "Continue an existing thread")
+    .option("--session <session_id>", "Continue an existing session")
     .option("--profile <profile>", "Agent profile id", "executor")
     .option("--cwd <cwd>", "Working directory", process.cwd())
     .option("--max-attempts <num>", "Max retry attempts", parsePositiveIntegerOption("--max-attempts"), 3)
@@ -367,7 +367,7 @@ export async function main(argv = process.argv): Promise<void> {
           ...(commandOptions.cron !== undefined ? { cron: commandOptions.cron } : {}),
           ...(commandOptions.every !== undefined ? { every: commandOptions.every } : {}),
           ...(commandOptions.at !== undefined ? { runAt: commandOptions.at } : {}),
-          ...(commandOptions.thread !== undefined ? { threadId: commandOptions.thread } : {}),
+          ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {}),
           ...(commandOptions.timezone !== undefined ? { timezone: commandOptions.timezone } : {})
         });
         console.log(formatScheduleDetail(schedule));
@@ -410,7 +410,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--at <iso>", "One-shot run time in ISO-8601")
     .option("--cron <expression>", "Cron expression")
     .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
-    .option("--thread <thread_id>", "Continue an existing thread; use none to clear")
+    .option("--session <session_id>", "Continue an existing session; use none to clear")
     .option("--profile <profile>", "Agent profile id")
     .option("--max-attempts <num>", "Max retry attempts", parsePositiveIntegerOption("--max-attempts"))
     .option("--backoff-base <ms>", "Backoff base milliseconds", parsePositiveIntegerOption("--backoff-base"))
@@ -436,7 +436,7 @@ export async function main(argv = process.argv): Promise<void> {
           ...(commandOptions.profile !== undefined
             ? { agentProfileId: commandOptions.profile as "executor" | "planner" | "reviewer" }
             : {}),
-          ...(commandOptions.thread !== undefined ? { threadId: parseNullableOption(commandOptions.thread) } : {}),
+          ...(commandOptions.session !== undefined ? { sessionId: parseNullableOption(commandOptions.session) } : {}),
           ...(commandOptions.timezone !== undefined ? { timezone: commandOptions.timezone } : {})
         });
         console.log(formatScheduleDetail(updated));
@@ -632,16 +632,16 @@ export async function main(argv = process.argv): Promise<void> {
     }
   });
 
-  const commitmentsCommand = program.command("commitments").description("Manage thread commitments");
+  const commitmentsCommand = program.command("commitments").description("Manage session commitments");
   commitmentsCommand
     .command("list")
-    .option("--thread <thread_id>", "Thread id")
+    .option("--session <session_id>", "Session id")
     .option("--status <status>", "Filter status")
-    .action((commandOptions: { thread?: string; status?: string }) => {
+    .action((commandOptions: { session?: string; status?: string }) => {
       const handle = createApplication(process.cwd());
       try {
         const list = handle.service.listCommitments({
-          ...(commandOptions.thread !== undefined ? { threadId: commandOptions.thread } : {}),
+          ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {}),
           ...(commandOptions.status !== undefined ? { status: commandOptions.status as CommitmentRecord["status"] } : {})
         });
         console.log(formatCommitmentList(list));
@@ -665,10 +665,10 @@ export async function main(argv = process.argv): Promise<void> {
   });
   commitmentsCommand
     .command("create")
-    .requiredOption("--thread <thread_id>", "Thread id")
+    .requiredOption("--session <session_id>", "Session id")
     .requiredOption("--title <title>", "Commitment title")
     .option("--summary <summary>", "Commitment summary", "")
-    .action((commandOptions: { thread: string; title: string; summary?: string }) => {
+    .action((commandOptions: { session: string; title: string; summary?: string }) => {
       const handle = createApplication(process.cwd());
       try {
         const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
@@ -676,7 +676,7 @@ export async function main(argv = process.argv): Promise<void> {
           ownerUserId,
           source: "manual",
           summary: commandOptions.summary ?? "",
-          threadId: commandOptions.thread,
+          sessionId: commandOptions.session,
           title: commandOptions.title
         });
         console.log(formatCommitmentDetail(created));
@@ -724,12 +724,12 @@ export async function main(argv = process.argv): Promise<void> {
   const nextCommand = program.command("next").description("Manage next actions");
   nextCommand
     .command("list")
-    .option("--thread <thread_id>", "Thread id")
-    .action((commandOptions: { thread?: string }) => {
+    .option("--session <session_id>", "Session id")
+    .action((commandOptions: { session?: string }) => {
       const handle = createApplication(process.cwd());
       try {
         const list = handle.service.listNextActions(
-          commandOptions.thread !== undefined ? { threadId: commandOptions.thread } : {}
+          commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {}
         );
         console.log(formatNextActionList(list));
       } finally {
@@ -738,17 +738,17 @@ export async function main(argv = process.argv): Promise<void> {
     });
   nextCommand
     .command("add")
-    .requiredOption("--thread <thread_id>", "Thread id")
+    .requiredOption("--session <session_id>", "Session id")
     .requiredOption("--title <title>", "Action title")
     .option("--commitment <commitment_id>", "Related commitment id")
-    .action((commandOptions: { thread: string; title: string; commitment?: string }) => {
+    .action((commandOptions: { session: string; title: string; commitment?: string }) => {
       const handle = createApplication(process.cwd());
       try {
         const created = handle.service.appendNextAction({
           commitmentId: commandOptions.commitment ?? null,
           source: "manual",
           status: "pending",
-          threadId: commandOptions.thread,
+          sessionId: commandOptions.session,
           title: commandOptions.title
         });
         console.log(formatNextActionList([created]));
@@ -792,7 +792,7 @@ export async function main(argv = process.argv): Promise<void> {
       try {
         const result = await handle.service.continueLatest(undefined, { cwd: commandOptions.cwd });
         console.log(`Task ID: ${result.task.taskId}`);
-        console.log(`Thread ID: ${result.task.threadId ?? "-"}`);
+        console.log(`Session ID: ${result.task.sessionId ?? "-"}`);
         console.log(`Status: ${result.task.status}`);
         if (result.output !== null) {
           console.log(result.output);
@@ -1157,8 +1157,8 @@ export async function main(argv = process.argv): Promise<void> {
 
   providerCommand
     .command("stats")
-    .option("--by <groupBy>", "Group by: provider | thread | task | mode", "provider")
-    .action((commandOptions: { by: "provider" | "thread" | "task" | "mode" }) => {
+    .option("--by <groupBy>", "Group by: provider | session | task | mode", "provider")
+    .action((commandOptions: { by: "provider" | "session" | "task" | "mode" }) => {
       const handle = createApplication(process.cwd());
       try {
         console.log(formatProviderStats(handle.service.providerStats(commandOptions.by)));
@@ -1184,19 +1184,19 @@ export async function main(argv = process.argv): Promise<void> {
   budgetCommand
     .command("show")
     .option("--task <taskId>", "Task id")
-    .option("--thread <threadId>", "Thread id")
-    .action((commandOptions: { task?: string; thread?: string }) => {
+    .option("--session <sessionId>", "Session id")
+    .action((commandOptions: { task?: string; session?: string }) => {
       const handle = createApplication(process.cwd());
       try {
         if (commandOptions.task !== undefined) {
           console.log(JSON.stringify(handle.service.budgetReport("task", commandOptions.task), null, 2));
           return;
         }
-        if (commandOptions.thread !== undefined) {
-          console.log(JSON.stringify(handle.service.budgetReport("thread", commandOptions.thread), null, 2));
+        if (commandOptions.session !== undefined) {
+          console.log(JSON.stringify(handle.service.budgetReport("session", commandOptions.session), null, 2));
           return;
         }
-        console.log("Provide --task <id> or --thread <id>.");
+        console.log("Provide --task <id> or --session <id>.");
       } finally {
         handle.close();
       }
@@ -1483,41 +1483,41 @@ export async function main(argv = process.argv): Promise<void> {
   memoryCommand
     .command("search")
     .argument("<query>", "Session memory search query")
-    .option("--thread <threadId>", "Search within specific thread")
-    .option("--global", "Search across all threads")
-    .option("--exclude-thread <threadId>", "Exclude one thread from global search")
+    .option("--session <sessionId>", "Search within specific session")
+    .option("--global", "Search across all sessions")
+    .option("--exclude-session <sessionId>", "Exclude one session from global search")
     .option("--limit <number>", "Max hit count", parsePositiveIntegerOption("--limit"), 5)
     .action(
       (
         query: string,
         commandOptions: {
-          thread?: string;
+          session?: string;
           global?: boolean;
-          excludeThread?: string;
+          excludeSession?: string;
           limit: number;
         }
       ) => {
         const handle = createApplication(process.cwd());
         try {
-          if (commandOptions.global !== true && commandOptions.thread === undefined) {
-            throw new Error("Provide --thread <threadId> or use --global.");
+          if (commandOptions.global !== true && commandOptions.session === undefined) {
+            throw new Error("Provide --session <sessionId> or use --global.");
           }
-          if (commandOptions.global === true && commandOptions.thread !== undefined) {
-            throw new Error("Use either --global or --thread, not both.");
+          if (commandOptions.global === true && commandOptions.session !== undefined) {
+            throw new Error("Use either --global or --session, not both.");
           }
           const hits =
             commandOptions.global === true
-              ? handle.service.searchThreadSnapshots({
-                  excludeThreadId: commandOptions.excludeThread ?? null,
+              ? handle.service.searchSessionSummaries({
+                  excludeSessionId: commandOptions.excludeSession ?? null,
                   limit: commandOptions.limit,
                   query
                 })
-              : handle.service.searchThreadSnapshots({
+              : handle.service.searchSessionSummaries({
                   limit: commandOptions.limit,
                   query,
-                  threadId: commandOptions.thread ?? ""
+                  sessionId: commandOptions.session ?? ""
                 });
-          console.log(formatThreadSessionSearchHits(hits));
+          console.log(formatSessionSummarySearchHits(hits));
         } finally {
           handle.close();
         }
@@ -2118,7 +2118,7 @@ interface RunCommandOptions extends SandboxCommandOptions {
   jsonEvents?: boolean;
   maxIterations?: number;
   profile: string;
-  thread?: string;
+  session?: string;
   timeoutMs?: number;
 }
 
@@ -2132,7 +2132,7 @@ interface ScheduleCreateOptions {
   maxAttempts: number;
   name?: string;
   profile?: string;
-  thread?: string;
+  session?: string;
   timezone?: string;
 }
 
@@ -2146,7 +2146,7 @@ interface ScheduleEditOptions {
   maxAttempts?: number;
   name?: string;
   profile?: string;
-  thread?: string;
+  session?: string;
   timezone?: string;
 }
 
@@ -2477,3 +2477,4 @@ function normalizeMemoryScope(
   }
   return scope;
 }
+

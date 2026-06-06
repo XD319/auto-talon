@@ -1,4 +1,4 @@
-# Provider Routing and Budget Policy
+﻿# Provider Routing and Budget Policy
 
 This runtime policy makes model selection and spend control explicit at execution time.
 
@@ -17,7 +17,7 @@ Budgets track both:
 - token usage (`usedInput`, `usedOutput`)
 - USD usage (`usedCostUsd`)
 
-Both task and thread scopes support soft/hard limits:
+Both task and session scopes support soft/hard limits:
 
 - soft breach -> trace/audit warning + downgrade to cheap tier
 - hard breach -> fail fast with `budget_exceeded`
@@ -42,6 +42,6 @@ Routing and budget behavior is observable through:
 ## CLI
 
 - `talon provider route --mode <cheap_first|balanced|quality_first>`
-- `talon provider stats --by <provider|thread|task|mode>`
+- `talon provider stats --by <provider|session|task|mode>`
 - `talon budget show --task <taskId>`
-- `talon budget show --thread <threadId>`
+- `talon budget show --session <sessionId>`

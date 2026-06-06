@@ -1,4 +1,4 @@
-import { AppError } from "../core/app-error.js";
+﻿import { AppError } from "../core/app-error.js";
 import { ProviderError, toProviderError } from "../providers/index.js";
 import type {
   ContextAssemblyDebugView,
@@ -123,7 +123,7 @@ export function rebuildSignaturesFromMessages(
  * look like the error envelope produced by `toolResultOutputForModel` on failure.
  *
  * Used when resuming a task from an approval/clarification checkpoint so the runtime
- * does not pessimistically treat the new turn as if no write has ever happened —
+ * does not pessimistically treat the new turn as if no write has ever happened 鈥?
  * otherwise `evaluateNoWriteFinal` defers a perfectly valid final response and the
  * next iteration is forced to retry, eventually tripping the `task_incomplete` guard.
  */
@@ -307,20 +307,20 @@ export function buildFinalSessionCompactInput(
     })),
     originalGoal: task.input,
     reason: "context_budget",
-    sessionScopeKey: task.threadId ?? task.taskId,
+    sessionScopeKey: task.sessionId ?? task.taskId,
     taskId: task.taskId
   };
 }
 
-export function readThreadResumeMessages(metadata: RuntimeRunOptions["metadata"]): ConversationMessage[] {
+export function readSessionResumeMessages(metadata: RuntimeRunOptions["metadata"]): ConversationMessage[] {
   if (metadata === undefined || metadata === null) {
     return [];
   }
-  const threadResume = (metadata as Record<string, unknown>).threadResume;
-  if (typeof threadResume !== "object" || threadResume === null) {
+  const sessionResume = (metadata as Record<string, unknown>).sessionResume;
+  if (typeof sessionResume !== "object" || sessionResume === null) {
     return [];
   }
-  const contextMessages = (threadResume as Record<string, unknown>).contextMessages;
+  const contextMessages = (sessionResume as Record<string, unknown>).contextMessages;
   if (!Array.isArray(contextMessages)) {
     return [];
   }
@@ -333,15 +333,15 @@ export function readThreadResumeMessages(metadata: RuntimeRunOptions["metadata"]
   );
 }
 
-export function readThreadResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]): ContextFragment[] {
+export function readSessionResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]): ContextFragment[] {
   if (metadata === undefined || metadata === null) {
     return [];
   }
-  const threadResume = (metadata as Record<string, unknown>).threadResume;
-  if (typeof threadResume !== "object" || threadResume === null) {
+  const sessionResume = (metadata as Record<string, unknown>).sessionResume;
+  if (typeof sessionResume !== "object" || sessionResume === null) {
     return [];
   }
-  const memoryContext = (threadResume as Record<string, unknown>).memoryContext;
+  const memoryContext = (sessionResume as Record<string, unknown>).memoryContext;
   if (!Array.isArray(memoryContext)) {
     return [];
   }

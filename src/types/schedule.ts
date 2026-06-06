@@ -39,7 +39,7 @@ export interface ScheduleRecord {
   scheduleId: string;
   name: string;
   status: ScheduleStatus;
-  threadId: string | null;
+  sessionId: string | null;
   ownerUserId: string;
   cwd: string;
   agentProfileId: AgentProfileId;
@@ -62,7 +62,7 @@ export interface ScheduleRecord {
 export interface ScheduleDraft {
   scheduleId: string;
   name: string;
-  threadId?: string | null;
+  sessionId?: string | null;
   ownerUserId: string;
   cwd: string;
   agentProfileId: AgentProfileId;
@@ -83,7 +83,7 @@ export interface ScheduleDraft {
 export interface ScheduleUpdatePatch {
   name?: string;
   status?: ScheduleStatus;
-  threadId?: string | null;
+  sessionId?: string | null;
   agentProfileId?: AgentProfileId;
   input?: string;
   runAt?: string | null;
@@ -117,7 +117,7 @@ export interface ScheduleRunRecord {
   startedAt: string | null;
   finishedAt: string | null;
   taskId: string | null;
-  threadId: string | null;
+  sessionId: string | null;
   errorCode: string | null;
   errorMessage: string | null;
   trigger: ScheduleRunTrigger;
@@ -133,7 +133,7 @@ export interface ScheduleRunDraft {
   startedAt?: string | null;
   finishedAt?: string | null;
   taskId?: string | null;
-  threadId?: string | null;
+  sessionId?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
   trigger: ScheduleRunTrigger;
@@ -145,7 +145,7 @@ export interface ScheduleRunUpdatePatch {
   startedAt?: string | null;
   finishedAt?: string | null;
   taskId?: string | null;
-  threadId?: string | null;
+  sessionId?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
   metadata?: JsonObject;

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+﻿import { join } from "node:path";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
@@ -165,9 +165,9 @@ const LONG_CODING_POLICY_CONFIG: LocalPolicyConfig = {
   source: "local"
 };
 
-describe("thread compact resume e2e", () => {
+describe("session compact resume e2e", () => {
   it("creates session memory on compaction and rehydrates resume context", async () => {
-    const workspace = createThreadWorkspace("talon-thread-snapshot-");
+    const workspace = createSessionWorkspace("talon-session-snapshot-");
     const handle = createApplication(workspace, {
       config: {
         compact: {
@@ -183,33 +183,33 @@ describe("thread compact resume e2e", () => {
     try {
       const firstOptions = createDefaultRunOptions("Preserve this goal", workspace, handle.config);
       const firstRun = await handle.service.runTask(firstOptions);
-      const threadId = firstRun.task.threadId!;
-      const sessionMemories = handle.service.listThreadSnapshots(threadId);
+      const sessionId = firstRun.task.sessionId!;
+      const sessionMemories = handle.service.listSessionSummaries(sessionId);
       expect(sessionMemories.length).toBeGreaterThan(0);
 
-      handle.infrastructure.storage.threadSessionMemories.create({
+      handle.infrastructure.storage.sessionSummaries.create({
         decisions: ["use existing context"],
         goal: "Preserve this goal",
         nextActions: ["verify follow-up output"],
         openLoops: ["pending file_read(tc-manual-open-loop)"],
-        sessionMemoryId: "manual-latest-session-memory",
+        sessionSummaryId: "manual-latest-session-memory",
         summary: "manual resume snapshot",
         taskId: firstRun.task.taskId,
-        threadId,
+        sessionId,
         trigger: "manual"
       });
 
-      const secondRun = await handle.service.continueThread(threadId, "continue with latest state", {
+      const secondRun = await handle.service.continueSession(sessionId, "continue with latest state", {
         cwd: workspace
       });
       const contextDebug = handle.service.traceTaskContext(secondRun.task.taskId);
       const systemPreviews = contextDebug.contextAssembly?.systemPromptFragments.map((fragment) => fragment.preview) ?? [];
-      expect(systemPreviews.some((preview) => preview.includes("KnownThreadGoal: Preserve this goal"))).toBe(true);
+      expect(systemPreviews.some((preview) => preview.includes("KnownSessionGoal: Preserve this goal"))).toBe(true);
       expect(systemPreviews.some((preview) => preview.includes("KnownOpenLoops: pending file_read"))).toBe(true);
       expect(systemPreviews.some((preview) => preview.includes("KnownDecisions: use existing context"))).toBe(true);
       const memoryRecall = contextDebug.contextAssembly?.memoryRecallFragments ?? [];
-      expect(memoryRecall.some((fragment) => fragment.label === "Thread goal")).toBe(true);
-      expect(memoryRecall.some((fragment) => fragment.label === "Thread decisions")).toBe(true);
+      expect(memoryRecall.some((fragment) => fragment.label === "Session goal")).toBe(true);
+      expect(memoryRecall.some((fragment) => fragment.label === "Session decisions")).toBe(true);
     } finally {
       handle.close();
       rmSync(workspace, { force: true, recursive: true });
@@ -217,7 +217,7 @@ describe("thread compact resume e2e", () => {
   });
 
   it("writes final-trigger session memory for short non-compact runs and injects resume context", async () => {
-    const workspace = createThreadWorkspace("talon-thread-final-session-memory-");
+    const workspace = createSessionWorkspace("talon-session-final-session-memory-");
     const handle = createApplication(workspace, {
       config: {
         compact: {
@@ -232,24 +232,24 @@ describe("thread compact resume e2e", () => {
     });
     try {
       const firstOptions = createDefaultRunOptions(
-        "Remember this thread goal from final branch",
+        "Remember this session goal from final branch",
         workspace,
         handle.config
       );
       const firstRun = await handle.service.runTask(firstOptions);
-      const threadId = firstRun.task.threadId!;
-      const sessionMemories = handle.service.listThreadSnapshots(threadId);
+      const sessionId = firstRun.task.sessionId!;
+      const sessionMemories = handle.service.listSessionSummaries(sessionId);
       expect(sessionMemories.length).toBeGreaterThan(0);
       expect(sessionMemories.some((memory) => memory.trigger === "final")).toBe(true);
 
-      const secondRun = await handle.service.continueThread(threadId, "continue with remembered goal", {
+      const secondRun = await handle.service.continueSession(sessionId, "continue with remembered goal", {
         cwd: workspace
       });
       const contextDebug = handle.service.traceTaskContext(secondRun.task.taskId);
       const systemPreviews = contextDebug.contextAssembly?.systemPromptFragments.map((fragment) => fragment.preview) ?? [];
       expect(
         systemPreviews.some((preview) =>
-          preview.includes("KnownThreadGoal: Remember this thread goal from final branch")
+          preview.includes("KnownSessionGoal: Remember this session goal from final branch")
         )
       ).toBe(true);
     } finally {
@@ -259,7 +259,7 @@ describe("thread compact resume e2e", () => {
   });
 
   it("preserves compacted long coding context across clarification resume", async () => {
-    const workspace = createThreadWorkspace("talon-long-coding-resume-");
+    const workspace = createSessionWorkspace("talon-long-coding-resume-");
     writeFileSync(join(workspace, "alpha.ts"), "export const alpha = true;\n", "utf8");
     writeFileSync(join(workspace, "beta.ts"), "export const beta = true;\n", "utf8");
     writeFileSync(join(workspace, "gamma.ts"), "export const gamma = true;\n", "utf8");
@@ -306,7 +306,7 @@ describe("thread compact resume e2e", () => {
   });
 });
 
-function createThreadWorkspace(prefix: string): string {
+function createSessionWorkspace(prefix: string): string {
   const tempRoot = join(process.cwd(), ".tmp-tests");
   mkdirSync(tempRoot, { recursive: true });
   return mkdtempSync(join(tempRoot, prefix));
@@ -315,3 +315,4 @@ function createThreadWorkspace(prefix: string): string {
 function readFileSyncUtf8(path: string): string {
   return readFileSync(path, "utf8");
 }
+

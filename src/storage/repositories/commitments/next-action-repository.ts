@@ -13,7 +13,7 @@ import { parseJsonValue, serializeJsonValue } from "../json.js";
 
 interface NextActionRow {
   next_action_id: string;
-  thread_id: string;
+  session_id: string;
   commitment_id: string | null;
   task_id: string | null;
   title: string;
@@ -39,13 +39,13 @@ export class SqliteNextActionRepository implements NextActionRepository {
     this.database
       .prepare(
         `INSERT INTO next_actions (
-          next_action_id, thread_id, commitment_id, task_id, title, detail, status, rank, blocked_reason,
+          next_action_id, session_id, commitment_id, task_id, title, detail, status, rank, blocked_reason,
           source, source_trace_id, due_at, created_at, updated_at, completed_at, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         nextActionId,
-        record.threadId,
+        record.sessionId,
         record.commitmentId ?? null,
         record.taskId ?? null,
         record.title,
@@ -78,9 +78,9 @@ export class SqliteNextActionRepository implements NextActionRepository {
   public list(query: NextActionListQuery = {}): NextActionRecord[] {
     const clauses: string[] = [];
     const values: Array<number | string> = [];
-    if (query.threadId !== undefined) {
-      clauses.push("thread_id = ?");
-      values.push(query.threadId);
+    if (query.sessionId !== undefined) {
+      clauses.push("session_id = ?");
+      values.push(query.sessionId);
     }
     if (query.commitmentId !== undefined) {
       clauses.push("commitment_id = ?");
@@ -155,7 +155,7 @@ export class SqliteNextActionRepository implements NextActionRepository {
   private mapRow(row: NextActionRow): NextActionRecord {
     return {
       nextActionId: row.next_action_id,
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       commitmentId: row.commitment_id,
       taskId: row.task_id,
       title: row.title,

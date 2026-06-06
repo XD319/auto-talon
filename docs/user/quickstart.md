@@ -3,7 +3,7 @@
 1. Initialize workspace: `talon init --yes`
 2. Configure a reusable user provider: `talon provider setup openai --api-key "$OPENAI_API_KEY"`
 3. Open Personal Assistant workspace: `talon tui`
-4. Start or continue work from today/inbox/thread views inside the TUI
+4. Start or continue work from today/inbox/session views inside the TUI
 5. Open runtime Ops view when needed: `talon ops` (`talon dashboard` is a compatibility alias)
 6. Optional: connect a chat entry point with `talon gateway serve-feishu --cwd .`
 

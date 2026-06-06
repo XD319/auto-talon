@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   CommitmentDraft,
   CommitmentListQuery,
   CommitmentRecord,
@@ -123,12 +123,12 @@ export class CommitmentService {
         pendingDecision: commitment.pendingDecision,
         status: commitment.status,
         taskId: commitment.taskId,
-        threadId: commitment.threadId,
+        sessionId: commitment.sessionId,
         title: commitment.title
       },
       stage: "planning",
       summary,
-      taskId: commitment.taskId ?? `thread:${commitment.threadId}`
+      taskId: commitment.taskId ?? `session:${commitment.sessionId}`
     });
   }
 }

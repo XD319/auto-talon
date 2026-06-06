@@ -1,4 +1,4 @@
-import type { AgentDoctorReport, ContextTraceDebugReport, TaskTimelineReport } from "../runtime/index.js";
+﻿import type { AgentDoctorReport, ContextTraceDebugReport, TaskTimelineReport } from "../runtime/index.js";
 import type {
   BetaReadinessReport,
   CodingEvalReport,
@@ -24,11 +24,11 @@ import type {
   SkillListResult,
   SkillView,
   TaskRecord,
-  ThreadLineageRecord,
-  ThreadRecord,
-  ThreadRunRecord,
-  ThreadCommitmentState,
-  ThreadSessionMemoryRecord,
+  SessionLineageRecord,
+  SessionRecord,
+  SessionTaskRecord,
+  SessionCommitmentState,
+  SessionSummaryRecord,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -49,38 +49,38 @@ export function formatTaskList(tasks: TaskRecord[]): string {
     .join("\n");
 }
 
-export function formatThreadList(threads: ThreadRecord[]): string {
-  if (threads.length === 0) {
-    return "No threads found.";
+export function formatSessionList(sessions: SessionRecord[]): string {
+  if (sessions.length === 0) {
+    return "No sessions found.";
   }
-  return threads
+  return sessions
     .map(
-      (thread) =>
-        `${thread.threadId} | ${thread.status} | owner=${thread.ownerUserId} | updated=${thread.updatedAt} | ${thread.title}`
+      (session) =>
+        `${session.sessionId} | ${session.status} | owner=${session.ownerUserId} | updated=${session.updatedAt} | ${session.title}`
     )
     .join("\n");
 }
 
-export function formatThreadDetail(
-  thread: ThreadRecord,
-  runs: ThreadRunRecord[],
-  lineage: ThreadLineageRecord[] = [],
+export function formatSessionDetail(
+  session: SessionRecord,
+  runs: SessionTaskRecord[],
+  lineage: SessionLineageRecord[] = [],
   inboxItems: InboxItem[] = [],
   commitments: CommitmentRecord[] = [],
   nextActions: NextActionRecord[] = [],
-  state?: ThreadCommitmentState
+  state?: SessionCommitmentState
 ): string {
   const header = [
-    `Thread ID: ${thread.threadId}`,
-    `Title: ${thread.title}`,
-    `Status: ${thread.status}`,
-    `Owner: ${thread.ownerUserId}`,
-    `Profile: ${thread.agentProfileId}`,
-    `Provider: ${thread.providerName}`,
-    `CWD: ${thread.cwd}`,
-    `Created: ${thread.createdAt}`,
-    `Updated: ${thread.updatedAt}`,
-    `Archived: ${thread.archivedAt ?? "-"}`
+    `Session ID: ${session.sessionId}`,
+    `Title: ${session.title}`,
+    `Status: ${session.status}`,
+    `Owner: ${session.ownerUserId}`,
+    `Profile: ${session.agentProfileId}`,
+    `Provider: ${session.providerName}`,
+    `CWD: ${session.cwd}`,
+    `Created: ${session.createdAt}`,
+    `Updated: ${session.updatedAt}`,
+    `Archived: ${session.archivedAt ?? "-"}`
   ].join("\n");
   const runsSection =
     runs.length === 0
@@ -102,9 +102,9 @@ export function formatThreadDetail(
   const nextActionSection = formatNextActionList(nextActions);
   const stateSection =
     state === undefined
-      ? "Thread State: unavailable"
+      ? "Session State: unavailable"
       : [
-          "Thread State:",
+          "Session State:",
           `- Current objective: ${state.currentObjective?.title ?? "-"}`,
           `- Next action: ${state.nextAction?.title ?? "-"}`,
           `- Blocked reason: ${state.blockedReason ?? "-"}`,
@@ -129,7 +129,7 @@ export function formatCommitmentList(commitments: CommitmentRecord[]): string {
 export function formatCommitmentDetail(item: CommitmentRecord): string {
   return [
     `Commitment ID: ${item.commitmentId}`,
-    `Thread ID: ${item.threadId}`,
+    `Session ID: ${item.sessionId}`,
     `Task ID: ${item.taskId ?? "-"}`,
     `Owner: ${item.ownerUserId}`,
     `Status: ${item.status}`,
@@ -158,22 +158,22 @@ export function formatNextActionList(actions: NextActionRecord[]): string {
   ].join("\n");
 }
 
-export function formatThreadSnapshotList(snapshots: ThreadSessionMemoryRecord[]): string {
+export function formatSessionSummaryList(snapshots: SessionSummaryRecord[]): string {
   if (snapshots.length === 0) {
-    return "No thread session memories found.";
+    return "No session summaries found.";
   }
   return snapshots
     .map(
       (snapshot) =>
-        `${snapshot.sessionMemoryId} | ${snapshot.trigger} | ${snapshot.createdAt} | goal=${snapshot.goal.slice(0, 80)}`
+        `${snapshot.sessionSummaryId} | ${snapshot.trigger} | ${snapshot.createdAt} | goal=${snapshot.goal.slice(0, 80)}`
     )
     .join("\n");
 }
 
-export function formatThreadSnapshot(snapshot: ThreadSessionMemoryRecord): string {
+export function formatSessionSummary(snapshot: SessionSummaryRecord): string {
   return [
-    `Session Memory ID: ${snapshot.sessionMemoryId}`,
-    `Thread ID: ${snapshot.threadId}`,
+    `Session Summary ID: ${snapshot.sessionSummaryId}`,
+    `Session ID: ${snapshot.sessionId}`,
     `Run ID: ${snapshot.runId ?? "-"}`,
     `Task ID: ${snapshot.taskId ?? "-"}`,
     `Trigger: ${snapshot.trigger}`,
@@ -186,14 +186,14 @@ export function formatThreadSnapshot(snapshot: ThreadSessionMemoryRecord): strin
   ].join("\n");
 }
 
-export function formatThreadSessionSearchHits(hits: SessionSearchHit[]): string {
+export function formatSessionSummarySearchHits(hits: SessionSearchHit[]): string {
   if (hits.length === 0) {
-    return "No session memory hits found.";
+    return "No session summary hits found.";
   }
   return hits
     .map(
       (hit, index) =>
-        `#${index + 1} ${hit.sessionMemoryId} | thread=${hit.threadId} | score=${hit.score.toFixed(3)} | goal=${hit.goal.slice(0, 80)}`
+        `#${index + 1} ${hit.sessionSummaryId} | session=${hit.sessionId} | score=${hit.score.toFixed(3)} | goal=${hit.goal.slice(0, 80)}`
     )
     .join("\n");
 }
@@ -215,7 +215,7 @@ export function formatScheduleDetail(schedule: ScheduleRecord): string {
     `Schedule ID: ${schedule.scheduleId}`,
     `Name: ${schedule.name}`,
     `Status: ${schedule.status}`,
-    `Thread ID: ${schedule.threadId ?? "-"}`,
+    `Session ID: ${schedule.sessionId ?? "-"}`,
     `Owner: ${schedule.ownerUserId}`,
     `Profile: ${schedule.agentProfileId}`,
     `Provider: ${schedule.providerName}`,
@@ -240,7 +240,7 @@ export function formatScheduleRunList(runs: ScheduleRunRecord[]): string {
   return runs
     .map(
       (run) =>
-        `${run.runId} | attempt=${run.attemptNumber} | ${run.status} | trigger=${run.trigger} | task=${run.taskId ?? "-"} | thread=${run.threadId ?? "-"}`
+        `${run.runId} | attempt=${run.attemptNumber} | ${run.status} | trigger=${run.trigger} | task=${run.taskId ?? "-"} | session=${run.sessionId ?? "-"}`
     )
     .join("\n");
 }
@@ -344,7 +344,7 @@ export function formatInboxDetail(item: InboxItem): string {
     `Category: ${item.category}`,
     `Severity: ${item.severity}`,
     `Task ID: ${item.taskId ?? "-"}`,
-    `Thread ID: ${item.threadId ?? "-"}`,
+    `Session ID: ${item.sessionId ?? "-"}`,
     `Schedule Run ID: ${item.scheduleRunId ?? "-"}`,
     `Approval ID: ${item.approvalId ?? "-"}`,
     `Experience ID: ${item.experienceId ?? "-"}`,
@@ -398,7 +398,7 @@ export function formatTraceContextDebug(report: ContextTraceDebugReport): string
       contextAssembly: report.contextAssembly,
       memoryRecall: report.memoryRecall,
       reviewerTrace: report.reviewerTrace,
-      latestThreadSessionMemory: report.latestThreadSessionMemory
+      latestSessionSummary: report.latestSessionSummary
     },
     null,
     2
@@ -661,7 +661,7 @@ export function formatMemoryList(memories: MemoryRecord[]): string {
 export function formatMemoryGuide(): string {
   return [
     "Memory layers:",
-    "- working | runtime-only context for the current task/thread; read-only, not manually persisted",
+    "- working | runtime-only context for the current task/session; read-only, not manually persisted",
     "- project | reusable knowledge for the current workspace",
     "- profile | reusable user/profile preferences across tasks",
     "Use `talon memory show <scope>` to inspect a scope."

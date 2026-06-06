@@ -1,5 +1,5 @@
-import type { TuiRuntimeService } from "../runtime-api.js";
-import type { InboxItem, ThreadRecord } from "../../types/index.js";
+﻿import type { TuiRuntimeService } from "../runtime-api.js";
+import type { InboxItem, SessionRecord } from "../../types/index.js";
 import { buildTodaySummary, type TodaySummaryViewModel } from "./today-summary.js";
 
 export interface HomeSummaryAction {
@@ -7,14 +7,14 @@ export interface HomeSummaryAction {
   inboxId?: string;
   key: string;
   label: string;
-  threadId?: string | null;
+  sessionId?: string | null;
 }
 
-export interface HomeSummaryThreadCard {
+export interface HomeSummarySessionCard {
   detail: string;
   headline: string;
   label: string;
-  threadId: string;
+  sessionId: string;
 }
 
 export interface HomeSummaryEntry {
@@ -22,27 +22,27 @@ export interface HomeSummaryEntry {
   headline?: string;
   inboxId?: string;
   key: string;
-  kind: "action" | "thread";
+  kind: "action" | "session";
   label: string;
-  threadId?: string | null;
+  sessionId?: string | null;
 }
 
 export interface HomeSummaryViewModel {
   actions: HomeSummaryAction[];
   agenda: string[];
   assistantHint: string;
-  recentThreads: HomeSummaryThreadCard[];
-  recommendedThread: HomeSummaryThreadCard | null;
+  recentSessions: HomeSummarySessionCard[];
+  recommendedSession: HomeSummarySessionCard | null;
   title: string;
 }
 
 const MAX_AGENDA_ITEMS = 3;
 const MAX_HOME_ENTRIES = 4;
-const MAX_THREAD_CARDS = 3;
+const MAX_SESSION_CARDS = 3;
 const AGENDA_LABEL_LENGTH = 72;
 const ENTRY_LABEL_LENGTH = 76;
 const ENTRY_DETAIL_LENGTH = 92;
-const THREAD_HEADLINE_LENGTH = 72;
+const SESSION_HEADLINE_LENGTH = 72;
 
 export function buildHomeSummary(
   service: Pick<
@@ -52,32 +52,32 @@ export function buildHomeSummary(
     | "listNextActions"
     | "listPendingApprovals"
     | "listSchedules"
-    | "listThreads"
+    | "listSessions"
     | "showTask"
-    | "showThread"
+    | "showSession"
   >,
-  options: { activeThreadId?: string | null } = {}
+  options: { activeSessionId?: string | null } = {}
 ): HomeSummaryViewModel {
   const summary = buildTodaySummary(service as TuiRuntimeService, options);
   const actionableInboxItem = findActionableInboxItem(service, summary.userId);
-  const recentThreads = buildRecentThreadCards(service, summary);
-  const recommendedThread = buildRecommendedThreadCard(service, summary, recentThreads, actionableInboxItem);
+  const recentSessions = buildRecentSessionCards(service, summary);
+  const recommendedSession = buildRecommendedSessionCard(service, summary, recentSessions, actionableInboxItem);
   const actions = buildRecommendedActions(service, summary, actionableInboxItem);
   const primaryEntry = listHomeSummaryEntries({
     actions,
     agenda: [],
     assistantHint: "",
-    recentThreads,
-    recommendedThread,
+    recentSessions,
+    recommendedSession,
     title: ""
   })[0] ?? null;
 
   return {
     actions,
-    agenda: buildAgenda(service, summary, recommendedThread),
+    agenda: buildAgenda(service, summary, recommendedSession),
     assistantHint: primaryEntry !== null ? "Type a request below, or use Up/Down and Enter to open a next step." : "",
-    recentThreads,
-    recommendedThread,
+    recentSessions,
+    recommendedSession,
     title: ""
   };
 }
@@ -91,29 +91,29 @@ export function listHomeSummaryEntries(summary: HomeSummaryViewModel): HomeSumma
       kind: "action",
       label: action.label,
       ...(action.inboxId !== undefined ? { inboxId: action.inboxId } : {}),
-      ...(action.threadId !== undefined ? { threadId: action.threadId } : {})
+      ...(action.sessionId !== undefined ? { sessionId: action.sessionId } : {})
     });
   }
-  for (const thread of prioritizeRecommendedThread(summary.recentThreads, summary.recommendedThread)) {
+  for (const session of prioritizeRecommendedSession(summary.recentSessions, summary.recommendedSession)) {
     if (entries.length >= MAX_HOME_ENTRIES) {
       break;
     }
-    const threadLabel = summarizeText(thread.headline.length > 0 ? thread.headline : thread.label, ENTRY_LABEL_LENGTH);
+    const sessionLabel = summarizeText(session.headline.length > 0 ? session.headline : session.label, ENTRY_LABEL_LENGTH);
     entries.push({
-      detail: thread.detail,
-      key: `thread:${thread.threadId}`,
-      kind: "thread",
-      label: `Continue ${threadLabel}`,
-      threadId: thread.threadId
+      detail: session.detail,
+      key: `session:${session.sessionId}`,
+      kind: "session",
+      label: `Continue ${sessionLabel}`,
+      sessionId: session.sessionId
     });
   }
   return entries;
 }
 
 function buildAgenda(
-  service: Pick<TuiRuntimeService, "showThread">,
+  service: Pick<TuiRuntimeService, "showSession">,
   summary: TodaySummaryViewModel,
-  recommendedThread: HomeSummaryThreadCard | null
+  recommendedSession: HomeSummarySessionCard | null
 ): string[] {
   const agenda: string[] = [];
   const approval = summary.pendingApprovals.items[0];
@@ -128,14 +128,14 @@ function buildAgenda(
   if (agenda.length < 3 && nextAction !== undefined) {
     agenda.push(compactAgendaLine(`Continue: ${formatNextActionAgendaLabel(service, nextAction)}`));
   }
-  if (agenda.length === 0 && recommendedThread !== null) {
-    agenda.push(compactAgendaLine(`Continue: ${recommendedThread.label}`));
+  if (agenda.length === 0 && recommendedSession !== null) {
+    agenda.push(compactAgendaLine(`Continue: ${recommendedSession.label}`));
   }
   return agenda.slice(0, MAX_AGENDA_ITEMS);
 }
 
 function buildRecommendedActions(
-  service: Pick<TuiRuntimeService, "showTask" | "showThread">,
+  service: Pick<TuiRuntimeService, "showTask" | "showSession">,
   summary: TodaySummaryViewModel,
   actionableInboxItem: InboxItem | null
 ): HomeSummaryAction[] {
@@ -146,7 +146,7 @@ function buildRecommendedActions(
       detail: `Resolve ${approval.toolName} before it expires.`,
       key: "approval",
       label: "Respond to approval",
-      threadId: service.showTask(approval.taskId).task?.threadId ?? null
+      sessionId: service.showTask(approval.taskId).task?.sessionId ?? null
     });
   }
   const inboxItem = actionableInboxItem;
@@ -157,7 +157,7 @@ function buildRecommendedActions(
       inboxId: inboxItem.inboxId,
       key: "inbox",
       label: `Open inbox: ${inboxLabel}`,
-      threadId: inboxItem.threadId
+      sessionId: inboxItem.sessionId
     });
   }
   const routine = summary.dueRoutines.items[0];
@@ -178,70 +178,70 @@ function buildRecommendedActions(
   return actions.slice(0, MAX_HOME_ENTRIES);
 }
 
-function buildRecentThreadCards(
-  service: Pick<TuiRuntimeService, "showThread">,
+function buildRecentSessionCards(
+  service: Pick<TuiRuntimeService, "showSession">,
   summary: TodaySummaryViewModel
-): HomeSummaryThreadCard[] {
-  return dedupeThreadCards(summary.threads.items.map((thread) => buildThreadCard(service, thread))).slice(0, MAX_THREAD_CARDS);
+): HomeSummarySessionCard[] {
+  return dedupeSessionCards(summary.sessions.items.map((session) => buildSessionCard(service, session))).slice(0, MAX_SESSION_CARDS);
 }
 
-function buildRecommendedThreadCard(
-  service: Pick<TuiRuntimeService, "showThread">,
+function buildRecommendedSessionCard(
+  service: Pick<TuiRuntimeService, "showSession">,
   summary: TodaySummaryViewModel,
-  recentThreads: HomeSummaryThreadCard[],
+  recentSessions: HomeSummarySessionCard[],
   actionableInboxItem: InboxItem | null
-): HomeSummaryThreadCard | null {
-  const recommendedThreadId =
-    summary.nextActions.items[0]?.threadId ??
-    summary.commitments.items[0]?.threadId ??
-    actionableInboxItem?.threadId ??
-    recentThreads[0]?.threadId ??
+): HomeSummarySessionCard | null {
+  const recommendedSessionId =
+    summary.nextActions.items[0]?.sessionId ??
+    summary.commitments.items[0]?.sessionId ??
+    actionableInboxItem?.sessionId ??
+    recentSessions[0]?.sessionId ??
     null;
 
-  if (recommendedThreadId === null) {
+  if (recommendedSessionId === null) {
     return null;
   }
   return (
-    recentThreads.find((thread) => thread.threadId === recommendedThreadId) ??
-    buildThreadCardById(service, recommendedThreadId)
+    recentSessions.find((session) => session.sessionId === recommendedSessionId) ??
+    buildSessionCardById(service, recommendedSessionId)
   );
 }
 
-function buildThreadCardById(
-  service: Pick<TuiRuntimeService, "showThread">,
-  threadId: string
-): HomeSummaryThreadCard | null {
-  const detail = service.showThread(threadId);
-  if (detail.thread === null) {
+function buildSessionCardById(
+  service: Pick<TuiRuntimeService, "showSession">,
+  sessionId: string
+): HomeSummarySessionCard | null {
+  const detail = service.showSession(sessionId);
+  if (detail.session === null) {
     return null;
   }
-  return buildThreadCard(service, detail.thread);
+  return buildSessionCard(service, detail.session);
 }
 
-function prioritizeRecommendedThread(
-  recentThreads: HomeSummaryThreadCard[],
-  recommendedThread: HomeSummaryThreadCard | null
-): HomeSummaryThreadCard[] {
-  if (recommendedThread === null) {
-    return recentThreads;
+function prioritizeRecommendedSession(
+  recentSessions: HomeSummarySessionCard[],
+  recommendedSession: HomeSummarySessionCard | null
+): HomeSummarySessionCard[] {
+  if (recommendedSession === null) {
+    return recentSessions;
   }
-  return dedupeThreadCards([
-    recommendedThread,
-    ...recentThreads.filter((thread) => thread.threadId !== recommendedThread.threadId)
+  return dedupeSessionCards([
+    recommendedSession,
+    ...recentSessions.filter((session) => session.sessionId !== recommendedSession.sessionId)
   ]);
 }
 
-function buildThreadCard(
-  service: Pick<TuiRuntimeService, "showThread">,
-  thread: ThreadRecord
-): HomeSummaryThreadCard {
-  const detail = service.showThread(thread.threadId);
+function buildSessionCard(
+  service: Pick<TuiRuntimeService, "showSession">,
+  session: SessionRecord
+): HomeSummarySessionCard {
+  const detail = service.showSession(session.sessionId);
   const headline =
     detail.state.currentObjective?.title ??
     detail.state.nextAction?.title ??
-    detail.inboxItems.find(isUsefulThreadCardInboxItem)?.title ??
-    thread.title;
-  const latestRun = detail.runs.at(-1);
+    detail.inboxItems.find(isUsefulSessionCardInboxItem)?.title ??
+    session.title;
+  const latestRun = detail.tasks.at(-1);
   const suffix =
     detail.state.blockedReason ??
     detail.state.pendingDecision ??
@@ -250,15 +250,15 @@ function buildThreadCard(
 
   return {
     detail: summarizeText(humanizeRuntimeSummary(suffix), ENTRY_DETAIL_LENGTH),
-    headline: summarizeText(headline, THREAD_HEADLINE_LENGTH),
-    label: summarizeText(thread.title, ENTRY_LABEL_LENGTH),
-    threadId: thread.threadId
+    headline: summarizeText(headline, SESSION_HEADLINE_LENGTH),
+    label: summarizeText(session.title, ENTRY_LABEL_LENGTH),
+    sessionId: session.sessionId
   };
 }
 
-function dedupeThreadCards(cards: HomeSummaryThreadCard[]): HomeSummaryThreadCard[] {
+function dedupeSessionCards(cards: HomeSummarySessionCard[]): HomeSummarySessionCard[] {
   const seen = new Set<string>();
-  const deduped: HomeSummaryThreadCard[] = [];
+  const deduped: HomeSummarySessionCard[] = [];
   for (const card of cards) {
     const key = normalizeDedupeText(card.label);
     if (seen.has(key)) {
@@ -286,37 +286,37 @@ function findActionableInboxItem(
   );
 }
 
-function isUsefulThreadCardInboxItem(item: InboxItem): boolean {
+function isUsefulSessionCardInboxItem(item: InboxItem): boolean {
   return isActionableInboxItem(item);
 }
 
 function formatInboxDisplayLabel(
-  service: Pick<TuiRuntimeService, "showThread">,
+  service: Pick<TuiRuntimeService, "showSession">,
   item: InboxItem
 ): string {
   const subject = isGenericInboxTitle(item.title) ? "" : item.title;
-  const threadTitle = item.threadId === null ? null : service.showThread(item.threadId).thread?.title ?? null;
-  if (threadTitle === null || threadTitle.length === 0) {
+  const sessionTitle = item.sessionId === null ? null : service.showSession(item.sessionId).session?.title ?? null;
+  if (sessionTitle === null || sessionTitle.length === 0) {
     return subject.length > 0 ? subject : summarizeText(humanizeRuntimeSummary(item.summary), ENTRY_LABEL_LENGTH);
   }
-  if (subject.length === 0 || subject === threadTitle) {
-    return summarizeText(threadTitle, ENTRY_LABEL_LENGTH);
+  if (subject.length === 0 || subject === sessionTitle) {
+    return summarizeText(sessionTitle, ENTRY_LABEL_LENGTH);
   }
-  return summarizeText(`${threadTitle} - ${subject}`, ENTRY_LABEL_LENGTH);
+  return summarizeText(`${sessionTitle} - ${subject}`, ENTRY_LABEL_LENGTH);
 }
 
 function formatNextActionAgendaLabel(
-  service: Pick<TuiRuntimeService, "showThread">,
+  service: Pick<TuiRuntimeService, "showSession">,
   nextAction: TodaySummaryViewModel["nextActions"]["items"][number]
 ): string {
   if (!looksLikeAssistantNarrative(nextAction.title)) {
     return nextAction.title;
   }
-  const detail = service.showThread(nextAction.threadId);
+  const detail = service.showSession(nextAction.sessionId);
   return (
     firstUsefulText([
       detail.state.currentObjective?.title,
-      detail.thread?.title,
+      detail.session?.title,
       nextAction.title
     ]) ?? nextAction.title
   );

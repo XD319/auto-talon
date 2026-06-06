@@ -356,7 +356,7 @@ describe("Phase 3 memory plane", () => {
         .find((event) => event.eventType === "memory_write_rejected");
       expect(rejectedEvent).toBeDefined();
       expect(rejectedEvent?.payload.scope).toBe("working");
-      expect(rejectedEvent?.payload.reason).toBe("working_scope_moved_to_thread_session_memory");
+      expect(rejectedEvent?.payload.reason).toBe("working_scope_moved_to_session_summary");
     } finally {
       close();
     }

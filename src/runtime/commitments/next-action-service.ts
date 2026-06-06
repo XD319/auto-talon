@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   NextActionDraft,
   NextActionListQuery,
   NextActionRecord,
@@ -77,8 +77,8 @@ export class NextActionService {
     });
   }
 
-  public reorder(threadId: string, orderedIds: string[]): NextActionRecord[] {
-    const current = this.list({ threadId });
+  public reorder(sessionId: string, orderedIds: string[]): NextActionRecord[] {
+    const current = this.list({ sessionId });
     const rankById = new Map<string, number>();
     orderedIds.forEach((id, index) => rankById.set(id, index));
     return current.map((action) =>
@@ -102,12 +102,12 @@ export class NextActionService {
         nextActionId: action.nextActionId,
         status: action.status,
         taskId: action.taskId,
-        threadId: action.threadId,
+        sessionId: action.sessionId,
         title: action.title
       },
       stage: "planning",
       summary,
-      taskId: action.taskId ?? `thread:${action.threadId}`
+      taskId: action.taskId ?? `session:${action.sessionId}`
     });
   }
 }

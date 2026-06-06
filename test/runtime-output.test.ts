@@ -140,7 +140,7 @@ describe("runtime output events", () => {
       expect(detailRows.map((row) => row.text)).toContain("intermediate text");
       expect(output.some((event) => event.eventType === "tool_status")).toBe(true);
       expect(output.at(-1)?.eventType).toBe("result");
-      expect(handle.service.outputThread(result.task.threadId ?? "")).toHaveLength(output.length);
+      expect(handle.service.outputSession(result.task.sessionId ?? "")).toHaveLength(output.length);
     } finally {
       handle.close();
     }
@@ -159,10 +159,10 @@ describe("runtime output events", () => {
     try {
       const firstOptions = createDefaultRunOptions("read then answer", workspace, handle.config);
       const first = await handle.service.runTask(firstOptions);
-      const threadId = first.task.threadId;
-      expect(threadId).not.toBeNull();
+      const sessionId = first.task.sessionId;
+      expect(sessionId).not.toBeNull();
 
-      const continued = await handle.service.continueThread(threadId!, "continue from plan", {
+      const continued = await handle.service.continueSession(sessionId!, "continue from plan", {
         cwd: workspace,
         onOutputEvent: (event) => continuedEvents.push(event.eventType),
         taskId: "continued-task-id",

@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   JsonObject,
   Provider,
   ProviderStatsSnapshot,
@@ -17,7 +17,7 @@ export class ProviderStatsService {
   public constructor(private readonly dependencies: ProviderStatsServiceDependencies) {}
 
   public providerStats(
-    groupBy: "provider" | "thread" | "task" | "mode" = "provider"
+    groupBy: "provider" | "session" | "task" | "mode" = "provider"
   ): ProviderStatsSnapshot | null | JsonObject {
     const liveStats = this.dependencies.provider.getStats?.() ?? null;
     if (groupBy !== "provider") {
@@ -42,7 +42,7 @@ export class ProviderStatsService {
       : liveStats;
   }
 
-  private providerStatsBy(groupBy: "thread" | "task" | "mode"): JsonObject {
+  private providerStatsBy(groupBy: "session" | "task" | "mode"): JsonObject {
     const events = this.dependencies
       .listTasks()
       .flatMap((task) => this.dependencies.listTrace(task.taskId))
@@ -53,8 +53,8 @@ export class ProviderStatsService {
       const key =
         groupBy === "task"
           ? event.taskId
-          : groupBy === "thread"
-            ? readGroupingKey(payload.threadId, "none")
+          : groupBy === "session"
+            ? readGroupingKey(payload.sessionId, "none")
             : readGroupingKey(payload.mode, "balanced");
       const row = grouped[key] ?? { costUsd: 0, count: 0, inputTokens: 0, outputTokens: 0 };
       row.count += 1;

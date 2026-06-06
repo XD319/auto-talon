@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+﻿import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,7 +21,7 @@ class ScheduledProvider implements Provider {
 }
 
 describe("schedule e2e", () => {
-  it("runs scheduled work and keeps task/thread traceability", async () => {
+  it("runs scheduled work and keeps task/session traceability", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "talon-schedule-e2e-"));
     const handle = createApplication(workspace, {
       config: { databasePath: join(workspace, "runtime.db") },
@@ -44,12 +44,12 @@ describe("schedule e2e", () => {
       const runs = handle.service.listScheduleRuns(schedule.scheduleId, { tail: 20 });
       const completed = runs.find((run) => run.status === "completed");
       expect(completed?.taskId).toBeTruthy();
-      expect(completed?.threadId).toBeTruthy();
+      expect(completed?.sessionId).toBeTruthy();
 
       const taskView = handle.service.showTask(completed!.taskId!);
       expect(taskView.scheduleRuns.length).toBeGreaterThan(0);
 
-      const threadView = handle.service.showThread(completed!.threadId!);
+      const threadView = handle.service.showSession(completed!.sessionId!);
       expect(threadView.scheduleRuns.length).toBeGreaterThan(0);
     } finally {
       handle.close();

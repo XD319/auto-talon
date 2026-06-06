@@ -1,15 +1,15 @@
-import type { ContextCompactor, ThreadSessionMemoryService } from "../context/index.js";
+﻿import type { ContextCompactor, SessionSummaryService } from "../context/index.js";
 import type {
   ProviderToolDescriptor,
   SessionCompactInput,
   SessionCompactResult,
   TaskRecord,
-  ThreadSessionMemoryRecord
+  SessionSummaryRecord
 } from "../../types/index.js";
 
 export interface SummarizerWorkerDependencies {
   contextCompactor: ContextCompactor;
-  threadSessionMemoryService: ThreadSessionMemoryService;
+  sessionSummaryService: SessionSummaryService;
 }
 
 export interface SummarizerWorkerInput {
@@ -23,7 +23,7 @@ export interface SummarizerWorkerInput {
 }
 
 export interface SummarizerWorkerOutput {
-  sessionMemory: ThreadSessionMemoryRecord | null;
+  sessionSummary: SessionSummaryRecord | null;
   compacted: boolean;
   summary: string;
 }
@@ -32,20 +32,20 @@ export class SummarizerWorker {
   public constructor(private readonly dependencies: SummarizerWorkerDependencies) {}
 
   public execute(input: SummarizerWorkerInput): Promise<SummarizerWorkerOutput> {
-    if (!input.compactResult.triggered || input.task.threadId === null || input.task.threadId === undefined) {
+    if (!input.compactResult.triggered || input.task.sessionId === null || input.task.sessionId === undefined) {
       return Promise.resolve({
         compacted: input.compactResult.triggered,
-        sessionMemory: null,
-        summary: "Compaction did not produce thread session memory."
+        sessionSummary: null,
+        summary: "Compaction did not produce session summary."
       });
     }
 
-    const draft = this.dependencies.contextCompactor.buildSessionMemory({
+    const draft = this.dependencies.contextCompactor.buildSessionSummary({
       availableTools: input.availableTools,
       compact: input.compactInput,
       task: input.task
     });
-    const sessionMemory = this.dependencies.threadSessionMemoryService.create({
+    const sessionSummary = this.dependencies.sessionSummaryService.create({
       ...draft,
       metadata: {
         ...(draft.metadata ?? {}),
@@ -56,13 +56,13 @@ export class SummarizerWorker {
         )
       },
       runId: input.runId,
-      threadId: input.task.threadId,
+      sessionId: input.task.sessionId,
       trigger: "compact"
     });
     return Promise.resolve({
       compacted: true,
-      sessionMemory,
-      summary: sessionMemory.summary
+      sessionSummary,
+      summary: sessionSummary.summary
     });
   }
 }

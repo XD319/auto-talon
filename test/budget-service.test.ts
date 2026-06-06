@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 
 import { BudgetService } from "../src/runtime/budget/budget-service.js";
 
@@ -9,7 +9,7 @@ describe("budget service", () => {
     const service = new BudgetService(
       {
         task: { hardCostUsd: 2, softCostUsd: 1 },
-        thread: {}
+        session: {}
       },
       traceService,
       auditService
@@ -19,14 +19,14 @@ describe("budget service", () => {
       costUsd: 1.2,
       mode: "balanced",
       taskId: "task-1",
-      threadId: null,
+      sessionId: null,
       usage: { inputTokens: 10, outputTokens: 5 }
     });
     const hard = service.recordUsage({
       costUsd: 1,
       mode: "balanced",
       taskId: "task-1",
-      threadId: null,
+      sessionId: null,
       usage: { inputTokens: 10, outputTokens: 5 }
     });
 

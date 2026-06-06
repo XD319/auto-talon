@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 
 import {
   CheckpointManager,
@@ -69,7 +69,7 @@ const task = (): TaskRecord => ({
   startedAt: "2026-06-05T00:00:00.000Z",
   status: "waiting_approval",
   taskId: "task-1",
-  threadId: "thread-1",
+  sessionId: "session-1",
   tokenBudget: {
     inputLimit: 1000,
     outputLimit: 1000,

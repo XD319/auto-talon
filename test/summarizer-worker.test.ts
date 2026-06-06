@@ -1,22 +1,22 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { ContextCompactor } from "../src/runtime/context/context-compactor.js";
 import { SummarizerWorker } from "../src/runtime/workers/summarizer-worker.js";
-import type { ThreadSessionMemoryService } from "../src/runtime/context/index.js";
+import type { SessionSummaryService } from "../src/runtime/context/index.js";
 import type {
   ProviderToolDescriptor,
   TaskRecord,
-  ThreadSessionMemoryDraft,
-  ThreadSessionMemoryRecord
+  SessionSummaryDraft,
+  SessionSummaryRecord
 } from "../src/types/index.js";
 
 describe("SummarizerWorker", () => {
   it("persists compact reason and replaced message count through worker compaction", async () => {
-    let capturedDraft: ThreadSessionMemoryDraft | null = null;
+    let capturedDraft: SessionSummaryDraft | null = null;
     const worker = new SummarizerWorker({
       contextCompactor: new ContextCompactor(),
-      threadSessionMemoryService: {
-        create(draft: ThreadSessionMemoryDraft): ThreadSessionMemoryRecord {
+      sessionSummaryService: {
+        create(draft: SessionSummaryDraft): SessionSummaryRecord {
           capturedDraft = draft;
           return {
             createdAt: "2026-01-01T00:00:00.000Z",
@@ -26,14 +26,14 @@ describe("SummarizerWorker", () => {
             nextActions: draft.nextActions,
             openLoops: draft.openLoops,
             runId: draft.runId ?? null,
-            sessionMemoryId: "session-memory-1",
+            sessionSummaryId: "session-memory-1",
             summary: draft.summary,
             taskId: draft.taskId ?? null,
-            threadId: draft.threadId,
+            sessionId: draft.sessionId,
             trigger: draft.trigger
           };
         }
-      } as unknown as ThreadSessionMemoryService
+      } as unknown as SessionSummaryService
     });
 
     await worker.execute({
@@ -48,7 +48,7 @@ describe("SummarizerWorker", () => {
           { content: "summary", role: "assistant" }
         ],
         reason: "tool_call_count",
-        sessionScopeKey: "thread-1",
+        sessionScopeKey: "session-1",
         taskId: "task-1"
       },
       compactResult: {
@@ -89,7 +89,7 @@ function createTask(): TaskRecord {
     startedAt: "2026-01-01T00:00:00.000Z",
     status: "running",
     taskId: "task-1",
-    threadId: "thread-1",
+    sessionId: "session-1",
     tokenBudget: {
       maxCostUsd: 1,
       maxInputTokens: 1000,

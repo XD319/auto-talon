@@ -33,12 +33,12 @@ function HomeSummaryBase({ selectedIndex = 0, summary }: HomeSummaryProps): Reac
                 {index === selectedIndex ? "> " : "  "}
                 {entry.label}
               </Text>
-              {entry.kind === "thread" && entry.headline !== entry.label ? (
+              {entry.kind === "session" && entry.headline !== entry.label ? (
                 <Text color={index === selectedIndex ? theme.fg : theme.muted} wrap="truncate-end">
                   {entry.headline}
                 </Text>
               ) : null}
-              {entry.kind !== "thread" && entry.headline !== undefined ? (
+              {entry.kind !== "session" && entry.headline !== undefined ? (
                 <Text color={theme.muted} wrap="truncate-end">
                   {entry.headline}
                 </Text>

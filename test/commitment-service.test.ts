@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { CommitmentCollector } from "../src/runtime/commitments/commitment-collector.js";
 import { CommitmentService } from "../src/runtime/commitments/commitment-service.js";
 import { NextActionService } from "../src/runtime/commitments/next-action-service.js";
-import { ThreadSessionMemoryService } from "../src/runtime/context/thread-session-memory-service.js";
+import { SessionSummaryService } from "../src/runtime/context/session-summary-service.js";
 import { StorageManager } from "../src/storage/database.js";
 import { TraceService } from "../src/tracing/trace-service.js";
 
@@ -11,12 +11,12 @@ describe("commitment services", () => {
   it("emits trace events for status transitions", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: process.cwd(),
         ownerUserId: "u1",
         providerName: "test-provider",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "Thread one"
       });
 
@@ -34,7 +34,7 @@ describe("commitment services", () => {
         ownerUserId: "u1",
         source: "manual",
         summary: "summary",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "Deliver update"
       });
       commitmentService.block(commitment.commitmentId, "blocked");
@@ -42,12 +42,12 @@ describe("commitment services", () => {
       const action = nextActionService.create({
         source: "manual",
         status: "active",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "Run tests"
       });
       nextActionService.markDone(action.nextActionId);
 
-      const events = storage.traces.listByTaskId(`thread:thread-1`);
+      const events = storage.traces.listByTaskId(`session:session-1`);
       expect(events.some((event) => event.eventType === "commitment_created")).toBe(true);
       expect(events.some((event) => event.eventType === "commitment_blocked")).toBe(true);
       expect(events.some((event) => event.eventType === "next_action_done")).toBe(true);
@@ -59,12 +59,12 @@ describe("commitment services", () => {
   it("does not create snapshot commitments from ordinary final summaries", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: process.cwd(),
         ownerUserId: "u1",
         providerName: "test-provider",
-        threadId: "thread-summary",
+        sessionId: "session-summary",
         title: "Thread summary"
       });
       storage.tasks.create({
@@ -77,7 +77,7 @@ describe("commitment services", () => {
         requesterUserId: "u1",
         status: "succeeded",
         taskId: "task-summary",
-        threadId: "thread-summary",
+        sessionId: "session-summary",
         tokenBudget: {
           inputLimit: 1000,
           outputLimit: 1000,
@@ -97,20 +97,20 @@ describe("commitment services", () => {
         nextActionRepository: storage.nextActions,
         traceService
       });
-      const threadSessionMemoryService = new ThreadSessionMemoryService({
-        repository: storage.threadSessionMemories,
+      const sessionSummaryService = new SessionSummaryService({
+        repository: storage.sessionSummaries,
         traceService
       });
       const collector = new CommitmentCollector({
         commitmentService,
         findTask: (taskId) => storage.tasks.findById(taskId),
         nextActionService,
-        threadSessionMemoryService,
+        sessionSummaryService,
         traceService
       });
       collector.start();
 
-      threadSessionMemoryService.create({
+      sessionSummaryService.create({
         decisions: [],
         goal: "implement feature",
         metadata: {},
@@ -118,12 +118,12 @@ describe("commitment services", () => {
         openLoops: [],
         summary: "final summary",
         taskId: "task-summary",
-        threadId: "thread-summary",
+        sessionId: "session-summary",
         trigger: "final"
       });
 
-      expect(commitmentService.list({ threadId: "thread-summary" })).toEqual([]);
-      expect(nextActionService.list({ threadId: "thread-summary" })).toEqual([]);
+      expect(commitmentService.list({ sessionId: "session-summary" })).toEqual([]);
+      expect(nextActionService.list({ sessionId: "session-summary" })).toEqual([]);
       collector.stop();
     } finally {
       storage.close();

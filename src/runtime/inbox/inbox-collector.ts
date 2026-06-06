@@ -51,7 +51,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: event.payload.outputSummary,
           taskId: event.taskId,
-          threadId: this.dependencies.findTask(event.taskId)?.threadId ?? null,
+          sessionId: this.dependencies.findTask(event.taskId)?.sessionId ?? null,
           title: "Task completed",
           userId: this.resolveUserId(event.taskId)
         });
@@ -67,7 +67,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: `${event.payload.errorCode}: ${event.payload.errorMessage}`,
           taskId: event.taskId,
-          threadId: this.dependencies.findTask(event.taskId)?.threadId ?? null,
+          sessionId: this.dependencies.findTask(event.taskId)?.sessionId ?? null,
           title: "Task failed",
           userId: this.resolveUserId(event.taskId)
         });
@@ -86,7 +86,7 @@ export class InboxCollector {
             sourceTraceId: event.eventId,
             summary: `${event.payload.toolName} requires approval`,
             taskId: event.taskId,
-            threadId: this.dependencies.findTask(event.taskId)?.threadId ?? null,
+            sessionId: this.dependencies.findTask(event.taskId)?.sessionId ?? null,
             title: "Approval requested",
             userId: this.resolveUserId(event.taskId)
           });
@@ -161,7 +161,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: event.payload.reasons.join("; "),
           taskId: event.taskId,
-          threadId: event.payload.threadId,
+          sessionId: event.payload.sessionId,
           title: "Budget warning",
           userId: this.resolveUserId(event.taskId)
         });
@@ -175,7 +175,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: event.payload.reasons.join("; "),
           taskId: event.taskId,
-          threadId: event.payload.threadId,
+          sessionId: event.payload.sessionId,
           title: "Budget exceeded",
           userId: this.resolveUserId(event.taskId)
         });
@@ -196,7 +196,7 @@ export class InboxCollector {
             sourceTraceId: event.eventId,
             summary: `Routine completed: ${scheduleLabel}.`,
             taskId: event.payload.taskId ?? event.taskId,
-            threadId: event.payload.threadId,
+            sessionId: event.payload.sessionId,
             title: `Routine completed: ${scheduleLabel}`,
             userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
           });
@@ -208,7 +208,7 @@ export class InboxCollector {
         const scheduleName = schedule?.name ?? event.payload.runId;
         const failureReason = [event.payload.errorCode, event.payload.errorMessage].filter(Boolean).join(": ") || "Scheduled routine failed";
         const metadata = buildScheduleInboxMetadata(schedule);
-        if (schedule?.threadId !== null && schedule?.threadId !== undefined && !hasExternalScheduleOrigin(metadata)) {
+        if (schedule?.sessionId !== null && schedule?.sessionId !== undefined && !hasExternalScheduleOrigin(metadata)) {
           this.createFailedRoutineFollowUp(schedule, event.payload.runId, event.payload.taskId, failureReason);
           return;
         }
@@ -221,7 +221,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: failureReason,
           taskId: event.payload.taskId ?? event.taskId,
-          threadId: schedule?.threadId ?? null,
+          sessionId: schedule?.sessionId ?? null,
           title: `Routine failed: ${scheduleName}`,
           userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
         });
@@ -235,7 +235,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: event.payload.blockedReason,
           taskId: event.payload.taskId,
-          threadId: event.payload.threadId,
+          sessionId: event.payload.sessionId,
           title: "Task blocked",
           userId: this.resolveUserId(event.taskId)
         });
@@ -248,7 +248,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: event.payload.blockedReason,
           taskId: event.payload.taskId,
-          threadId: event.payload.threadId,
+          sessionId: event.payload.sessionId,
           title: "Next action blocked",
           userId: this.resolveUserId(event.taskId)
         });
@@ -264,7 +264,7 @@ export class InboxCollector {
           sourceTraceId: event.eventId,
           summary: event.payload.pendingDecision,
           taskId: event.payload.taskId,
-          threadId: event.payload.threadId,
+          sessionId: event.payload.sessionId,
           title: "Decision requested",
           userId: this.resolveUserId(event.taskId)
         });
@@ -323,7 +323,7 @@ export class InboxCollector {
       source: "manual",
       status: "blocked",
       taskId,
-      threadId: schedule.threadId!,
+      sessionId: schedule.sessionId!,
       title: `Follow up failed routine: ${schedule.name}`
     });
     return this.dependencies.nextActionService.block(created.nextActionId, reason);

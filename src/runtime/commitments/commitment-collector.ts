@@ -1,12 +1,12 @@
-import type { TraceEvent, TaskRecord } from "../../types/index.js";
+﻿import type { TraceEvent, TaskRecord } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
-import type { ThreadSessionMemoryService } from "../context/thread-session-memory-service.js";
+import type { SessionSummaryService } from "../context/session-summary-service.js";
 import type { CommitmentService } from "./commitment-service.js";
 import type { NextActionService } from "./next-action-service.js";
 
 export interface CommitmentCollectorDependencies {
   traceService: TraceService;
-  threadSessionMemoryService: ThreadSessionMemoryService;
+  sessionSummaryService: SessionSummaryService;
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
   findTask: (taskId: string) => TaskRecord | null;
@@ -36,8 +36,8 @@ export class CommitmentCollector {
       case "task_created":
         this.onTaskCreated(event);
         return;
-      case "thread_session_memory_written":
-        this.onSessionMemory(event);
+      case "session_summary_written":
+        this.onSessionSummary(event);
         return;
       case "approval_requested":
         this.onApprovalRequested(event);
@@ -58,12 +58,12 @@ export class CommitmentCollector {
 
   private onTaskCreated(event: Extract<TraceEvent, { eventType: "task_created" }>): void {
     const task = this.dependencies.findTask(event.taskId);
-    if (task?.threadId === undefined || task.threadId === null) {
+    if (task?.sessionId === undefined || task.sessionId === null) {
       return;
     }
     const existing = this.dependencies.commitmentService.list({
       statuses: ["open", "in_progress", "blocked", "waiting_decision"],
-      threadId: task.threadId
+      sessionId: task.sessionId
     });
     if (existing.length === 0) {
       const commitment = this.dependencies.commitmentService.create({
@@ -73,7 +73,7 @@ export class CommitmentCollector {
         status: "in_progress",
         summary: task.input,
         taskId: task.taskId,
-        threadId: task.threadId,
+        sessionId: task.sessionId,
         title: task.input.slice(0, 160)
       });
       this.dependencies.nextActionService.create({
@@ -83,14 +83,14 @@ export class CommitmentCollector {
         sourceTraceId: event.eventId,
         status: "active",
         taskId: task.taskId,
-        threadId: task.threadId,
+        sessionId: task.sessionId,
         title: task.input.slice(0, 160)
       });
       return;
     }
     const actions = this.dependencies.nextActionService.list({
       statuses: ["pending", "active", "blocked"],
-      threadId: task.threadId
+      sessionId: task.sessionId
     });
     if (actions.length === 0) {
       this.dependencies.nextActionService.create({
@@ -100,28 +100,28 @@ export class CommitmentCollector {
         sourceTraceId: event.eventId,
         status: "active",
         taskId: task.taskId,
-        threadId: task.threadId,
+        sessionId: task.sessionId,
         title: task.input.slice(0, 160)
       });
     }
   }
 
-  private onSessionMemory(event: Extract<TraceEvent, { eventType: "thread_session_memory_written" }>): void {
-    const sessionMemory = this.dependencies.threadSessionMemoryService.findById(event.payload.sessionMemoryId);
-    if (sessionMemory === null) {
+  private onSessionSummary(event: Extract<TraceEvent, { eventType: "session_summary_written" }>): void {
+    const sessionSummary = this.dependencies.sessionSummaryService.findById(event.payload.sessionSummaryId);
+    if (sessionSummary === null) {
       return;
     }
     const commitments = this.dependencies.commitmentService.list({
       statuses: ["open", "in_progress", "blocked", "waiting_decision"],
-      threadId: sessionMemory.threadId
+      sessionId: sessionSummary.sessionId
     });
-    const nextActions = sessionMemory.nextActions.filter((title) =>
+    const nextActions = sessionSummary.nextActions.filter((title) =>
       shouldProjectSessionNextAction(title)
     );
-    if (commitments.length === 0 && nextActions.length === 0 && sessionMemory.openLoops.length === 0) {
+    if (commitments.length === 0 && nextActions.length === 0 && sessionSummary.openLoops.length === 0) {
       return;
     }
-    const objective = sessionMemory.goal.trim().slice(0, 160);
+    const objective = sessionSummary.goal.trim().slice(0, 160);
     const commitment =
       commitments[0] ??
       this.dependencies.commitmentService.create({
@@ -129,17 +129,17 @@ export class CommitmentCollector {
         source: "snapshot",
         sourceTraceId: event.eventId,
         status: "in_progress",
-        summary: sessionMemory.summary,
-        taskId: sessionMemory.taskId,
-        threadId: sessionMemory.threadId,
-        title: objective.length > 0 ? objective : "Continue thread objective"
+        summary: sessionSummary.summary,
+        taskId: sessionSummary.taskId,
+        sessionId: sessionSummary.sessionId,
+        title: objective.length > 0 ? objective : "Continue session objective"
       });
-    if (sessionMemory.openLoops.length > 0) {
-      this.dependencies.commitmentService.block(commitment.commitmentId, sessionMemory.openLoops[0]!);
+    if (sessionSummary.openLoops.length > 0) {
+      this.dependencies.commitmentService.block(commitment.commitmentId, sessionSummary.openLoops[0]!);
     }
     const existing = this.dependencies.nextActionService.list({
       statuses: ["pending", "active", "blocked"],
-      threadId: sessionMemory.threadId
+      sessionId: sessionSummary.sessionId
     });
     if (existing.length === 0) {
       nextActions.forEach((title, index) => {
@@ -149,8 +149,8 @@ export class CommitmentCollector {
           source: "snapshot",
           sourceTraceId: event.eventId,
           status: index === 0 ? "active" : "pending",
-          taskId: sessionMemory.taskId,
-          threadId: sessionMemory.threadId,
+          taskId: sessionSummary.taskId,
+          sessionId: sessionSummary.sessionId,
           title
         });
       });
@@ -159,12 +159,12 @@ export class CommitmentCollector {
 
   private onApprovalRequested(event: Extract<TraceEvent, { eventType: "approval_requested" }>): void {
     const task = this.dependencies.findTask(event.taskId);
-    if (task?.threadId === undefined || task.threadId === null) {
+    if (task?.sessionId === undefined || task.sessionId === null) {
       return;
     }
     const active = this.dependencies.nextActionService.list({
       statuses: ["active", "pending"],
-      threadId: task.threadId
+      sessionId: task.sessionId
     })[0];
     if (active !== undefined) {
       this.dependencies.nextActionService.block(
@@ -176,12 +176,12 @@ export class CommitmentCollector {
 
   private onApprovalResolved(event: Extract<TraceEvent, { eventType: "approval_resolved" }>): void {
     const task = this.dependencies.findTask(event.taskId);
-    if (task?.threadId === undefined || task.threadId === null) {
+    if (task?.sessionId === undefined || task.sessionId === null) {
       return;
     }
     const blocked = this.dependencies.nextActionService.list({
       status: "blocked",
-      threadId: task.threadId
+      sessionId: task.sessionId
     })[0];
     if (blocked === undefined) {
       return;
@@ -198,12 +198,12 @@ export class CommitmentCollector {
 
   private onTaskSuccess(event: Extract<TraceEvent, { eventType: "task_success" }>): void {
     const task = this.dependencies.findTask(event.taskId);
-    if (task?.threadId === undefined || task.threadId === null) {
+    if (task?.sessionId === undefined || task.sessionId === null) {
       return;
     }
     const active = this.dependencies.nextActionService.list({
       statuses: ["active", "pending", "blocked"],
-      threadId: task.threadId
+      sessionId: task.sessionId
     })[0];
     if (active === undefined) {
       return;
@@ -211,7 +211,7 @@ export class CommitmentCollector {
     this.dependencies.nextActionService.markDone(active.nextActionId);
     const remaining = this.dependencies.nextActionService.list({
       statuses: ["active", "pending", "blocked"],
-      threadId: task.threadId
+      sessionId: task.sessionId
     });
     if (remaining.length === 0 && active.commitmentId !== null) {
       this.dependencies.commitmentService.complete(active.commitmentId);
@@ -220,12 +220,12 @@ export class CommitmentCollector {
 
   private onTaskFailure(event: Extract<TraceEvent, { eventType: "task_failure" }>): void {
     const task = this.dependencies.findTask(event.taskId);
-    if (task?.threadId === undefined || task.threadId === null) {
+    if (task?.sessionId === undefined || task.sessionId === null) {
       return;
     }
     const active = this.dependencies.nextActionService.list({
       statuses: ["active", "pending", "blocked"],
-      threadId: task.threadId
+      sessionId: task.sessionId
     })[0];
     if (active === undefined) {
       return;

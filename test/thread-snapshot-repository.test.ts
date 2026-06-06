@@ -1,48 +1,46 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { StorageManager } from "../src/storage/database.js";
 
-describe("thread snapshot repository", () => {
-  it("creates and queries snapshots by id and thread", () => {
+describe("session summary repository", () => {
+  it("creates and queries summaries by id and session", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: "/tmp/workspace",
         ownerUserId: "u1",
         providerName: "mock",
-        threadId: "thread-1",
-        title: "snapshot thread"
+        sessionId: "session-1",
+        title: "session summary"
       });
 
-      const first = storage.threadSnapshots.create({
-        activeMemoryIds: ["m1"],
+      const first = storage.sessionSummaries.create({
+        decisions: ["picked A"],
         goal: "Initial objective",
         nextActions: ["do A"],
         openLoops: ["pending shell call"],
-        snapshotId: "snap-1",
+        sessionSummaryId: "summary-1",
         summary: "first summary",
-        threadId: "thread-1",
-        toolCapabilitySummary: ["Shell"],
+        sessionId: "session-1",
         trigger: "compact"
       });
-      const second = storage.threadSnapshots.create({
-        activeMemoryIds: ["m2"],
+      const second = storage.sessionSummaries.create({
+        decisions: ["picked B"],
         goal: "Updated objective",
         nextActions: ["do B"],
         openLoops: [],
-        snapshotId: "snap-2",
+        sessionSummaryId: "summary-2",
         summary: "second summary",
-        threadId: "thread-1",
-        toolCapabilitySummary: ["ReadFile"],
+        sessionId: "session-1",
         trigger: "manual"
       });
 
-      expect(storage.threadSnapshots.findById(first.snapshotId)?.goal).toBe("Initial objective");
-      expect(storage.threadSnapshots.findLatestByThread("thread-1")?.snapshotId).toBe("snap-2");
-      expect(storage.threadSnapshots.listByThread("thread-1").map((item) => item.snapshotId)).toEqual([
-        "snap-2",
-        "snap-1"
+      expect(storage.sessionSummaries.findById(first.sessionSummaryId)?.goal).toBe("Initial objective");
+      expect(storage.sessionSummaries.findLatestBySession("session-1")?.sessionSummaryId).toBe("summary-2");
+      expect(storage.sessionSummaries.listBySession("session-1").map((item) => item.sessionSummaryId)).toEqual([
+        "summary-2",
+        "summary-1"
       ]);
       expect(second.trigger).toBe("manual");
     } finally {
@@ -50,3 +48,4 @@ describe("thread snapshot repository", () => {
     }
   });
 });
+

@@ -1,4 +1,4 @@
-import type { AuditService } from "../../audit/audit-service.js";
+﻿import type { AuditService } from "../../audit/audit-service.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type { Provider, ProviderTier, RouteKind, RoutingMode } from "../../types/index.js";
 
@@ -21,7 +21,7 @@ export interface ProviderRouterConfig {
 export interface SelectProviderInput {
   kind: RouteKind;
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   mode?: RoutingMode;
 }
 
@@ -34,7 +34,7 @@ export interface SelectProviderResult {
 }
 
 export interface BudgetDowngradeReader {
-  isDowngradeActive(scope: "task" | "thread", scopeId: string): boolean;
+  isDowngradeActive(scope: "task" | "session", scopeId: string): boolean;
 }
 
 export class ProviderRouter {
@@ -63,7 +63,7 @@ export class ProviderRouter {
     const modeApplied = input.mode ?? this.mode;
     const softDowngrade =
       this.budgetService.isDowngradeActive("task", input.taskId) ||
-      (input.threadId !== null && this.budgetService.isDowngradeActive("thread", input.threadId));
+      (input.sessionId !== null && this.budgetService.isDowngradeActive("session", input.sessionId));
     const tier = this.resolveTier(input.kind, modeApplied, softDowngrade);
     const providerName = tier === null ? null : this.resolveProviderName(tier);
     const provider = providerName === null ? null : this.getOrCreateProvider(providerName);
@@ -83,7 +83,7 @@ export class ProviderRouter {
         providerName,
         reason,
         taskId: input.taskId,
-        threadId: input.threadId,
+        sessionId: input.sessionId,
         tier
       },
       stage: "planning",
@@ -101,7 +101,7 @@ export class ProviderRouter {
         providerName,
         reason,
         taskId: input.taskId,
-        threadId: input.threadId,
+        sessionId: input.sessionId,
         tier
       },
       summary: `Route decision for ${input.kind}`,

@@ -42,12 +42,12 @@ describe("assistant output projection", () => {
     try {
       const first = await handle.service.runTask(createDefaultRunOptions("run projection", workspaceRoot, handle.config));
       const secondOptions = createDefaultRunOptions("run projection again", workspaceRoot, handle.config);
-      secondOptions.threadId = first.task.threadId ?? undefined;
+      secondOptions.sessionId = first.task.sessionId ?? undefined;
       await handle.service.runTask(secondOptions);
 
-      const threadId = first.task.threadId ?? "";
-      const commitments = handle.service.listCommitments({ threadId }).filter((item) => item.source === "assistant_pledge");
-      const nextActions = handle.service.listNextActions({ threadId }).filter((item) => item.source === "assistant_pledge");
+      const sessionId = first.task.sessionId ?? "";
+      const commitments = handle.service.listCommitments({ sessionId }).filter((item) => item.source === "assistant_pledge");
+      const nextActions = handle.service.listNextActions({ sessionId }).filter((item) => item.source === "assistant_pledge");
       expect(commitments).toHaveLength(1);
       expect(commitments[0]?.title).toBe("Ship parser");
       expect(nextActions.map((item) => item.title).sort()).toEqual(["Add tests", "Update docs"]);
@@ -70,11 +70,11 @@ describe("assistant output projection", () => {
 
     try {
       const result = await handle.service.runTask(createDefaultRunOptions("blocked projection", workspaceRoot, handle.config));
-      const threadId = result.task.threadId ?? "";
-      const blockedActions = handle.service.listNextActions({ threadId }).filter((item) => item.status === "blocked");
+      const sessionId = result.task.sessionId ?? "";
+      const blockedActions = handle.service.listNextActions({ sessionId }).filter((item) => item.status === "blocked");
       expect(blockedActions.length).toBeGreaterThan(0);
 
-      const inboxItems = handle.service.listInbox({ status: "pending", threadId }).filter((item) => item.category === "task_blocked");
+      const inboxItems = handle.service.listInbox({ status: "pending", sessionId }).filter((item) => item.category === "task_blocked");
       expect(inboxItems.length).toBeGreaterThan(0);
     } finally {
       handle.close();
@@ -102,8 +102,8 @@ describe("assistant output projection", () => {
 
     try {
       const result = await handle.service.runTask(createDefaultRunOptions("summarize completed work", workspaceRoot, handle.config));
-      const threadId = result.task.threadId ?? "";
-      const nextActions = handle.service.listNextActions({ threadId }).filter((item) => item.source === "assistant_pledge");
+      const sessionId = result.task.sessionId ?? "";
+      const nextActions = handle.service.listNextActions({ sessionId }).filter((item) => item.source === "assistant_pledge");
       expect(nextActions).toHaveLength(0);
     } finally {
       handle.close();

@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+﻿import type { DatabaseSync } from "node:sqlite";
 
 interface SchemaMigration {
   description: string;
@@ -23,7 +23,7 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     version: 3
   },
   {
-    description: "add thread snapshots table",
+    description: "add session summarys table",
     up: migrateV4,
     version: 4
   },
@@ -48,12 +48,12 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     version: 8
   },
   {
-    description: "add thread session memory and session search tables",
+    description: "add session summary and session search tables",
     up: migrateV9,
     version: 9
   },
   {
-    description: "split thread session memory into current state and events",
+    description: "split session summary into current state and events",
     up: migrateV10,
     version: 10
   },
@@ -76,6 +76,21 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "add clarify prompt response column",
     up: migrateV14,
     version: 14
+  },
+  {
+    description: "add session transcript events table",
+    up: migrateV15,
+    version: 15
+  },
+  {
+    description: "add output event session id column",
+    up: migrateV16,
+    version: 16
+  },
+  {
+    description: "repair session core tables",
+    up: migrateV17,
+    version: 17
   }
 ];
 
@@ -91,6 +106,7 @@ export function runMigrations(database: DatabaseSync): void {
     migration.up(database);
     database.exec(`PRAGMA user_version = ${migration.version}`);
   }
+  ensureSessionSchemaRepairs(database);
 }
 
 function migrateV1(database: DatabaseSync): void {
@@ -337,12 +353,12 @@ function migrateV2(database: DatabaseSync): void {
 }
 
 function migrateV3(database: DatabaseSync): void {
-  addColumnIfMissing(database, "tasks", "thread_id", "TEXT");
-  database.exec("CREATE INDEX IF NOT EXISTS idx_tasks_thread_id ON tasks(thread_id)");
+  addColumnIfMissing(database, "tasks", "session_id", "TEXT");
+  database.exec("CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)");
 
   database.exec(`
-    CREATE TABLE IF NOT EXISTS threads (
-      thread_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS sessions (
+      session_id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       status TEXT NOT NULL,
       owner_user_id TEXT NOT NULL,
@@ -355,12 +371,12 @@ function migrateV3(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_threads_owner ON threads(owner_user_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_user_id, updated_at DESC);
 
-    CREATE TABLE IF NOT EXISTS thread_runs (
+    CREATE TABLE IF NOT EXISTS session_tasks (
       run_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
       task_id TEXT NOT NULL REFERENCES tasks(task_id),
       run_number INTEGER NOT NULL,
       input TEXT NOT NULL,
@@ -371,12 +387,12 @@ function migrateV3(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_thread_runs_thread ON thread_runs(thread_id, run_number);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_runs_task ON thread_runs(task_id);
+    CREATE INDEX IF NOT EXISTS idx_session_tasks_thread ON session_tasks(session_id, run_number);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_tasks_task ON session_tasks(task_id);
 
-    CREATE TABLE IF NOT EXISTS thread_lineage (
+    CREATE TABLE IF NOT EXISTS session_lineage (
       lineage_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
       event_type TEXT NOT NULL,
       source_run_id TEXT,
       target_run_id TEXT,
@@ -384,15 +400,15 @@ function migrateV3(database: DatabaseSync): void {
       payload_json TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_thread_lineage_thread ON thread_lineage(thread_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_session_lineage_thread ON session_lineage(session_id, created_at);
   `);
 }
 
 function migrateV4(database: DatabaseSync): void {
   database.exec(`
-    CREATE TABLE IF NOT EXISTS thread_snapshots (
+    CREATE TABLE IF NOT EXISTS legacy_session_snapshots (
       snapshot_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
       run_id TEXT,
       task_id TEXT,
       trigger TEXT NOT NULL,
@@ -407,8 +423,8 @@ function migrateV4(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_thread_snapshots_thread
-      ON thread_snapshots(thread_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_legacy_session_snapshots_session
+      ON legacy_session_snapshots(session_id, created_at DESC);
   `);
 }
 
@@ -418,7 +434,7 @@ function migrateV5(database: DatabaseSync): void {
       schedule_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       status TEXT NOT NULL,
-      thread_id TEXT REFERENCES threads(thread_id),
+      session_id TEXT REFERENCES sessions(session_id),
       owner_user_id TEXT NOT NULL,
       cwd TEXT NOT NULL,
       agent_profile_id TEXT NOT NULL DEFAULT 'executor',
@@ -450,7 +466,7 @@ function migrateV5(database: DatabaseSync): void {
       started_at TEXT,
       finished_at TEXT,
       task_id TEXT REFERENCES tasks(task_id),
-      thread_id TEXT REFERENCES threads(thread_id),
+      session_id TEXT REFERENCES sessions(session_id),
       error_code TEXT,
       error_message TEXT,
       trigger TEXT NOT NULL,
@@ -472,7 +488,7 @@ function migrateV6(database: DatabaseSync): void {
       inbox_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       task_id TEXT REFERENCES tasks(task_id),
-      thread_id TEXT REFERENCES threads(thread_id),
+      session_id TEXT REFERENCES sessions(session_id),
       schedule_run_id TEXT REFERENCES schedule_runs(run_id),
       approval_id TEXT REFERENCES approvals(approval_id),
       experience_id TEXT REFERENCES experiences(experience_id),
@@ -497,7 +513,7 @@ function migrateV6(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_inbox_task
       ON inbox_items(task_id);
     CREATE INDEX IF NOT EXISTS idx_inbox_thread
-      ON inbox_items(thread_id);
+      ON inbox_items(session_id);
     CREATE INDEX IF NOT EXISTS idx_inbox_approval
       ON inbox_items(approval_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_user_dedup
@@ -510,7 +526,7 @@ function migrateV7(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS commitments (
       commitment_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
       task_id TEXT REFERENCES tasks(task_id),
       owner_user_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -528,13 +544,13 @@ function migrateV7(database: DatabaseSync): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_commitments_thread_status_updated
-      ON commitments(thread_id, status, updated_at DESC);
+      ON commitments(session_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_commitments_owner_status_updated
       ON commitments(owner_user_id, status, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS next_actions (
       next_action_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
       commitment_id TEXT REFERENCES commitments(commitment_id),
       task_id TEXT REFERENCES tasks(task_id),
       title TEXT NOT NULL,
@@ -552,7 +568,7 @@ function migrateV7(database: DatabaseSync): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_next_actions_thread_status_rank
-      ON next_actions(thread_id, status, rank);
+      ON next_actions(session_id, status, rank);
     CREATE INDEX IF NOT EXISTS idx_next_actions_commitment_rank
       ON next_actions(commitment_id, rank);
   `);
@@ -576,9 +592,9 @@ function migrateV8(database: DatabaseSync): void {
 
 function migrateV9(database: DatabaseSync): void {
   database.exec(`
-    CREATE TABLE IF NOT EXISTS thread_session_memory (
+    CREATE TABLE IF NOT EXISTS session_summary (
       session_memory_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
       run_id TEXT,
       task_id TEXT,
       trigger TEXT NOT NULL,
@@ -591,15 +607,15 @@ function migrateV9(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_thread_session_memory_thread
-      ON thread_session_memory(thread_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_summary_thread
+      ON session_summary(session_id, created_at DESC);
   `);
 
   try {
     database.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS session_index USING fts5(
         session_memory_id UNINDEXED,
-        thread_id UNINDEXED,
+        session_id UNINDEXED,
         summary,
         goal,
         decisions,
@@ -613,7 +629,7 @@ function migrateV9(database: DatabaseSync): void {
     database.exec(`
       CREATE TABLE IF NOT EXISTS session_index (
         session_memory_id TEXT PRIMARY KEY,
-        thread_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
         summary TEXT NOT NULL,
         goal TEXT NOT NULL,
         decisions TEXT NOT NULL,
@@ -624,15 +640,15 @@ function migrateV9(database: DatabaseSync): void {
       );
 
       CREATE INDEX IF NOT EXISTS idx_session_index_thread_created
-        ON session_index(thread_id, created_at DESC);
+        ON session_index(session_id, created_at DESC);
     `);
   }
 }
 
 function migrateV10(database: DatabaseSync): void {
   database.exec(`
-    CREATE TABLE IF NOT EXISTS threads (
-      thread_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS sessions (
+      session_id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'active',
       owner_user_id TEXT NOT NULL DEFAULT 'local-user',
@@ -645,9 +661,9 @@ function migrateV10(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL DEFAULT '{}'
     );
 
-    CREATE TABLE IF NOT EXISTS thread_session_memory_events (
+    CREATE TABLE IF NOT EXISTS session_summary_events (
       session_memory_id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
       run_id TEXT,
       task_id TEXT,
       trigger TEXT NOT NULL,
@@ -660,11 +676,11 @@ function migrateV10(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_thread_session_memory_events_thread
-      ON thread_session_memory_events(thread_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_summary_events_thread
+      ON session_summary_events(session_id, created_at DESC);
 
-    CREATE TABLE IF NOT EXISTS thread_session_memories_current (
-      thread_id TEXT PRIMARY KEY REFERENCES threads(thread_id),
+    CREATE TABLE IF NOT EXISTS session_summaries_current (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(session_id),
       session_memory_id TEXT NOT NULL,
       summary TEXT NOT NULL,
       goal TEXT NOT NULL,
@@ -677,9 +693,9 @@ function migrateV10(database: DatabaseSync): void {
   `);
 
   database.exec(`
-    INSERT OR IGNORE INTO thread_session_memory_events (
+    INSERT OR IGNORE INTO session_summary_events (
       session_memory_id,
-      thread_id,
+      session_id,
       run_id,
       task_id,
       trigger,
@@ -693,7 +709,7 @@ function migrateV10(database: DatabaseSync): void {
     )
     SELECT
       session_memory_id,
-      thread_id,
+      session_id,
       run_id,
       task_id,
       trigger,
@@ -704,12 +720,12 @@ function migrateV10(database: DatabaseSync): void {
       next_actions_json,
       created_at,
       metadata_json
-    FROM thread_session_memory;
+    FROM session_summary;
   `);
 
   database.exec(`
-    INSERT INTO thread_session_memories_current (
-      thread_id,
+    INSERT INTO session_summaries_current (
+      session_id,
       session_memory_id,
       summary,
       goal,
@@ -720,7 +736,7 @@ function migrateV10(database: DatabaseSync): void {
       metadata_json
     )
     SELECT
-      source.thread_id,
+      source.session_id,
       source.session_memory_id,
       source.summary,
       source.goal,
@@ -729,15 +745,15 @@ function migrateV10(database: DatabaseSync): void {
       source.next_actions_json,
       source.created_at,
       source.metadata_json
-    FROM thread_session_memory AS source
+    FROM session_summary AS source
     WHERE source.session_memory_id = (
       SELECT candidate.session_memory_id
-      FROM thread_session_memory AS candidate
-      WHERE candidate.thread_id = source.thread_id
+      FROM session_summary AS candidate
+      WHERE candidate.session_id = source.session_id
       ORDER BY candidate.created_at DESC, candidate.session_memory_id DESC
       LIMIT 1
     )
-    ON CONFLICT(thread_id) DO UPDATE SET
+    ON CONFLICT(session_id) DO UPDATE SET
       session_memory_id = excluded.session_memory_id,
       summary = excluded.summary,
       goal = excluded.goal,
@@ -788,7 +804,7 @@ function migrateV12(database: DatabaseSync): void {
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
       event_id TEXT NOT NULL UNIQUE,
       task_id TEXT NOT NULL,
-      thread_id TEXT,
+      session_id TEXT,
       timestamp TEXT NOT NULL,
       event_type TEXT NOT NULL,
       stage TEXT NOT NULL,
@@ -798,7 +814,7 @@ function migrateV12(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_output_events_task
       ON output_events(task_id, sequence);
     CREATE INDEX IF NOT EXISTS idx_output_events_thread
-      ON output_events(thread_id, sequence);
+      ON output_events(session_id, sequence);
   `);
 }
 
@@ -811,9 +827,561 @@ function migrateV14(database: DatabaseSync): void {
   addColumnIfMissing(database, "clarify_prompts", "response_text", "TEXT");
 }
 
+function migrateV15(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_transcript_events (
+      transcript_event_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      task_id TEXT REFERENCES tasks(task_id),
+      sequence INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      role TEXT,
+      content TEXT,
+      created_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_transcript_sequence
+      ON session_transcript_events(session_id, sequence);
+    CREATE INDEX IF NOT EXISTS idx_session_transcript_task
+      ON session_transcript_events(task_id, created_at);
+  `);
+}
+
+function migrateV16(database: DatabaseSync): void {
+  addColumnIfMissing(database, "output_events", "session_id", "TEXT");
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_output_events_session
+      ON output_events(session_id, sequence);
+  `);
+}
+
+function migrateV17(database: DatabaseSync): void {
+  ensureSessionSchemaRepairs(database);
+}
+
+function ensureSessionSchemaRepairs(database: DatabaseSync): void {
+  addColumnIfMissing(database, "tasks", "session_id", "TEXT");
+  if (tableExists(database, "tasks")) {
+    database.exec("CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)");
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      session_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      agent_profile_id TEXT NOT NULL DEFAULT 'executor',
+      provider_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_user_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_tasks (
+      run_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      task_id TEXT NOT NULL REFERENCES tasks(task_id),
+      run_number INTEGER NOT NULL,
+      input TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      finished_at TEXT,
+      summary_json TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_tasks_thread ON session_tasks(session_id, run_number);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_tasks_task ON session_tasks(task_id);
+
+    CREATE TABLE IF NOT EXISTS session_lineage (
+      lineage_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      event_type TEXT NOT NULL,
+      source_run_id TEXT,
+      target_run_id TEXT,
+      created_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_lineage_thread ON session_lineage(session_id, created_at);
+  `);
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_summary_events (
+      session_memory_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      run_id TEXT,
+      task_id TEXT,
+      trigger TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      decisions_json TEXT NOT NULL,
+      open_loops_json TEXT NOT NULL,
+      next_actions_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_summary_events_session
+      ON session_summary_events(session_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_summaries_current (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(session_id),
+      session_memory_id TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      decisions_json TEXT NOT NULL,
+      open_loops_json TEXT NOT NULL,
+      next_actions_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL
+    );
+  `);
+
+  withForeignKeysDisabled(database, () => {
+    repairLegacySessionIds(database);
+    dropLegacyThreadIdColumns(database);
+    copyLegacyThreadTables(database);
+    copyLegacySessionSummaries(database);
+    repairSessionIndex(database);
+  });
+}
+
+function withForeignKeysDisabled(database: DatabaseSync, action: () => void): void {
+  database.exec("PRAGMA foreign_keys = OFF");
+  try {
+    action();
+  } finally {
+    ensureReferencedSessionsExist(database);
+    database.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function ensureReferencedSessionsExist(database: DatabaseSync): void {
+  if (!tableExists(database, "sessions")) {
+    return;
+  }
+
+  const sources = collectReferencedSessionIdSources(database);
+  if (sources.length === 0) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  database.exec(`
+    INSERT OR IGNORE INTO sessions (
+      session_id,
+      title,
+      status,
+      owner_user_id,
+      cwd,
+      agent_profile_id,
+      provider_name,
+      created_at,
+      updated_at,
+      archived_at,
+      metadata_json
+    )
+    SELECT
+      orphaned.session_id,
+      'Recovered session',
+      'active',
+      'local-user',
+      '',
+      'executor',
+      'unknown',
+      '${timestamp}',
+      '${timestamp}',
+      NULL,
+      '{}'
+    FROM (
+      ${sources.join(" UNION ")}
+    ) AS orphaned
+    WHERE orphaned.session_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM sessions AS existing
+        WHERE existing.session_id = orphaned.session_id
+      );
+  `);
+}
+
+function collectReferencedSessionIdSources(database: DatabaseSync): string[] {
+  const sources: string[] = [];
+  const addSource = (tableName: string, columnName: string): void => {
+    if (!tableExists(database, tableName) || !columnExists(database, tableName, columnName)) {
+      return;
+    }
+    sources.push(
+      `SELECT ${columnName} AS session_id FROM ${tableName} WHERE ${columnName} IS NOT NULL`
+    );
+  };
+
+  for (const tableName of LEGACY_THREAD_ID_TABLES) {
+    addSource(tableName, "session_id");
+  }
+
+  addSource("session_tasks", "session_id");
+  addSource("session_lineage", "session_id");
+  addSource("session_summary_events", "session_id");
+  addSource("session_summaries_current", "session_id");
+  addSource("threads", "thread_id");
+  addSource("thread_runs", "thread_id");
+  addSource("thread_lineage", "thread_id");
+  addSource("thread_session_memory_events", "thread_id");
+  addSource("thread_session_memory", "thread_id");
+  addSource("thread_session_memories_current", "thread_id");
+
+  return sources;
+}
+
 function readUserVersion(database: DatabaseSync): number {
   const row = database.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   return row?.user_version ?? 0;
+}
+
+function tableExists(database: DatabaseSync, tableName: string): boolean {
+  const tableRow = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { name?: string } | undefined;
+  return tableRow?.name === tableName;
+}
+
+function columnExists(database: DatabaseSync, tableName: string, columnName: string): boolean {
+  if (!tableExists(database, tableName)) {
+    return false;
+  }
+  const rows = database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
+function repairLegacySessionIds(database: DatabaseSync): void {
+  for (const tableName of LEGACY_THREAD_ID_TABLES) {
+    addColumnIfMissing(database, tableName, "session_id", "TEXT");
+    if (columnExists(database, tableName, "thread_id")) {
+      database.exec(`UPDATE ${tableName} SET session_id = thread_id WHERE session_id IS NULL`);
+    }
+  }
+}
+
+const LEGACY_THREAD_ID_TABLES = [
+  "tasks",
+  "commitments",
+  "next_actions",
+  "inbox_items",
+  "schedules",
+  "schedule_runs",
+  "output_events"
+] as const;
+
+function dropLegacyThreadIdColumns(database: DatabaseSync): void {
+  for (const tableName of LEGACY_THREAD_ID_TABLES) {
+    cleanupInterruptedTableMigration(database, tableName);
+    if (!tableExists(database, tableName)) {
+      continue;
+    }
+    if (!columnExists(database, tableName, "thread_id") || !columnExists(database, tableName, "session_id")) {
+      continue;
+    }
+
+    database.exec(`UPDATE ${tableName} SET session_id = thread_id WHERE session_id IS NULL`);
+
+    try {
+      database.exec(`ALTER TABLE ${tableName} DROP COLUMN thread_id`);
+    } catch {
+      rebuildTableWithoutColumn(database, tableName, "thread_id");
+    }
+  }
+}
+
+interface TableColumnInfo {
+  dflt_value: string | null;
+  name: string;
+  notnull: number;
+  pk: number;
+  type: string;
+}
+
+function cleanupInterruptedTableMigration(database: DatabaseSync, tableName: string): void {
+  const tempName = `${tableName}__session_migration`;
+  if (!tableExists(database, tempName)) {
+    return;
+  }
+  if (!tableExists(database, tableName)) {
+    database.exec(`ALTER TABLE ${tempName} RENAME TO ${tableName}`);
+    return;
+  }
+  database.exec(`DROP TABLE ${tempName}`);
+}
+
+function rebuildTableWithoutColumn(
+  database: DatabaseSync,
+  tableName: string,
+  columnToDrop: string
+): void {
+  cleanupInterruptedTableMigration(database, tableName);
+  if (!tableExists(database, tableName)) {
+    return;
+  }
+
+  const columns = database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as unknown as TableColumnInfo[];
+  const kept = columns.filter((column) => column.name !== columnToDrop);
+  if (kept.length === 0 || kept.length === columns.length) {
+    return;
+  }
+
+  const tempName = `${tableName}__session_migration`;
+  const columnDefinitions = kept
+    .map((column) => formatTableColumnDefinition(column))
+    .join(", ");
+  const columnNames = kept.map((column) => column.name).join(", ");
+
+  database.exec(`CREATE TABLE ${tempName} (${columnDefinitions})`);
+  database.exec(`INSERT INTO ${tempName} (${columnNames}) SELECT ${columnNames} FROM ${tableName}`);
+  database.exec(`DROP TABLE ${tableName}`);
+  database.exec(`ALTER TABLE ${tempName} RENAME TO ${tableName}`);
+}
+
+function formatTableColumnDefinition(column: TableColumnInfo): string {
+  const parts = [`${column.name} ${column.type.length > 0 ? column.type : "TEXT"}`];
+  if (column.pk === 1) {
+    parts.push("PRIMARY KEY");
+  }
+  if (column.notnull === 1 && column.pk !== 1) {
+    parts.push("NOT NULL");
+  }
+  if (column.dflt_value !== null) {
+    parts.push(`DEFAULT ${column.dflt_value}`);
+  }
+  return parts.join(" ");
+}
+
+function copyLegacyThreadTables(database: DatabaseSync): void {
+  if (tableExists(database, "threads")) {
+    database.exec(`
+      INSERT OR IGNORE INTO sessions (
+        session_id,
+        title,
+        status,
+        owner_user_id,
+        cwd,
+        agent_profile_id,
+        provider_name,
+        created_at,
+        updated_at,
+        archived_at,
+        metadata_json
+      )
+      SELECT
+        thread_id,
+        title,
+        status,
+        owner_user_id,
+        cwd,
+        agent_profile_id,
+        provider_name,
+        created_at,
+        updated_at,
+        archived_at,
+        metadata_json
+      FROM threads;
+    `);
+  }
+
+  if (tableExists(database, "thread_runs")) {
+    database.exec(`
+      INSERT OR IGNORE INTO session_tasks (
+        run_id,
+        session_id,
+        task_id,
+        run_number,
+        input,
+        status,
+        created_at,
+        finished_at,
+        summary_json,
+        metadata_json
+      )
+      SELECT
+        run_id,
+        thread_id,
+        task_id,
+        run_number,
+        input,
+        status,
+        created_at,
+        finished_at,
+        summary_json,
+        metadata_json
+      FROM thread_runs;
+    `);
+  }
+
+  if (tableExists(database, "thread_lineage")) {
+    database.exec(`
+      INSERT OR IGNORE INTO session_lineage (
+        lineage_id,
+        session_id,
+        event_type,
+        source_run_id,
+        target_run_id,
+        created_at,
+        payload_json
+      )
+      SELECT
+        lineage_id,
+        thread_id,
+        event_type,
+        source_run_id,
+        target_run_id,
+        created_at,
+        payload_json
+      FROM thread_lineage;
+    `);
+  }
+}
+
+function copyLegacySessionSummaries(database: DatabaseSync): void {
+  const legacyEventsTable = tableExists(database, "thread_session_memory_events")
+    ? "thread_session_memory_events"
+    : tableExists(database, "thread_session_memory")
+      ? "thread_session_memory"
+      : null;
+
+  if (legacyEventsTable !== null) {
+    database.exec(`
+      INSERT OR IGNORE INTO session_summary_events (
+        session_memory_id,
+        session_id,
+        run_id,
+        task_id,
+        trigger,
+        summary,
+        goal,
+        decisions_json,
+        open_loops_json,
+        next_actions_json,
+        created_at,
+        metadata_json
+      )
+      SELECT
+        session_memory_id,
+        thread_id,
+        run_id,
+        task_id,
+        trigger,
+        summary,
+        goal,
+        decisions_json,
+        open_loops_json,
+        next_actions_json,
+        created_at,
+        metadata_json
+      FROM ${legacyEventsTable};
+    `);
+  }
+
+  if (tableExists(database, "thread_session_memories_current")) {
+    database.exec(`
+      INSERT OR REPLACE INTO session_summaries_current (
+        session_id,
+        session_memory_id,
+        summary,
+        goal,
+        decisions_json,
+        open_loops_json,
+        next_actions_json,
+        updated_at,
+        metadata_json
+      )
+      SELECT
+        thread_id,
+        session_memory_id,
+        summary,
+        goal,
+        decisions_json,
+        open_loops_json,
+        next_actions_json,
+        updated_at,
+        metadata_json
+      FROM thread_session_memories_current
+    `);
+  }
+}
+
+function repairSessionIndex(database: DatabaseSync): void {
+  if (tableExists(database, "session_index") && !columnExists(database, "session_index", "session_id")) {
+    database.exec("DROP TABLE session_index");
+  }
+
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_index USING fts5(
+        session_memory_id UNINDEXED,
+        session_id UNINDEXED,
+        summary,
+        goal,
+        decisions,
+        open_loops,
+        next_actions,
+        keywords,
+        created_at UNINDEXED
+      );
+    `);
+  } catch {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_index (
+        session_memory_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        decisions TEXT NOT NULL,
+        open_loops TEXT NOT NULL,
+        next_actions TEXT NOT NULL,
+        keywords TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_session_index_session_created
+        ON session_index(session_id, created_at DESC);
+    `);
+  }
+
+  database.exec(`
+    INSERT OR REPLACE INTO session_index (
+      session_memory_id,
+      session_id,
+      summary,
+      goal,
+      decisions,
+      open_loops,
+      next_actions,
+      keywords,
+      created_at
+    )
+    SELECT
+      session_memory_id,
+      session_id,
+      summary,
+      goal,
+      decisions_json,
+      open_loops_json,
+      next_actions_json,
+      goal || ' ' || summary || ' ' || decisions_json || ' ' || open_loops_json || ' ' || next_actions_json,
+      created_at
+    FROM session_summary_events;
+  `);
 }
 
 function addColumnIfMissing(
@@ -822,11 +1390,7 @@ function addColumnIfMissing(
   columnName: string,
   definition: string
 ): void {
-  const tableRow = database
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName) as { name?: string } | undefined;
-
-  if (tableRow?.name !== tableName) {
+  if (!tableExists(database, tableName)) {
     return;
   }
 

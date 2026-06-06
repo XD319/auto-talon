@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import type { AgentApplicationService } from "../src/runtime/index.js";
 import { buildHomeSummary, listHomeSummaryEntries } from "../src/tui/view-models/home-summary.js";
-import { formatThreadDetailForTui, formatThreadRecapForTui } from "../src/tui/view-models/today-summary.js";
+import { formatSessionDetailForTui, formatSessionRecapForTui } from "../src/tui/view-models/today-summary.js";
 import type {
   ApprovalRecord,
   CommitmentRecord,
@@ -10,8 +10,8 @@ import type {
   NextActionRecord,
   ScheduleRecord,
   ScheduleRunRecord,
-  ThreadRecord,
-  ThreadRunRecord
+  SessionRecord,
+  SessionTaskRecord
 } from "../src/types/index.js";
 
 type HomeServiceStub = Pick<
@@ -21,15 +21,15 @@ type HomeServiceStub = Pick<
   | "listNextActions"
   | "listPendingApprovals"
   | "listSchedules"
-  | "listThreads"
+  | "listSessions"
   | "showTask"
-  | "showThread"
+  | "showSession"
 >;
 
 describe("home summary", () => {
-  it("prioritizes urgent workflow items and recent thread guidance", () => {
+  it("prioritizes urgent workflow items and recent session guidance", () => {
     process.env.USERNAME = "local-user";
-    const summary = buildHomeSummary(createServiceStub(), { activeThreadId: "thread-a" });
+    const summary = buildHomeSummary(createServiceStub(), { activeSessionId: "session-a" });
 
     expect(summary.title).toBe("");
     expect(summary.agenda).toEqual([
@@ -41,8 +41,8 @@ describe("home summary", () => {
       "Respond to approval",
       "Open routine"
     ]);
-    expect(summary.recommendedThread?.label).toBe("Quarterly planning");
-    expect(summary.recentThreads.map((item) => item.label)).toEqual([
+    expect(summary.recommendedSession?.label).toBe("Quarterly planning");
+    expect(summary.recentSessions.map((item) => item.label)).toEqual([
       "Quarterly planning",
       "Release checklist",
       "Research notes"
@@ -53,8 +53,8 @@ describe("home summary", () => {
   it("builds a start path when nothing is open", () => {
     const summary = buildHomeSummary(createEmptyServiceStub());
 
-    expect(summary.recommendedThread).toBeNull();
-    expect(summary.recentThreads).toEqual([]);
+    expect(summary.recommendedSession).toBeNull();
+    expect(summary.recentSessions).toEqual([]);
     expect(summary.actions).toEqual([
       {
         detail: "Describe what you want AutoTalon to do in the prompt below.",
@@ -97,16 +97,16 @@ describe("home summary", () => {
       }
     ]);
     expect(summary.agenda[0]).toBe("Continue: Draft the plan outline");
-    expect(listHomeSummaryEntries(summary).find((entry) => entry.kind === "thread")).toMatchObject({
-      kind: "thread",
+    expect(listHomeSummaryEntries(summary).find((entry) => entry.kind === "session")).toMatchObject({
+      kind: "session",
       label: "Continue Wrap the planning task",
-      threadId: "thread-a"
+      sessionId: "session-a"
     });
   });
 
   it("builds keyboard-selectable entries with actionable items first", () => {
     process.env.USERNAME = "local-user";
-    const summary = buildHomeSummary(createServiceStub(), { activeThreadId: "thread-a" });
+    const summary = buildHomeSummary(createServiceStub(), { activeSessionId: "session-a" });
     const entries = listHomeSummaryEntries(summary);
 
     expect(entries.slice(0, 3)).toMatchObject([
@@ -114,7 +114,7 @@ describe("home summary", () => {
         key: "approval",
         kind: "action",
         label: "Respond to approval",
-        threadId: "thread-a"
+        sessionId: "session-a"
       },
       {
         key: "routine",
@@ -122,16 +122,16 @@ describe("home summary", () => {
         label: "Open routine"
       },
       {
-        kind: "thread",
+        kind: "session",
         label: "Continue Wrap the planning task",
-        threadId: "thread-a"
+        sessionId: "session-a"
       }
     ]);
     expect(entries.slice(3, 4)).toMatchObject([
       {
-        kind: "thread",
+        kind: "session",
         label: "Continue Check final release blockers",
-        threadId: "thread-b"
+        sessionId: "session-b"
       }
     ]);
   });
@@ -142,7 +142,7 @@ describe("home summary", () => {
       ...createServiceStub(),
       listInbox() {
         return [
-          createInbox("inbox-action", "Decision requested", "thread-a", {
+          createInbox("inbox-action", "Decision requested", "session-a", {
             category: "decision_requested",
             severity: "action_required",
             summary: "Choose whether to publish the draft."
@@ -150,7 +150,7 @@ describe("home summary", () => {
         ];
       }
     };
-    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+    const summary = buildHomeSummary(service, { activeSessionId: "session-a" });
 
     expect(summary.agenda).not.toContain("Needs attention: Quarterly planning - Decision requested");
     expect(summary.actions.find((item) => item.key === "inbox")).toMatchObject(
@@ -159,46 +159,46 @@ describe("home summary", () => {
         inboxId: "inbox-action",
         key: "inbox",
         label: "Open inbox: Quarterly planning - Decision requested",
-        threadId: "thread-a"
+        sessionId: "session-a"
       }
     );
   });
 
-  it("deduplicates thread suggestions by visible title", () => {
+  it("deduplicates session suggestions by visible title", () => {
     process.env.USERNAME = "local-user";
-    const duplicateThreads = [
-      createThread("thread-a", "Repeated reminder", "2026-01-01T03:00:00.000Z"),
-      createThread("thread-b", "Repeated reminder", "2026-01-01T02:00:00.000Z")
+    const duplicateSessions = [
+      createSession("session-a", "Repeated reminder", "2026-01-01T03:00:00.000Z"),
+      createSession("session-b", "Repeated reminder", "2026-01-01T02:00:00.000Z")
     ];
     const service = {
       ...createEmptyServiceStub(),
-      listThreads() {
-        return duplicateThreads;
+      listSessions() {
+        return duplicateSessions;
       },
-      showThread(threadId: string) {
-        const thread = duplicateThreads.find((item) => item.threadId === threadId) ?? null;
+      showSession(sessionId: string) {
+        const session = duplicateSessions.find((item) => item.sessionId === sessionId) ?? null;
         return {
           commitments: [],
           inboxItems: [],
           lineage: [],
           nextActions: [],
-          runs: [createThreadRun(`run-${threadId}`, threadId, 1, "completed", "same prompt")],
+          tasks: [createSessionTask(`run-${sessionId}`, sessionId, 1, "completed", "same prompt")],
           scheduleRuns: [],
           state: {
             activeNextActions: [],
             blockedReason: null,
             currentObjective: null,
-            nextAction: createNextAction(`next-${threadId}`, threadId, threadId === "thread-a" ? "first detail" : "second detail"),
+            nextAction: createNextAction(`next-${sessionId}`, sessionId, sessionId === "session-a" ? "first detail" : "second detail"),
             openCommitments: [],
             pendingDecision: null
           },
-          thread
+          session
         };
       }
     };
     const summary = buildHomeSummary(service);
 
-    expect(listHomeSummaryEntries(summary).filter((entry) => entry.kind === "thread")).toHaveLength(1);
+    expect(listHomeSummaryEntries(summary).filter((entry) => entry.kind === "session")).toHaveLength(1);
   });
 
   it("keeps completed inbox noise off the home agenda", () => {
@@ -207,7 +207,7 @@ describe("home summary", () => {
       ...createEmptyServiceStub(),
       listInbox() {
         return [
-          createInbox("completed-a", "Task completed", "thread-a", {
+          createInbox("completed-a", "Task completed", "session-a", {
             summary: "This is a long completed task summary that should stay out of the home agenda."
           })
         ];
@@ -227,7 +227,7 @@ describe("home summary", () => {
   it("finds actionable inbox items beyond the completed items kept in the today preview", () => {
     process.env.USERNAME = "local-user";
     const completedItems = Array.from({ length: 6 }, (_, index) => ({
-      ...createInbox(`completed-${index}`, "Task completed", "thread-a"),
+      ...createInbox(`completed-${index}`, "Task completed", "session-a"),
       updatedAt: `2026-01-01T0${index + 2}:00:00.000Z`
     }));
     const service = {
@@ -236,7 +236,7 @@ describe("home summary", () => {
         return [
           ...completedItems,
           {
-            ...createInbox("blocked-old", "Task blocked", "thread-a", {
+            ...createInbox("blocked-old", "Task blocked", "session-a", {
               category: "task_blocked",
               severity: "warning",
               summary: "Need a decision before continuing."
@@ -246,7 +246,7 @@ describe("home summary", () => {
         ];
       }
     };
-    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+    const summary = buildHomeSummary(service, { activeSessionId: "session-a" });
 
     expect(summary.agenda).not.toContain("Needs attention: Quarterly planning");
     expect(summary.actions.find((item) => item.key === "inbox")).toMatchObject({
@@ -261,7 +261,7 @@ describe("home summary", () => {
       ...createServiceStub(),
       listInbox() {
         return [
-          createInbox("blocked-a", "Next action blocked", "thread-a", {
+          createInbox("blocked-a", "Next action blocked", "session-a", {
             category: "task_blocked",
             severity: "warning",
             summary:
@@ -270,7 +270,7 @@ describe("home summary", () => {
         ];
       }
     };
-    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+    const summary = buildHomeSummary(service, { activeSessionId: "session-a" });
     const inboxAction = summary.actions.find((item) => item.key === "inbox");
 
     expect(summary.agenda).not.toContain("Needs attention: Quarterly planning");
@@ -278,23 +278,23 @@ describe("home summary", () => {
     expect(inboxAction?.detail).toBe("Blocked: A directory was used where a file path was expected.");
   });
 
-  it("keeps thread cards on the latest run and away from completed inbox headlines", () => {
+  it("keeps session cards on the latest run and away from completed inbox headlines", () => {
     process.env.USERNAME = "local-user";
-    const thread = createThread("thread-card", "Card thread", "2026-01-01T04:00:00.000Z");
+    const session = createSession("session-card", "Card thread", "2026-01-01T04:00:00.000Z");
     const service = {
       ...createEmptyServiceStub(),
-      listThreads() {
-        return [thread];
+      listSessions() {
+        return [session];
       },
-      showThread() {
+      showSession() {
         return {
           commitments: [],
-          inboxItems: [createInbox("completed-card", "Task completed", thread.threadId)],
+          inboxItems: [createInbox("completed-card", "Task completed", session.sessionId)],
           lineage: [],
           nextActions: [],
-          runs: [
-            createThreadRun("run-old", thread.threadId, 1, "failed", "Old failure"),
-            createThreadRun("run-new", thread.threadId, 2, "waiting_approval", "Latest wait")
+          tasks: [
+            createSessionTask("run-old", session.sessionId, 1, "failed", "Old failure"),
+            createSessionTask("run-new", session.sessionId, 2, "waiting_approval", "Latest wait")
           ],
           scheduleRuns: [],
           state: {
@@ -305,13 +305,13 @@ describe("home summary", () => {
             openCommitments: [],
             pendingDecision: null
           },
-          thread
+          session
         };
       }
     };
-    const threadEntry = listHomeSummaryEntries(buildHomeSummary(service)).find((entry) => entry.kind === "thread");
+    const sessionEntry = listHomeSummaryEntries(buildHomeSummary(service)).find((entry) => entry.kind === "session");
 
-    expect(threadEntry).toMatchObject({
+    expect(sessionEntry).toMatchObject({
       detail: "recent run waiting_approval",
       label: "Continue Card thread"
     });
@@ -334,19 +334,19 @@ describe("home summary", () => {
         return [
           createNextAction(
             "next-long",
-            "thread-a",
+            "session-a",
             "I found the old notes and can now continue. Let me prepare the full answer with the details you asked for, including the source context and the next concrete step."
           )
         ];
       }
     };
-    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+    const summary = buildHomeSummary(service, { activeSessionId: "session-a" });
 
     expect(summary.agenda[0]).toBe("Continue: Wrap the planning task");
-    expect(listHomeSummaryEntries(summary).find((entry) => entry.kind === "thread")).toMatchObject({
-      kind: "thread",
+    expect(listHomeSummaryEntries(summary).find((entry) => entry.kind === "session")).toMatchObject({
+      kind: "session",
       label: "Continue Wrap the planning task",
-      threadId: "thread-a"
+      sessionId: "session-a"
     });
   });
 
@@ -356,7 +356,7 @@ describe("home summary", () => {
       ...createServiceStub(),
       listInbox() {
         return [
-          createInbox("inbox-action", "Decision requested", "thread-a", {
+          createInbox("inbox-action", "Decision requested", "session-a", {
             category: "decision_requested",
             severity: "action_required",
             summary: "Choose whether to publish the draft."
@@ -364,70 +364,70 @@ describe("home summary", () => {
         ];
       }
     };
-    const summary = buildHomeSummary(service, { activeThreadId: "thread-a" });
+    const summary = buildHomeSummary(service, { activeSessionId: "session-a" });
     const entries = listHomeSummaryEntries(summary);
 
     expect(entries).toHaveLength(4);
-    expect(entries.map((entry) => entry.kind)).toEqual(["action", "action", "action", "thread"]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["action", "action", "action", "session"]);
   });
 
-  it("recommends the thread with the highest-priority next action before recent history", () => {
+  it("recommends the session with the highest-priority next action before recent history", () => {
     process.env.USERNAME = "local-user";
     const summary = buildHomeSummary(createServiceStub());
     const entries = listHomeSummaryEntries(summary);
-    const firstThread = entries.find((entry) => entry.kind === "thread");
+    const firstSession = entries.find((entry) => entry.kind === "session");
 
-    expect(summary.recentThreads.map((item) => item.label)).toEqual([
+    expect(summary.recentSessions.map((item) => item.label)).toEqual([
       "Release checklist",
       "Research notes",
       "Quarterly planning"
     ]);
-    expect(summary.recommendedThread?.label).toBe("Quarterly planning");
-    expect(firstThread).toMatchObject({
-      kind: "thread",
+    expect(summary.recommendedSession?.label).toBe("Quarterly planning");
+    expect(firstSession).toMatchObject({
+      kind: "session",
       label: "Continue Wrap the planning task",
-      threadId: "thread-a"
+      sessionId: "session-a"
     });
   });
 
-  it("formats thread detail with a useful preview instead of only counts", () => {
-    const detail = formatThreadDetailForTui(createServiceStub() as AgentApplicationService, "thread-a");
+  it("formats session detail with a useful preview instead of only counts", () => {
+    const detail = formatSessionDetailForTui(createServiceStub() as AgentApplicationService, "session-a");
 
-    expect(detail).toContain("Thread thread-a | Quarterly planning");
+    expect(detail).toContain("Session session-a | Quarterly planning");
     expect(detail).toContain("objective: Wrap the planning task [open]");
     expect(detail).toContain("next: Draft the plan outline [pending]");
     expect(detail).toContain("recent inbox:");
     expect(detail).toContain("- Need review [pending]");
-    expect(detail).toContain("recent runs:");
+    expect(detail).toContain("recent tasks:");
     expect(detail).toContain("#2 waiting_approval | Need permission to write release notes");
     expect(detail).toContain("recent schedules:");
   });
 
-  it("formats thread selection as a conversation recap by default", () => {
+  it("formats session selection as a conversation recap by default", () => {
     const baseService = createServiceStub();
     const service = {
       ...baseService,
-      showThread(threadId: string) {
-        const detail = baseService.showThread(threadId);
+      showSession(sessionId: string) {
+        const detail = baseService.showSession(sessionId);
         return {
           ...detail,
-          runs: [
-            createThreadRun("run-2", threadId, 2, "succeeded", "Write the final answer", {
+          tasks: [
+            createSessionTask("run-2", sessionId, 2, "succeeded", "Write the final answer", {
               finalOutput: "The final answer is ready with concise next steps."
             }),
-            createThreadRun("run-1", threadId, 1, "waiting_approval", "Need permission to write release notes")
+            createSessionTask("run-1", sessionId, 1, "waiting_approval", "Need permission to write release notes")
           ],
           state: {
             ...detail.state,
-            currentObjective: createCommitment("commitment-a", threadId),
-            nextAction: createNextAction("next-a", threadId, "Review the release notes")
+            currentObjective: createCommitment("commitment-a", sessionId),
+            nextAction: createNextAction("next-a", sessionId, "Review the release notes")
           }
         };
       }
     };
-    const recap = formatThreadRecapForTui(service as AgentApplicationService, "thread-a");
+    const recap = formatSessionRecapForTui(service as AgentApplicationService, "session-a");
 
-    expect(recap).toContain("Thread thread-a | Quarterly planning");
+    expect(recap).toContain("Session session-a | Quarterly planning");
     expect(recap).toContain("Previous conversation:");
     expect(recap).toContain("- You: Need permission to write release notes");
     expect(recap).toContain("- You: Write the final answer");
@@ -439,38 +439,38 @@ describe("home summary", () => {
     expect(recap).toContain("- Objective: Wrap the planning task");
     expect(recap).toContain("- Next: Review the release notes");
     expect(recap).not.toContain("counts:");
-    expect(recap).not.toContain("recent runs:");
+    expect(recap).not.toContain("recent tasks:");
     expect(recap).not.toContain("recent schedules:");
   });
 
-  it("omits duplicate focus lines from the thread recap", () => {
+  it("omits duplicate focus lines from the session recap", () => {
     const baseService = createServiceStub();
     const service = {
       ...baseService,
-      showThread(threadId: string) {
-        const thread = createThread(threadId, "只回复：schedule-ok-from-feishu", "2026-01-01T02:00:00.000Z");
+      showSession(sessionId: string) {
+        const session = createSession(sessionId, "鍙洖澶嶏細schedule-ok-from-feishu", "2026-01-01T02:00:00.000Z");
         return {
           commitments: [],
           inboxItems: [],
           lineage: [],
           nextActions: [],
-          runs: [createThreadRun("run-a", threadId, 1, "succeeded", "只回复：schedule-ok-from-feishu")],
+          tasks: [createSessionTask("run-a", sessionId, 1, "succeeded", "鍙洖澶嶏細schedule-ok-from-feishu")],
           scheduleRuns: [],
           state: {
             activeNextActions: [],
             blockedReason: null,
-            currentObjective: createCommitment("commitment-a", threadId, {
-              title: "只回复：schedule-ok-from-feishu"
+            currentObjective: createCommitment("commitment-a", sessionId, {
+              title: "鍙洖澶嶏細schedule-ok-from-feishu"
             }),
             nextAction: null,
             openCommitments: [],
-            pendingDecision: "只回复：schedule-ok-from-feishu"
+            pendingDecision: "鍙洖澶嶏細schedule-ok-from-feishu"
           },
-          thread
+          session
         };
       }
     };
-    const recap = formatThreadRecapForTui(service as AgentApplicationService, "thread-a");
+    const recap = formatSessionRecapForTui(service as AgentApplicationService, "session-a");
 
     expect(recap).not.toContain("Current focus:");
     expect(recap).not.toContain("Decision needed:");
@@ -481,26 +481,26 @@ describe("home summary", () => {
     const baseService = createServiceStub();
     const service = {
       ...baseService,
-      showThread(threadId: string) {
-        const detail = baseService.showThread(threadId);
+      showSession(sessionId: string) {
+        const detail = baseService.showSession(sessionId);
         return {
           ...detail,
-          runs: [
-            createThreadRun("run-2", threadId, 2, "running", "A stale in-progress run"),
-            createThreadRun("run-1", threadId, 1, "succeeded", "Check the forecast", {
+          tasks: [
+            createSessionTask("run-2", sessionId, 2, "running", "A stale in-progress run"),
+            createSessionTask("run-1", sessionId, 1, "succeeded", "Check the forecast", {
               finalOutput: "Weather status: sunny with a high of 29C."
             })
           ],
           state: {
             ...detail.state,
             currentObjective: null,
-            nextAction: createNextAction("next-fragment", threadId, "Weather status**: sunny"),
+            nextAction: createNextAction("next-fragment", sessionId, "Weather status**: sunny"),
             pendingDecision: null
           }
         };
       }
     };
-    const recap = formatThreadRecapForTui(service as AgentApplicationService, "thread-a");
+    const recap = formatSessionRecapForTui(service as AgentApplicationService, "session-a");
 
     expect(recap).toContain("- You: Check the forecast");
     expect(recap).toContain("- AutoTalon: Weather status: sunny with a high of 29C.");
@@ -510,18 +510,18 @@ describe("home summary", () => {
     expect(recap).not.toContain("Weather status**");
   });
 
-  it("keeps completed notification noise and duplicate decisions out of thread details", () => {
+  it("keeps completed notification noise and duplicate decisions out of session details", () => {
     const baseService = createServiceStub();
     const service = {
       ...baseService,
-      showThread(threadId: string) {
-        const detail = baseService.showThread(threadId);
+      showSession(sessionId: string) {
+        const detail = baseService.showSession(sessionId);
         return {
           ...detail,
           inboxItems: [
-            createInbox("completed-a", "Task completed", "thread-a"),
-            createInbox("routine-a", "Routine completed: 飞书一分钟定时测试", "thread-a"),
-            createInbox("blocked-a", "Need review", "thread-a", {
+            createInbox("completed-a", "Task completed", "session-a"),
+            createInbox("routine-a", "Routine completed: 椋炰功涓€鍒嗛挓瀹氭椂娴嬭瘯", "session-a"),
+            createInbox("blocked-a", "Need review", "session-a", {
               category: "task_blocked",
               severity: "warning",
               summary: "Needs review before continuing."
@@ -534,33 +534,33 @@ describe("home summary", () => {
         };
       }
     };
-    const detail = formatThreadDetailForTui(service as AgentApplicationService, "thread-a");
+    const detail = formatSessionDetailForTui(service as AgentApplicationService, "session-a");
 
     expect(detail).not.toContain("decision: Wrap the planning task");
     expect(detail).not.toContain("Task completed [pending]");
-    expect(detail).not.toContain("Routine completed: 飞书一分钟定时测试");
+    expect(detail).not.toContain("Routine completed: 椋炰功涓€鍒嗛挓瀹氭椂娴嬭瘯");
     expect(detail).toContain("recent inbox:");
     expect(detail).toContain("- Need review [pending]");
   });
 });
 
 function createServiceStub(): HomeServiceStub {
-  const threads = [
-    createThread("thread-a", "Quarterly planning", "2026-01-01T01:00:00.000Z"),
-    createThread("thread-b", "Release checklist", "2026-01-01T03:00:00.000Z"),
-    createThread("thread-c", "Research notes", "2026-01-01T02:00:00.000Z")
+  const sessions = [
+    createSession("session-a", "Quarterly planning", "2026-01-01T01:00:00.000Z"),
+    createSession("session-b", "Release checklist", "2026-01-01T03:00:00.000Z"),
+    createSession("session-c", "Research notes", "2026-01-01T02:00:00.000Z")
   ];
-  const threadMap = new Map(threads.map((thread) => [thread.threadId, thread]));
+  const sessionMap = new Map(sessions.map((session) => [session.sessionId, session]));
 
   return {
     listCommitments() {
-      return [createCommitment("commitment-a", "thread-a")];
+      return [createCommitment("commitment-a", "session-a")];
     },
     listInbox() {
-      return [createInbox("inbox-a", "Need review", "thread-a")];
+      return [createInbox("inbox-a", "Need review", "session-a")];
     },
     listNextActions() {
-      return [createNextAction("next-a", "thread-a")];
+      return [createNextAction("next-a", "session-a")];
     },
     listPendingApprovals() {
       return [createApproval("approval-a")];
@@ -568,8 +568,8 @@ function createServiceStub(): HomeServiceStub {
     listSchedules() {
       return [createSchedule("schedule-a", "Morning review")];
     },
-    listThreads() {
-      return threads;
+    listSessions() {
+      return sessions;
     },
     showTask() {
       return {
@@ -594,7 +594,7 @@ function createServiceStub(): HomeServiceStub {
           startedAt: "2026-01-01T00:00:00.000Z",
           status: "waiting_approval",
           taskId: "task-1",
-          threadId: "thread-a",
+          sessionId: "session-a",
           tokenBudget: {
             hardCostUsd: null,
             hardInputTokens: null,
@@ -609,15 +609,15 @@ function createServiceStub(): HomeServiceStub {
         trace: []
       };
     },
-    showThread(threadId) {
-      const thread = threadMap.get(threadId) ?? null;
-      if (thread === null) {
+    showSession(sessionId) {
+      const session = sessionMap.get(sessionId) ?? null;
+      if (session === null) {
         return {
           commitments: [],
           inboxItems: [],
           lineage: [],
           nextActions: [],
-          runs: [],
+          tasks: [],
           scheduleRuns: [],
           state: {
             activeNextActions: [],
@@ -627,48 +627,48 @@ function createServiceStub(): HomeServiceStub {
             openCommitments: [],
             pendingDecision: null
           },
-          thread: null
+          session: null
         };
       }
-      if (threadId === "thread-a") {
+      if (sessionId === "session-a") {
         return {
-          commitments: [createCommitment("commitment-a", thread.threadId)],
-          inboxItems: [createInbox("inbox-a", "Need review", thread.threadId)],
+          commitments: [createCommitment("commitment-a", session.sessionId)],
+          inboxItems: [createInbox("inbox-a", "Need review", session.sessionId)],
           lineage: [],
-          nextActions: [createNextAction("next-a", thread.threadId)],
-          runs: [
-            createThreadRun("run-2", thread.threadId, 2, "waiting_approval", "Need permission to write release notes"),
-            createThreadRun("run-1", thread.threadId, 1, "completed", "Draft the quarterly plan")
+          nextActions: [createNextAction("next-a", session.sessionId)],
+          tasks: [
+            createSessionTask("run-2", session.sessionId, 2, "waiting_approval", "Need permission to write release notes"),
+            createSessionTask("run-1", session.sessionId, 1, "completed", "Draft the quarterly plan")
           ],
-          scheduleRuns: [createScheduleRun("schedule-a", thread.threadId, "waiting_approval")],
+          scheduleRuns: [createScheduleRun("schedule-a", session.sessionId, "waiting_approval")],
           state: {
-            activeNextActions: [createNextAction("next-a", thread.threadId)],
+            activeNextActions: [createNextAction("next-a", session.sessionId)],
             blockedReason: null,
-            currentObjective: createCommitment("commitment-a", thread.threadId),
-            nextAction: createNextAction("next-a", thread.threadId),
-            openCommitments: [createCommitment("commitment-a", thread.threadId)],
+            currentObjective: createCommitment("commitment-a", session.sessionId),
+            nextAction: createNextAction("next-a", session.sessionId),
+            openCommitments: [createCommitment("commitment-a", session.sessionId)],
             pendingDecision: null
           },
-          thread
+          session
         };
       }
-      if (threadId === "thread-b") {
+      if (sessionId === "session-b") {
         return {
           commitments: [],
           inboxItems: [],
           lineage: [],
-          nextActions: [createNextAction("next-b", thread.threadId, "Check final release blockers")],
-          runs: [createThreadRun("run-3", thread.threadId, 3, "running", "Validate RC build and changelog")],
+          nextActions: [createNextAction("next-b", session.sessionId, "Check final release blockers")],
+          tasks: [createSessionTask("run-3", session.sessionId, 3, "running", "Validate RC build and changelog")],
           scheduleRuns: [],
           state: {
-            activeNextActions: [createNextAction("next-b", thread.threadId, "Check final release blockers")],
+            activeNextActions: [createNextAction("next-b", session.sessionId, "Check final release blockers")],
             blockedReason: null,
             currentObjective: null,
-            nextAction: createNextAction("next-b", thread.threadId, "Check final release blockers"),
+            nextAction: createNextAction("next-b", session.sessionId, "Check final release blockers"),
             openCommitments: [],
             pendingDecision: null
           },
-          thread
+          session
         };
       }
       return {
@@ -676,7 +676,7 @@ function createServiceStub(): HomeServiceStub {
         inboxItems: [],
         lineage: [],
         nextActions: [],
-        runs: [],
+        tasks: [],
         scheduleRuns: [],
         state: {
           activeNextActions: [],
@@ -686,7 +686,7 @@ function createServiceStub(): HomeServiceStub {
           openCommitments: [],
           pendingDecision: null
         },
-        thread
+        session
       };
     }
   };
@@ -709,7 +709,7 @@ function createEmptyServiceStub(): HomeServiceStub {
     listSchedules() {
       return [];
     },
-    listThreads() {
+    listSessions() {
       return [];
     },
     showTask() {
@@ -723,13 +723,13 @@ function createEmptyServiceStub(): HomeServiceStub {
         trace: []
       };
     },
-    showThread() {
+    showSession() {
       return {
         commitments: [],
         inboxItems: [],
         lineage: [],
         nextActions: [],
-        runs: [],
+        tasks: [],
         scheduleRuns: [],
         state: {
           activeNextActions: [],
@@ -739,13 +739,13 @@ function createEmptyServiceStub(): HomeServiceStub {
           openCommitments: [],
           pendingDecision: null
         },
-        thread: null
+        session: null
       };
     }
   };
 }
 
-function createThread(threadId: string, title: string, updatedAt: string): ThreadRecord {
+function createSession(sessionId: string, title: string, updatedAt: string): SessionRecord {
   return {
     agentProfileId: "executor",
     archivedAt: null,
@@ -755,7 +755,7 @@ function createThread(threadId: string, title: string, updatedAt: string): Threa
     ownerUserId: "local-user",
     providerName: "mock",
     status: "active",
-    threadId,
+    sessionId,
     title,
     updatedAt
   };
@@ -764,7 +764,7 @@ function createThread(threadId: string, title: string, updatedAt: string): Threa
 function createInbox(
   inboxId: string,
   title: string,
-  threadId: string,
+  sessionId: string,
   overrides: Partial<Pick<InboxItem, "category" | "severity" | "summary">> = {}
 ): InboxItem {
   return {
@@ -785,7 +785,7 @@ function createInbox(
     status: "pending",
     summary: overrides.summary ?? title,
     taskId: null,
-    threadId,
+    sessionId,
     title,
     updatedAt: "2026-01-01T01:00:00.000Z",
     userId: "local-user"
@@ -794,7 +794,7 @@ function createInbox(
 
 function createCommitment(
   commitmentId: string,
-  threadId: string,
+  sessionId: string,
   overrides: Partial<Pick<CommitmentRecord, "summary" | "title">> = {}
 ): CommitmentRecord {
   return {
@@ -811,13 +811,13 @@ function createCommitment(
     status: "open",
     summary: overrides.summary ?? "Wrap the planning task",
     taskId: null,
-    threadId,
+    sessionId,
     title: overrides.title ?? "Wrap the planning task",
     updatedAt: "2026-01-01T01:00:00.000Z"
   };
 }
 
-function createNextAction(nextActionId: string, threadId: string, title = "Draft the plan outline"): NextActionRecord {
+function createNextAction(nextActionId: string, sessionId: string, title = "Draft the plan outline"): NextActionRecord {
   return {
     blockedReason: null,
     commitmentId: null,
@@ -832,7 +832,7 @@ function createNextAction(nextActionId: string, threadId: string, title = "Draft
     sourceTraceId: null,
     status: "pending",
     taskId: null,
-    threadId,
+    sessionId,
     title,
     updatedAt: "2026-01-01T01:00:00.000Z"
   };
@@ -877,20 +877,20 @@ function createSchedule(scheduleId: string, name: string): ScheduleRecord {
     runAt: null,
     scheduleId,
     status: "active",
-    threadId: null,
+    sessionId: null,
     timezone: null,
     updatedAt: "2026-01-01T00:00:00.000Z"
   };
 }
 
-function createThreadRun(
+function createSessionTask(
   runId: string,
-  threadId: string,
+  sessionId: string,
   runNumber: number,
-  status: ThreadRunRecord["status"],
+  status: SessionTaskRecord["status"],
   input: string,
-  summary: ThreadRunRecord["summary"] = {}
-): ThreadRunRecord {
+  summary: SessionTaskRecord["summary"] = {}
+): SessionTaskRecord {
   return {
     createdAt: `2026-01-01T0${runNumber}:00:00.000Z`,
     finishedAt: status === "completed" ? `2026-01-01T0${runNumber}:30:00.000Z` : null,
@@ -901,13 +901,13 @@ function createThreadRun(
     status,
     summary,
     taskId: `task-${runNumber}`,
-    threadId
+    sessionId
   };
 }
 
 function createScheduleRun(
   scheduleId: string,
-  threadId: string,
+  sessionId: string,
   status: ScheduleRunRecord["status"]
 ): ScheduleRunRecord {
   return {
@@ -922,7 +922,10 @@ function createScheduleRun(
     startedAt: "2026-01-01T01:31:00.000Z",
     status,
     taskId: "task-2",
-    threadId,
+    sessionId,
     trigger: "scheduled"
   };
 }
+
+
+

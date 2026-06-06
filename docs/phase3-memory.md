@@ -74,7 +74,7 @@ Minimal review flow:
 Recall does not inject all stored memory. `RecallPlanner` now coordinates retrieval across layers:
 
 1. builds an enriched query from:
-   - thread goal
+   - session goal
    - current objective
    - next actions
    - tool plan
@@ -104,27 +104,27 @@ When the active session grows beyond the configured threshold, the runtime creat
 
 without replaying the entire conversation back into the prompt.
 
-## Thread Session Memory Storage Model
+## Session Summary Storage Model
 
-Thread session memory now uses a split model instead of a single append-only table:
+Session summary memory now uses a split model instead of a single append-only table:
 
-- `thread_session_memories_current`
-  - one row per `thread_id`
+- `session_summaries_current`
+  - one row per `session_id`
   - stores the latest session state used by resume flows
-- `thread_session_memory_events`
+- `session_summary_events`
   - append-only history of every session memory write
-  - powers thread history views and cross-session search
+  - powers session history views and cross-session search
 
 Read/write behavior:
 
 - writes append to `events` and upsert `current` in one transaction
-- `findLatestByThread` reads from `current`
+- `findLatestBySession` reads from `current`
 - history listing and session search read from `events` (via `session_index`)
 
 Migration behavior:
 
-- historical rows from legacy `thread_session_memory` are backfilled into `events`
-- per-thread latest records are backfilled into `current`
+- historical rows from legacy `session_summary` are backfilled into `events`
+- per-session latest records are backfilled into `current`
 - read paths switch directly to the new model after migration (no legacy read fallback)
 
 ## Snapshot

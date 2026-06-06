@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import {
   DeterministicCompactSummarizer,
@@ -51,7 +51,7 @@ describe("compact summarizer", () => {
       }
     ],
     reason: "message_count" as const,
-    sessionScopeKey: "thread-1",
+    sessionScopeKey: "session-1",
     taskId: "task-1"
   };
 

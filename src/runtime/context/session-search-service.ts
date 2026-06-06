@@ -1,61 +1,61 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import type {
   ContextFragment,
   SessionSearchHit,
-  ThreadSessionMemoryRepository
+  SessionSummaryRepository
 } from "../../types/index.js";
 
 export interface SessionSearchServiceDependencies {
-  repository: ThreadSessionMemoryRepository;
+  repository: SessionSummaryRepository;
 }
 
 export class SessionSearchService {
   public constructor(private readonly dependencies: SessionSearchServiceDependencies) {}
 
-  public searchAsContext(input: { limit: number; query: string; threadId: string }): ContextFragment[] {
+  public searchAsContext(input: { limit: number; query: string; sessionId: string }): ContextFragment[] {
     const hits = this.dependencies.repository.search(input);
     if (hits.length === 0) {
       return [];
     }
-    return [toContextFragment("thread", input.threadId, hits)];
+    return [toContextFragment("session", input.sessionId, hits)];
   }
 
   public searchGlobalAsContext(input: {
     limit: number;
     query: string;
-    excludeThreadId?: string | null;
+    excludeSessionId?: string | null;
   }): ContextFragment[] {
     const hits = this.dependencies.repository.searchGlobal(input);
     if (hits.length === 0) {
       return [];
     }
-    return [toContextFragment("global", input.excludeThreadId ?? null, hits)];
+    return [toContextFragment("global", input.excludeSessionId ?? null, hits)];
   }
 }
 
 function toContextFragment(
-  mode: "global" | "thread",
-  threadId: string | null,
+  mode: "global" | "session",
+  sessionId: string | null,
   hits: SessionSearchHit[]
 ): ContextFragment {
   const topHits = hits.slice(0, 3);
   const sourceDescription =
     mode === "global"
-      ? `global session history matched via FTS5${threadId === null ? "" : ` excluding thread=${threadId}`}`
-      : `session history matched via FTS5 for thread=${threadId}`;
+      ? `global session history matched via FTS5${sessionId === null ? "" : ` excluding session=${sessionId}`}`
+      : `session history matched via FTS5 for session=${sessionId}`;
   return {
     confidence: 0.82,
     explanation: sourceDescription,
     fragmentId: randomUUID(),
-    memoryId: `session-search:${mode}:${threadId ?? "none"}:${topHits.map((item) => item.sessionMemoryId).join(",")}`,
+    memoryId: `session-search:${mode}:${sessionId ?? "none"}:${topHits.map((item) => item.sessionSummaryId).join(",")}`,
     privacyLevel: "internal",
     retentionPolicy: {
       kind: "working",
       reason:
         mode === "global"
           ? "Global session search references are injected for historical recall."
-          : "Session search references are injected only for the active thread.",
+          : "Session search references are injected only for the active session.",
       ttlDays: null
     },
     scope: "session_ref",
@@ -65,7 +65,7 @@ function toContextFragment(
       .map((hit, index) =>
         [
           `Session history ${index + 1}`,
-          `thread_id=${hit.threadId}`,
+          `session_id=${hit.sessionId}`,
           `goal=${hit.goal}`,
           `summary=${hit.summary}`,
           `decisions=${hit.decisions.join("; ") || "[none]"}`,

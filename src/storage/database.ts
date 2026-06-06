@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+﻿import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -19,12 +19,12 @@ import { SqliteRunMetadataRepository } from "./repositories/run-metadata-reposit
 import { SqliteRuntimeOutputRepository } from "./repositories/runtime-output-repository.js";
 import { SqliteScheduleRepository } from "./repositories/schedules/schedule-repository.js";
 import { SqliteScheduleRunRepository } from "./repositories/schedules/schedule-run-repository.js";
+import { SqliteSessionTranscriptRepository } from "./repositories/session-transcript-repository.js";
 import { SqliteTaskRepository } from "./repositories/task-repository.js";
-import { SqliteThreadLineageRepository } from "./repositories/thread-lineage-repository.js";
-import { SqliteThreadRepository } from "./repositories/thread-repository.js";
-import { SqliteThreadRunRepository } from "./repositories/thread-run-repository.js";
-import { SqliteThreadSessionMemoryRepository } from "./repositories/thread-session-memory-repository.js";
-import { SqliteThreadSnapshotRepository } from "./repositories/thread-snapshot-repository.js";
+import { SqliteSessionLineageRepository } from "./repositories/session-lineage-repository.js";
+import { SqliteSessionRepository } from "./repositories/session-repository.js";
+import { SqliteSessionTaskRepository } from "./repositories/session-task-repository.js";
+import { SqliteSessionSummaryRepository } from "./repositories/session-summary-repository.js";
 import { SqliteToolCallRepository } from "./repositories/tool-call-repository.js";
 import { SqliteTraceRepository } from "./repositories/trace-repository.js";
 
@@ -35,11 +35,11 @@ export interface StorageConfig {
 export class StorageManager {
   public readonly database: DatabaseSync;
   public readonly tasks: SqliteTaskRepository;
-  public readonly threads: SqliteThreadRepository;
-  public readonly threadRuns: SqliteThreadRunRepository;
-  public readonly threadLineage: SqliteThreadLineageRepository;
-  public readonly threadSessionMemories: SqliteThreadSessionMemoryRepository;
-  public readonly threadSnapshots: SqliteThreadSnapshotRepository;
+  public readonly sessions: SqliteSessionRepository;
+  public readonly sessionTasks: SqliteSessionTaskRepository;
+  public readonly sessionLineage: SqliteSessionLineageRepository;
+  public readonly sessionTranscripts: SqliteSessionTranscriptRepository;
+  public readonly sessionSummaries: SqliteSessionSummaryRepository;
   public readonly schedules: SqliteScheduleRepository;
   public readonly scheduleRuns: SqliteScheduleRunRepository;
   public readonly traces: SqliteTraceRepository;
@@ -68,11 +68,11 @@ export class StorageManager {
     runMigrations(this.database);
 
     this.tasks = new SqliteTaskRepository(this.database);
-    this.threads = new SqliteThreadRepository(this.database);
-    this.threadRuns = new SqliteThreadRunRepository(this.database);
-    this.threadLineage = new SqliteThreadLineageRepository(this.database);
-    this.threadSessionMemories = new SqliteThreadSessionMemoryRepository(this.database);
-    this.threadSnapshots = new SqliteThreadSnapshotRepository(this.database);
+    this.sessions = new SqliteSessionRepository(this.database);
+    this.sessionTasks = new SqliteSessionTaskRepository(this.database);
+    this.sessionLineage = new SqliteSessionLineageRepository(this.database);
+    this.sessionTranscripts = new SqliteSessionTranscriptRepository(this.database);
+    this.sessionSummaries = new SqliteSessionSummaryRepository(this.database);
     this.schedules = new SqliteScheduleRepository(this.database);
     this.scheduleRuns = new SqliteScheduleRunRepository(this.database);
     this.traces = new SqliteTraceRepository(this.database);
@@ -97,3 +97,4 @@ export class StorageManager {
     this.database.close();
   }
 }
+

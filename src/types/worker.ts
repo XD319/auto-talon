@@ -18,7 +18,7 @@ export interface WorkerRequest<TInput> {
   workerId: string;
   workerKind: WorkerKind;
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   input: TInput;
   timeoutMs: number;
   maxAttempts: number;

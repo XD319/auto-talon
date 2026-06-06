@@ -25,7 +25,7 @@ export interface CreateScheduleInput {
   agentProfileId: ScheduleRecord["agentProfileId"];
   providerName: string;
   input: string;
-  threadId?: string | null;
+  sessionId?: string | null;
   runAt?: string | null;
   every?: string | null;
   cron?: string | null;
@@ -49,7 +49,7 @@ export interface UpdateScheduleInput {
   metadata?: JsonObject;
   name?: string;
   runAt?: string | null;
-  threadId?: string | null;
+  sessionId?: string | null;
   timezone?: string | null;
 }
 
@@ -369,7 +369,7 @@ export class SchedulerService {
       providerName: input.providerName,
       runAt,
       scheduleId: randomUUID(),
-      threadId: input.threadId ?? null,
+      sessionId: input.sessionId ?? null,
       timezone: input.timezone ?? null
     };
   }
@@ -389,7 +389,7 @@ export class SchedulerService {
       ...(input.input !== undefined ? { input: input.input } : {}),
       ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
       ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       ...(input.timezone !== undefined ? { timezone: input.timezone } : {})
     };
 

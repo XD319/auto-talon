@@ -16,7 +16,7 @@ interface InboxItemRow {
   inbox_id: string;
   user_id: string;
   task_id: string | null;
-  thread_id: string | null;
+  session_id: string | null;
   schedule_run_id: string | null;
   approval_id: string | null;
   experience_id: string | null;
@@ -45,7 +45,7 @@ export class SqliteInboxRepository implements InboxRepository {
     this.database
       .prepare(
         `INSERT INTO inbox_items (
-          inbox_id, user_id, task_id, thread_id, schedule_run_id, approval_id, experience_id, skill_id,
+          inbox_id, user_id, task_id, session_id, schedule_run_id, approval_id, experience_id, skill_id,
           category, severity, status, title, summary, body_md, action_hint, source_trace_id, dedup_key,
           created_at, updated_at, done_at, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -54,7 +54,7 @@ export class SqliteInboxRepository implements InboxRepository {
         inboxId,
         record.userId,
         record.taskId ?? null,
-        record.threadId ?? null,
+        record.sessionId ?? null,
         record.scheduleRunId ?? null,
         record.approvalId ?? null,
         record.experienceId ?? null,
@@ -105,9 +105,9 @@ export class SqliteInboxRepository implements InboxRepository {
       clauses.push("task_id = ?");
       values.push(query.taskId);
     }
-    if (query.threadId !== undefined) {
-      clauses.push("thread_id = ?");
-      values.push(query.threadId);
+    if (query.sessionId !== undefined) {
+      clauses.push("session_id = ?");
+      values.push(query.sessionId);
     }
     if (query.category !== undefined) {
       clauses.push("category = ?");
@@ -173,7 +173,7 @@ export class SqliteInboxRepository implements InboxRepository {
       inboxId: row.inbox_id,
       userId: row.user_id,
       taskId: row.task_id,
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       scheduleRunId: row.schedule_run_id,
       approvalId: row.approval_id,
       experienceId: row.experience_id,

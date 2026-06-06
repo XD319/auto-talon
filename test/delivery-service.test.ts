@@ -32,7 +32,7 @@ describe("delivery service", () => {
         status: "pending",
         summary: "ok",
         taskId: null,
-        threadId: null,
+        sessionId: null,
         title: "done",
         updatedAt: new Date().toISOString(),
         userId: "u1"

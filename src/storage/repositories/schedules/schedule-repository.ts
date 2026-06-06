@@ -18,7 +18,7 @@ interface ScheduleRow {
   schedule_id: string;
   name: string;
   status: ScheduleStatus;
-  thread_id: string | null;
+  session_id: string | null;
   owner_user_id: string;
   cwd: string;
   agent_profile_id: string;
@@ -46,7 +46,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
     this.database
       .prepare(
         `INSERT INTO schedules (
-          schedule_id, name, status, thread_id, owner_user_id, cwd, agent_profile_id, provider_name,
+          schedule_id, name, status, session_id, owner_user_id, cwd, agent_profile_id, provider_name,
           input, run_at, interval_ms, cron, timezone, max_attempts, backoff_base_ms, backoff_max_ms,
           next_fire_at, last_fire_at, created_at, updated_at, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -55,7 +55,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
         record.scheduleId,
         record.name,
         "active",
-        record.threadId ?? null,
+        record.sessionId ?? null,
         record.ownerUserId,
         record.cwd,
         record.agentProfileId,
@@ -104,7 +104,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
       ...existing,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.status !== undefined ? { status: patch.status } : {}),
-      ...(patch.threadId !== undefined ? { threadId: patch.threadId } : {}),
+      ...(patch.sessionId !== undefined ? { sessionId: patch.sessionId } : {}),
       ...(patch.agentProfileId !== undefined ? { agentProfileId: patch.agentProfileId } : {}),
       ...(patch.input !== undefined ? { input: patch.input } : {}),
       ...(patch.runAt !== undefined ? { runAt: patch.runAt } : {}),
@@ -123,7 +123,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
     this.database
       .prepare(
         `UPDATE schedules
-         SET name = ?, status = ?, thread_id = ?, agent_profile_id = ?, input = ?, run_at = ?, interval_ms = ?, cron = ?,
+         SET name = ?, status = ?, session_id = ?, agent_profile_id = ?, input = ?, run_at = ?, interval_ms = ?, cron = ?,
              timezone = ?, max_attempts = ?, backoff_base_ms = ?, backoff_max_ms = ?, next_fire_at = ?,
              last_fire_at = ?, updated_at = ?, metadata_json = ?
          WHERE schedule_id = ?`
@@ -131,7 +131,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
       .run(
         next.name,
         next.status,
-        next.threadId,
+        next.sessionId,
         next.agentProfileId,
         next.input,
         next.runAt,
@@ -167,7 +167,7 @@ export class SqliteScheduleRepository implements ScheduleRepository {
       scheduleId: row.schedule_id,
       name: row.name,
       status: row.status,
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       ownerUserId: row.owner_user_id,
       cwd: row.cwd,
       agentProfileId: row.agent_profile_id as ScheduleRecord["agentProfileId"],

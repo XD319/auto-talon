@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import { createManagedAbortController, throwIfAborted } from "./abort-controller.js";
 import { AppError, toAppError } from "./app-error.js";
@@ -16,8 +16,8 @@ import {
   injectResumeContextMessages,
   normalizeProviderFailure,
   providerUsageToJson,
-  readThreadResumeMemoryContext,
-  readThreadResumeMessages,
+  readSessionResumeMemoryContext,
+  readSessionResumeMessages,
   rebuildTurnProviderMessages,
   sleepWithAbort,
   summarizeText,
@@ -34,7 +34,7 @@ import {
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
-import type { ContextCompactor, ThreadSessionMemoryService } from "./context/index.js";
+import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
 import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
@@ -59,11 +59,12 @@ import type {
   RuntimeRunOptions,
   RuntimeRunResult,
   SessionCompactResult,
+  SessionTranscriptRepository,
   TaskRecord,
   TaskRepository,
-  ThreadCommitmentState,
-  ThreadLineageRepository,
-  ThreadRunRepository,
+  SessionCommitmentState,
+  SessionLineageRepository,
+  SessionTaskRepository,
   ToolExecutionResult,
   TokenBudget,
   BudgetPricingEntry
@@ -85,17 +86,18 @@ export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
   compactPolicy: CompactTriggerPolicy;
   executionCheckpointRepository: ExecutionCheckpointRepository;
-  getThreadCommitmentState?: (threadId: string) => ThreadCommitmentState | null;
+  getSessionCommitmentState?: (sessionId: string) => SessionCommitmentState | null;
   memoryPlane: MemoryPlane;
   recallPlanner: RecallPlanner;
   provider: Provider;
   runMetadataRepository: RunMetadataRepository;
   runtimeVersion: string;
   taskRepository: TaskRepository;
-  threadRunRepository: ThreadRunRepository;
-  threadLineageRepository: ThreadLineageRepository;
+  sessionTaskRepository: SessionTaskRepository;
+  sessionLineageRepository: SessionLineageRepository;
+  sessionTranscriptRepository: SessionTranscriptRepository;
   contextCompactor: ContextCompactor;
-  threadSessionMemoryService: ThreadSessionMemoryService;
+  sessionSummaryService: SessionSummaryService;
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
   outputService: RuntimeOutputService;
@@ -188,7 +190,7 @@ export class ExecutionKernel {
         input,
         maxAttempts: 2,
         taskId: input.task.taskId,
-        threadId: input.task.threadId ?? null,
+        sessionId: input.task.sessionId ?? null,
         timeoutMs: 5_000,
         workerId: randomUUID(),
         workerKind: "retrieval"
@@ -213,7 +215,7 @@ export class ExecutionKernel {
       providerName: this.dependencies.provider.name,
       requesterUserId: options.userId,
       taskId,
-      threadId: options.threadId ?? null,
+      sessionId: options.sessionId ?? null,
       tokenBudget: options.tokenBudget
     });
     const stopOutputSubscription =
@@ -244,6 +246,14 @@ export class ExecutionKernel {
       payload: { input: options.taskInput },
       stage: "planning",
       taskId
+    });
+    this.appendSessionTranscript(task, {
+      content: options.taskInput,
+      eventType: "user_message",
+      payload: {
+        source: "task_input"
+      },
+      role: "user"
     });
 
     this.dependencies.runMetadataRepository.create({
@@ -307,7 +317,7 @@ export class ExecutionKernel {
       });
 
       const profile = this.dependencies.agentProfileRegistry.get(options.agentProfileId);
-      const threadId = task.threadId ?? null;
+      const sessionId = task.sessionId ?? null;
       const initialToolExposure = this.dependencies.toolExposurePlanner
         ? await this.dependencies.toolExposurePlanner.plan({
             context: {
@@ -322,7 +332,7 @@ export class ExecutionKernel {
             },
             iteration: 1,
             taskId,
-            threadId
+            sessionId
           })
         : null;
       managedAbortController.touchActivity("tool_exposure_planned");
@@ -330,8 +340,8 @@ export class ExecutionKernel {
         initialToolExposure?.tools ?? this.dependencies.toolOrchestrator.listTools();
       const recallPlan = await this.planRecall({
         task,
-        threadCommitmentState:
-          threadId === null ? null : this.dependencies.getThreadCommitmentState?.(threadId) ?? null,
+        sessionCommitmentState:
+          sessionId === null ? null : this.dependencies.getSessionCommitmentState?.(sessionId) ?? null,
         tokenBudget: options.tokenBudget,
         toolPlan: availableTools.map((tool) => tool.name)
       });
@@ -346,11 +356,11 @@ export class ExecutionKernel {
         profile,
         repoMap?.summary
       );
-      const resumeContextMessages = readThreadResumeMessages(taskMetadata);
+      const resumeContextMessages = readSessionResumeMessages(taskMetadata);
       if (resumeContextMessages.length > 0) {
         injectResumeContextMessages(messages, resumeContextMessages);
       }
-      const resumeMemoryContext = readThreadResumeMemoryContext(taskMetadata);
+      const resumeMemoryContext = readSessionResumeMemoryContext(taskMetadata);
       if (repoMap !== null) {
         this.dependencies.traceService.record({
           actor: "runtime.repo_map",
@@ -604,7 +614,7 @@ export class ExecutionKernel {
             },
             iteration,
             taskId: task.taskId,
-            threadId: task.threadId ?? null
+            sessionId: task.sessionId ?? null
           });
           availableTools = exposure.tools;
           state.costWarnedToolNames = exposure.decisions
@@ -701,7 +711,7 @@ export class ExecutionKernel {
           this.dependencies.providerRouter?.selectProvider({
             kind: "main",
             taskId: task.taskId,
-            threadId: task.threadId ?? null,
+            sessionId: task.sessionId ?? null,
             ...(this.dependencies.routingMode !== undefined
               ? { mode: this.dependencies.routingMode }
               : {})
@@ -1090,7 +1100,7 @@ export class ExecutionKernel {
         const duplicateNotice =
           priorCall === null
             ? null
-            : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments �?synthesize from the prior result and answer the user.`;
+            : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments 鈥?synthesize from the prior result and answer the user.`;
         const finishedSummary =
           priorCall === null
             ? `${toolSummary} | ${structuredOutputSummary}`
@@ -1204,7 +1214,7 @@ export class ExecutionKernel {
         messages,
         originalGoal: task.input,
         pendingToolCalls,
-        sessionScopeKey: task.threadId ?? task.taskId,
+        sessionScopeKey: task.sessionId ?? task.taskId,
         taskId: task.taskId,
         tokenEstimate: estimateTokenCount(messages),
         tokenThreshold: this.dependencies.compact.tokenThreshold,
@@ -1214,9 +1224,9 @@ export class ExecutionKernel {
       if (compacted.triggered) {
         const compactReason = compacted.reason ?? "message_count";
         const preCompactMessages = [...messages];
-        if (task.threadId !== null && task.threadId !== undefined) {
-          const latestRun = this.dependencies.threadRunRepository.findLatestByThreadId(task.threadId);
-          this.dependencies.threadLineageRepository.append({
+        if (task.sessionId !== null && task.sessionId !== undefined) {
+          const latestRun = this.dependencies.sessionTaskRepository.findLatestBySessionId(task.sessionId);
+          this.dependencies.sessionLineageRepository.append({
             eventType: "compress",
             lineageId: randomUUID(),
             payload: {
@@ -1225,7 +1235,7 @@ export class ExecutionKernel {
             },
             sourceRunId: latestRun?.runId ?? null,
             targetRunId: latestRun?.runId ?? null,
-            threadId: task.threadId
+            sessionId: task.sessionId
           });
           const compactInput = {
             iteration,
@@ -1235,7 +1245,7 @@ export class ExecutionKernel {
             originalGoal: task.input,
             pendingToolCalls,
             reason: compactReason,
-            sessionScopeKey: task.threadId,
+            sessionScopeKey: task.sessionId,
             taskId: task.taskId,
             tokenEstimate: estimateTokenCount(preCompactMessages),
             tokenThreshold: this.dependencies.compact.tokenThreshold,
@@ -1258,7 +1268,7 @@ export class ExecutionKernel {
                 },
                 maxAttempts: 2,
                 taskId: task.taskId,
-                threadId: task.threadId,
+                sessionId: task.sessionId,
                 timeoutMs: 5_000,
                 workerId: randomUUID(),
                 workerKind: "summarizer"
@@ -1266,15 +1276,15 @@ export class ExecutionKernel {
               (input) => summarizerWorker.execute(input)
             );
           } else {
-            const sessionMemoryDraft = this.dependencies.contextCompactor.buildSessionMemory({
+            const sessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
               availableTools,
               compact: compactInput,
               task
             });
-            this.dependencies.threadSessionMemoryService.create({
-              ...sessionMemoryDraft,
+            this.dependencies.sessionSummaryService.create({
+              ...sessionSummaryDraft,
               metadata: {
-                ...(sessionMemoryDraft.metadata ?? {}),
+                ...(sessionSummaryDraft.metadata ?? {}),
                 compactReason,
                 replacedMessageCount: Math.max(
                   0,
@@ -1282,7 +1292,7 @@ export class ExecutionKernel {
                 )
               },
               runId: latestRun?.runId ?? null,
-              threadId: task.threadId,
+              sessionId: task.sessionId,
               trigger: "compact"
             });
           }
@@ -1321,13 +1331,13 @@ export class ExecutionKernel {
           role: "system"
         });
         messages.push(...compacted.replacementMessages);
-        const refreshThreadId = task.threadId ?? null;
+        const refreshSessionId = task.sessionId ?? null;
         const refreshedContext = await this.planRecall({
           task,
-          threadCommitmentState:
-            refreshThreadId === null
+          sessionCommitmentState:
+            refreshSessionId === null
               ? null
-              : this.dependencies.getThreadCommitmentState?.(refreshThreadId) ?? null,
+              : this.dependencies.getSessionCommitmentState?.(refreshSessionId) ?? null,
           tokenBudget: state.tokenBudget,
           toolPlan: availableTools.map((tool) => tool.name)
         });
@@ -1362,7 +1372,7 @@ export class ExecutionKernel {
       this.dependencies.providerRouter?.selectProvider({
         kind: "main",
         taskId: task.taskId,
-        threadId: task.threadId ?? null,
+        sessionId: task.sessionId ?? null,
         ...(this.dependencies.routingMode !== undefined
           ? { mode: this.dependencies.routingMode }
           : {})
@@ -1477,6 +1487,22 @@ export class ExecutionKernel {
       status: "succeeded"
     });
     this.dependencies.memoryPlane.recordFinalOutcome(completedTask, finalOutput);
+    this.appendSessionTranscript(completedTask, {
+      content: finalOutput,
+      eventType: "assistant_message",
+      payload: {
+        source: "final_output"
+      },
+      role: "assistant"
+    });
+    this.appendSessionTranscript(completedTask, {
+      content: summarizeText(finalOutput, 240),
+      eventType: "task_result",
+      payload: {
+        status: "succeeded"
+      },
+      role: "system"
+    });
 
     this.dependencies.traceService.record({
       actor: "runtime.kernel",
@@ -1523,24 +1549,24 @@ export class ExecutionKernel {
       taskId: completedTask.taskId
     });
 
-    this.persistThreadRun(completedTask, completedTask.input, {
+    this.persistSessionTask(completedTask, completedTask.input, {
       finalOutput,
       status: completedTask.status
     });
-    if (completedTask.threadId !== null && completedTask.threadId !== undefined) {
+    if (completedTask.sessionId !== null && completedTask.sessionId !== undefined) {
       const latestRun =
-        this.dependencies.threadRunRepository.findByTaskId(completedTask.taskId) ??
-        this.dependencies.threadRunRepository.findLatestByThreadId(completedTask.threadId);
-      const finalSessionMemoryDraft = this.dependencies.contextCompactor.buildSessionMemory({
+        this.dependencies.sessionTaskRepository.findByTaskId(completedTask.taskId) ??
+        this.dependencies.sessionTaskRepository.findLatestBySessionId(completedTask.sessionId);
+      const finalSessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
         availableTools,
         compact: buildFinalSessionCompactInput(messages, completedTask),
         task: completedTask,
         trigger: "final"
       });
-      this.dependencies.threadSessionMemoryService.create({
-        ...finalSessionMemoryDraft,
+      this.dependencies.sessionSummaryService.create({
+        ...finalSessionSummaryDraft,
         runId: latestRun?.runId ?? null,
-        threadId: completedTask.threadId,
+        sessionId: completedTask.sessionId,
         trigger: "final"
       });
     }
@@ -1604,7 +1630,7 @@ export class ExecutionKernel {
     };
   }
 
-  private selectCompactSummarizer(taskId: string, threadId: string | null): CompactSummarizer {
+  private selectCompactSummarizer(taskId: string, sessionId: string | null): CompactSummarizer {
     if (this.dependencies.compact.summarizer !== "provider_subagent") {
       return new DeterministicCompactSummarizer();
     }
@@ -1616,7 +1642,7 @@ export class ExecutionKernel {
         this.dependencies.providerRouter?.selectProvider({
           kind: "summarize",
           taskId,
-          threadId
+          sessionId
         }).provider ?? this.dependencies.provider
       );
     });
@@ -1697,7 +1723,7 @@ export class ExecutionKernel {
       taskId: task.taskId
     });
 
-    this.persistThreadRun(task, task.input, {
+    this.persistSessionTask(task, task.input, {
       errorCode: error.code,
       errorMessage: error.message,
       status: isCancelled ? "cancelled" : "failed"
@@ -1714,7 +1740,7 @@ export class ExecutionKernel {
     });
   }
 
-  private persistThreadRun(
+  private persistSessionTask(
     task: TaskRecord,
     input: string,
     summary: {
@@ -1724,13 +1750,13 @@ export class ExecutionKernel {
       errorMessage?: string | null;
     }
   ): void {
-    if (task.threadId === null || task.threadId === undefined) {
+    if (task.sessionId === null || task.sessionId === undefined) {
       return;
     }
-    if (this.dependencies.threadRunRepository.findByTaskId(task.taskId) !== null) {
+    if (this.dependencies.sessionTaskRepository.findByTaskId(task.taskId) !== null) {
       return;
     }
-    this.dependencies.threadRunRepository.create({
+    this.dependencies.sessionTaskRepository.create({
       finishedAt: task.finishedAt,
       input,
       metadata: {
@@ -1745,7 +1771,29 @@ export class ExecutionKernel {
         status: summary.status
       },
       taskId: task.taskId,
-      threadId: task.threadId
+      sessionId: task.sessionId
+    });
+  }
+
+  private appendSessionTranscript(
+    task: TaskRecord,
+    event: {
+      content: string | null;
+      eventType: Parameters<SessionTranscriptRepository["append"]>[0]["eventType"];
+      payload?: Parameters<SessionTranscriptRepository["append"]>[0]["payload"];
+      role: Parameters<SessionTranscriptRepository["append"]>[0]["role"];
+    }
+  ): void {
+    if (task.sessionId === null || task.sessionId === undefined) {
+      return;
+    }
+    this.dependencies.sessionTranscriptRepository.append({
+      content: event.content,
+      eventType: event.eventType,
+      payload: event.payload ?? {},
+      role: event.role ?? null,
+      sessionId: task.sessionId,
+      taskId: task.taskId
     });
   }
 

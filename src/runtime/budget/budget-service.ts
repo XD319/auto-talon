@@ -1,4 +1,4 @@
-import type { AuditService } from "../../audit/audit-service.js";
+﻿import type { AuditService } from "../../audit/audit-service.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type {
   BudgetEnforcementDecision,
@@ -13,12 +13,12 @@ import { classifyBudgetState } from "./budget-policy.js";
 
 export interface BudgetServiceConfig {
   task: BudgetLimits;
-  thread: BudgetLimits;
+  session: BudgetLimits;
 }
 
 export interface RecordBudgetUsageInput {
   taskId: string;
-  threadId: string | null;
+  sessionId: string | null;
   mode: RoutingMode;
   usage: ProviderUsage;
   costUsd: number | null;
@@ -26,9 +26,9 @@ export interface RecordBudgetUsageInput {
 
 export class BudgetService {
   private readonly taskStates = new Map<string, BudgetState>();
-  private readonly threadStates = new Map<string, BudgetState>();
+  private readonly sessionStates = new Map<string, BudgetState>();
   private readonly taskDowngrade = new Set<string>();
-  private readonly threadDowngrade = new Set<string>();
+  private readonly sessionDowngrade = new Set<string>();
 
   public constructor(
     private readonly config: BudgetServiceConfig,
@@ -49,16 +49,16 @@ export class BudgetService {
       return taskDecision;
     }
 
-    if (input.threadId !== null) {
-      const threadState = nextState(this.threadStates.get(input.threadId), input.usage, input.costUsd);
-      this.threadStates.set(input.threadId, threadState);
-      const threadDecision = classifyBudgetState(threadState, this.config.thread);
-      this.handleDecision("thread", input.threadId, input, threadState, threadDecision);
-      if (threadDecision.action === "hard_abort") {
-        return threadDecision;
+    if (input.sessionId !== null) {
+      const sessionState = nextState(this.sessionStates.get(input.sessionId), input.usage, input.costUsd);
+      this.sessionStates.set(input.sessionId, sessionState);
+      const sessionDecision = classifyBudgetState(sessionState, this.config.session);
+      this.handleDecision("session", input.sessionId, input, sessionState, sessionDecision);
+      if (sessionDecision.action === "hard_abort") {
+        return sessionDecision;
       }
-      if (threadDecision.action === "soft_downgrade") {
-        return threadDecision;
+      if (sessionDecision.action === "soft_downgrade") {
+        return sessionDecision;
       }
     }
 
@@ -69,12 +69,12 @@ export class BudgetService {
     return this.taskStates.get(taskId) ?? null;
   }
 
-  public getThreadState(threadId: string): BudgetState | null {
-    return this.threadStates.get(threadId) ?? null;
+  public getSessionState(sessionId: string): BudgetState | null {
+    return this.sessionStates.get(sessionId) ?? null;
   }
 
   public isDowngradeActive(scope: BudgetScope, id: string): boolean {
-    return scope === "task" ? this.taskDowngrade.has(id) : this.threadDowngrade.has(id);
+    return scope === "task" ? this.taskDowngrade.has(id) : this.sessionDowngrade.has(id);
   }
 
   private handleDecision(
@@ -91,7 +91,7 @@ export class BudgetService {
       if (scope === "task") {
         this.taskDowngrade.add(id);
       } else {
-        this.threadDowngrade.add(id);
+        this.sessionDowngrade.add(id);
       }
       this.traceService.record({
         actor: "runtime.budget",
@@ -102,7 +102,7 @@ export class BudgetService {
           reasons: decision.reasons,
           scope,
           taskId: input.taskId,
-          threadId: input.threadId,
+          sessionId: input.sessionId,
           usedCostUsd: state.usedCostUsd,
           usedInput: state.usedInput,
           usedOutput: state.usedOutput
@@ -121,7 +121,7 @@ export class BudgetService {
           reasons: decision.reasons,
           scope,
           taskId: input.taskId,
-          threadId: input.threadId
+          sessionId: input.sessionId
         },
         summary: `Budget warning for ${scope}`,
         taskId: input.taskId,
@@ -139,7 +139,7 @@ export class BudgetService {
         reasons: decision.reasons,
         scope,
         taskId: input.taskId,
-        threadId: input.threadId,
+        sessionId: input.sessionId,
         usedCostUsd: state.usedCostUsd,
         usedInput: state.usedInput,
         usedOutput: state.usedOutput
@@ -158,7 +158,7 @@ export class BudgetService {
         reasons: decision.reasons,
         scope,
         taskId: input.taskId,
-        threadId: input.threadId
+        sessionId: input.sessionId
       },
       summary: `Budget exceeded for ${scope}`,
       taskId: input.taskId,

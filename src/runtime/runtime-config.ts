@@ -122,7 +122,7 @@ const runtimeConfigFileSchema = z.object({
           softOutputTokens: z.number().int().nonnegative().optional()
         })
         .optional(),
-      thread: z
+      session: z
         .object({
           hardCostUsd: z.number().nonnegative().optional(),
           hardInputTokens: z.number().int().nonnegative().optional(),
@@ -242,7 +242,7 @@ export interface RuntimeConfig {
   };
   budget: {
     task: BudgetLimits;
-    thread: BudgetLimits;
+    session: BudgetLimits;
     pricing: Record<string, BudgetPricingEntry>;
   };
   tokenBudget: TokenBudget;
@@ -307,7 +307,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
   },
   budget: {
     task: {},
-    thread: {},
+    session: {},
     pricing: {}
   },
   workflow: {
@@ -515,8 +515,8 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       task: normalizeBudgetLimits(
         envConfig.budget?.task ?? fileConfig?.budget?.task ?? DEFAULT_RUNTIME_CONFIG.budget.task
       ),
-      thread: normalizeBudgetLimits(
-        envConfig.budget?.thread ?? fileConfig?.budget?.thread ?? DEFAULT_RUNTIME_CONFIG.budget.thread
+      session: normalizeBudgetLimits(
+        envConfig.budget?.session ?? fileConfig?.budget?.session ?? DEFAULT_RUNTIME_CONFIG.budget.session
       ),
       pricing:
         normalizeBudgetPricing(

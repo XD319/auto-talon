@@ -1,69 +1,69 @@
-import type {
+﻿import type {
   ConversationMessage,
-  ThreadCommitmentState,
-  ThreadSessionMemoryRecord
+  SessionCommitmentState,
+  SessionSummaryRecord
 } from "../../types/index.js";
-import type { ThreadSessionMemoryService } from "../context/thread-session-memory-service.js";
-import type { ThreadCommitmentProjector } from "../commitments/thread-commitment-projector.js";
+import type { SessionSummaryService } from "../context/session-summary-service.js";
+import type { SessionCommitmentProjector } from "../commitments/session-commitment-projector.js";
 
-export interface ThreadStateProjection {
+export interface SessionStateProjection {
   messages: ConversationMessage[];
-  commitmentState: ThreadCommitmentState;
-  sessionMemory: ThreadSessionMemoryRecord | null;
+  commitmentState: SessionCommitmentState;
+  sessionSummary: SessionSummaryRecord | null;
 }
 
-export interface ThreadStateProjectorDependencies {
-  threadSessionMemoryService: ThreadSessionMemoryService;
-  commitmentProjector: ThreadCommitmentProjector;
+export interface SessionStateProjectorDependencies {
+  sessionSummaryService: SessionSummaryService;
+  commitmentProjector: SessionCommitmentProjector;
 }
 
-export class ThreadStateProjector {
-  public constructor(private readonly dependencies: ThreadStateProjectorDependencies) {}
+export class SessionStateProjector {
+  public constructor(private readonly dependencies: SessionStateProjectorDependencies) {}
 
-  public projectState(threadId: string): ThreadStateProjection {
-    const commitmentState = this.dependencies.commitmentProjector.project(threadId);
-    const sessionMemory = this.dependencies.threadSessionMemoryService.findLatestByThread(threadId);
-    if (sessionMemory !== null) {
-      const messages = toResumeMessages(sessionMemory, commitmentState);
+  public projectState(sessionId: string): SessionStateProjection {
+    const commitmentState = this.dependencies.commitmentProjector.project(sessionId);
+    const sessionSummary = this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
+    if (sessionSummary !== null) {
+      const messages = toResumeMessages(sessionSummary, commitmentState);
       return {
         commitmentState,
         messages,
-        sessionMemory
+        sessionSummary
       };
     }
     return {
       commitmentState,
       messages: [],
-      sessionMemory: null
+      sessionSummary: null
     };
   }
 }
 
 function toResumeMessages(
-  sessionMemory: ThreadSessionMemoryRecord,
-  commitmentState: ThreadCommitmentState
+  sessionSummary: SessionSummaryRecord,
+  commitmentState: SessionCommitmentState
 ): ConversationMessage[] {
   const messages: ConversationMessage[] = [
     {
       role: "system",
-      content: `KnownThreadGoal: ${normalizeLine(sessionMemory.goal, 220)}`
+      content: `KnownSessionGoal: ${normalizeLine(sessionSummary.goal, 220)}`
     }
   ];
-  const decisions = compactItems(sessionMemory.decisions, 3, 180);
+  const decisions = compactItems(sessionSummary.decisions, 3, 180);
   if (decisions.length > 0) {
     messages.push({
       role: "system",
       content: `KnownDecisions: ${decisions.join(" | ")}`
     });
   }
-  const openLoops = compactItems(sessionMemory.openLoops, 3, 180);
+  const openLoops = compactItems(sessionSummary.openLoops, 3, 180);
   if (openLoops.length > 0) {
     messages.push({
       role: "system",
       content: `KnownOpenLoops: ${openLoops.join(" | ")}`
     });
   }
-  const nextActions = compactItems(sessionMemory.nextActions, 3, 180);
+  const nextActions = compactItems(sessionSummary.nextActions, 3, 180);
   if (nextActions.length > 0) {
     messages.push({
       role: "system",
@@ -118,3 +118,4 @@ function normalizeLine(value: string, maxLength: number): string {
   }
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
 }
+

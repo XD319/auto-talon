@@ -13,7 +13,7 @@ import { parseJsonValue, serializeJsonValue } from "../json.js";
 
 interface CommitmentRow {
   commitment_id: string;
-  thread_id: string;
+  session_id: string;
   task_id: string | null;
   owner_user_id: string;
   title: string;
@@ -39,13 +39,13 @@ export class SqliteCommitmentRepository implements CommitmentRepository {
     this.database
       .prepare(
         `INSERT INTO commitments (
-          commitment_id, thread_id, task_id, owner_user_id, title, summary, status, blocked_reason,
+          commitment_id, session_id, task_id, owner_user_id, title, summary, status, blocked_reason,
           pending_decision, source, source_trace_id, due_at, created_at, updated_at, completed_at, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         commitmentId,
-        record.threadId,
+        record.sessionId,
         record.taskId ?? null,
         record.ownerUserId,
         record.title,
@@ -78,9 +78,9 @@ export class SqliteCommitmentRepository implements CommitmentRepository {
   public list(query: CommitmentListQuery = {}): CommitmentRecord[] {
     const clauses: string[] = [];
     const values: Array<number | string> = [];
-    if (query.threadId !== undefined) {
-      clauses.push("thread_id = ?");
-      values.push(query.threadId);
+    if (query.sessionId !== undefined) {
+      clauses.push("session_id = ?");
+      values.push(query.sessionId);
     }
     if (query.ownerUserId !== undefined) {
       clauses.push("owner_user_id = ?");
@@ -153,7 +153,7 @@ export class SqliteCommitmentRepository implements CommitmentRepository {
   private mapRow(row: CommitmentRow): CommitmentRecord {
     return {
       commitmentId: row.commitment_id,
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       taskId: row.task_id,
       ownerUserId: row.owner_user_id,
       title: row.title,

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+﻿import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SLASH_COMMANDS, completeSlashCommand } from "../src/tui/slash-commands.js";
 import { buildTodaySummary } from "../src/tui/view-models/today-summary.js";
@@ -9,12 +9,12 @@ import type {
   InboxItem,
   NextActionRecord,
   ScheduleRecord,
-  ThreadRecord
+  SessionRecord
 } from "../src/types/index.js";
 
 type TodayServiceStub = Pick<
   AgentApplicationService,
-  "listCommitments" | "listInbox" | "listNextActions" | "listPendingApprovals" | "listSchedules" | "listThreads"
+  "listCommitments" | "listInbox" | "listNextActions" | "listPendingApprovals" | "listSchedules" | "listSessions"
 >;
 
 describe("personal assistant slash commands", () => {
@@ -23,11 +23,11 @@ describe("personal assistant slash commands", () => {
       "/today",
       "/inbox",
       "/inbox show ",
-      "/thread",
-      "/thread new ",
-      "/thread list",
-      "/thread switch ",
-      "/thread summary ",
+      "/session",
+      "/session new ",
+      "/session list",
+      "/session switch ",
+      "/session summary ",
       "/next",
       "/next list",
       "/next done ",
@@ -46,9 +46,9 @@ describe("personal assistant slash commands", () => {
   it("completes personal workflow commands by prefix", () => {
     expect(completeSlashCommand("/t")).toBe("/today ");
     expect(completeSlashCommand("/r")).toBe("/resume ");
-    expect(completeSlashCommand("/th")).toBe("/thread ");
+    expect(completeSlashCommand("/ses")).toBe("/session ");
     expect(completeSlashCommand("/co")).toBe("/commitments ");
-    expect(completeSlashCommand("/thread s")).toBe("/thread switch ");
+    expect(completeSlashCommand("/session s")).toBe("/session switch ");
     expect(completeSlashCommand("/next d")).toBe("/next done ");
     expect(completeSlashCommand("/commitments b")).toBe("/commitments block ");
     expect(completeSlashCommand("/schedule c")).toBe("/schedule create ");
@@ -60,17 +60,17 @@ describe("today summary view model", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T08:00:00.000Z"));
     process.env.USERNAME = "local-user";
-    const summary = buildTodaySummary(createServiceStub(), { activeThreadId: "thread-a" });
+    const summary = buildTodaySummary(createServiceStub(), { activeSessionId: "session-a" });
 
     expect(summary.inbox.total).toBe(2);
-    expect(summary.threads.total).toBe(2);
+    expect(summary.sessions.total).toBe(2);
     expect(summary.commitments.total).toBe(2);
     expect(summary.nextActions.total).toBe(2);
     expect(summary.pendingApprovals.total).toBe(2);
     expect(summary.dueRoutines.total).toBe(2);
-    expect(summary.threads.items[0]?.threadId).toBe("thread-a");
-    expect(summary.commitments.items[0]?.threadId).toBe("thread-a");
-    expect(summary.nextActions.items[0]?.threadId).toBe("thread-a");
+    expect(summary.sessions.items[0]?.sessionId).toBe("session-a");
+    expect(summary.commitments.items[0]?.sessionId).toBe("session-a");
+    expect(summary.nextActions.items[0]?.sessionId).toBe("session-a");
     expect(summary.dueRoutines.items[0]?.scheduleId).toBe("schedule-overdue");
   });
 });
@@ -80,26 +80,26 @@ afterEach(() => {
 });
 
 function createServiceStub(): TodayServiceStub {
-  const threads: ThreadRecord[] = [
-    createThread("thread-b", "2026-01-01T00:00:00.000Z"),
-    createThread("thread-a", "2026-01-01T01:00:00.000Z"),
+  const sessions: SessionRecord[] = [
+    createSession("session-b", "2026-01-01T00:00:00.000Z"),
+    createSession("session-a", "2026-01-01T01:00:00.000Z"),
     {
-      ...createThread("thread-z", "2026-01-01T02:00:00.000Z"),
+      ...createSession("session-z", "2026-01-01T02:00:00.000Z"),
       ownerUserId: "other-user"
     }
   ];
   const inbox: InboxItem[] = [
-    createInbox("inbox-a", "thread-a"),
-    createInbox("inbox-b", "thread-b")
+    createInbox("inbox-a", "session-a"),
+    createInbox("inbox-b", "session-b")
   ];
   const commitments: CommitmentRecord[] = [
-    createCommitment("commitment-b", "thread-b"),
-    createCommitment("commitment-a", "thread-a")
+    createCommitment("commitment-b", "session-b"),
+    createCommitment("commitment-a", "session-a")
   ];
   const nextActions: NextActionRecord[] = [
-    createNextAction("next-b", "thread-b", 2),
-    createNextAction("next-a", "thread-a", 1),
-    createNextAction("next-ignore", "thread-z", 0)
+    createNextAction("next-b", "session-b", 2),
+    createNextAction("next-a", "session-a", 1),
+    createNextAction("next-ignore", "session-z", 0)
   ];
   const approvals: ApprovalRecord[] = [createApproval("approval-2"), createApproval("approval-1")];
   const schedules: ScheduleRecord[] = [
@@ -132,13 +132,13 @@ function createServiceStub(): TodayServiceStub {
           (query?.status === undefined || item.status === query.status)
       );
     },
-    listThreads() {
-      return threads;
+    listSessions() {
+      return sessions;
     }
   } as TodayServiceStub;
 }
 
-function createThread(threadId: string, updatedAt: string): ThreadRecord {
+function createSession(sessionId: string, updatedAt: string): SessionRecord {
   return {
     agentProfileId: "executor",
     archivedAt: null,
@@ -148,13 +148,13 @@ function createThread(threadId: string, updatedAt: string): ThreadRecord {
     ownerUserId: "local-user",
     providerName: "mock",
     status: "active",
-    threadId,
-    title: threadId,
+    sessionId,
+    title: sessionId,
     updatedAt
   };
 }
 
-function createInbox(inboxId: string, threadId: string): InboxItem {
+function createInbox(inboxId: string, sessionId: string): InboxItem {
   return {
     actionHint: null,
     approvalId: null,
@@ -173,14 +173,14 @@ function createInbox(inboxId: string, threadId: string): InboxItem {
     status: "pending",
     summary: inboxId,
     taskId: null,
-    threadId,
+    sessionId,
     title: inboxId,
     updatedAt: "2026-01-01T00:00:00.000Z",
     userId: "local-user"
   };
 }
 
-function createCommitment(commitmentId: string, threadId: string): CommitmentRecord {
+function createCommitment(commitmentId: string, sessionId: string): CommitmentRecord {
   return {
     blockedReason: null,
     commitmentId,
@@ -195,13 +195,13 @@ function createCommitment(commitmentId: string, threadId: string): CommitmentRec
     status: "open",
     summary: commitmentId,
     taskId: null,
-    threadId,
+    sessionId,
     title: commitmentId,
     updatedAt: "2026-01-01T00:00:00.000Z"
   };
 }
 
-function createNextAction(nextActionId: string, threadId: string, rank: number): NextActionRecord {
+function createNextAction(nextActionId: string, sessionId: string, rank: number): NextActionRecord {
   return {
     blockedReason: null,
     commitmentId: null,
@@ -216,7 +216,7 @@ function createNextAction(nextActionId: string, threadId: string, rank: number):
     sourceTraceId: null,
     status: "pending",
     taskId: null,
-    threadId,
+    sessionId,
     title: nextActionId,
     updatedAt: "2026-01-01T00:00:00.000Z"
   };
@@ -261,7 +261,7 @@ function createSchedule(scheduleId: string, nextFireAt: string): ScheduleRecord 
     runAt: null,
     scheduleId,
     status: "active",
-    threadId: null,
+    sessionId: null,
     timezone: null,
     updatedAt: "2026-01-01T00:00:00.000Z"
   };

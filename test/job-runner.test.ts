@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { JobRunner } from "../src/runtime/jobs/job-runner.js";
 import { StorageManager } from "../src/storage/database.js";
 import { TraceService } from "../src/tracing/trace-service.js";
 
 describe("job runner", () => {
-  it("updates run with task/thread on success", async () => {
+  it("updates run with task/session on success", async () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     const traceService = new TraceService(storage.traces);
     try {
@@ -19,12 +19,12 @@ describe("job runner", () => {
         providerName: "mock",
         scheduleId: "sched-ok"
       });
-      storage.threads.create({
+      storage.sessions.create({
         agentProfileId: "executor",
         cwd: "/tmp/ws",
         ownerUserId: "u1",
         providerName: "mock",
-        threadId: "thread-1",
+        sessionId: "session-1",
         title: "scheduled-thread"
       });
       storage.tasks.create({
@@ -35,7 +35,7 @@ describe("job runner", () => {
         providerName: "mock",
         requesterUserId: "u1",
         taskId: "task-1",
-        threadId: "thread-1",
+        sessionId: "session-1",
         tokenBudget: { inputLimit: 1, outputLimit: 1, reservedOutput: 0, usedInput: 0, usedOutput: 0 }
       });
       storage.scheduleRuns.create({
@@ -66,7 +66,7 @@ describe("job runner", () => {
             startedAt: new Date().toISOString(),
             status: "succeeded",
             taskId: "task-1",
-            threadId: "thread-1",
+            sessionId: "session-1",
             tokenBudget: { inputLimit: 1, outputLimit: 1, reservedOutput: 0, usedInput: 0, usedOutput: 0 },
             updatedAt: new Date().toISOString()
           }
@@ -79,7 +79,7 @@ describe("job runner", () => {
       const processed = await runner.drain(new Date().toISOString(), 10);
       expect(processed[0]?.status).toBe("completed");
       expect(processed[0]?.taskId).toBe("task-1");
-      expect(processed[0]?.threadId).toBe("thread-1");
+      expect(processed[0]?.sessionId).toBe("session-1");
     } finally {
       storage.close();
     }

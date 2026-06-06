@@ -16,7 +16,7 @@ describe("provider router", () => {
       { record: vi.fn() } as never
     );
 
-    const selected = router.selectProvider({ kind: "main", taskId: "t1", threadId: null });
+    const selected = router.selectProvider({ kind: "main", taskId: "t1", sessionId: null });
     expect(selected.tier).toBe("quality");
   });
 });

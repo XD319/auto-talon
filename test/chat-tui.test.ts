@@ -1,4 +1,4 @@
-import { PassThrough } from "node:stream";
+﻿import { PassThrough } from "node:stream";
 
 import { render } from "ink";
 import React from "react";
@@ -68,9 +68,9 @@ type ControllerServiceStub = Pick<
   | "listPendingApprovals"
   | "listPendingClarifyPrompts"
   | "listTasks"
-  | "continueThread"
+  | "continueSession"
   | "providerStats"
-  | "createThread"
+  | "createSession"
   | "resolveApproval"
   | "runTask"
   | "showTask"
@@ -276,7 +276,7 @@ describe("chat tui view-models", () => {
   it("counts CJK text as wide when wrapping scrollback output", () => {
     const state: ScrollbackWrapState = { column: 0, pending: "" };
 
-    expect(wrapScrollbackChunk("中文中文中文中文中文", state, 21)).toBe("中文中文中文中文中文\n");
+    expect(wrapScrollbackChunk("\u4E2D\u6587\u4E2D\u6587\u4E2D\u6587\u4E2D\u6587\u4E2D\u6587", state, 21)).toBe("\u4E2D\u6587\u4E2D\u6587\u4E2D\u6587\u4E2D\u6587\u4E2D\u6587\n");
     expect(state.pending).toBe("");
   });
 
@@ -598,7 +598,7 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
-  it("continues the same thread after the first submitted prompt", async () => {
+  it("continues the same session after the first submitted prompt", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
     const runTask = vi.fn((options: RuntimeRunOptions) => Promise.resolve({
@@ -607,15 +607,15 @@ describe("use-chat-controller helpers", () => {
         ...createControllerTask(options),
         finalOutput: "first-reply",
         status: "succeeded",
-        threadId: "thread-123"
+        sessionId: "session-123"
       }
     }));
-    const continueThread = vi.fn((threadId: string, text: string, overrides?: Partial<RuntimeRunOptions>) => {
+    const continueSession = vi.fn((sessionId: string, text: string, overrides?: Partial<RuntimeRunOptions>) => {
       const options = {
         ...createDefaultRunOptions(text, process.cwd(), config),
         ...overrides,
         taskInput: text,
-        threadId
+        sessionId
       };
       return Promise.resolve({
         output: "second-reply",
@@ -623,7 +623,7 @@ describe("use-chat-controller helpers", () => {
           ...createControllerTask(options),
           finalOutput: "second-reply",
           status: "succeeded",
-          threadId
+          sessionId
         }
       });
     });
@@ -634,9 +634,9 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread,
-      createThread() {
-        throw new Error("createThread should not be called in this test.");
+      continueSession,
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
       },
       listPendingApprovals() {
         return [];
@@ -703,18 +703,18 @@ describe("use-chat-controller helpers", () => {
       expect(submitPrompt("first")).toBe(true);
       await waitFor(() => runTask.mock.calls.length === 1);
       expect(submitPrompt("second")).toBe(true);
-      await waitFor(() => continueThread.mock.calls.length === 1);
+      await waitFor(() => continueSession.mock.calls.length === 1);
 
       expect(runTask).toHaveBeenCalledTimes(1);
-      expect(continueThread).toHaveBeenCalledTimes(1);
+      expect(continueSession).toHaveBeenCalledTimes(1);
       expect(runTask.mock.calls[0]?.[0].maxIterations).toBe(TUI_INTERACTIVE_MAX_ITERATIONS);
       expect(runTask.mock.calls[0]?.[0].timeoutMode).toBe("activity");
       expect(runTask.mock.calls[0]?.[0].timeoutMs).toBe(TUI_ACTIVITY_TIMEOUT_MS);
-      expect(continueThread.mock.calls[0]?.[0]).toBe("thread-123");
-      expect(continueThread.mock.calls[0]?.[1]).toBe("second");
-      expect(continueThread.mock.calls[0]?.[2]?.maxIterations).toBe(TUI_INTERACTIVE_MAX_ITERATIONS);
-      expect(continueThread.mock.calls[0]?.[2]?.timeoutMode).toBe("activity");
-      expect(continueThread.mock.calls[0]?.[2]?.timeoutMs).toBe(TUI_ACTIVITY_TIMEOUT_MS);
+      expect(continueSession.mock.calls[0]?.[0]).toBe("session-123");
+      expect(continueSession.mock.calls[0]?.[1]).toBe("second");
+      expect(continueSession.mock.calls[0]?.[2]?.maxIterations).toBe(TUI_INTERACTIVE_MAX_ITERATIONS);
+      expect(continueSession.mock.calls[0]?.[2]?.timeoutMode).toBe("activity");
+      expect(continueSession.mock.calls[0]?.[2]?.timeoutMs).toBe(TUI_ACTIVITY_TIMEOUT_MS);
     } finally {
       await unmountInkApp(app);
     }
@@ -741,11 +741,11 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread() {
-        return Promise.reject(new Error("continueThread should not be called in this test."));
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
       },
-      createThread() {
-        throw new Error("createThread should not be called in this test.");
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
       },
       listPendingApprovals() {
         return [];
@@ -861,11 +861,11 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread() {
-        return Promise.reject(new Error("continueThread should not be called in this test."));
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
       },
-      createThread() {
-        throw new Error("createThread should not be called in this test.");
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
       },
       listPendingApprovals() {
         return [];
@@ -956,11 +956,11 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread() {
-        return Promise.reject(new Error("continueThread should not be called in this test."));
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
       },
-      createThread() {
-        throw new Error("createThread should not be called in this test.");
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
       },
       listPendingApprovals() {
         return [];
@@ -1034,7 +1034,7 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
-  it("creates and activates a thread before prompt submission", async () => {
+  it("creates and activates a session before prompt submission", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
     const runTask = vi.fn((options: RuntimeRunOptions) => Promise.resolve({
@@ -1043,10 +1043,10 @@ describe("use-chat-controller helpers", () => {
         ...createControllerTask(options),
         finalOutput: "reply",
         status: "succeeded",
-        threadId: options.threadId ?? null
+        sessionId: options.sessionId ?? null
       }
     }));
-    const createThread = vi.fn(() => ({
+    const createSession = vi.fn(() => ({
       agentProfileId: "executor" as const,
       archivedAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -1055,16 +1055,16 @@ describe("use-chat-controller helpers", () => {
       ownerUserId: "local-user",
       providerName: "mock",
       status: "active" as const,
-      threadId: "thread-new",
-      title: "Untitled thread",
+      sessionId: "session-new",
+      title: "Untitled session",
       updatedAt: "2026-01-01T00:00:00.000Z"
     }));
-    const continueThread = vi.fn((threadId: string, text: string, overrides?: Partial<RuntimeRunOptions>) => {
+    const continueSession = vi.fn((sessionId: string, text: string, overrides?: Partial<RuntimeRunOptions>) => {
       const options = {
         ...createDefaultRunOptions(text, process.cwd(), config),
         ...overrides,
         taskInput: text,
-        threadId
+        sessionId
       };
       return Promise.resolve({
         output: "reply",
@@ -1072,7 +1072,7 @@ describe("use-chat-controller helpers", () => {
           ...createControllerTask(options),
           finalOutput: "reply",
           status: "succeeded",
-          threadId
+          sessionId
         }
       });
     });
@@ -1083,8 +1083,8 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread,
-      createThread,
+      continueSession,
+      createSession,
       listPendingApprovals() {
         return [];
       },
@@ -1112,7 +1112,7 @@ describe("use-chat-controller helpers", () => {
       }
     };
     let submitPrompt: ChatController["submitPrompt"] | null = null;
-    let createAndActivateThread: ChatController["createAndActivateThread"] | null = null;
+    let createAndActivateSession: ChatController["createAndActivateSession"] | null = null;
 
     function Harness(): React.ReactElement | null {
       const instance = useChatController({
@@ -1123,7 +1123,7 @@ describe("use-chat-controller helpers", () => {
       });
       React.useEffect(() => {
         submitPrompt = instance.submitPrompt;
-        createAndActivateThread = instance.createAndActivateThread;
+        createAndActivateSession = instance.createAndActivateSession;
       }, [instance]);
       return null;
     }
@@ -1133,19 +1133,19 @@ describe("use-chat-controller helpers", () => {
       stdout: stdout as unknown as NodeJS.WriteStream
     });
     try {
-      await waitFor(() => submitPrompt !== null && createAndActivateThread !== null);
-      createAndActivateThread?.();
+      await waitFor(() => submitPrompt !== null && createAndActivateSession !== null);
+      createAndActivateSession?.();
       expect(submitPrompt?.("after switch")).toBe(true);
-      await waitFor(() => continueThread.mock.calls.length === 1);
-      expect(createThread).toHaveBeenCalledTimes(1);
+      await waitFor(() => continueSession.mock.calls.length === 1);
+      expect(createSession).toHaveBeenCalledTimes(1);
       expect(runTask).toHaveBeenCalledTimes(0);
-      expect(continueThread.mock.calls[0]?.[0]).toBe("thread-new");
+      expect(continueSession.mock.calls[0]?.[0]).toBe("session-new");
     } finally {
       await unmountInkApp(app);
     }
   });
 
-  it("scopes pending approvals and clarify prompts to the active thread", async () => {
+  it("scopes pending approvals and clarify prompts to the active session", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
     const taskById = new Map<string, TaskRecord>([
@@ -1154,7 +1154,7 @@ describe("use-chat-controller helpers", () => {
         createControllerTask({
           ...createDefaultRunOptions("visible", process.cwd(), config),
           taskId: "task-visible",
-          threadId: "thread-visible"
+          sessionId: "session-visible"
         })
       ],
       [
@@ -1162,7 +1162,7 @@ describe("use-chat-controller helpers", () => {
         createControllerTask({
           ...createDefaultRunOptions("hidden", process.cwd(), config),
           taskId: "task-hidden",
-          threadId: "thread-hidden"
+          sessionId: "session-hidden"
         })
       ]
     ]);
@@ -1173,11 +1173,11 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread() {
-        return Promise.reject(new Error("continueThread should not be called in this test."));
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
       },
-      createThread() {
-        throw new Error("createThread should not be called in this test.");
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
       },
       listPendingApprovals() {
         return [
@@ -1233,7 +1233,7 @@ describe("use-chat-controller helpers", () => {
       const instance = useChatController({
         config,
         cwd: process.cwd(),
-        initialThreadId: "thread-visible",
+        initialSessionId: "session-visible",
         reviewerId: "reviewer",
         service: service as AgentApplicationService
       });
@@ -1261,7 +1261,7 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
-  it("resets the visible transcript without abandoning the active thread", async () => {
+  it("resets the visible transcript without abandoning the active session", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
     const service = createIdleControllerService();
@@ -1272,7 +1272,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         initialSessionApprovalFingerprints: ["fingerprint-1"],
-        initialThreadId: "thread-active",
+        initialSessionId: "session-active",
         reviewerId: "reviewer",
         service: service as AgentApplicationService
       });
@@ -1296,18 +1296,18 @@ describe("use-chat-controller helpers", () => {
         throw new Error("Controller did not initialize.");
       }
       const activeController: {
-        activeThreadId: string | null;
+        activeSessionId: string | null;
         addSystemMessage: (text: string) => void;
         messages: ChatMessage[];
-        resetVisibleChatPreserveActiveThread: () => void;
+        resetVisibleChatPreserveActiveSession: () => void;
         sessionApprovalFingerprints: string[];
       } = controller;
       activeController.addSystemMessage("before clear");
       await delay(20);
-      activeController.resetVisibleChatPreserveActiveThread();
+      activeController.resetVisibleChatPreserveActiveSession();
       await delay(20);
 
-      expect(activeController.activeThreadId).toBe("thread-active");
+      expect(activeController.activeSessionId).toBe("session-active");
       expect(activeController.sessionApprovalFingerprints).toEqual(["fingerprint-1"]);
       expect(activeController.messages).toHaveLength(1);
       expect(activeController.messages[0]?.id).toBe("system:welcome");
@@ -1316,7 +1316,7 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
-  it("clears the visible transcript and abandons the active thread without dropping session approvals", async () => {
+  it("clears the visible transcript and abandons the active session without dropping session approvals", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
     const service = createIdleControllerService();
@@ -1327,7 +1327,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         initialSessionApprovalFingerprints: ["fingerprint-1"],
-        initialThreadId: "thread-active",
+        initialSessionId: "session-active",
         reviewerId: "reviewer",
         service: service as AgentApplicationService
       });
@@ -1356,7 +1356,7 @@ describe("use-chat-controller helpers", () => {
       getController().addSystemMessage("before clear");
       await delay(20);
       getController().resetVisibleChat();
-      await waitFor(() => getController().activeThreadId === null);
+      await waitFor(() => getController().activeSessionId === null);
 
       expect(getController().sessionApprovalFingerprints).toEqual(["fingerprint-1"]);
       expect(getController().messages).toHaveLength(1);
@@ -1404,10 +1404,10 @@ describe("use-chat-controller helpers", () => {
         id: "session-resume",
         messages: [{ id: "user:resume", kind: "user", text: "Resume me", timestamp: "2026-01-01T00:00:00.000Z" }],
         sessionApprovalFingerprints: ["resume-fingerprint"],
-        threadId: "thread-resume",
+        sessionId: "session-resume",
         updatedAt: "2026-01-01T01:00:00.000Z"
       });
-      await waitFor(() => getController().activeThreadId === "thread-resume");
+      await waitFor(() => getController().activeSessionId === "session-resume");
 
       expect(getController().messages).toMatchObject([{ kind: "user", text: "Resume me" }]);
       expect(getController().sessionApprovalFingerprints).toEqual(["resume-fingerprint"]);
@@ -1439,7 +1439,7 @@ describe("use-chat-controller helpers", () => {
             sequence: 1,
             stage: "planning",
             taskId,
-            threadId: "thread-resume",
+            sessionId: "session-resume",
             timestamp: "2026-01-01T00:00:01.000Z"
           },
           {
@@ -1453,7 +1453,7 @@ describe("use-chat-controller helpers", () => {
             sequence: 2,
             stage: "completion",
             taskId,
-            threadId: "thread-resume",
+            sessionId: "session-resume",
             timestamp: "2026-01-01T00:00:02.000Z"
           }
         ];
@@ -1510,7 +1510,7 @@ describe("use-chat-controller helpers", () => {
             timestamp: "2026-01-01T00:00:02.000Z"
           }
         ],
-        threadId: "thread-resume",
+        sessionId: "session-resume",
         updatedAt: "2026-01-01T01:00:00.000Z"
       });
       await waitFor(() => messages.some((message) => message.kind === "agent"));
@@ -1534,7 +1534,7 @@ describe("use-chat-controller helpers", () => {
     const task = createControllerTask({
       ...createDefaultRunOptions("clarify", process.cwd(), config),
       taskId: "task-visible",
-      threadId: "thread-visible"
+      sessionId: "session-visible"
     });
     const service: ControllerServiceStub = {
       answerClarifyPrompt() {
@@ -1543,11 +1543,11 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread() {
-        return Promise.reject(new Error("continueThread should not be called in this test."));
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
       },
-      createThread() {
-        throw new Error("createThread should not be called in this test.");
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
       },
       listPendingApprovals() {
         return [];
@@ -1591,7 +1591,7 @@ describe("use-chat-controller helpers", () => {
       const instance = useChatController({
         config,
         cwd: process.cwd(),
-        initialThreadId: "thread-visible",
+        initialSessionId: "session-visible",
         reviewerId: "reviewer",
         service: service as AgentApplicationService
       });
@@ -1650,11 +1650,11 @@ describe("use-chat-controller helpers", () => {
       cancelClarifyPrompt() {
         throw new Error("cancelClarifyPrompt should not be called in this test.");
       },
-      continueThread() {
-        return Promise.reject(new Error("continueThread should not be called in this test."));
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
       },
-      createThread() {
-        throw new Error("createThread should not be called in this test.");
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
       },
       listPendingApprovals() {
         return [];
@@ -1793,8 +1793,8 @@ describe("use-text-input helpers", () => {
   });
 
   it("deletes a full emoji grapheme for backspace", () => {
-    const value = "A👩🏽‍💻B";
-    const cursorIndex = "A👩🏽‍💻".length;
+    const value = "A\u{1F469}\u{1F3FD}\u200D\u{1F4BB}B";
+    const cursorIndex = "A\u{1F469}\u{1F3FD}\u200D\u{1F4BB}".length;
     const result = deleteCharacterBefore(value, cursorIndex);
     expect(result.value).toBe("AB");
     expect(result.cursorIndex).toBe(1);
@@ -1807,7 +1807,7 @@ describe("use-text-input helpers", () => {
   });
 
   it("deletes a full emoji grapheme for delete", () => {
-    const value = "A👩🏽‍💻B";
+    const value = "A\u{1F469}\u{1F3FD}\u200D\u{1F4BB}B";
     const result = deleteCharacterAfter(value, 1);
     expect(result.value).toBe("AB");
     expect(result.cursorIndex).toBe(1);
@@ -1840,18 +1840,18 @@ describe("use-text-input helpers", () => {
 describe("schedule slash command helper", () => {
   type ScheduleCommandService = Parameters<typeof handleScheduleCommand>[2];
 
-  it("creates schedules with the active thread", () => {
+  it("creates schedules with the active session", () => {
     const messages: string[] = [];
     const createSchedule = vi.fn((input: CreateScheduleInput) => ({
       ...createScheduleRecord("schedule-1"),
       name: input.name,
       nextFireAt: input.runAt ?? "2026-01-01T10:00:00.000Z",
-      threadId: input.threadId ?? null
+      sessionId: input.sessionId ?? null
     }));
     const handled = handleScheduleCommand(
       "/schedule create 每天 | review inbox",
       {
-        activeThreadId: "thread-123",
+        activeSessionId: "session-123",
         addSystemMessage: (text) => messages.push(text)
       },
       {
@@ -1871,7 +1871,7 @@ describe("schedule slash command helper", () => {
       expect.objectContaining({
         every: "1d",
         input: "review inbox",
-        threadId: "thread-123"
+        sessionId: "session-123"
       })
     );
     expect(messages[0]).toContain("Scheduled");
@@ -1891,7 +1891,7 @@ describe("schedule slash command helper", () => {
     handleScheduleCommand(
       "/schedule list all",
       {
-        activeThreadId: null,
+        activeSessionId: null,
         addSystemMessage: (text) => messages.push(text)
       },
       {
@@ -1908,7 +1908,7 @@ describe("schedule slash command helper", () => {
     handleScheduleCommand(
       "/schedule pause schedule-12",
       {
-        activeThreadId: null,
+        activeSessionId: null,
         addSystemMessage: (text) => messages.push(text)
       },
       {
@@ -1925,7 +1925,7 @@ describe("schedule slash command helper", () => {
     handleScheduleCommand(
       "/schedule resume schedule-ab",
       {
-        activeThreadId: null,
+        activeSessionId: null,
         addSystemMessage: (text) => messages.push(text)
       },
       {
@@ -1969,7 +1969,7 @@ describe("schedule slash command helper", () => {
       handleScheduleCommand(
         command,
         {
-          activeThreadId: null,
+          activeSessionId: null,
           addSystemMessage: (text) => messages.push(text)
         },
         service,
@@ -1993,7 +1993,7 @@ describe("schedule slash command helper", () => {
     handleScheduleCommand(
       "/schedule create invalid",
       {
-        activeThreadId: null,
+        activeSessionId: null,
         addSystemMessage: (text) => messages.push(text)
       },
       {
@@ -2010,7 +2010,7 @@ describe("schedule slash command helper", () => {
     handleScheduleCommand(
       "/schedule pause schedule-11",
       {
-        activeThreadId: null,
+        activeSessionId: null,
         addSystemMessage: (text) => messages.push(text)
       },
       {
@@ -2046,7 +2046,7 @@ describe("resume slash command helper", () => {
             id: "session-new",
             label: "New conversation",
             preview: null,
-            threadId: null,
+            sessionId: null,
             updatedAt: "2026-01-01T02:00:00.000Z"
           }
         ]),
@@ -2075,14 +2075,14 @@ describe("resume slash command helper", () => {
             id: "session-new",
             label: "New conversation",
             preview: "Fix tests",
-            threadId: "thread-a",
+            sessionId: "session-a",
             updatedAt: "2026-01-01T02:00:00.000Z"
           }
         ]),
         loadSession: () => Promise.resolve({
           id: "session-new",
           messages: [{ id: "user:1", kind: "user", text: "Fix tests", timestamp: "2026-01-01T00:00:00.000Z" }],
-          threadId: "thread-a",
+          sessionId: "session-a",
           updatedAt: "2026-01-01T02:00:00.000Z"
         }),
         openPicker: () => {},
@@ -2154,7 +2154,7 @@ function createOutputEvent(
     sequence: 1,
     stage: "completion",
     taskId: "task-001",
-    threadId: null,
+    sessionId: null,
     timestamp: "2026-01-01T00:00:00.000Z"
   } as RuntimeOutputEvent;
 }
@@ -2217,7 +2217,7 @@ function createInboxRecord(
     status: "pending",
     summary: overrides.summary ?? "Choose a next step.",
     taskId: null,
-    threadId: null,
+    sessionId: null,
     title: overrides.title ?? "Memory suggestion",
     updatedAt: "2026-01-01T01:00:00.000Z",
     userId: "local-user"
@@ -2302,7 +2302,7 @@ function createScheduleRecord(scheduleId: string): ScheduleRecord {
     runAt: null,
     scheduleId,
     status: "active",
-    threadId: null,
+    sessionId: null,
     timezone: null,
     updatedAt: "2026-01-01T00:00:00.000Z"
   };
@@ -2321,7 +2321,7 @@ function createScheduleRunRecord(runId: string, scheduleId: string): ScheduleRun
     startedAt: null,
     status: "queued",
     taskId: "task-run",
-    threadId: null,
+    sessionId: null,
     trigger: "manual"
   };
 }
@@ -2340,7 +2340,7 @@ function createControllerConfig(): AppConfig {
         softInputTokens: null,
         softOutputTokens: null
       },
-      thread: {
+      session: {
         hardCostUsd: null,
         hardInputTokens: null,
         hardOutputTokens: null,
@@ -2444,7 +2444,7 @@ function createMultiTurnControllerService(config: {
     options: RuntimeRunOptions,
     draft: Omit<
       Extract<Parameters<NonNullable<RuntimeRunOptions["onOutputEvent"]>>[0], { eventType: string }>,
-      "eventId" | "sequence" | "stage" | "taskId" | "threadId" | "timestamp"
+      "eventId" | "sequence" | "stage" | "taskId" | "sessionId" | "timestamp"
     > & { stage?: string }
   ): void => {
     sequence += 1;
@@ -2454,7 +2454,7 @@ function createMultiTurnControllerService(config: {
       sequence,
       stage: draft.stage ?? "planning",
       taskId: options.taskId ?? "task",
-      threadId: options.threadId ?? null,
+      sessionId: options.sessionId ?? null,
       timestamp: new Date().toISOString()
     };
     options.onOutputEvent?.(event as Parameters<NonNullable<RuntimeRunOptions["onOutputEvent"]>>[0]);
@@ -2527,11 +2527,11 @@ function createMultiTurnControllerService(config: {
     cancelClarifyPrompt() {
       throw new Error("cancelClarifyPrompt should not be called in this test.");
     },
-    continueThread() {
-      return Promise.reject(new Error("continueThread should not be called in this test."));
+    continueSession() {
+      return Promise.reject(new Error("continueSession should not be called in this test."));
     },
-    createThread() {
-      throw new Error("createThread should not be called in this test.");
+    createSession() {
+      throw new Error("createSession should not be called in this test.");
     },
     listPendingApprovals() {
       return [];
@@ -2605,16 +2605,16 @@ function createStreamingControllerService(): ControllerServiceStub {
     cancelClarifyPrompt() {
       throw new Error("cancelClarifyPrompt should not be called in this test.");
     },
-    continueThread(threadId: string, text: string, overrides?: Partial<RuntimeRunOptions>) {
+    continueSession(sessionId: string, text: string, overrides?: Partial<RuntimeRunOptions>) {
       const options = {
         ...createDefaultRunOptions(text, process.cwd(), createControllerConfig()),
         ...overrides,
         taskInput: text,
-        threadId
+        sessionId
       };
       return runTask(options);
     },
-    createThread() {
+    createSession() {
       return {
         agentProfileId: "executor",
         archivedAt: null,
@@ -2624,8 +2624,8 @@ function createStreamingControllerService(): ControllerServiceStub {
         ownerUserId: "local-user",
         providerName: "mock",
         status: "active",
-        threadId: "thread-created",
-        title: "Untitled thread",
+        sessionId: "session-created",
+        title: "Untitled session",
         updatedAt: "2026-01-01T00:00:00.000Z"
       };
     },
@@ -2673,11 +2673,11 @@ function createIdleControllerService(): ControllerServiceStub {
     cancelClarifyPrompt() {
       throw new Error("cancelClarifyPrompt should not be called in this test.");
     },
-    continueThread() {
-      return Promise.reject(new Error("continueThread should not be called in this test."));
+    continueSession() {
+      return Promise.reject(new Error("continueSession should not be called in this test."));
     },
-    createThread() {
-      throw new Error("createThread should not be called in this test.");
+    createSession() {
+      throw new Error("createSession should not be called in this test.");
     },
     listPendingApprovals() {
       return [];
@@ -2736,7 +2736,7 @@ function createControllerTask(options: RuntimeRunOptions): TaskRecord {
     startedAt: timestamp,
     status: "running",
     taskId: options.taskId ?? "task",
-    threadId: options.threadId ?? null,
+    sessionId: options.sessionId ?? null,
     tokenBudget: options.tokenBudget,
     updatedAt: timestamp
   };
@@ -2757,3 +2757,4 @@ async function delay(ms: number): Promise<void> {
     setTimeout(resolve, ms);
   });
 }
+

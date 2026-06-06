@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import { summarizeSession } from "../src/tui/session-store.js";
 import { buildWelcomeHome } from "../src/tui/view-models/welcome-home.js";
@@ -11,14 +11,14 @@ describe("welcome home", () => {
           id: "session-old",
           label: "Old",
           preview: null,
-          threadId: null,
+          sessionId: null,
           updatedAt: "2026-01-01T00:00:00.000Z"
         },
         {
           id: "session-new",
           label: "Fix the release check",
           preview: "Fix the release check",
-          threadId: "thread-a",
+          sessionId: "session-a",
           updatedAt: "2026-01-01T02:00:00.000Z"
         }
       ],

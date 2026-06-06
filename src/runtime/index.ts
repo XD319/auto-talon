@@ -12,7 +12,7 @@ export * from "./jobs/index.js";
 export * from "./delivery/index.js";
 export * from "./inbox/index.js";
 export * from "./commitments/index.js";
-export * from "./threads/index.js";
+export * from "./sessions/index.js";
 export * from "./retrieval/index.js";
 export * from "./workers/index.js";
 export * from "./workspace-setup.js";

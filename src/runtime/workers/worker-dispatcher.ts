@@ -1,4 +1,4 @@
-import { planRetry } from "../jobs/backoff.js";
+﻿import { planRetry } from "../jobs/backoff.js";
 import type { AuditService } from "../../audit/audit-service.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type { BudgetService } from "../budget/budget-service.js";
@@ -33,7 +33,7 @@ export class WorkerDispatcher {
     options: WorkerDispatchOptions = {}
   ): Promise<WorkerResult<TOutput>> {
     const actor = options.actor ?? `runtime.worker.${request.workerKind}`;
-    if (this.shouldSkipForBudget(request.taskId, request.threadId)) {
+    if (this.shouldSkipForBudget(request.taskId, request.sessionId)) {
       const message = "Worker skipped due to active budget downgrade.";
       this.safeTrace({
         actor,
@@ -43,7 +43,7 @@ export class WorkerDispatcher {
           errorMessage: message,
           retriable: false,
           taskId: request.taskId,
-          threadId: request.threadId,
+          sessionId: request.sessionId,
           workerId: request.workerId,
           workerKind: request.workerKind
         },
@@ -59,7 +59,7 @@ export class WorkerDispatcher {
         payload: {
           reason: "budget_downgrade_active",
           taskId: request.taskId,
-          threadId: request.threadId,
+          sessionId: request.sessionId,
           workerId: request.workerId,
           workerKind: request.workerKind
         },
@@ -86,7 +86,7 @@ export class WorkerDispatcher {
         eventType: "worker_dispatched",
         payload: {
           taskId: request.taskId,
-          threadId: request.threadId,
+          sessionId: request.sessionId,
           timeoutMs: request.timeoutMs,
           workerId: request.workerId,
           workerKind: request.workerKind
@@ -103,7 +103,7 @@ export class WorkerDispatcher {
         payload: {
           attemptNumber: attempt,
           taskId: request.taskId,
-          threadId: request.threadId,
+          sessionId: request.sessionId,
           timeoutMs: request.timeoutMs,
           workerId: request.workerId,
           workerKind: request.workerKind
@@ -123,7 +123,7 @@ export class WorkerDispatcher {
             durationMs,
             outputSummary: summarizeOutput(output),
             taskId: request.taskId,
-            threadId: request.threadId,
+            sessionId: request.sessionId,
             workerId: request.workerId,
             workerKind: request.workerKind
           },
@@ -152,7 +152,7 @@ export class WorkerDispatcher {
           payload: isTimeout
             ? {
                 taskId: request.taskId,
-                threadId: request.threadId,
+                sessionId: request.sessionId,
                 timeoutMs: request.timeoutMs,
                 workerId: request.workerId,
                 workerKind: request.workerKind
@@ -162,7 +162,7 @@ export class WorkerDispatcher {
                 errorMessage,
                 retriable: canRetry,
                 taskId: request.taskId,
-                threadId: request.threadId,
+                sessionId: request.sessionId,
                 workerId: request.workerId,
                 workerKind: request.workerKind
               },
@@ -183,7 +183,7 @@ export class WorkerDispatcher {
             errorMessage,
             retriable: canRetry,
             taskId: request.taskId,
-            threadId: request.threadId,
+            sessionId: request.sessionId,
             timeoutMs: request.timeoutMs,
             workerId: request.workerId,
             workerKind: request.workerKind
@@ -234,7 +234,7 @@ export class WorkerDispatcher {
             delayMs: retry.delayMs,
             maxAttempts: request.maxAttempts,
             taskId: request.taskId,
-            threadId: request.threadId,
+            sessionId: request.sessionId,
             workerId: request.workerId,
             workerKind: request.workerKind
           },
@@ -258,14 +258,14 @@ export class WorkerDispatcher {
     };
   }
 
-  private shouldSkipForBudget(taskId: string, threadId: string | null): boolean {
+  private shouldSkipForBudget(taskId: string, sessionId: string | null): boolean {
     if (this.dependencies.budgetService === undefined) {
       return false;
     }
     if (this.dependencies.budgetService.isDowngradeActive("task", taskId)) {
       return true;
     }
-    if (threadId !== null && this.dependencies.budgetService.isDowngradeActive("thread", threadId)) {
+    if (sessionId !== null && this.dependencies.budgetService.isDowngradeActive("session", sessionId)) {
       return true;
     }
     return false;

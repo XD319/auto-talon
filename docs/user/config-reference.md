@@ -105,14 +105,14 @@ Run validation with:
 talon doctor
 ```
 
-SQLite runtime schema now includes thread continuity tables:
+SQLite runtime schema now includes session continuity tables:
 
-- `threads` for first-class thread/session containers
-- `thread_runs` for each task run linked to a thread
-- `thread_lineage` for branch/compress/archive lineage events
-- `thread_snapshots` for structured compact/resume state (goal, open loops, blocked reason, next actions, memory links, capabilities)
+- `sessions` for first-class session containers
+- `session_tasks` for each task run linked to a session
+- `session_lineage` for branch/compress/archive lineage events
+- `session_summary_events` for structured compact/resume state (goal, open loops, blocked reason, next actions, memory links, capabilities)
 - `schedules` for persisted one-shot/interval/cron schedule definitions
-- `schedule_runs` for queued/running/completed/failed execution attempts, retry records, and task/thread traceability
+- `schedule_runs` for queued/running/completed/failed execution attempts, retry records, and task/session traceability
 - `inbox_items` for user-facing delivery entries (task completion/failure, approvals, memory suggestions, skill promotion suggestions)
 - `commitments` for user-visible promises and their lifecycle (`open`/`blocked`/`completed` etc.)
 - `next_actions` for ordered actionable continuation steps, including blocked reason and status

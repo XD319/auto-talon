@@ -1,23 +1,23 @@
-import type { DatabaseSync } from "node:sqlite";
+﻿import type { DatabaseSync } from "node:sqlite";
 
 import type {
   JsonObject,
-  ThreadListQuery,
-  ThreadRecord,
-  ThreadRepository,
-  ThreadStatus,
-  ThreadUpdatePatch
+  SessionListQuery,
+  SessionRecord,
+  SessionRepository,
+  SessionStatus,
+  SessionUpdatePatch
 } from "../../types/index.js";
 import type { AgentProfileId } from "../../types/profile.js";
-import type { ThreadDraft } from "../../types/thread.js";
+import type { SessionDraft } from "../../types/session.js";
 
 import { parseJsonValue, serializeJsonValue } from "./json.js";
 import { buildWhereClause, requirePersisted } from "./sqlite-helpers.js";
 
-interface ThreadRow {
-  thread_id: string;
+interface SessionRow {
+  session_id: string;
   title: string;
-  status: ThreadStatus;
+  status: SessionStatus;
   owner_user_id: string;
   cwd: string;
   agent_profile_id: AgentProfileId;
@@ -28,59 +28,75 @@ interface ThreadRow {
   metadata_json: string;
 }
 
-export class SqliteThreadRepository implements ThreadRepository {
+export class SqliteSessionRepository implements SessionRepository {
   public constructor(private readonly database: DatabaseSync) {}
 
-  public create(thread: ThreadDraft): ThreadRecord {
+  public create(session: SessionDraft): SessionRecord {
     const now = new Date().toISOString();
     this.database
       .prepare(
-        `INSERT INTO threads (
-          thread_id, title, status, owner_user_id, cwd, agent_profile_id, provider_name,
+        `INSERT INTO sessions (
+          session_id, title, status, owner_user_id, cwd, agent_profile_id, provider_name,
           created_at, updated_at, archived_at, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
-        thread.threadId,
-        thread.title,
+        session.sessionId,
+        session.title,
         "active",
-        thread.ownerUserId,
-        thread.cwd,
-        thread.agentProfileId,
-        thread.providerName,
+        session.ownerUserId,
+        session.cwd,
+        session.agentProfileId,
+        session.providerName,
         now,
         now,
         null,
-        serializeJsonValue(thread.metadata ?? {})
+        serializeJsonValue(session.metadata ?? {})
       );
 
-    return requirePersisted(this.findById(thread.threadId), `Thread ${thread.threadId} was not persisted.`);
+    return requirePersisted(this.findById(session.sessionId), `Session ${session.sessionId} was not persisted.`);
   }
 
-  public findById(threadId: string): ThreadRecord | null {
+  public getOrCreate(session: SessionDraft): SessionRecord {
+    const existing = this.findById(session.sessionId);
+    if (existing !== null) {
+      return existing;
+    }
+    try {
+      return this.create(session);
+    } catch (error) {
+      const raced = this.findById(session.sessionId);
+      if (raced !== null) {
+        return raced;
+      }
+      throw error;
+    }
+  }
+
+  public findById(sessionId: string): SessionRecord | null {
     const row = this.database
-      .prepare("SELECT * FROM threads WHERE thread_id = ?")
-      .get(threadId) as ThreadRow | undefined;
+      .prepare("SELECT * FROM sessions WHERE session_id = ?")
+      .get(sessionId) as SessionRow | undefined;
     return row === undefined ? null : this.mapRow(row);
   }
 
-  public list(query?: ThreadListQuery): ThreadRecord[] {
+  public list(query?: SessionListQuery): SessionRecord[] {
     const { params, whereSql } = buildWhereClause([
       { sql: "owner_user_id = ?", value: query?.ownerUserId ?? null, when: query?.ownerUserId !== undefined },
       { sql: "status = ?", value: query?.status ?? null, when: query?.status !== undefined }
     ]);
     const rows = this.database
-      .prepare(`SELECT * FROM threads ${whereSql} ORDER BY updated_at DESC`)
-      .all(...params) as unknown as ThreadRow[];
+      .prepare(`SELECT * FROM sessions ${whereSql} ORDER BY updated_at DESC`)
+      .all(...params) as unknown as SessionRow[];
     return rows.map((row) => this.mapRow(row));
   }
 
-  public update(threadId: string, patch: ThreadUpdatePatch): ThreadRecord {
-    const existing = this.findById(threadId);
+  public update(sessionId: string, patch: SessionUpdatePatch): SessionRecord {
+    const existing = this.findById(sessionId);
     if (existing === null) {
-      throw new Error(`Thread ${threadId} was not found.`);
+      throw new Error(`Session ${sessionId} was not found.`);
     }
-    const next: ThreadRecord = {
+    const next: SessionRecord = {
       ...existing,
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.status !== undefined ? { status: patch.status } : {}),
@@ -91,9 +107,9 @@ export class SqliteThreadRepository implements ThreadRepository {
 
     this.database
       .prepare(
-        `UPDATE threads
+        `UPDATE sessions
          SET title = ?, status = ?, updated_at = ?, archived_at = ?, metadata_json = ?
-         WHERE thread_id = ?`
+         WHERE session_id = ?`
       )
       .run(
         next.title,
@@ -101,21 +117,21 @@ export class SqliteThreadRepository implements ThreadRepository {
         next.updatedAt,
         next.archivedAt,
         serializeJsonValue(next.metadata),
-        threadId
+        sessionId
       );
     return next;
   }
 
-  public findLatestByOwner(ownerUserId: string): ThreadRecord | null {
+  public findLatestByOwner(ownerUserId: string): SessionRecord | null {
     const row = this.database
-      .prepare("SELECT * FROM threads WHERE owner_user_id = ? ORDER BY updated_at DESC LIMIT 1")
-      .get(ownerUserId) as ThreadRow | undefined;
+      .prepare("SELECT * FROM sessions WHERE owner_user_id = ? ORDER BY updated_at DESC LIMIT 1")
+      .get(ownerUserId) as SessionRow | undefined;
     return row === undefined ? null : this.mapRow(row);
   }
 
-  private mapRow(row: ThreadRow): ThreadRecord {
+  private mapRow(row: SessionRow): SessionRecord {
     return {
-      threadId: row.thread_id,
+      sessionId: row.session_id,
       title: row.title,
       status: row.status,
       ownerUserId: row.owner_user_id,
@@ -129,3 +145,4 @@ export class SqliteThreadRepository implements ThreadRepository {
     };
   }
 }
+

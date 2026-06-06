@@ -295,11 +295,11 @@ export class MemoryPlane {
         actor: "memory.plane",
         eventType: "memory_write_rejected",
         payload: {
-          reason: "working_scope_moved_to_thread_session_memory",
+          reason: "working_scope_moved_to_session_summary",
           scope: record.scope
         },
         stage: "memory",
-        summary: "Rejected working memory write; use ThreadSessionMemory instead",
+        summary: "Rejected working memory write; use SessionSummary instead",
         taskId: record.source.taskId ?? "memory-admin"
       });
       return null;

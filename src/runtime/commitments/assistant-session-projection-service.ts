@@ -1,11 +1,11 @@
-import type { CommitmentRecord } from "../../types/index.js";
+﻿import type { CommitmentRecord } from "../../types/index.js";
 import type { CommitmentService } from "./commitment-service.js";
 import type { NextActionService } from "./next-action-service.js";
 
 export interface AssistantProjectionInput {
   output: string;
   taskId: string;
-  threadId: string;
+  sessionId: string;
 }
 
 interface ParsedProjection {
@@ -20,18 +20,18 @@ interface ParsedItem {
   title: string;
 }
 
-export interface AssistantThreadProjectionServiceDependencies {
+export interface AssistantSessionProjectionServiceDependencies {
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
 }
 
 const COMMITMENT_OPEN_STATUSES: CommitmentRecord["status"][] = ["open", "in_progress", "blocked", "waiting_decision"];
-const HEADING_COMMITMENTS = /^(commitments?|承诺|承諾|责任|責任)\s*[:：]?$/iu;
-const HEADING_NEXT = /^(next(\s+actions?)?|next\s*steps?|下一步|后续行动|後續行動)\s*[:：]?$/iu;
+const HEADING_COMMITMENTS = /^(commitments?|承诺|责任)\s*[:：]?$/iu;
+const HEADING_NEXT = /^(next(\s+actions?)?|next\s*steps?|下一步|后续行动)\s*[:：]?$/iu;
 const HEADING_BLOCKED = /^(blocked|阻塞|受阻|卡住|blocked\s+items?)\s*[:：]?$/iu;
 
-export class AssistantThreadProjectionService {
-  public constructor(private readonly dependencies: AssistantThreadProjectionServiceDependencies) {}
+export class AssistantSessionProjectionService {
+  public constructor(private readonly dependencies: AssistantSessionProjectionServiceDependencies) {}
 
   public project(input: AssistantProjectionInput): void {
     const parsed = parseAssistantOutput(input.output);
@@ -40,7 +40,7 @@ export class AssistantThreadProjectionService {
     }
     const openCommitments = this.dependencies.commitmentService.list({
       statuses: COMMITMENT_OPEN_STATUSES,
-      threadId: input.threadId
+      sessionId: input.sessionId
     });
     const commitmentByTitle = new Map(openCommitments.map((item) => [normalizeTitle(item.title), item] as const));
     let openCommitmentForBlocked = openCommitments[0] ?? null;
@@ -57,7 +57,7 @@ export class AssistantThreadProjectionService {
           status: "open",
           summary: item.title,
           taskId: input.taskId,
-          threadId: input.threadId,
+          sessionId: input.sessionId,
           title: item.title
         });
       if (existing === null) {
@@ -77,7 +77,7 @@ export class AssistantThreadProjectionService {
     }
 
     const nextActions = this.dependencies.nextActionService.list({
-      threadId: input.threadId
+      sessionId: input.sessionId
     });
     const nextActionByTitle = new Map(
       nextActions
@@ -103,7 +103,7 @@ export class AssistantThreadProjectionService {
           sourceTraceId: input.taskId,
           status: item.blocked ? "pending" : nextStatus,
           taskId: input.taskId,
-          threadId: input.threadId,
+          sessionId: input.sessionId,
           title: item.title
         });
         if (item.blocked) {
@@ -142,7 +142,7 @@ export class AssistantThreadProjectionService {
           sourceTraceId: input.taskId,
           status: "pending",
           taskId: input.taskId,
-          threadId: input.threadId,
+          sessionId: input.sessionId,
           title: item.title
         });
         this.dependencies.nextActionService.block(created.nextActionId, item.reason ?? "blocked");
@@ -229,13 +229,13 @@ function parseKeyedLine(line: string): { item: ParsedItem; section: keyof Parsed
     return null;
   }
   const item = toParsedItem(value);
-  if (key === "commitment" || key === "commitments" || key === "承诺" || key === "承諾") {
+  if (key === "commitment" || key === "commitments" || key === "鎵胯" || key === "鎵胯") {
     return { item, section: "commitments" };
   }
   if (key === "next" || key === "next action" || key === "next actions" || key === "下一步") {
     return { item, section: "nextActions" };
   }
-  if (key === "blocked" || key === "阻塞" || key === "受阻") {
+  if (key === "blocked" || key === "闃诲" || key === "鍙楅樆") {
     return { item: { ...item, blocked: true }, section: "blockedItems" };
   }
   return null;
@@ -257,7 +257,7 @@ function parseListItem(line: string): ParsedItem | null {
 
 function toParsedItem(raw: string): ParsedItem {
   const value = stripMarkdownPunctuation(raw).trim();
-  const blockedMatch = value.match(/(?:^|\b)(blocked|阻塞|受阻|卡住)\s*[:：-]?\s*(.+)$/iu);
+  const blockedMatch = value.match(/(?:^|\b)(blocked|阻塞|受阻|卡住)\s*[:：]?\s*(.+)$/iu);
   if (blockedMatch !== null) {
     const reason = blockedMatch[2]?.trim() ?? value;
     return {
@@ -266,7 +266,7 @@ function toParsedItem(raw: string): ParsedItem {
       title: reason
     };
   }
-  const parts = value.split(/\s[-—–]\s/gu);
+  const parts = value.split(/\s(?:-|–|—)\s/gu);
   if (parts.length >= 2) {
     const [title, ...detail] = parts;
     return {

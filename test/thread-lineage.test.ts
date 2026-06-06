@@ -1,10 +1,10 @@
-import { join } from "node:path";
+﻿import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { createApplication, createDefaultRunOptions, ThreadService } from "../src/runtime/index.js";
+import { createApplication, createDefaultRunOptions, SessionService } from "../src/runtime/index.js";
 import type { Provider, ProviderResponse } from "../src/types/index.js";
 
 class CompactingProvider implements Provider {
@@ -29,7 +29,7 @@ class CompactingProvider implements Provider {
   }
 }
 
-describe("thread lineage", () => {
+describe("session lineage", () => {
   it("tracks archive and branch lineage events", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "talon-lineage-"));
     const handle = createApplication(workspace, {
@@ -47,22 +47,22 @@ describe("thread lineage", () => {
     try {
       const options = createDefaultRunOptions("lineage", workspace, handle.config);
       const result = await handle.service.runTask(options);
-      const threadId = result.task.threadId!;
-      const threadService = new ThreadService({
-        threadLineageRepository: handle.infrastructure.storage.threadLineage,
-        threadRepository: handle.infrastructure.storage.threads,
-        threadRunRepository: handle.infrastructure.storage.threadRuns
+      const sessionId = result.task.sessionId!;
+      const sessionService = new SessionService({
+        sessionLineageRepository: handle.infrastructure.storage.sessionLineage,
+        sessionRepository: handle.infrastructure.storage.sessions,
+        sessionTaskRepository: handle.infrastructure.storage.sessionTasks
       });
-      threadService.archiveThread(threadId);
-      handle.infrastructure.storage.threadLineage.append({
+      sessionService.archiveSession(sessionId);
+      handle.infrastructure.storage.sessionLineage.append({
         eventType: "branch",
         lineageId: "lineage-branch",
         payload: { reason: "manual test branch" },
         sourceRunId: null,
         targetRunId: null,
-        threadId
+        sessionId
       });
-      const lineage = handle.infrastructure.storage.threadLineage.listByThreadId(threadId);
+      const lineage = handle.infrastructure.storage.sessionLineage.listBySessionId(sessionId);
       expect(lineage.some((entry) => entry.eventType === "archive")).toBe(true);
       expect(lineage.some((entry) => entry.eventType === "branch")).toBe(true);
     } finally {
