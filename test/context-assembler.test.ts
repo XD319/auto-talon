@@ -36,7 +36,7 @@ describe("ExecutionContextAssembler", () => {
           capability: "filesystem.read",
           description: "Read a local file",
           inputSchema: { type: "object" },
-          name: "file_read",
+          name: "read_file",
           privacyLevel: "internal",
           riskLevel: "low"
         }
@@ -46,7 +46,7 @@ describe("ExecutionContextAssembler", () => {
 
     expect(messages[0]?.content).not.toContain("When web_extract is available");
     expect(messages[0]?.content).toContain("Visible tools may still be denied");
-    expect(messages[0]?.content).toContain("Available tools: file_read.");
+    expect(messages[0]?.content).toContain("Available tools: read_file.");
   });
 });
 
@@ -55,7 +55,7 @@ function createProfile(): AgentProfile {
     description: "Executor profile",
     displayName: "Executor",
     id: "executor",
-    allowedToolNames: ["file_read", "web_extract"],
+    allowedToolNames: ["read_file", "web_extract"],
     systemPrompt: "You are a coding agent."
   };
 }

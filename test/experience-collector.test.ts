@@ -117,12 +117,11 @@ describe("ExperienceCollector runtime hooks", () => {
             toolCalls: [
               {
                 input: {
-                  action: "read_file",
                   path: "README.md"
                 },
                 reason: "Need context",
                 toolCallId: "tool-readme",
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ],
             usage: {
@@ -177,7 +176,7 @@ describe("ExperienceCollector runtime hooks", () => {
                 },
                 reason: "Need cached context",
                 toolCallId: "tool-readme-replay",
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ],
             usage: {
@@ -217,7 +216,7 @@ describe("ExperienceCollector runtime hooks", () => {
       summary: "Read cached README contents.",
       taskId: "prior-task",
       toolCallId: "tool-readme-replay",
-      toolName: "file_read"
+      toolName: "read_file"
     });
 
     try {
@@ -240,7 +239,7 @@ describe("ExperienceCollector runtime hooks", () => {
       expect(replayedToolFinish.payload.outputPreview).toContain("cached README contents");
       expect(replayedToolFinish.payload.summary).toBe("Read cached README contents.");
       expect(replayedToolFinish.payload.toolCallId).toBe("tool-readme-replay");
-      expect(replayedToolFinish.payload.toolName).toBe("file_read");
+      expect(replayedToolFinish.payload.toolName).toBe("read_file");
       expect(experiences[0]?.summary).toBe("Read cached README contents.");
       expect(experiences[0]?.content).toContain("cached README contents");
     } finally {

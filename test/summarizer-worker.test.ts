@@ -37,14 +37,14 @@ describe("SummarizerWorker", () => {
     });
 
     await worker.execute({
-      availableTools: [createToolDescriptor("file_read")],
+      availableTools: [createToolDescriptor("read_file")],
       compactInput: {
         maxMessagesBeforeCompact: 4,
         messages: [
           { content: "system", role: "system" },
           { content: "implement feature", role: "user" },
           { content: "read file", role: "assistant" },
-          { content: "tool output", role: "tool", toolCallId: "read-1", toolName: "file_read" },
+          { content: "tool output", role: "tool", toolCallId: "read-1", toolName: "read_file" },
           { content: "summary", role: "assistant" }
         ],
         reason: "tool_call_count",

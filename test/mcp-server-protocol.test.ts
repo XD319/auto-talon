@@ -7,7 +7,7 @@ describe("McpServer protocol", () => {
     const server = new McpServer(
       {
         exposeSkills: true,
-        exposeTools: ["file_read"],
+        exposeTools: ["read_file"],
         externalIdentity: {
           agentProfileId: "reviewer",
           runtimeUserId: "mcp_external"
@@ -18,7 +18,7 @@ describe("McpServer protocol", () => {
           {
             description: "Read files",
             inputSchema: { type: "object" },
-            name: "file_read"
+            name: "read_file"
           }
         ]
       } as never,

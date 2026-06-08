@@ -1516,7 +1516,7 @@ export class AgentApplicationService {
               required: ["path"],
               type: "object"
             },
-            name: "file_read",
+            name: "read_file",
             privacyLevel: "internal",
             riskLevel: "low"
           }
@@ -1540,7 +1540,7 @@ export class AgentApplicationService {
                 input: { path: "PLAN.md" },
                 reason: "Provider smoke synthetic tool request.",
                 toolCallId: "provider-smoke-file-read",
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ]
           },
@@ -1548,7 +1548,7 @@ export class AgentApplicationService {
             content: '{"ok":true,"summary":"Synthetic provider smoke tool result."}',
             role: "tool",
             toolCallId: "provider-smoke-file-read",
-            toolName: "file_read"
+            toolName: "read_file"
           }
         ],
         signal: signal ?? controller!.signal,

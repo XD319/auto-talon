@@ -46,15 +46,15 @@ describe("historyHasSuccessfulWrite", () => {
 
   it("ignores tool results from non-write tools", () => {
     const messages = [
-      toolResultMessage("file_read", JSON.stringify({ path: "a.txt", bytes: 10 }))
+      toolResultMessage("read_file", JSON.stringify({ path: "a.txt", bytes: 10 }))
     ];
     expect(historyHasSuccessfulWrite(messages, isWriteTool)).toBe(false);
   });
 
   it("returns true when a write tool emitted a non-error payload", () => {
     const messages = [
-      toolResultMessage("file_read", JSON.stringify({ path: "a.txt" })),
-      toolResultMessage("file_write", JSON.stringify({ path: "b.txt", bytesWritten: 42 }))
+      toolResultMessage("read_file", JSON.stringify({ path: "a.txt" })),
+      toolResultMessage("write_file", JSON.stringify({ path: "b.txt", bytesWritten: 42 }))
     ];
     expect(historyHasSuccessfulWrite(messages, isWriteTool)).toBe(true);
   });
@@ -65,7 +65,7 @@ describe("historyHasSuccessfulWrite", () => {
       errorCode: "filesystem_permission_denied",
       recoverable: true
     });
-    const messages = [toolResultMessage("file_write", failureEnvelope)];
+    const messages = [toolResultMessage("write_file", failureEnvelope)];
     expect(historyHasSuccessfulWrite(messages, isWriteTool)).toBe(false);
   });
 
@@ -76,19 +76,19 @@ describe("historyHasSuccessfulWrite", () => {
       recoverable: true
     });
     const messages = [
-      toolResultMessage("file_write", failureEnvelope),
-      toolResultMessage("file_write", JSON.stringify({ path: "ok.txt", bytesWritten: 4 }))
+      toolResultMessage("write_file", failureEnvelope),
+      toolResultMessage("write_file", JSON.stringify({ path: "ok.txt", bytesWritten: 4 }))
     ];
     expect(historyHasSuccessfulWrite(messages, isWriteTool)).toBe(true);
   });
 
   it("does not treat plain non-JSON write payloads as failures", () => {
-    const messages = [toolResultMessage("file_write", "written 12 bytes to b.txt")];
+    const messages = [toolResultMessage("write_file", "written 12 bytes to b.txt")];
     expect(historyHasSuccessfulWrite(messages, isWriteTool)).toBe(true);
   });
 
   it("treats empty or null payloads as inconclusive (no proof of write)", () => {
-    expect(historyHasSuccessfulWrite([toolResultMessage("file_write", "")], isWriteTool)).toBe(false);
-    expect(historyHasSuccessfulWrite([toolResultMessage("file_write", "null")], isWriteTool)).toBe(false);
+    expect(historyHasSuccessfulWrite([toolResultMessage("write_file", "")], isWriteTool)).toBe(false);
+    expect(historyHasSuccessfulWrite([toolResultMessage("write_file", "null")], isWriteTool)).toBe(false);
   });
 });

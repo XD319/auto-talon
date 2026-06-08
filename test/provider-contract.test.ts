@@ -298,7 +298,7 @@ function runProviderContractSuite(name: string, harness: ProviderContractHarness
       }
 
       expect(response.toolCalls).toHaveLength(1);
-      expect(response.toolCalls[0]?.toolName).toBe("file_read");
+      expect(response.toolCalls[0]?.toolName).toBe("read_file");
     });
 
     it("accepts empty responses", async () => {
@@ -472,7 +472,7 @@ function createGlmHarness(): ProviderContractHarness {
                 {
                   function: {
                     arguments: "{bad json",
-                    name: "file_read"
+                    name: "read_file"
                   },
                   id: "call-1",
                   type: "function"
@@ -529,8 +529,8 @@ function createGlmHarness(): ProviderContractHarness {
               tool_calls: [
                 {
                   function: {
-                    arguments: "{\"path\":\"README.md\",\"action\":\"read_file\"}",
-                    name: "file_read"
+                    arguments: "{\"path\":\"README.md\"}",
+                    name: "read_file"
                   },
                   id: "call-1",
                   type: "function"
@@ -614,7 +614,7 @@ function createOpenAiCompatibleHarness(): ProviderContractHarness {
                 {
                   function: {
                     arguments: "{bad json",
-                    name: "file_read"
+                    name: "read_file"
                   },
                   id: "call-1",
                   type: "function"
@@ -671,8 +671,8 @@ function createOpenAiCompatibleHarness(): ProviderContractHarness {
               tool_calls: [
                 {
                   function: {
-                    arguments: "{\"path\":\"README.md\",\"action\":\"read_file\"}",
-                    name: "file_read"
+                    arguments: "{\"path\":\"README.md\"}",
+                    name: "read_file"
                   },
                   id: "call-1",
                   type: "function"
@@ -752,7 +752,7 @@ function createAnthropicHarness(): ProviderContractHarness {
           {
             id: "call-1",
             input: "bad-input",
-            name: "file_read",
+            name: "read_file",
             type: "tool_use"
           }
         ],
@@ -819,10 +819,9 @@ function createAnthropicHarness(): ProviderContractHarness {
           {
             id: "call-1",
             input: {
-              action: "read_file",
               path: "README.md"
             },
-            name: "file_read",
+            name: "read_file",
             type: "tool_use"
           }
         ],
@@ -909,7 +908,7 @@ function createMiniMaxHarness(): ProviderContractHarness {
           {
             id: "call-1",
             input: "bad-input",
-            name: "file_read",
+            name: "read_file",
             type: "tool_use"
           }
         ],
@@ -981,10 +980,9 @@ function createMiniMaxHarness(): ProviderContractHarness {
           {
             id: "call-1",
             input: {
-              action: "read_file",
               path: "README.md"
             },
-            name: "file_read",
+            name: "read_file",
             type: "tool_use"
           }
         ],

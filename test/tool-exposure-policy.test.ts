@@ -35,9 +35,9 @@ function createTool(partial: Partial<ToolDefinition> & { name: string }): ToolDe
 
 describe("tool exposure policy", () => {
   it("hides unavailable tools", () => {
-    const tools = [createTool({ name: "file_read" })];
+    const tools = [createTool({ name: "read_file" })];
     const decisions = evaluateToolExposure({
-      availability: new Map([["file_read", { available: false, reason: "disabled" }]]),
+      availability: new Map([["read_file", { available: false, reason: "disabled" }]]),
       budgetDowngradeActive: false,
       tools
     });
@@ -45,7 +45,7 @@ describe("tool exposure policy", () => {
     expect(decisions[0]).toMatchObject({
       exposed: false,
       reason: "unavailable: disabled",
-      toolName: "file_read"
+      toolName: "read_file"
     });
   });
 
@@ -53,7 +53,7 @@ describe("tool exposure policy", () => {
     const tools = [
       createTool({
         capability: "filesystem.write",
-        name: "file_write",
+        name: "write_file",
         riskLevel: "medium",
         sideEffectLevel: "workspace_mutation"
       }),

@@ -116,12 +116,11 @@ function inferToolCall(task: string) {
   if (readMatch?.[1] !== undefined) {
     return {
       input: {
-        action: "read_file",
         path: readMatch[1].trim()
       },
       reason: "The task explicitly asks to read a file.",
       toolCallId: "mock-read-1",
-      toolName: "file_read"
+      toolName: "read_file"
     };
   }
 
@@ -129,12 +128,11 @@ function inferToolCall(task: string) {
   if (listMatch?.[1] !== undefined) {
     return {
       input: {
-        action: "list_dir",
         path: listMatch[1].trim()
       },
       reason: "The task explicitly asks to list a directory.",
       toolCallId: "mock-list-1",
-      toolName: "file_read"
+      toolName: "glob"
     };
   }
 
@@ -142,13 +140,12 @@ function inferToolCall(task: string) {
   if (searchMatch?.[1] !== undefined && searchMatch[2] !== undefined) {
     return {
       input: {
-        action: "search_text",
-        keyword: searchMatch[1].trim(),
-        path: searchMatch[2].trim()
+        path: searchMatch[2].trim(),
+        query: searchMatch[1].trim()
       },
       reason: "The task explicitly asks to search text.",
       toolCallId: "mock-search-1",
-      toolName: "file_read"
+      toolName: "search_files"
     };
   }
 
@@ -156,14 +153,13 @@ function inferToolCall(task: string) {
   if (writeMatch?.[1] !== undefined && writeMatch[2] !== undefined) {
     return {
       input: {
-        action: "write_file",
         content: writeMatch[2],
         overwrite: true,
         path: writeMatch[1].trim()
       },
       reason: "The task explicitly asks to write a file.",
       toolCallId: "mock-write-1",
-      toolName: "file_write"
+      toolName: "write_file"
     };
   }
 

@@ -22,18 +22,14 @@ export function createProviderInput(taskInput: string): ProviderInput {
         description: "Read files from the workspace.",
         inputSchema: {
           properties: {
-            action: {
-              enum: ["read_file"],
-              type: "string"
-            },
             path: {
               type: "string"
             }
           },
-          required: ["action", "path"],
+          required: ["path"],
           type: "object"
         },
-        name: "file_read",
+        name: "read_file",
         privacyLevel: "internal",
         riskLevel: "low"
       }

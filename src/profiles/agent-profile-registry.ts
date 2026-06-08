@@ -2,7 +2,16 @@ import { z } from "zod";
 
 import type { AgentProfile, AgentProfileId } from "../types/index.js";
 
-const DEPRECATED_UNIFIED_TOOL_NAMES = ["file_read", "file_write", "shell", "skill_view", "web_extract"];
+const DEPRECATED_UNIFIED_TOOL_NAMES = [
+  "glob",
+  "patch",
+  "read_file",
+  "search_files",
+  "shell",
+  "skill_view",
+  "web_extract",
+  "write_file"
+];
 
 const agentProfileSchema = z.object({
   allowedToolNames: z.array(z.string().min(1)).min(1),

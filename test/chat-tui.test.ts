@@ -127,12 +127,12 @@ describe("chat tui view-models", () => {
     const event = createTraceEvent("tool_call_started", {
       iteration: 1,
       toolCallId: "call-00112233",
-      toolName: "file_write"
+      toolName: "write_file"
     });
 
     const message = toTraceActivityMessage(event);
     expect(message.kind).toBe("activity");
-    expect(message.text).toContain("Running file_write");
+    expect(message.text).toContain("Running write_file");
   });
 
   it("marks approval message as resolved", () => {
@@ -166,7 +166,7 @@ describe("chat tui view-models", () => {
     const activity = toTraceActivityMessage(createTraceEvent("tool_call_finished", {
       iteration: 1,
       toolCallId: "call-00112233",
-      toolName: "file_write",
+      toolName: "write_file",
       summary: "wrote file",
       outputPreview: "ok"
     }));
@@ -180,7 +180,7 @@ describe("chat tui view-models", () => {
     const activity = toTraceActivityMessage(createTraceEvent("tool_call_finished", {
       iteration: 1,
       toolCallId: "call-00112233",
-      toolName: "file_read",
+      toolName: "read_file",
       summary: "read file",
       outputPreview: "ok"
     }));
@@ -194,7 +194,7 @@ describe("chat tui view-models", () => {
       outputPreview: "ok",
       summary: "path=D:\\talon-test\\css\\style.css",
       toolCallId: "call-1",
-      toolName: "file_write"
+      toolName: "write_file"
     }));
     const second = {
       ...toTraceActivityMessage(createTraceEvent("tool_call_finished", {
@@ -202,7 +202,7 @@ describe("chat tui view-models", () => {
         outputPreview: "ok",
         summary: "path=D:\\talon-test\\css\\style.css",
         toolCallId: "call-2",
-        toolName: "file_write"
+        toolName: "write_file"
       })),
       text: first.text
     };
@@ -216,11 +216,11 @@ describe("chat tui view-models", () => {
       errorMessage: "ENOENT: no such file or directory, stat 'D:\\talon-test\\food.js'",
       iteration: 1,
       toolCallId: "call-00112233",
-      toolName: "file_read"
+      toolName: "read_file"
     }));
 
     expect(activity.text).toBe(
-      "file_read failed while executing the requested action: requested path not found: D:\\talon-test\\food.js. This is a tool error, not an AutoTalon runtime failure."
+      "read_file failed while executing the requested action: requested path not found: D:\\talon-test\\food.js. This is a tool error, not an AutoTalon runtime failure."
     );
   });
 
@@ -372,13 +372,13 @@ describe("chat tui view-models", () => {
       input: { path: "src/app.ts" },
       iteration: 1,
       toolCallId: "call-1",
-      toolName: "file_write"
+      toolName: "write_file"
     });
     const started = {
       ...createTraceEvent("tool_call_started", {
         iteration: 1,
         toolCallId: "call-1",
-        toolName: "file_write"
+        toolName: "write_file"
       }),
       timestamp: "2026-01-01T00:00:00.000Z"
     };
@@ -388,7 +388,7 @@ describe("chat tui view-models", () => {
         outputPreview: "ok",
         summary: "wrote file",
         toolCallId: "call-1",
-        toolName: "file_write"
+        toolName: "write_file"
       }),
       timestamp: "2026-01-01T00:00:00.200Z"
     };
@@ -2319,7 +2319,7 @@ function createApprovalRecord(): ApprovalRecord {
     status: "pending",
     taskId: "task-001",
     toolCallId: "call-001",
-    toolName: "file_write"
+    toolName: "write_file"
   };
 }
 
@@ -2367,7 +2367,7 @@ function createToolCallRecord(): ToolCallRecord {
     summary: null,
     taskId: "task-001",
     toolCallId: "call-001",
-    toolName: "file_write"
+    toolName: "write_file"
   };
 }
 

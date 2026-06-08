@@ -10,22 +10,22 @@
   "payload": {
     "iteration": 1,
     "taskId": "task-123",
-    "exposedTools": ["file_read", "skill_view", "web_fetch", "shell", "test_run", "file_write"],
+    "exposedTools": ["glob", "patch", "read_file", "search_files", "skill_view", "web_extract", "shell", "write_file"],
     "hiddenTools": ["mcp__docs__search"],
     "reasons": [
-      "file_read:eligible",
-      "file_write:eligible",
+      "read_file:eligible",
+      "write_file:eligible",
       "shell:eligible",
       "mcp__docs__search:unavailable: server offline"
     ],
     "decisions": [
       {
-        "toolName": "file_read",
+        "toolName": "read_file",
         "exposed": true,
         "reason": "eligible"
       },
       {
-        "toolName": "file_write",
+        "toolName": "write_file",
         "exposed": true,
         "reason": "eligible"
       },

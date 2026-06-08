@@ -130,9 +130,9 @@ describe("context compactor", () => {
           {
             content: "I'll read the file next.",
             role: "assistant",
-            toolCalls: [{ toolCallId: "tc-99", toolName: "file_read" }]
+            toolCalls: [{ toolCallId: "tc-99", toolName: "read_file" }]
           },
-          { content: "{\"content\":\"...\"}", role: "tool", toolCallId: "tc-99", toolName: "file_read" }
+          { content: "{\"content\":\"...\"}", role: "tool", toolCallId: "tc-99", toolName: "read_file" }
         ],
         originalGoal: "Complete phase 2 of the snake game development plan",
         reason: "context_budget",

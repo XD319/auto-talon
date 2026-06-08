@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { ShellTool } from "../src/tools/shell-tool.js";
+import { PatchTool } from "../src/tools/patch-tool.js";
+import { ReadFileTool } from "../src/tools/read-file-tool.js";
+import { WriteFileTool } from "../src/tools/write-file-tool.js";
+import { GlobTool } from "../src/tools/glob-tool.js";
+import { CodeSearchTool } from "../src/tools/code-search-tool.js";
 import { SandboxService } from "../src/sandbox/sandbox-service.js";
 import {
   getToolInputSchemaDescriptor,
@@ -86,5 +91,19 @@ describe("getToolInputSchemaDescriptor", () => {
     };
 
     expect(getToolInputSchemaDescriptor(tool)).toBe(override);
+  });
+
+  it("derives file tool descriptors without stack overflow", () => {
+    const sandbox = new SandboxService({ workspaceRoot: process.cwd() });
+    const cases: Array<[string, { inputSchema: import("zod").ZodTypeAny }]> = [
+      ["read_file", new ReadFileTool(sandbox)],
+      ["write_file", new WriteFileTool(sandbox)],
+      ["patch", new PatchTool(sandbox)],
+      ["glob", new GlobTool(sandbox)],
+      ["search_files", new CodeSearchTool(sandbox)]
+    ];
+    for (const [name, tool] of cases) {
+      expect(() => getToolInputSchemaDescriptor(tool), name).not.toThrow();
+    }
   });
 });

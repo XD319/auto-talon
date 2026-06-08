@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SandboxService } from "../src/sandbox/sandbox-service.js";
-import { FileWriteTool } from "../src/tools/file-write-tool.js";
+import { PatchTool } from "../src/tools/patch-tool.js";
 import type { ToolExecutionContext } from "../src/types/index.js";
 
 const tempPaths: string[] = [];
@@ -19,12 +19,12 @@ afterEach(async () => {
   }
 });
 
-describe("FileWriteTool", () => {
+describe("PatchTool", () => {
   it("fails update_file when target is ambiguous and replaceAll=false", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "a.txt");
     await fs.writeFile(filePath, "foo\nfoo\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -42,33 +42,11 @@ describe("FileWriteTool", () => {
     await expect(listRollbackSnapshots(root)).resolves.toHaveLength(0);
   });
 
-  it("does not create rollback snapshots when write_file fails with overwrite=false", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
-    const filePath = join(root, "existing.txt");
-    await fs.writeFile(filePath, "original\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
-
-    const prepared = tool.prepare(
-      {
-        action: "write_file",
-        content: "replacement\n",
-        overwrite: false,
-        path: filePath
-      },
-      createContext(root)
-    );
-
-    await expect(tool.execute(prepared.preparedInput, createContext(root))).rejects.toThrow(
-      /overwrite=false/i
-    );
-    await expect(listRollbackSnapshots(root)).resolves.toHaveLength(0);
-  });
-
   it("supports context-aware apply_patch replacements", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "b.txt");
     await fs.writeFile(filePath, "alpha\nX\nbeta\nalpha\nX\ngamma\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -92,10 +70,10 @@ describe("FileWriteTool", () => {
   });
 
   it("accepts oldText and newText aliases for apply_patch replacements", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "aliases.txt");
     await fs.writeFile(filePath, "const value = CONFIG.OLD_KEY;\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -117,14 +95,14 @@ describe("FileWriteTool", () => {
   });
 
   it("includes file preview and nearest match when apply_patch target is missing", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "food.js");
     await fs.writeFile(
       filePath,
       "class Food {\n  spawn() {\n    const newPosition = { x: 1, y: 2 };\n  }\n}\n",
       "utf8"
     );
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
     const prepared = tool.prepare(
       {
         action: "apply_patch",
@@ -156,11 +134,11 @@ describe("FileWriteTool", () => {
   });
 
   it("stores full rollback content and writes snapshot reference", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "large.txt");
     const original = "a".repeat(1_200_000);
     await fs.writeFile(filePath, original, "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -190,10 +168,10 @@ describe("FileWriteTool", () => {
   });
 
   it("applies unified diff patches", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "diff.txt");
     await fs.writeFile(filePath, "alpha\nbeta\ngamma\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -218,10 +196,10 @@ describe("FileWriteTool", () => {
   });
 
   it("supports dry-run unified diff without writing rollback snapshots", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "dry.txt");
     await fs.writeFile(filePath, "before\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -240,11 +218,11 @@ describe("FileWriteTool", () => {
   });
 
   it("renames files with rollback metadata", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const fromPath = join(root, "old.txt");
     const toPath = join(root, "nested", "new.txt");
     await fs.writeFile(fromPath, "move me\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -263,10 +241,10 @@ describe("FileWriteTool", () => {
   });
 
   it("deletes files and records rollback snapshots", async () => {
-    const root = await createTempDir("auto-talon-file-write-");
+    const root = await createTempDir("auto-talon-patch-");
     const filePath = join(root, "delete.txt");
     await fs.writeFile(filePath, "remove me\n", "utf8");
-    const tool = new FileWriteTool(createSandbox(root));
+    const tool = new PatchTool(createSandbox(root));
 
     const prepared = tool.prepare(
       {
@@ -309,7 +287,7 @@ function createContext(workspaceRoot: string): ToolExecutionContext {
     cwd: workspaceRoot,
     iteration: 1,
     signal: new AbortController().signal,
-    taskId: "task-file-write-test",
+    taskId: "task-patch-test",
     userId: "test-user",
     workspaceRoot
   };

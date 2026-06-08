@@ -11,7 +11,7 @@ describe("CompactTriggerPolicy breakpoints", () => {
         { content: "hi", role: "user" },
         { content: "need tool", role: "assistant" }
       ],
-      pendingToolCalls: [{ toolCallId: "tc-1", toolName: "file_read" }],
+      pendingToolCalls: [{ toolCallId: "tc-1", toolName: "read_file" }],
       sessionScopeKey: "s1",
       taskId: "t1"
     });

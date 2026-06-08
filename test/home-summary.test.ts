@@ -33,7 +33,7 @@ describe("home summary", () => {
 
     expect(summary.title).toBe("");
     expect(summary.agenda).toEqual([
-      "Approval needed: file_write",
+      "Approval needed: write_file",
       "Routine ready: Morning review",
       "Continue: Draft the plan outline"
     ]);
@@ -853,7 +853,7 @@ function createApproval(approvalId: string): ApprovalRecord {
     status: "pending",
     taskId: "task-1",
     toolCallId: "call-1",
-    toolName: "file_write"
+    toolName: "write_file"
   };
 }
 

@@ -168,13 +168,12 @@ describe("Phase 2 governance runtime", () => {
             toolCalls: [
               {
                 input: {
-                  action: "write_file",
                   content: "workspace-write-default",
                   path: "default-write.md"
                 },
                 reason: "Verify default workspace write behavior.",
                 toolCallId: "default-workspace-write",
-                toolName: "file_write"
+                toolName: "write_file"
               }
             ],
             usage: {
@@ -230,7 +229,7 @@ describe("Phase 2 governance runtime", () => {
 
       const pendingApprovals = handle.service.listPendingApprovals();
       expect(pendingApprovals).toHaveLength(1);
-      expect(pendingApprovals[0]?.toolName).toBe("file_write");
+      expect(pendingApprovals[0]?.toolName).toBe("write_file");
 
       const details = handle.service.showTask(result.task.taskId);
       expect(details.toolCalls).toHaveLength(1);
@@ -395,7 +394,7 @@ describe("Phase 2 governance runtime", () => {
                 },
                 reason: "Need a clear user decision.",
                 toolCallId: "ask-1",
-                toolName: "ask_user"
+                toolName: "clarify"
               }
             ],
             usage: {
@@ -456,7 +455,7 @@ describe("Phase 2 governance runtime", () => {
                 },
                 reason: "Need a preference before editing.",
                 toolCallId: "ask-string-options",
-                toolName: "ask_user"
+                toolName: "clarify"
               }
             ],
             usage: {
@@ -747,7 +746,7 @@ describe("Phase 2 governance runtime", () => {
             },
             reason: "Need a clear user decision.",
             toolCallId: "ask-1",
-            toolName: "ask_user"
+            toolName: "clarify"
           }
         ],
         usage: {
@@ -848,13 +847,12 @@ describe("Phase 2 governance runtime", () => {
         toolCalls: [
           {
               input: {
-                action: "write_file",
                 content: "denied",
                 path: "../outside.txt"
               },
             reason: "Verify sandbox path enforcement.",
             toolCallId: "outside-write",
-            toolName: "file_write"
+            toolName: "write_file"
           }
         ],
         usage: {
@@ -902,13 +900,12 @@ describe("Phase 2 governance runtime", () => {
             toolCalls: [
               {
                 input: {
-                  action: "write_file",
                   content: "external-write-root",
                   path: targetPath
                 },
                 reason: "Persist the external file after review.",
                 toolCallId: "external-write",
-                toolName: "file_write"
+                toolName: "write_file"
               }
             ],
             usage: {
@@ -1007,7 +1004,7 @@ describe("Phase 2 governance runtime", () => {
                 },
                 reason: "Update existing file after review.",
                 toolCallId: "update-existing",
-                toolName: "file_write"
+                toolName: "patch"
               }
             ],
             usage: {
@@ -1114,13 +1111,12 @@ function createApprovalWriteApplication(workspaceRoot: string) {
           toolCalls: [
             {
               input: {
-                action: "write_file",
                 content: "phase-2-governed",
                 path: "governed.txt"
               },
               reason: "Persist the governed file after review.",
               toolCallId: "governed-write",
-              toolName: "file_write"
+              toolName: "write_file"
             }
           ],
           usage: {

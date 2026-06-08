@@ -649,7 +649,7 @@ function computeVerificationEvidenceCount(toolCalls: ToolCallRecord[], trace: Tr
 }
 
 function isWriteToolName(toolName: string): boolean {
-  return toolName === "file_write" || toolName === "git" || toolName.includes("write");
+  return toolName === "write_file" || toolName === "patch" || toolName === "git" || toolName.includes("write");
 }
 
 function countReadBackVerification(toolCalls: ToolCallRecord[]): number {
@@ -662,7 +662,7 @@ function countReadBackVerification(toolCalls: ToolCallRecord[]): number {
     .filter(
       (toolCall) =>
         toolCall.status === "finished" &&
-        (toolCall.toolName === "file_read" ||
+        (toolCall.toolName === "read_file" ||
           toolCall.toolName === "shell")
     ).length;
 }

@@ -1126,7 +1126,7 @@ export async function main(argv = process.argv): Promise<void> {
 
   workspaceCommand
     .command("rollback")
-    .description("Rollback a file_write checkpoint")
+    .description("Rollback a file write checkpoint")
     .argument("<artifact_id>", "Rollback artifact id or last")
     .option("--cwd <path>", "Workspace path", process.cwd())
     .action(async (artifactId: string, commandOptions: { cwd: string }) => {

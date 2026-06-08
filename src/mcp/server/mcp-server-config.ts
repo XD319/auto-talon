@@ -20,7 +20,7 @@ export function resolveMcpServerConfig(workspaceRoot: string): McpServerRuntimeC
   const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<McpServerRuntimeConfig>;
   return {
     exposeSkills: parsed.exposeSkills ?? true,
-    exposeTools: Array.isArray(parsed.exposeTools) ? parsed.exposeTools : ["file_read", "skill_view", "web_extract"],
+    exposeTools: Array.isArray(parsed.exposeTools) ? parsed.exposeTools : ["glob", "read_file", "skill_view", "web_extract"],
     externalIdentity: {
       agentProfileId:
         parsed.externalIdentity?.agentProfileId === "executor" ||
@@ -36,7 +36,7 @@ export function resolveMcpServerConfig(workspaceRoot: string): McpServerRuntimeC
 function defaultConfig(): McpServerRuntimeConfig {
   return {
     exposeSkills: true,
-    exposeTools: ["file_read", "skill_view", "web_extract"],
+    exposeTools: ["glob", "read_file", "skill_view", "web_extract"],
     externalIdentity: {
       agentProfileId: "reviewer",
       runtimeUserId: "mcp_external"

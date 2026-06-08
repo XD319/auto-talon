@@ -238,7 +238,7 @@ function createApproval(approvalId: string): ApprovalRecord {
     status: "pending",
     taskId: "task",
     toolCallId: "call",
-    toolName: "file_write"
+    toolName: "write_file"
   };
 }
 

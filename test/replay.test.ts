@@ -60,12 +60,11 @@ describe("replay diagnostics", () => {
           toolCalls: [
             {
               input: {
-                action: "read_file",
                 path: "README.md"
               },
               reason: "Need fixture content.",
               toolCallId: "replay-readme",
-              toolName: "file_read"
+              toolName: "read_file"
             }
           ],
           usage: {

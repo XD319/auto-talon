@@ -77,8 +77,8 @@ describe("loop discipline", () => {
   });
 
   it("builds stable tool call signatures regardless of key order", () => {
-    expect(toolCallSignature("file_read", { a: 1, b: 2 })).toBe(
-      toolCallSignature("file_read", { b: 2, a: 1 })
+    expect(toolCallSignature("read_file", { a: 1, b: 2 })).toBe(
+      toolCallSignature("read_file", { b: 2, a: 1 })
     );
     expect(stableStringify({ z: 1, a: 2 })).toBe('{"a":2,"z":1}');
   });
@@ -121,7 +121,7 @@ describe("loop discipline", () => {
     expect(below.triggered).toBe(false);
   });
 
-  it("annotates duplicate file_read tool results", async () => {
+  it("annotates duplicate read_file tool results", async () => {
     const workspace = await fs.mkdtemp(join(tmpdir(), "talon-loop-dedup-"));
     tempPaths.push(workspace);
     await fs.writeFile(join(workspace, "target.txt"), "payload", "utf8");
@@ -141,10 +141,10 @@ describe("loop discipline", () => {
             message: "",
             toolCalls: [
               {
-                input: { action: "read_file", path: join(workspace, "target.txt") },
+                input: { path: join(workspace, "target.txt") },
                 reason: "Read target file.",
                 toolCallId: "read-1",
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ],
             usage: { inputTokens: 2, outputTokens: 1 }
@@ -157,10 +157,10 @@ describe("loop discipline", () => {
             message: "",
             toolCalls: [
               {
-                input: { action: "read_file", path: join(workspace, "target.txt") },
+                input: { path: join(workspace, "target.txt") },
                 reason: "Read target file again.",
                 toolCallId: "read-2",
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ],
             usage: { inputTokens: 2, outputTokens: 1 }
@@ -280,10 +280,10 @@ describe("loop discipline", () => {
             message: "",
             toolCalls: [
               {
-                input: { action: "read_file", path },
+                input: { path },
                 reason: `Read ${path}.`,
                 toolCallId: `read-${toolCount + 1}`,
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ],
             usage: { inputTokens: 2, outputTokens: 1 }
@@ -340,10 +340,10 @@ describe("loop discipline", () => {
             message: `Reasoning before tool ${toolCount + 1}.`,
             toolCalls: [
               {
-                input: { action: "read_file", path: join(workspace, "note.txt") },
+                input: { path: join(workspace, "note.txt") },
                 reason: "Read note.",
                 toolCallId: `read-${toolCount + 1}`,
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ],
             usage: { inputTokens: 2, outputTokens: 1 }
@@ -415,10 +415,10 @@ describe("loop discipline", () => {
           kind: "tool_calls",
           message: "",
           toolCalls: batch.map((relativePath, index) => ({
-            input: { action: "read_file", path: join(workspace, relativePath) },
+            input: { path: join(workspace, relativePath) },
             reason: `Read ${relativePath}.`,
             toolCallId: `read-${iteration}-${index}`,
-            toolName: "file_read"
+            toolName: "read_file"
           })),
           usage: { inputTokens: 2, outputTokens: 1 }
         };

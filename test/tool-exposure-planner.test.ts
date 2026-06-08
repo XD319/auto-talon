@@ -35,7 +35,7 @@ function makeTool(name: string, riskLevel: "low" | "medium" | "high"): ToolDefin
 
 describe("tool exposure planner", () => {
   it("keeps all available tools exposed and emits trace data", async () => {
-    const tools = [makeTool("file_read", "low"), makeTool("shell", "high")];
+    const tools = [makeTool("read_file", "low"), makeTool("shell", "high")];
     const planner = new ToolExposurePlanner({
       budgetService: { isDowngradeActive: () => false } as never,
       toolOrchestrator: {
@@ -68,7 +68,7 @@ describe("tool exposure planner", () => {
       taskId: "task-1",
       sessionId: null
     });
-    expect(plan.tools.map((tool) => tool.name)).toEqual(["file_read", "shell"]);
+    expect(plan.tools.map((tool) => tool.name)).toEqual(["read_file", "shell"]);
   });
 
   it("hides only tools that fail availability checks", async () => {
@@ -76,7 +76,7 @@ describe("tool exposure planner", () => {
     webFetch.capability = "network.fetch_public_readonly";
     webFetch.sideEffectLevel = "external_read_only";
     webFetch.checkAvailability = () => ({ available: false, reason: "network disabled" });
-    const tools = [makeTool("file_read", "low"), webFetch];
+    const tools = [makeTool("read_file", "low"), webFetch];
     const planner = new ToolExposurePlanner({
       budgetService: { isDowngradeActive: () => false } as never,
       toolOrchestrator: {
@@ -111,7 +111,7 @@ describe("tool exposure planner", () => {
       sessionId: null
     });
 
-    expect(plan.tools.map((tool) => tool.name)).toEqual(["file_read"]);
+    expect(plan.tools.map((tool) => tool.name)).toEqual(["read_file"]);
     expect(plan.decisions.find((decision) => decision.toolName === "web_extract")).toMatchObject({
       exposed: false,
       reason: "unavailable: network disabled"

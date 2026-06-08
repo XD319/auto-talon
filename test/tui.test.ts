@@ -86,13 +86,12 @@ describe("Phase 4 Ink TUI query models", () => {
             toolCalls: [
               {
                 input: {
-                  action: "write_file",
                   content: "phase4 hello",
                   path: "phase4.txt"
                 },
                 reason: "Create an observable file.",
                 toolCallId: "phase4-write",
-                toolName: "file_write"
+                toolName: "write_file"
               }
             ],
             usage: {
@@ -124,7 +123,7 @@ describe("Phase 4 Ink TUI query models", () => {
       });
 
       expect(beforeApproval.summary.pendingApprovalCount).toBe(1);
-      expect(beforeApproval.pendingApprovals[0]?.toolName).toBe("file_write");
+      expect(beforeApproval.pendingApprovals[0]?.toolName).toBe("write_file");
       expect(beforeApproval.selectedTask?.finalSummary).toContain("waiting for reviewer approval");
 
       await queryService.resolveApproval(
@@ -185,13 +184,12 @@ describe("Phase 4 Ink TUI query models", () => {
           toolCalls: [
             {
               input: {
-                action: "write_file",
                 content: "escape",
                 path: "../outside.txt"
               },
               reason: "Trigger sandbox denial.",
               toolCallId: "sandbox-deny",
-              toolName: "file_write"
+              toolName: "write_file"
             }
           ],
           usage: {
@@ -263,7 +261,7 @@ describe("Phase 4 Ink TUI query models", () => {
       actor: "runtime",
       eventType: "approval_requested",
       payload: {
-        toolName: "file_write"
+        toolName: "write_file"
       },
       sequence: 1,
       stage: "governance",
@@ -272,7 +270,7 @@ describe("Phase 4 Ink TUI query models", () => {
       timestamp: new Date().toISOString()
     } as unknown as TraceEvent;
 
-    expect(extractChainLabel(malformedEvent)).toBe("file_write");
+    expect(extractChainLabel(malformedEvent)).toBe("write_file");
   });
 });
 

@@ -267,7 +267,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     (taskId: string, toolCallId: string, at: string) => {
       const detail = input.service.showTask(taskId);
       const toolCall = detail.toolCalls.find((item) => item.toolCallId === toolCallId);
-      if (toolCall === undefined || toolCall.toolName !== "file_write") {
+      if (toolCall === undefined || (toolCall.toolName !== "write_file" && toolCall.toolName !== "patch")) {
         return;
       }
       const pathValue = toolCall.input["path"];
@@ -290,7 +290,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         if (event.eventType === "memory_recalled") {
           setUsedMemoryCount(event.payload.selectedMemoryIds.length);
         }
-        if (event.eventType === "tool_call_finished" && event.payload.toolName === "file_write") {
+        if (
+          event.eventType === "tool_call_finished" &&
+          (event.payload.toolName === "write_file" || event.payload.toolName === "patch")
+        ) {
           recordFileWrite(event.taskId, event.payload.toolCallId, event.timestamp);
         }
       });
@@ -667,7 +670,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         if (event.eventType === "memory_recalled") {
           setUsedMemoryCount(event.payload.selectedMemoryIds.length);
         }
-        if (event.eventType === "tool_call_finished" && event.payload.toolName === "file_write") {
+        if (
+          event.eventType === "tool_call_finished" &&
+          (event.payload.toolName === "write_file" || event.payload.toolName === "patch")
+        ) {
           recordFileWrite(event.taskId, event.payload.toolCallId, event.timestamp);
         }
       }
@@ -1098,7 +1104,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     }
 
     if (fileEdits.length === 0) {
-      return "No file_write operations recorded in this session yet.";
+      return "No file changes recorded in this session yet.";
     }
     const lines = fileEdits.map((entry, index) => `${String(index + 1).padStart(2, " ")}. ${entry.path} (task ${entry.taskId.slice(0, 8)})`);
     return `Session file changes (${fileEdits.length}):\n${lines.join("\n")}`;

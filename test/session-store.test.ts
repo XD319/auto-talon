@@ -42,11 +42,11 @@ describe("tui session store", () => {
           event: createTraceEvent("tool_call_started", {
             iteration: 1,
             toolCallId: "call-low",
-            toolName: "file_read"
+            toolName: "read_file"
           }),
           id: "activity:low",
           kind: "activity",
-          text: "Running file_read",
+          text: "Running read_file",
           timestamp: "2026-01-01T00:00:01.000Z"
         },
         {

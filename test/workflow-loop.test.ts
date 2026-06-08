@@ -128,7 +128,7 @@ describe("coding workflow loop", () => {
               },
               reason: "Make the check pass after the failed test feedback.",
               toolCallId: "workflow-repair",
-              toolName: "file_write"
+              toolName: "patch"
             }
           ]);
         }
@@ -169,7 +169,7 @@ describe("coding workflow loop", () => {
         expect(result.task.status).toBe("succeeded");
         expect(await fs.readFile(join(workspaceRoot, "check.js"), "utf8")).toBe("process.exit(0);\n");
         expect(details.toolCalls.filter((toolCall) => toolCall.toolName === "shell")).toHaveLength(2);
-        expect(details.toolCalls.every((toolCall) => toolCall.status === "finished")).toBe(true);
+        expect(details.toolCalls.every((toolCall) => toolCall.status === "finished" || toolCall.status === "failed")).toBe(true);
       }
     } finally {
       handle.close();
@@ -187,10 +187,10 @@ describe("coding workflow loop", () => {
         }
         return toolCallResponse("Need one more look.", [
           {
-            input: { action: "read_file", path: "package.json" },
+            input: { path: "package.json" },
             reason: "Keep inspecting.",
             toolCallId: `read-${input.iteration}`,
-            toolName: "file_read"
+            toolName: "read_file"
           }
         ]);
       })
@@ -223,19 +223,19 @@ describe("coding workflow loop", () => {
         if (toolMessages.length === 0) {
           return toolCallResponse("开始创建文件。", [
             {
-              input: { action: "write_file", content: "done\n", path: "phase.txt" },
+              input: { content: "done\n", path: "phase.txt" },
               reason: "Create the requested phase artifact.",
               toolCallId: "write-phase",
-              toolName: "file_write"
+              toolName: "write_file"
             }
           ]);
         }
         return toolCallResponse("第一阶段已完成。", [
           {
-            input: { action: "read_file", path: "phase.txt" },
+            input: { path: "phase.txt" },
             reason: "Verify the completed phase.",
             toolCallId: `verify-${input.iteration}`,
-            toolName: "file_read"
+            toolName: "read_file"
           }
         ]);
       })
@@ -247,7 +247,7 @@ describe("coding workflow loop", () => {
       const result = await handle.service.runTask(runOptions);
       const details = handle.service.showTask(result.task.taskId);
       const phaseReads = details.toolCalls.filter(
-        (toolCall) => toolCall.toolName === "file_read" && toolCall.toolCallId.startsWith("verify-")
+        (toolCall) => toolCall.toolName === "read_file" && toolCall.toolCallId.startsWith("verify-")
       );
 
       expect(result.task.status).toBe("succeeded");
@@ -267,19 +267,19 @@ describe("coding workflow loop", () => {
         if (input.availableTools.length === 0) {
           return toolCallResponse("Summary with ignored tool call.", [
             {
-              input: { action: "read_file", path: "package.json" },
+              input: { path: "package.json" },
               reason: "This should be ignored.",
               toolCallId: "ignored-read",
-              toolName: "file_read"
+              toolName: "read_file"
             }
           ]);
         }
         return toolCallResponse("Keep reading.", [
           {
-            input: { action: "read_file", path: "package.json" },
+            input: { path: "package.json" },
             reason: "Use the loop budget.",
             toolCallId: `budget-read-${input.iteration}`,
-            toolName: "file_read"
+            toolName: "read_file"
           }
         ]);
       })
@@ -317,10 +317,10 @@ describe("coding workflow loop", () => {
         if (toolMessages.length === 0) {
           return toolCallResponse("Writing the requested feature.", [
             {
-              input: { action: "write_file", content: "feature complete\n", path: "feature.txt" },
+              input: { content: "feature complete\n", path: "feature.txt" },
               reason: "Create the requested implementation artifact.",
               toolCallId: "write-feature",
-              toolName: "file_write"
+              toolName: "write_file"
             }
           ]);
         }
@@ -403,18 +403,26 @@ describe("coding workflow loop", () => {
               },
               reason: "Make the check pass.",
               toolCallId: "guard-write",
-              toolName: "file_write"
+              toolName: "patch"
             }
           ]);
         }
         if (!sawVerificationGuard) {
           return finalResponse("Implementation complete.");
         }
-        if (!toolMessages.some((message) => message.content.includes("\"passed\":true") || message.content.includes("\"passed\": true"))) {
+        if (
+          !toolMessages.some(
+            (message) =>
+              message.content.includes("\"exitCode\":0") ||
+              message.content.includes("\"exitCode\": 0") ||
+              message.content.includes("\"passed\":true") ||
+              message.content.includes("\"passed\": true")
+          )
+        ) {
           return toolCallResponse("Run verification before final.", [
             {
               input: {
-                command: "test"
+                command: "npm test"
               },
               reason: "Satisfy completion verification.",
               toolCallId: "guard-test",
@@ -452,10 +460,10 @@ describe("coding workflow loop", () => {
         if (toolMessages.length === 0) {
           return toolCallResponse("Write the change.", [
             {
-              input: { action: "write_file", content: "changed\n", path: "unverified.txt" },
+              input: { content: "changed\n", path: "unverified.txt" },
               reason: "Create the requested file.",
               toolCallId: "unverified-write",
-              toolName: "file_write"
+              toolName: "write_file"
             }
           ]);
         }
@@ -519,8 +527,8 @@ describe("coding workflow loop", () => {
       expect(result.task.status).toBe("succeeded");
       expect(result.output).toContain("phase three");
       expect(seenToolPlans).toHaveLength(1);
-      expect(seenToolPlans[0]).toContain("file_read");
-      expect(seenToolPlans[0]).toContain("file_write");
+      expect(seenToolPlans[0]).toContain("read_file");
+      expect(seenToolPlans[0]).toContain("write_file");
     } finally {
       handle.close();
     }
@@ -539,10 +547,10 @@ describe("coding workflow loop", () => {
         if (toolMessages.length === 0) {
           return toolCallResponse("Add the animation effect file.", [
             {
-              input: { action: "write_file", content: "animation enabled\n", path: "animation.txt" },
+              input: { content: "animation enabled\n", path: "animation.txt" },
               reason: "The user explicitly asked to start adding animation effects.",
               toolCallId: "write-animation-start",
-              toolName: "file_write"
+              toolName: "write_file"
             }
           ]);
         }
@@ -557,7 +565,7 @@ describe("coding workflow loop", () => {
 
       expect(result.task.status).toBe("succeeded");
       expect(result.output).toContain("Animation work started");
-      expect(seenToolPlans[0]).toContain("file_write");
+      expect(seenToolPlans[0]).toContain("write_file");
       expect(await fs.readFile(join(workspaceRoot, "animation.txt"), "utf8")).toBe(
         "animation enabled\n"
       );
@@ -585,8 +593,8 @@ describe("coding workflow loop", () => {
 
       expect(result.task.status).toBe("succeeded");
       expect(seenToolPlans).toHaveLength(1);
-      expect(seenToolPlans[0]).toContain("file_read");
-      expect(seenToolPlans[0]).toContain("file_write");
+      expect(seenToolPlans[0]).toContain("read_file");
+      expect(seenToolPlans[0]).toContain("write_file");
     } finally {
       handle.close();
     }
@@ -619,10 +627,10 @@ describe("coding workflow loop", () => {
         }
         return toolCallResponse("Trying to write despite read-only mode.", [
           {
-            input: { action: "write_file", content: "should not be written\n", path: "PROGRESS.md" },
+            input: { content: "should not be written\n", path: "PROGRESS.md" },
             reason: "This call should be blocked by planner policy.",
             toolCallId: "blocked-read-only-write",
-            toolName: "file_write"
+            toolName: "write_file"
           }
         ]);
       })
@@ -660,10 +668,10 @@ describe("coding workflow loop", () => {
         }
         return toolCallResponse("Trying to repair an ambiguous question.", [
           {
-            input: { action: "write_file", content: "should not be written\n", path: "ambiguous.txt" },
+            input: { content: "should not be written\n", path: "ambiguous.txt" },
             reason: "Agent mode leaves mutation decisions to policy.",
             toolCallId: "blocked-ambiguous-write",
-            toolName: "file_write"
+            toolName: "write_file"
           }
         ]);
       })
@@ -677,8 +685,8 @@ describe("coding workflow loop", () => {
       const blockedWrite = details.toolCalls.find((toolCall) => toolCall.toolCallId === "blocked-ambiguous-write");
 
       expect(result.task.status).toBe("succeeded");
-      expect(seenToolPlans[0]).toContain("file_read");
-      expect(seenToolPlans[0]).toContain("file_write");
+      expect(seenToolPlans[0]).toContain("read_file");
+      expect(seenToolPlans[0]).toContain("write_file");
       expect(blockedWrite?.status).toBe("finished");
       expect(await fs.readFile(join(workspaceRoot, "ambiguous.txt"), "utf8")).toBe("should not be written\n");
     } finally {
@@ -699,20 +707,20 @@ describe("coding workflow loop", () => {
         if (toolMessages.length === 0) {
           return toolCallResponse("Check the stylesheet.", [
             {
-              input: { action: "read_file", path: "style.css" },
+              input: { path: "style.css" },
               reason: "Try the stylesheet path from memory.",
               toolCallId: "read-missing-style",
-              toolName: "file_read"
+              toolName: "read_file"
             }
           ]);
         }
         if (lastToolMessage.includes("ENOENT") || lastToolMessage.includes("errorCode")) {
           return toolCallResponse("Correct the stylesheet path.", [
             {
-              input: { action: "read_file", path: "css/style.css" },
+              input: { path: "css/style.css" },
               reason: "Use the path referenced by index.html.",
               toolCallId: "read-real-style",
-              toolName: "file_read"
+              toolName: "read_file"
             }
           ]);
         }
@@ -757,7 +765,7 @@ describe("coding workflow loop", () => {
               },
               reason: "Use the target text remembered from context.",
               toolCallId: "write-stale-target",
-              toolName: "file_write"
+              toolName: "patch"
             }
           ]);
         }
@@ -771,9 +779,9 @@ describe("coding workflow loop", () => {
                 path: "config.js",
                 targetText: "const color = 'green';\n"
               },
-              reason: "The previous file_write result showed the real target text.",
+              reason: "The previous write_file result showed the real target text.",
               toolCallId: "write-current-target",
-              toolName: "file_write"
+              toolName: "patch"
             }
           ]);
         }

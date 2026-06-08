@@ -526,8 +526,8 @@ describe("Provider integration", () => {
                   tool_calls: [
                     {
                       function: {
-                        arguments: "{\"action\":\"read_file\",\"path\":\"README.md\"}",
-                        name: "file_read"
+                        arguments: "{\"path\":\"README.md\"}",
+                        name: "read_file"
                       },
                       id: "call-1",
                       type: "function"
@@ -560,16 +560,15 @@ describe("Provider integration", () => {
 
     expect(response.toolCalls[0]).toEqual({
       input: {
-        action: "read_file",
         path: "README.md"
       },
       raw: {
-        arguments: "{\"action\":\"read_file\",\"path\":\"README.md\"}",
+        arguments: "{\"path\":\"README.md\"}",
         index: 0
       },
-      reason: "Provider file_read tool call requested.",
+      reason: "Provider read_file tool call requested.",
       toolCallId: "call-1",
-      toolName: "file_read"
+      toolName: "read_file"
     });
     expect(response.metadata?.providerName).toBe("glm");
     expect(response.metadata?.modelName).toBe("glm-4.5-air");
@@ -912,7 +911,7 @@ describe("Provider integration", () => {
                     pulled = true;
                     controller.enqueue(
                       encoder.encode(
-                        'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"file_read","arguments":"{\\""}}]}}]}\n\n'
+                        'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"read_file","arguments":"{\\""}}]}}]}\n\n'
                       )
                     );
                     return;
@@ -937,8 +936,8 @@ describe("Provider integration", () => {
                     tool_calls: [
                       {
                         function: {
-                          arguments: JSON.stringify({ action: "read_file", path: "README.md" }),
-                          name: "file_read"
+                          arguments: JSON.stringify({ path: "README.md" }),
+                          name: "read_file"
                         },
                         id: "call-fallback",
                         type: "function"
@@ -1461,10 +1460,9 @@ describe("Provider integration", () => {
               {
                 id: "call-1",
                 input: {
-                  action: "read_file",
                   path: "README.md"
                 },
-                name: "file_read",
+                name: "read_file",
                 type: "tool_use"
               }
             ],
@@ -1494,15 +1492,14 @@ describe("Provider integration", () => {
     expect(response.message).toBe("Need a tool.");
     expect(response.toolCalls[0]).toEqual({
       input: {
-        action: "read_file",
         path: "README.md"
       },
       raw: {
         index: 1
       },
-      reason: "Provider file_read tool call requested.",
+      reason: "Provider read_file tool call requested.",
       toolCallId: "call-1",
-      toolName: "file_read"
+      toolName: "read_file"
     });
     expect(response.metadata?.providerName).toBe("anthropic");
     expect(response.metadata?.modelName).toBe("claude-sonnet-4-20250514");
@@ -1932,18 +1929,14 @@ function createProviderInput(): ProviderInput {
         description: "Read files from the workspace.",
         inputSchema: {
           properties: {
-            action: {
-              enum: ["read_file"],
-              type: "string"
-            },
             path: {
               type: "string"
             }
           },
-          required: ["action", "path"],
+          required: ["path"],
           type: "object"
         },
-        name: "file_read",
+        name: "read_file",
         privacyLevel: "internal",
         riskLevel: "low"
       }

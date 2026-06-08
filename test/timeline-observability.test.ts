@@ -47,13 +47,12 @@ describe("timeline and diff observability", () => {
             toolCalls: [
               {
                 input: {
-                  action: "write_file",
                   content: "hello\n",
                   path: "observed.txt"
                 },
                 reason: "Create a diff artifact.",
                 toolCallId: "timeline-write",
-                toolName: "file_write"
+                toolName: "write_file"
               }
             ],
             usage: {

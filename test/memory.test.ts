@@ -414,12 +414,11 @@ describe("Phase 3 memory plane", () => {
             toolCalls: [
               {
                 input: {
-                  action: "read_file",
                   path: "README.md"
                 },
                 reason: "Need workspace context",
                 toolCallId: "tool-readme",
-                toolName: "file_read"
+                toolName: "read_file"
               }
             ],
             usage: {

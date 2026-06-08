@@ -47,7 +47,7 @@ const assistantToolCallMessage = (): ConversationMessage => ({
       input: { path: "a.txt" },
       reason: "Read file",
       toolCallId: "read-call",
-      toolName: "file_read"
+      toolName: "read_file"
     }
   ]
 });
@@ -108,8 +108,8 @@ describe("CheckpointManager", () => {
       memoryContext: [],
       messages: [
         assistantToolCallMessage(),
-        toolMessage("file_read", JSON.stringify({ path: "a.txt" })),
-        toolMessage("file_write", JSON.stringify({ bytesWritten: 12, path: "b.txt" }))
+        toolMessage("read_file", JSON.stringify({ path: "a.txt" })),
+        toolMessage("write_file", JSON.stringify({ bytesWritten: 12, path: "b.txt" }))
       ],
       pendingClarifyPromptId: null,
       pendingToolCalls: [],
@@ -123,7 +123,7 @@ describe("CheckpointManager", () => {
     };
     const toolOrchestrator = {
       describeTool: (toolName: string) =>
-        toolName === "file_write"
+        toolName === "write_file" || toolName === "patch"
           ? descriptor(toolName, "filesystem.write")
           : descriptor(toolName, "filesystem.read")
     } as unknown as ToolOrchestrator;
@@ -136,7 +136,7 @@ describe("CheckpointManager", () => {
 
     expect(restored.writeToolSucceeded).toBe(true);
     expect(restored.toolCallSignatures.size).toBe(1);
-    expect(restored.toolCallSignatures.get('file_read|{"path":"a.txt"}')).toEqual({
+    expect(restored.toolCallSignatures.get('read_file|{"path":"a.txt"}')).toEqual({
       iteration: 1,
       toolCallId: "read-call"
     });

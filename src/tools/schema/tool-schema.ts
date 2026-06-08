@@ -7,6 +7,8 @@ interface ZodDefNode {
   shape?: Record<string, ZodSchemaNode>;
   element?: ZodSchemaNode;
   innerType?: ZodSchemaNode;
+  in?: ZodSchemaNode;
+  out?: ZodSchemaNode;
   keyType?: ZodSchemaNode;
   valueType?: ZodSchemaNode;
   entries?: Record<string, string>;
@@ -101,10 +103,11 @@ function convertNode(node: ZodSchemaNode): ToolSchemaDescriptor {
     case "default":
     case "prefault":
     case "preprocess":
-    case "pipe":
     case "transform":
     case "catch":
       return convertNode(unwrapInner(def, node));
+    case "pipe":
+      return convertNode(unwrapPipeOut(def, node));
     case "nullable":
       return {
         ...convertNode(unwrapInner(def, node)),
@@ -123,22 +126,31 @@ function unwrapNode(node: ZodSchemaNode): ZodSchemaNode {
     typeName === "default" ||
     typeName === "prefault" ||
     typeName === "preprocess" ||
-    typeName === "pipe" ||
     typeName === "transform" ||
     typeName === "catch" ||
     typeName === "nullable"
   ) {
     return unwrapInner(def, node);
   }
+  if (typeName === "pipe") {
+    return unwrapPipeOut(def, node);
+  }
   return node;
 }
 
 function unwrapInner(def: ZodDefNode | undefined, node: ZodSchemaNode): ZodSchemaNode {
-  const inner = def?.innerType;
+  const inner = def?.innerType ?? def?.out;
   if (inner !== undefined) {
     return unwrapNode(inner);
   }
   return node;
+}
+
+function unwrapPipeOut(def: ZodDefNode | undefined, node: ZodSchemaNode): ZodSchemaNode {
+  if (def?.out !== undefined) {
+    return unwrapNode(def.out);
+  }
+  return unwrapInner(def, node);
 }
 
 function isOptionalNode(node: ZodSchemaNode): boolean {

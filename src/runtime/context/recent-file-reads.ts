@@ -284,11 +284,12 @@ export function formatRecentlyReadFilesSummary(entries: RecentFileReadEntry[]): 
 
 export function recordRecentFileReadFromToolCall(
   cache: RecentFileReadCache,
-  toolInput: { action?: unknown; path?: unknown },
+  toolName: string,
+  toolInput: { path?: unknown },
   output: unknown,
   toolCallId: string | null = null
 ): void {
-  if (toolInput.action !== "read_file") {
+  if (toolName !== "read_file") {
     return;
   }
   const outputRecord = output as { content?: unknown; path?: unknown };

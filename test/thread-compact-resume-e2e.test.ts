@@ -19,12 +19,11 @@ class ToolThenFinalProvider implements Provider {
         toolCalls: [
           {
             input: {
-              action: "list_dir",
               path: "."
             },
             reason: "Need project context",
             toolCallId: "tc-read-1",
-            toolName: "file_read"
+            toolName: "glob"
           }
         ],
         usage: { inputTokens: 1, outputTokens: 1 }
@@ -65,12 +64,11 @@ class LongCodingCompactClarifyProvider implements Provider {
         message: "Inspect implementation files.",
         toolCalls: ["alpha.ts", "beta.ts", "gamma.ts"].map((path, index) => ({
           input: {
-            action: "read_file",
             path
           },
           reason: `Inspect ${path}.`,
           toolCallId: `long-read-${index}`,
-          toolName: "file_read"
+          toolName: "read_file"
         })),
         usage: { inputTokens: 10, outputTokens: 5 }
       });
@@ -93,7 +91,7 @@ class LongCodingCompactClarifyProvider implements Provider {
             },
             reason: "Pause the long coding task for a user decision.",
             toolCallId: "long-clarify",
-            toolName: "ask_user"
+            toolName: "clarify"
           }
         ],
         usage: { inputTokens: 10, outputTokens: 5 }
@@ -108,13 +106,12 @@ class LongCodingCompactClarifyProvider implements Provider {
         toolCalls: [
           {
             input: {
-              action: "write_file",
               content: "mode=strict\n",
               path: "result.txt"
             },
             reason: "Persist the implementation choice after resume.",
             toolCallId: "long-write",
-            toolName: "file_write"
+            toolName: "write_file"
           }
         ],
         usage: { inputTokens: 10, outputTokens: 5 }
@@ -191,7 +188,7 @@ describe("session compact resume e2e", () => {
         decisions: ["use existing context"],
         goal: "Preserve this goal",
         nextActions: ["verify follow-up output"],
-        openLoops: ["pending file_read(tc-manual-open-loop)"],
+        openLoops: ["pending read_file(tc-manual-open-loop)"],
         sessionSummaryId: "manual-latest-session-memory",
         summary: "manual resume snapshot",
         taskId: firstRun.task.taskId,
@@ -205,7 +202,7 @@ describe("session compact resume e2e", () => {
       const contextDebug = handle.service.traceTaskContext(secondRun.task.taskId);
       const systemPreviews = contextDebug.contextAssembly?.systemPromptFragments.map((fragment) => fragment.preview) ?? [];
       expect(systemPreviews.some((preview) => preview.includes("KnownSessionGoal: Preserve this goal"))).toBe(true);
-      expect(systemPreviews.some((preview) => preview.includes("KnownOpenLoops: pending file_read"))).toBe(true);
+      expect(systemPreviews.some((preview) => preview.includes("KnownOpenLoops: pending read_file"))).toBe(true);
       expect(systemPreviews.some((preview) => preview.includes("KnownDecisions: use existing context"))).toBe(true);
       const memoryRecall = contextDebug.contextAssembly?.memoryRecallFragments ?? [];
       expect(memoryRecall.some((fragment) => fragment.label === "Session goal")).toBe(true);

@@ -11,7 +11,7 @@ describe("capability declaration reinjection", () => {
           capability: "filesystem.read",
           description: "Read files",
           inputSchema: { type: "object" },
-          name: "file_read",
+          name: "read_file",
           privacyLevel: "internal",
           riskLevel: "low"
         }
@@ -34,7 +34,7 @@ describe("capability declaration reinjection", () => {
     });
 
     expect(declaration).toContain("Capability declarations");
-    expect(declaration).toContain("file_read");
+    expect(declaration).toContain("read_file");
     expect(declaration).toContain("skill:project:test/demo");
   });
 });

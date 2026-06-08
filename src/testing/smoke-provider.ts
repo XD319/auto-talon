@@ -288,12 +288,11 @@ function finalResponse(message: string): ProviderResponse {
 function readFile(toolCallId: string, path: string, reason: string): ProviderToolCall {
   return {
     input: {
-      action: "read_file",
       path
     },
     reason,
     toolCallId,
-    toolName: "file_read"
+    toolName: "read_file"
   };
 }
 
@@ -305,13 +304,12 @@ function searchText(
 ): ProviderToolCall {
   return {
     input: {
-      action: "search_text",
-      keyword,
-      path
+      path,
+      query: keyword
     },
     reason,
     toolCallId,
-    toolName: "file_read"
+    toolName: "search_files"
   };
 }
 
@@ -323,14 +321,13 @@ function writeFile(
 ): ProviderToolCall {
   return {
     input: {
-      action: "write_file",
       content,
       overwrite: true,
       path
     },
     reason,
     toolCallId,
-    toolName: "file_write"
+    toolName: "write_file"
   };
 }
 
@@ -351,7 +348,7 @@ function updateFile(
     },
     reason,
     toolCallId,
-    toolName: "file_write"
+    toolName: "patch"
   };
 }
 
@@ -376,7 +373,7 @@ function applyPatch(
     },
     reason,
     toolCallId,
-    toolName: "file_write"
+    toolName: "patch"
   };
 }
 

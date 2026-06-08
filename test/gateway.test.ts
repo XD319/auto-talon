@@ -540,13 +540,12 @@ function createWaitingApprovalApplication(workspaceRoot: string) {
           toolCalls: [
             {
               input: {
-                action: "write_file",
                 content: "phase-5-governed",
                 path: "governed.txt"
               },
               reason: "Persist the governed file after review.",
               toolCallId: "governed-write",
-              toolName: "file_write"
+              toolName: "write_file"
             }
           ],
           usage: {

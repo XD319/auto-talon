@@ -20,10 +20,10 @@ class OutputProvider implements Provider {
         message: "intermediate text",
         toolCalls: [
           {
-            input: { action: "read_file", path: join(input.task.cwd, "README.md") },
+            input: { path: join(input.task.cwd, "README.md") },
             reason: "Read workspace context.",
             toolCallId: "read-output",
-            toolName: "file_read"
+            toolName: "read_file"
           }
         ],
         usage: { inputTokens: 3, outputTokens: 2 }
@@ -64,10 +64,10 @@ class MissingFileProvider implements Provider {
         message: "checking file",
         toolCalls: [
           {
-            input: { action: "read_file", path: join(input.task.cwd, "missing.txt") },
+            input: { path: join(input.task.cwd, "missing.txt") },
             reason: "Read a file that may exist.",
             toolCallId: "missing-read",
-            toolName: "file_read"
+            toolName: "read_file"
           }
         ],
         usage: { inputTokens: 1, outputTokens: 1 }
@@ -215,7 +215,7 @@ describe("runtime output events", () => {
         "not an AutoTalon runtime failure"
       );
       expect(detailRows.map((row) => row.text)).toContain(
-        `file_read failed while executing the requested action: requested path not found: ${join(workspace, "missing.txt")}. This is a tool error, not an AutoTalon runtime failure.`
+        `read_file failed while executing the requested action: requested path not found: ${join(workspace, "missing.txt")}. This is a tool error, not an AutoTalon runtime failure.`
       );
       expect(dashboard.selectedTask?.errors[0]?.message).toContain("not an AutoTalon runtime failure");
     } finally {
