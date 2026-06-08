@@ -68,6 +68,8 @@ import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
+import type { ToolOverrideStore } from "../tools/tool-overrides.js";
+import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ExecutionKernel } from "./execution-kernel.js";
 import type { ResumePacketBuilder, SessionService } from "./sessions/index.js";
 import type {
@@ -268,6 +270,8 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   runtimeConfigSource: "defaults" | "env" | "file";
   skillDraftManager: SkillDraftManager;
   skillRegistry: SkillRegistry;
+  toolOverrideStore: ToolOverrideStore;
+  toolRegistry: ToolRegistry;
   shellBackend: ShellBackend;
   inboxService: InboxService;
   commitmentService: CommitmentService;
@@ -623,6 +627,18 @@ export class AgentApplicationService {
 
   public disableSkill(skillId: string) {
     return this.dependencies.skillRegistry.disableSkill(skillId);
+  }
+
+  public listTools() {
+    return this.dependencies.toolOverrideStore.listTools(this.dependencies.toolRegistry.list());
+  }
+
+  public enableTool(toolName: string) {
+    return this.dependencies.toolOverrideStore.enableTool(toolName, this.dependencies.toolRegistry.list());
+  }
+
+  public disableTool(toolName: string) {
+    return this.dependencies.toolOverrideStore.disableTool(toolName, this.dependencies.toolRegistry.list());
   }
 
   public createSkillDraftFromExperience(experienceId: string) {

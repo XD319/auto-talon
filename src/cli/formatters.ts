@@ -1,4 +1,4 @@
-﻿import type { AgentDoctorReport, ContextTraceDebugReport, TaskTimelineReport } from "../runtime/index.js";
+﻿import type { ToolListResult } from "../tools/tool-overrides.js";
 import type {
   BetaReadinessReport,
   CodingEvalReport,
@@ -792,6 +792,19 @@ export function formatSkillList(result: SkillListResult): string {
           )
         ];
   return [...skillLines, ...issueLines].join("\n");
+}
+
+export function formatToolList(result: ToolListResult): string {
+  if (result.tools.length === 0) {
+    return "No registered tools found.";
+  }
+
+  return result.tools
+    .map(
+      (tool) =>
+        `${tool.name} | toolset=${tool.toolset} | disabled=${tool.disabled ? "yes" : "no"} | ${tool.description}`
+    )
+    .join("\n");
 }
 
 export function formatSkillView(skill: SkillView | null): string {

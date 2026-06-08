@@ -1,12 +1,16 @@
 ﻿import { checkToolAvailability } from "../tools/availability/index.js";
 import { evaluateToolExposure } from "../tools/policy/index.js";
+import { isPlanSafeTool } from "../tools/toolsets.js";
+import type { ToolOverrideStore } from "../tools/tool-overrides.js";
 import type { ToolOrchestrator } from "../tools/tool-orchestrator.js";
 import type { TraceService } from "../tracing/trace-service.js";
+import type { TuiInteractionMode } from "../types/index.js";
 import type { ToolExposurePlan, ToolExecutionContext } from "../types/index.js";
 import type { BudgetService } from "./budget/budget-service.js";
 
 export interface ToolExposurePlannerDependencies {
   toolOrchestrator: ToolOrchestrator;
+  toolOverrideStore: ToolOverrideStore;
   traceService: TraceService;
   budgetService?: BudgetService;
 }
@@ -16,13 +20,19 @@ export interface ToolExposurePlannerInput {
   sessionId: string | null;
   context: ToolExecutionContext;
   iteration: number;
+  interactionMode?: TuiInteractionMode;
 }
 
 export class ToolExposurePlanner {
   public constructor(private readonly dependencies: ToolExposurePlannerDependencies) {}
 
   public async plan(input: ToolExposurePlannerInput): Promise<ToolExposurePlan> {
-    const tools = this.dependencies.toolOrchestrator.listToolsWithMetadata();
+    const disabledToolNames = new Set(this.dependencies.toolOverrideStore.listDisabledToolNames());
+    const registeredTools = this.dependencies.toolOrchestrator
+      .listToolsWithMetadata()
+      .filter((tool) => !disabledToolNames.has(tool.name));
+    const tools =
+      input.interactionMode === "plan" ? registeredTools.filter(isPlanSafeTool) : registeredTools;
     const availability = await checkToolAvailability(tools, input.context);
     const budgetDowngradeActive =
       this.dependencies.budgetService?.isDowngradeActive("task", input.taskId) === true ||
@@ -50,6 +60,7 @@ export class ToolExposurePlanner {
           decisions,
           exposedTools: exposedNames,
           hiddenTools,
+          interactionMode: input.interactionMode ?? "agent",
           iteration: input.iteration,
           reasons: plannerReasons,
           taskId: input.taskId

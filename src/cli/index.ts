@@ -83,6 +83,7 @@ import {
   formatSkillDraft,
   formatSkillList,
   formatSkillView,
+  formatToolList,
   formatSnapshot,
   formatTask,
   formatTaskList,
@@ -126,6 +127,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--profile <profile>", "Agent profile", "executor")
+    .option("--mode <mode>", "Interaction mode: agent | plan", "agent")
     .option("--session <sessionId>", "Reuse an existing session id")
     .option("--max-iterations <number>", "Maximum loop iterations", parsePositiveIntegerOption("--max-iterations"))
     .option("--timeout-ms <number>", "Task timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
@@ -137,6 +139,10 @@ export async function main(argv = process.argv): Promise<void> {
       try {
         const runOptions = createDefaultRunOptions(task, commandOptions.cwd, handle.config);
         runOptions.agentProfileId = commandOptions.profile as typeof runOptions.agentProfileId;
+        if (commandOptions.mode === "plan") {
+          runOptions.interactionMode = "plan";
+          runOptions.agentProfileId = "planner";
+        }
         if (commandOptions.session !== undefined) {
           runOptions.sessionId = commandOptions.session;
         }
@@ -1096,6 +1102,41 @@ export async function main(argv = process.argv): Promise<void> {
   };
   registerSkillRollbackCommand(skillsCommand);
   registerSkillRollbackCommand(program.command("skill").description("Singular alias for skills"));
+
+  const toolsCommand = program.command("tools").description("Inspect and manage runtime tools");
+
+  toolsCommand.command("list").action(() => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatToolList(handle.service.listTools()));
+    } finally {
+      handle.close();
+    }
+  });
+
+  toolsCommand.command("enable").argument("<tool_name>", "Tool name").action((toolName: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatToolList(handle.service.enableTool(toolName)));
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    } finally {
+      handle.close();
+    }
+  });
+
+  toolsCommand.command("disable").argument("<tool_name>", "Tool name").action((toolName: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      console.log(formatToolList(handle.service.disableTool(toolName)));
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    } finally {
+      handle.close();
+    }
+  });
 
   const workspaceCommand = program.command("workspace").description("Inspect workspace coding context");
 
@@ -2210,6 +2251,7 @@ function formatCliOutputEvent(event: RuntimeOutputEvent): string | null {
 interface RunCommandOptions extends SandboxCommandOptions {
   jsonEvents?: boolean;
   maxIterations?: number;
+  mode: string;
   profile: string;
   session?: string;
   timeoutMs?: number;

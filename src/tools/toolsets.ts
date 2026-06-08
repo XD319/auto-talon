@@ -1,0 +1,60 @@
+import type { ToolDefinition, ToolSideEffectLevel } from "../types/index.js";
+
+export const TOOLSET_NAMES = [
+  "file",
+  "shell",
+  "web",
+  "interaction",
+  "skills",
+  "session",
+  "agent",
+  "mcp"
+] as const;
+
+export type ToolsetName = (typeof TOOLSET_NAMES)[number];
+
+export const TOOLSET_TOOLS: Record<ToolsetName, readonly string[]> = {
+  agent: ["delegate_task", "todo"],
+  file: ["read_file", "write_file", "patch", "search_files", "glob"],
+  interaction: ["clarify"],
+  mcp: [],
+  session: ["session_search"],
+  shell: ["shell", "process"],
+  skills: ["skills_list", "skill_view"],
+  web: ["web_extract", "web_search"]
+};
+
+const READ_ONLY_SIDE_EFFECT_LEVELS = new Set<ToolSideEffectLevel>([
+  "none",
+  "read_only",
+  "external_read_only"
+]);
+
+export function isReadOnlySideEffectLevel(sideEffectLevel: ToolSideEffectLevel): boolean {
+  return READ_ONLY_SIDE_EFFECT_LEVELS.has(sideEffectLevel);
+}
+
+export function isPlanSafeTool(tool: ToolDefinition): boolean {
+  return isReadOnlySideEffectLevel(tool.sideEffectLevel);
+}
+
+export function resolveToolsetForTool(toolName: string): ToolsetName {
+  if (toolName.startsWith("mcp__")) {
+    return "mcp";
+  }
+
+  for (const toolsetName of TOOLSET_NAMES) {
+    if (toolsetName === "mcp") {
+      continue;
+    }
+    if (TOOLSET_TOOLS[toolsetName].includes(toolName)) {
+      return toolsetName;
+    }
+  }
+
+  return "agent";
+}
+
+export function listPlanSafeToolNames(tools: ToolDefinition[]): string[] {
+  return tools.filter(isPlanSafeTool).map((tool) => tool.name);
+}

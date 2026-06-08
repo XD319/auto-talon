@@ -3,11 +3,20 @@ import { z } from "zod";
 
 import { ToolExposurePlanner } from "../src/runtime/tool-exposure-planner.js";
 import { getToolInputSchemaDescriptor } from "../src/tools/schema/index.js";
+import type { ToolOverrideStore } from "../src/tools/tool-overrides.js";
 import type { ToolDefinition } from "../src/types/index.js";
+
+function createDisabledToolOverrideStore(disabledToolNames: string[] = []): ToolOverrideStore {
+  return {
+    disableTool: () => ({ tools: [] }),
+    enableTool: () => ({ tools: [] }),
+    listDisabledToolNames: () => disabledToolNames,
+    listTools: () => ({ tools: [] })
+  } as ToolOverrideStore;
+}
 
 function makeTool(name: string, riskLevel: "low" | "medium" | "high"): ToolDefinition {
   return {
-    approvalDefault: "when_needed",
     capability: "filesystem.read",
     costLevel: "cheap",
     description: name,
@@ -33,27 +42,32 @@ function makeTool(name: string, riskLevel: "low" | "medium" | "high"): ToolDefin
   };
 }
 
+function createPlanner(tools: ToolDefinition[], disabledToolNames: string[] = []): ToolExposurePlanner {
+  return new ToolExposurePlanner({
+    budgetService: { isDowngradeActive: () => false } as never,
+    toolOrchestrator: {
+      listTools: (toolNames: string[] | undefined) =>
+        tools
+          .filter((tool) => toolNames === undefined || toolNames.includes(tool.name))
+          .map((tool) => ({
+            capability: tool.capability,
+            description: tool.description,
+            inputSchema: getToolInputSchemaDescriptor(tool),
+            name: tool.name,
+            privacyLevel: tool.privacyLevel,
+            riskLevel: tool.riskLevel
+          })),
+      listToolsWithMetadata: () => tools
+    } as never,
+    toolOverrideStore: createDisabledToolOverrideStore(disabledToolNames),
+    traceService: { record: vi.fn() } as never
+  });
+}
+
 describe("tool exposure planner", () => {
   it("keeps all available tools exposed and emits trace data", async () => {
     const tools = [makeTool("read_file", "low"), makeTool("shell", "high")];
-    const planner = new ToolExposurePlanner({
-      budgetService: { isDowngradeActive: () => false } as never,
-      toolOrchestrator: {
-        listTools: (allowed: string[] | undefined) =>
-          tools
-            .filter((tool) => allowed === undefined || allowed.includes(tool.name))
-            .map((tool) => ({
-              capability: tool.capability,
-              description: tool.description,
-              inputSchema: getToolInputSchemaDescriptor(tool),
-              name: tool.name,
-              privacyLevel: tool.privacyLevel,
-              riskLevel: tool.riskLevel
-            })),
-        listToolsWithMetadata: () => tools
-      } as never,
-      traceService: { record: vi.fn() } as never
-    });
+    const planner = createPlanner(tools);
     const plan = await planner.plan({
       context: {
         agentProfileId: "executor",
@@ -77,24 +91,7 @@ describe("tool exposure planner", () => {
     webFetch.sideEffectLevel = "external_read_only";
     webFetch.checkAvailability = () => ({ available: false, reason: "network disabled" });
     const tools = [makeTool("read_file", "low"), webFetch];
-    const planner = new ToolExposurePlanner({
-      budgetService: { isDowngradeActive: () => false } as never,
-      toolOrchestrator: {
-        listTools: (allowed: string[] | undefined) =>
-          tools
-            .filter((tool) => allowed === undefined || allowed.includes(tool.name))
-            .map((tool) => ({
-              capability: tool.capability,
-              description: tool.description,
-              inputSchema: getToolInputSchemaDescriptor(tool),
-              name: tool.name,
-              privacyLevel: tool.privacyLevel,
-              riskLevel: tool.riskLevel
-            })),
-        listToolsWithMetadata: () => tools
-      } as never,
-      traceService: { record: vi.fn() } as never
-    });
+    const planner = createPlanner(tools);
 
     const plan = await planner.plan({
       context: {
@@ -116,5 +113,50 @@ describe("tool exposure planner", () => {
       exposed: false,
       reason: "unavailable: network disabled"
     });
+  });
+
+  it("excludes disabled tools before availability checks", async () => {
+    const tools = [makeTool("read_file", "low"), makeTool("shell", "high")];
+    const planner = createPlanner(tools, ["shell"]);
+    const plan = await planner.plan({
+      context: {
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        iteration: 1,
+        signal: new AbortController().signal,
+        taskId: "task-3",
+        userId: "u1",
+        workspaceRoot: process.cwd()
+      },
+      iteration: 1,
+      taskId: "task-3",
+      sessionId: null
+    });
+
+    expect(plan.tools.map((tool) => tool.name)).toEqual(["read_file"]);
+  });
+
+  it("limits plan mode to read-only tools", async () => {
+    const readTool = makeTool("read_file", "low");
+    const shellTool = makeTool("shell", "high");
+    shellTool.sideEffectLevel = "external_mutation";
+    const planner = createPlanner([readTool, shellTool]);
+    const plan = await planner.plan({
+      context: {
+        agentProfileId: "planner",
+        cwd: process.cwd(),
+        iteration: 1,
+        signal: new AbortController().signal,
+        taskId: "task-4",
+        userId: "u1",
+        workspaceRoot: process.cwd()
+      },
+      interactionMode: "plan",
+      iteration: 1,
+      taskId: "task-4",
+      sessionId: null
+    });
+
+    expect(plan.tools.map((tool) => tool.name)).toEqual(["read_file"]);
   });
 });

@@ -86,6 +86,11 @@ const DEFAULT_SKILL_OVERRIDES: JsonObject = {
   disabledSkillIds: []
 };
 
+const DEFAULT_TOOL_OVERRIDES: JsonObject = {
+  version: CONFIG_VERSION,
+  disabledToolNames: []
+};
+
 const DEFAULT_APPROVAL_RULES: JsonObject = {
   version: CONFIG_VERSION,
   rules: []
@@ -114,6 +119,7 @@ export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceRe
     ...writeConfigIfMissing(workspaceRoot, "mcp.config.json", DEFAULT_MCP_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "mcp-server.config.json", DEFAULT_MCP_SERVER_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "skill-overrides.json", DEFAULT_SKILL_OVERRIDES),
+    ...writeConfigIfMissing(workspaceRoot, "tool-overrides.json", DEFAULT_TOOL_OVERRIDES),
     ...writeConfigIfMissing(workspaceRoot, "approval-rules.json", DEFAULT_APPROVAL_RULES)
   );
 

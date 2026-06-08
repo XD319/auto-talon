@@ -13,7 +13,8 @@ type ConfigFileName =
   | "feishu.config.json"
   | "mcp.config.json"
   | "mcp-server.config.json"
-  | "skill-overrides.json";
+  | "skill-overrides.json"
+  | "tool-overrides.json";
 
 const CONFIG_FILES: ConfigFileName[] = [
   "provider.config.json",
@@ -23,7 +24,8 @@ const CONFIG_FILES: ConfigFileName[] = [
   "feishu.config.json",
   "mcp.config.json",
   "mcp-server.config.json",
-  "skill-overrides.json"
+  "skill-overrides.json",
+  "tool-overrides.json"
 ] as const;
 
 export const LATEST_CONFIG_VERSION = 2;
