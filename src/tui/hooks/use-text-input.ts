@@ -15,6 +15,15 @@ export interface UseTextInputOptions {
   onHistoryNext: () => string | null;
   onHistoryPrevious: () => string | null;
   homeSummaryNavigation?: { enabled: boolean };
+  sessionPickerNavigation?: {
+    enabled: boolean;
+    onCancel: () => void;
+    onFilterAppend: (char: string) => void;
+    onFilterBackspace: () => void;
+    onMove: (delta: -1 | 1) => void;
+    onSubmit: () => void;
+    onTogglePreview: () => void;
+  };
   onImagePasteAttempt?: () => void;
   onInterruptRequest: () => void;
   busy: boolean;
@@ -29,6 +38,7 @@ export interface UseTextInputOptions {
   onPromptShortcut?: (index: number) => void;
   onPromptToggleSelection?: () => void;
   onExit: () => void;
+  onEscape?: () => void;
   onSubmit: (text: string) => boolean | Promise<boolean>;
   onSubmitBlockedBusy?: () => void;
   /** Return replacement value, or null to leave input unchanged. */
@@ -124,6 +134,15 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
   });
 
   useInput((input, key) => {
+    if (key.escape && valueRef.current.trim().length === 0 && options.activePrompt === undefined) {
+      if (options.sessionPickerNavigation?.enabled === true) {
+        options.sessionPickerNavigation.onCancel();
+        return;
+      }
+      options.onEscape?.();
+      return;
+    }
+
     if (key.ctrl && input === "c") {
       const now = Date.now();
       const lastRequestedAt = interruptRequestedAtRef.current;
@@ -193,6 +212,39 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       if (!clarifyPrompt.customActive) {
         return;
       }
+    }
+
+    if (options.sessionPickerNavigation?.enabled === true && value.trim().length === 0) {
+      const picker = options.sessionPickerNavigation;
+      if (key.escape) {
+        picker.onCancel();
+        return;
+      }
+      if (key.upArrow || key.leftArrow) {
+        picker.onMove(-1);
+        return;
+      }
+      if (key.downArrow || key.rightArrow) {
+        picker.onMove(1);
+        return;
+      }
+      if (key.return) {
+        picker.onSubmit();
+        return;
+      }
+      if (input === "p" || input === "P") {
+        picker.onTogglePreview();
+        return;
+      }
+      if (key.backspace || key.delete) {
+        picker.onFilterBackspace();
+        return;
+      }
+      if (input.length === 1 && !key.ctrl && !key.meta) {
+        picker.onFilterAppend(input);
+        return;
+      }
+      return;
     }
 
     if (options.homeSummaryNavigation?.enabled === true && value.trim().length === 0) {

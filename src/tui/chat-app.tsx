@@ -17,19 +17,14 @@ import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
 import { PromptZone } from "./components/prompt-zone.js";
 import { buildContextMetric, StatusBar } from "./components/status-bar.js";
-import { WelcomeHome } from "./components/welcome-home.js";
+import type { SessionIndexEntry } from "../types/index.js";
+import { SessionBrowser } from "./components/session-browser.js";
+import { SessionRecap } from "./components/session-recap.js";
 import { editInExternalEditor } from "./external-editor.js";
 import { useChatController } from "./hooks/use-chat-controller.js";
 import { useScrollbackTranscript } from "./hooks/use-scrollback-transcript.js";
 import { useTextInput } from "./hooks/use-text-input.js";
-import {
-  listSessionIds,
-  listSessionSummaries,
-  loadSession,
-  saveSession,
-  type ChatSessionSummary,
-  type PersistedChatSession
-} from "./session-store.js";
+import type { ChatSessionSummary, PersistedChatSession } from "./session-store.js";
 import {
   STATIC_SLASH_SUGGESTIONS,
   completeSlashCommand,
@@ -38,7 +33,7 @@ import {
   type SlashSuggestion
 } from "./slash-commands.js";
 import { type ChatMessage } from "./view-models/chat-messages.js";
-import { buildWelcomeHome, type WelcomeHomeEntry } from "./view-models/welcome-home.js";
+import { type WelcomeHomeEntry, type WelcomeHomeViewModel } from "./view-models/welcome-home.js";
 import {
   buildTodaySummary,
   formatSessionDetailForTui,
@@ -48,6 +43,10 @@ import {
 } from "./view-models/today-summary.js";
 import { formatTranscriptForPrint } from "./view-models/scrollback-transcript.js";
 import { outputEventsToMarkdown } from "./view-models/transcript-output.js";
+import {
+  clampPickerIndex,
+  filterSessionIndexEntries
+} from "./view-models/session-picker-model.js";
 
 export interface ChatTuiAppProps {
   config: TuiAppConfig;
@@ -57,7 +56,7 @@ export interface ChatTuiAppProps {
   initialSessionTitle?: string;
   initialInteractionMode?: TuiInteractionMode;
   initialRuntimeSessionId?: string;
-  initialTranscriptId?: string;
+  initialSessionId?: string;
   reviewerId: string;
   service: TuiRuntimeService;
 }
@@ -84,17 +83,22 @@ export function ChatTuiApp({
   initialSessionTitle,
   initialInteractionMode,
   initialRuntimeSessionId,
-  initialTranscriptId,
+  initialSessionId,
   reviewerId,
   service
 }: ChatTuiAppProps): React.ReactElement {
   const { exit } = useApp();
-  const resolvedTranscriptId = React.useMemo(() => initialTranscriptId ?? randomUUID(), [initialTranscriptId]);
+  const resolvedSessionId = React.useMemo(() => initialSessionId ?? randomUUID(), [initialSessionId]);
   const [sessionTitle, setSessionTitle] = React.useState(initialSessionTitle ?? "assistant");
-  const [sessionId, setSessionId] = React.useState(resolvedTranscriptId);
   const [interactionMode, setInteractionMode] = React.useState<TuiInteractionMode>(
     initialInteractionMode ?? "agent"
   );
+  const [sessionPickerOpen, setSessionPickerOpen] = React.useState(false);
+  const [sessionIndexEntries, setSessionIndexEntries] = React.useState<SessionIndexEntry[]>([]);
+  const [sessionPickerIndex, setSessionPickerIndex] = React.useState(0);
+  const [sessionPickerFilter, setSessionPickerFilter] = React.useState("");
+  const [sessionPickerPreviewOpen, setSessionPickerPreviewOpen] = React.useState(false);
+  const [recapSessionId, setRecapSessionId] = React.useState<string | null>(null);
   const [approvalSelectionIndex, setApprovalSelectionIndex] = React.useState(0);
   const [clarifySelectionIndex, setClarifySelectionIndex] = React.useState(0);
   const [clarifyQuestionIndex, setClarifyQuestionIndex] = React.useState(0);
@@ -102,7 +106,6 @@ export function ChatTuiApp({
   const [clarifyMultiSelections, setClarifyMultiSelections] = React.useState<Record<number, string[]>>({});
   const [clarifyCustomActive, setClarifyCustomActive] = React.useState(false);
   const [homeSelectionIndex, setHomeSelectionIndex] = React.useState(0);
-  const [sessionSummaries, setSessionSummaries] = React.useState<ChatSessionSummary[]>([]);
   const historyRef = React.useRef<string[]>([]);
   const historyIndexRef = React.useRef<number | null>(null);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -116,7 +119,7 @@ export function ChatTuiApp({
     ...(initialSessionApprovalFingerprints !== undefined
       ? { initialSessionApprovalFingerprints }
       : {}),
-    ...(initialRuntimeSessionId !== undefined ? { initialSessionId: initialRuntimeSessionId } : {}),
+    ...(initialRuntimeSessionId !== undefined ? { initialSessionId: initialRuntimeSessionId } : { initialSessionId: resolvedSessionId }),
     interactionMode,
     onOutputEvent: (event) => scrollbackRef.current?.onOutputEvent(event),
     onTraceEvent: (event) => scrollbackRef.current?.onTraceEvent(event),
@@ -137,43 +140,143 @@ export function ChatTuiApp({
     () => formatTodaySummary(buildTodaySummary(service, { activeSessionId: controller.activeSessionId })),
     [controller.activeSessionId, service]
   );
+  const activeSessionId = controller.activeSessionId ?? resolvedSessionId;
   const welcomeHome = React.useMemo(
-    () => buildWelcomeHome(sessionSummaries, sessionId),
-    [sessionId, sessionSummaries]
+    () => buildWelcomeHomeFromIndex(sessionIndexEntries, activeSessionId),
+    [activeSessionId, sessionIndexEntries]
   );
   const homeEntries = welcomeHome.entries;
-  const refreshSessionSummaries = React.useCallback(() => {
-    void listSessionSummaries(config.workspaceRoot).then(setSessionSummaries);
-  }, [config.workspaceRoot]);
+  const refreshSessionIndex = React.useCallback(() => {
+    setSessionIndexEntries(
+      service.listSessionIndex({ ownerUserId: reviewerId, status: "active" }).slice(0, 20)
+    );
+  }, [reviewerId, service]);
+  const filteredSessionEntries = React.useMemo(
+    () => filterSessionIndexEntries(sessionIndexEntries, sessionPickerFilter),
+    [sessionIndexEntries, sessionPickerFilter]
+  );
+  const pickerPreviewMessages = React.useMemo(() => {
+    if (!sessionPickerPreviewOpen) {
+      return null;
+    }
+    const entry = filteredSessionEntries[sessionPickerIndex];
+    if (entry === undefined) {
+      return null;
+    }
+    const uiState = service.loadSessionUiState(entry.sessionId);
+    return uiState === null ? null : (uiState.messages as ChatMessage[]);
+  }, [filteredSessionEntries, service, sessionPickerIndex, sessionPickerPreviewOpen]);
+
+  const flushActiveSessionState = React.useCallback(
+    (overrideTitle?: string) => {
+      if (saveTimerRef.current !== null) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const sessionId = controller.activeSessionId;
+      if (sessionId === null || controller.busy) {
+        return;
+      }
+      const title = overrideTitle ?? sessionTitle;
+      service.saveSessionUiState(sessionId, {
+        entrySource: "tui",
+        interactionMode,
+        messages: controller.messages as never,
+        sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
+        title
+      });
+      if (overrideTitle !== undefined) {
+        service.updateSessionTitle(sessionId, overrideTitle);
+        refreshSessionIndex();
+      }
+    },
+    [
+      controller.activeSessionId,
+      controller.busy,
+      controller.messages,
+      controller.sessionApprovalFingerprints,
+      interactionMode,
+      refreshSessionIndex,
+      service,
+      sessionTitle
+    ]
+  );
+
+  const dismissRecap = React.useCallback(() => {
+    setRecapSessionId(null);
+  }, []);
+
+  const showRecapForSession = React.useCallback((sessionId: string) => {
+    setRecapSessionId(sessionId);
+  }, []);
+
+  const clearAndStartNewSession = React.useCallback(
+    (options?: { newTitle?: string; oldTitle?: string }) => {
+      if (
+        controller.busy ||
+        controller.pendingApproval !== null ||
+        controller.pendingClarifyPrompt !== null
+      ) {
+        controller.addSystemMessage("Finish the active task, approval, or clarification before starting a new session.");
+        return null;
+      }
+      if (controller.activeSessionId !== null && options?.oldTitle !== undefined) {
+        flushActiveSessionState(options.oldTitle);
+        setSessionTitle(options.oldTitle);
+      } else if (controller.activeSessionId !== null) {
+        flushActiveSessionState();
+      }
+      const nextTitle = options?.newTitle ?? "Untitled session";
+      const nextId = controller.createAndActivateSession(nextTitle);
+      controller.resetVisibleChatPreserveActiveSession("session created");
+      setSessionTitle(nextTitle);
+      dismissRecap();
+      refreshSessionIndex();
+      return nextId;
+    },
+    [controller, dismissRecap, flushActiveSessionState, refreshSessionIndex]
+  );
 
   React.useEffect(() => {
-    refreshSessionSummaries();
-  }, [refreshSessionSummaries, sessionId]);
+    refreshSessionIndex();
+  }, [refreshSessionIndex, activeSessionId]);
+
+  React.useEffect(() => {
+    setSessionPickerIndex((current) => clampPickerIndex(current, filteredSessionEntries.length));
+  }, [filteredSessionEntries.length]);
 
   React.useEffect(() => {
     if (saveTimerRef.current !== null) {
       clearTimeout(saveTimerRef.current);
     }
-    if (controller.busy) {
+    if (controller.busy || controller.activeSessionId === null) {
       return;
     }
     saveTimerRef.current = setTimeout(() => {
-      void saveSession(config.workspaceRoot, {
-        id: sessionId,
+      service.saveSessionUiState(controller.activeSessionId!, {
+        entrySource: "tui",
         interactionMode,
-        messages: controller.messages,
+        messages: controller.messages as never,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
-        title: sessionTitle,
-        ...(controller.activeSessionId !== null ? { sessionId: controller.activeSessionId } : {}),
-        updatedAt: new Date().toISOString()
-      }).then(refreshSessionSummaries);
+        title: sessionTitle
+      });
+      refreshSessionIndex();
     }, 600);
     return () => {
       if (saveTimerRef.current !== null) {
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [config.workspaceRoot, controller.activeSessionId, controller.busy, controller.messages, controller.sessionApprovalFingerprints, interactionMode, refreshSessionSummaries, sessionId, sessionTitle]);
+  }, [
+    controller.activeSessionId,
+    controller.busy,
+    controller.messages,
+    controller.sessionApprovalFingerprints,
+    interactionMode,
+    refreshSessionIndex,
+    service,
+    sessionTitle
+  ]);
 
   React.useEffect(() => {
     if (controller.pendingApproval !== null) {
@@ -234,10 +337,15 @@ export function ChatTuiApp({
       if (!value.startsWith("/")) {
         return [];
       }
-      const dynamicSuggestions = buildDynamicSlashSuggestions(value, controller.activeSessionId, service);
+      const dynamicSuggestions = buildDynamicSlashSuggestions(
+        value,
+        controller.activeSessionId,
+        service,
+        reviewerId
+      );
       return getMatchingSuggestions(value, [...STATIC_SLASH_SUGGESTIONS, ...dynamicSuggestions]);
     },
-    [controller.activeSessionId, service]
+    [controller.activeSessionId, reviewerId, service]
   );
 
   const completeInput = React.useCallback(
@@ -270,35 +378,76 @@ export function ChatTuiApp({
     [slashSuggestions]
   );
 
-  const restoreSession = React.useCallback(
-    (session: PersistedChatSession): boolean => {
-      if (controller.busy || controller.pendingApproval !== null || controller.pendingClarifyPrompt !== null) {
-        controller.addSystemMessage("Finish the active task, approval, or clarification before resuming another session.");
+  const activateSessionById = React.useCallback(
+    (sessionId: string): boolean => {
+      if (
+        controller.busy ||
+        controller.pendingApproval !== null ||
+        controller.pendingClarifyPrompt !== null
+      ) {
+        controller.addSystemMessage(
+          "Finish the active task, approval, or clarification before resuming another session."
+        );
         return false;
       }
-      controller.restoreSession(session);
-      setSessionId(session.id);
-      setSessionTitle(session.title ?? "assistant");
-      setInteractionMode(session.interactionMode ?? "agent");
+      if (controller.activeSessionId !== null && controller.activeSessionId !== sessionId) {
+        flushActiveSessionState();
+      }
+      const activated = controller.activateSession(sessionId);
+      if (!activated) {
+        return false;
+      }
+      const session = service.findSession(sessionId);
+      setSessionTitle(session?.title ?? "assistant");
+      const uiState = service.loadSessionUiState(sessionId);
+      if (uiState !== null) {
+        setInteractionMode(uiState.interactionMode);
+      }
       setHomeSelectionIndex(0);
+      setSessionPickerOpen(false);
+      setSessionPickerFilter("");
+      setSessionPickerPreviewOpen(false);
+      showRecapForSession(sessionId);
+      refreshSessionIndex();
       return true;
     },
-    [controller]
+    [controller, flushActiveSessionState, refreshSessionIndex, service, showRecapForSession]
+  );
+
+  const restoreSession = React.useCallback(
+    (session: PersistedChatSession): boolean => {
+      return activateSessionById(session.sessionId ?? session.id);
+    },
+    [activateSessionById]
   );
 
   const runWelcomeEntry = React.useCallback(
     (entry: WelcomeHomeEntry) => {
-      void loadSession(config.workspaceRoot, entry.sessionId).then((session) => {
-        if (session === null) {
-          controller.addSystemMessage(`Session ${entry.sessionId} not found.`);
-          refreshSessionSummaries();
-          return;
-        }
-        restoreSession(session);
-      });
+      activateSessionById(entry.sessionId);
     },
-    [config.workspaceRoot, controller, refreshSessionSummaries, restoreSession]
+    [activateSessionById]
   );
+
+  const openSessionPicker = React.useCallback(() => {
+    refreshSessionIndex();
+    setSessionPickerIndex(0);
+    setSessionPickerFilter("");
+    setSessionPickerPreviewOpen(false);
+    setSessionPickerOpen(true);
+  }, [refreshSessionIndex]);
+
+  const closeSessionPicker = React.useCallback(() => {
+    setSessionPickerOpen(false);
+    setSessionPickerFilter("");
+    setSessionPickerPreviewOpen(false);
+  }, []);
+
+  const runSessionPickerEntry = React.useCallback(() => {
+    const entry = filteredSessionEntries[sessionPickerIndex];
+    if (entry !== undefined) {
+      activateSessionById(entry.sessionId);
+    }
+  }, [activateSessionById, filteredSessionEntries, sessionPickerIndex]);
 
   const handleSlashCommand = React.useCallback(
     (text: string): boolean => {
@@ -309,9 +458,9 @@ export function ChatTuiApp({
       if (text === "/help") {
         controller.addSystemMessage(
           [
-            "Most used: /resume /today /inbox /session new <title> /schedule create <when> | <prompt>",
-            "Workflow: /resume [session] /inbox [show] /session [summary|list|switch] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
-            "Session: /mode [agent|plan] /edit /status /clear /new /stop /history /context /cost /diff /sandbox /sessions /rollback <id|last> /title <name>",
+            "Most used: /resume <session> /sessions /today /inbox /new <title> /schedule create <when> | <prompt>",
+            "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
+            "Session: /mode [agent|plan] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history",
             "Saved sessions: use `talon tui --resume <id>` to restore transcript files from .auto-talon/sessions.",
@@ -323,17 +472,45 @@ export function ChatTuiApp({
 
       if (text === "/resume" || text.startsWith("/resume ")) {
         void handleResumeCommand(text, controller, {
-          loadSession: (id) => loadSession(config.workspaceRoot, id),
-          listSessionSummaries: () => listSessionSummaries(config.workspaceRoot),
-          openPicker: () => {
-            controller.resetVisibleChat();
-            setSessionTitle("assistant");
-            setSessionId(randomUUID());
+          loadSession: (id) => {
+            const uiState = service.loadSessionUiState(id);
+            if (uiState === null) {
+              return Promise.resolve(null);
+            }
+            const session = service.findSession(id);
+            return Promise.resolve({
+              id,
+              interactionMode: uiState.interactionMode,
+              messages: uiState.messages as ChatMessage[],
+              sessionApprovalFingerprints: uiState.sessionApprovalFingerprints,
+              sessionId: id,
+              updatedAt: session?.updatedAt ?? new Date().toISOString(),
+              ...(session?.title !== undefined ? { title: session.title } : {})
+            });
+          },
+          listSessionSummaries: () =>
+            Promise.resolve(service.listSessionIndex({ ownerUserId: reviewerId, status: "active" }).map((entry) => ({
+              id: entry.sessionId,
+              label: entry.title,
+              preview: entry.preview,
+              sessionId: entry.sessionId,
+              updatedAt: entry.updatedAt
+            }))),
+          openPicker: openSessionPicker,
+          resolveSessionRef: (ref) => {
+            const resolved = service.resolveSessionRef(ref, reviewerId);
+            return {
+              ambiguous: resolved.ambiguous.map((session) => ({
+                id: session.sessionId,
+                label: session.title
+              })),
+              sessionId: resolved.session?.sessionId ?? null
+            };
           },
           restoreSession
         }).then((resumed) => {
           if (!resumed) {
-            refreshSessionSummaries();
+            refreshSessionIndex();
           }
         });
         return true;
@@ -346,10 +523,6 @@ export function ChatTuiApp({
 
       if (text === "/inbox" || text.startsWith("/inbox ")) {
         return handleInboxCommand(text, controller, service);
-      }
-
-      if (text.startsWith("/session")) {
-        return handleSessionCommand(text, controller, service);
       }
 
       if (text.startsWith("/next")) {
@@ -452,17 +625,97 @@ export function ChatTuiApp({
         return false;
       }
 
-      if (text === "/clear") {
-        controller.resetVisibleChat();
+      if (text === "/clear" || text.startsWith("/clear ")) {
+        const oldTitle = text === "/clear" ? undefined : text.slice("/clear ".length).trim();
+        const nextId = clearAndStartNewSession({
+          ...(oldTitle !== undefined && oldTitle.length > 0 ? { oldTitle } : {}),
+          newTitle: "Untitled session"
+        });
+        if (nextId !== null) {
+          controller.addSystemMessage(`Started a new session. id=${nextId.slice(0, 8)}`);
+        }
         return true;
       }
 
-      if (text === "/new") {
-        controller.clearConversation();
-        setSessionTitle("assistant");
-        const nextId = randomUUID();
-        setSessionId(nextId);
-        controller.addSystemMessage(`Started a new assistant session. id=${nextId}`);
+      if (text === "/new" || text.startsWith("/new ")) {
+        const title = text === "/new" ? "Untitled session" : text.slice("/new ".length).trim() || "Untitled session";
+        const nextId = clearAndStartNewSession({ newTitle: title });
+        if (nextId !== null) {
+          controller.addSystemMessage(`Started a new assistant session. id=${nextId.slice(0, 8)} | ${title}`);
+        }
+        return true;
+      }
+
+      if (text === "/branch" || text.startsWith("/branch ")) {
+        if (controller.activeSessionId === null) {
+          controller.addSystemMessage("No active session to branch.");
+          return true;
+        }
+        const sourceSessionId = controller.activeSessionId;
+        const branchTitle = text === "/branch" ? undefined : text.slice("/branch ".length).trim();
+        flushActiveSessionState();
+        const branched = service.branchSession({
+          agentProfileId: config.defaultProfileId,
+          cwd,
+          ownerUserId: reviewerId,
+          sourceSessionId,
+          ...(branchTitle !== undefined && branchTitle.length > 0 ? { title: branchTitle } : {})
+        });
+        activateSessionById(branched.sessionId);
+        controller.addSystemMessage(
+          `Branched from ${sourceSessionId.slice(0, 8)} into ${branched.sessionId.slice(0, 8)} | ${branched.title}`
+        );
+        return true;
+      }
+
+      if (text === "/handoff" || text.startsWith("/handoff ")) {
+        if (controller.activeSessionId === null) {
+          controller.addSystemMessage("No active session to hand off.");
+          return true;
+        }
+        const args = text === "/handoff" ? [] : text.slice("/handoff ".length).trim().split(/\s+/u);
+        const sub = args[0] ?? "status";
+        if (sub === "status") {
+          const bindings = service.listGatewayBindingsForRuntimeSession(controller.activeSessionId);
+          controller.addSystemMessage(
+            bindings.length === 0
+              ? "No gateway bindings for this session."
+              : bindings
+                  .map(
+                    (binding) =>
+                      `- ${binding.adapterId}:${binding.externalSessionId.slice(0, 12)} -> ${binding.runtimeSessionId?.slice(0, 8) ?? "none"}`
+                  )
+                  .join("\n")
+          );
+          return true;
+        }
+        if (
+          controller.busy ||
+          controller.pendingApproval !== null ||
+          controller.pendingClarifyPrompt !== null
+        ) {
+          controller.addSystemMessage("Finish the active task, approval, or clarification before handoff.");
+          return true;
+        }
+        flushActiveSessionState();
+        const adapterId = sub;
+        const externalSessionId = args[1] ?? `${adapterId}:handoff:${controller.activeSessionId.slice(0, 8)}`;
+        try {
+          const result = service.handoffSession({
+            adapterId,
+            externalSessionId,
+            ownerUserId: reviewerId,
+            runtimeSessionId: controller.activeSessionId,
+            runtimeUserId: `${adapterId}:session:${externalSessionId}`,
+            source: "tui"
+          });
+          controller.addSystemMessage(
+            `Handoff complete to ${adapterId}. Resume locally: ${result.resumeHint}`
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          controller.addSystemMessage(`Handoff failed: ${message}`);
+        }
         return true;
       }
 
@@ -510,11 +763,7 @@ export function ChatTuiApp({
       }
 
       if (text === "/sessions") {
-        void listSessionIds(config.workspaceRoot).then((ids) => {
-          controller.addSystemMessage(
-            ids.length > 0 ? `Saved session ids (newest files under .auto-talon/sessions):\n${ids.join("\n")}` : "No saved sessions yet."
-          );
-        });
+        openSessionPicker();
         return true;
       }
 
@@ -526,7 +775,7 @@ export function ChatTuiApp({
       if (text === "/status") {
         const lines = [
           `session: ${sessionTitle}`,
-          `session_id: ${sessionId}`,
+          `session_id: ${activeSessionId}`,
           `cwd: ${cwd}`,
           `sandbox_mode: ${config.sandbox.mode}`,
           `write_roots: ${config.sandbox.writeRoots.join(", ")}`,
@@ -545,7 +794,9 @@ export function ChatTuiApp({
           "ui_scroll: native_terminal_scrollback",
           `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
-          `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`
+          `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`,
+          "",
+          formatSessionDetailForTui(service, activeSessionId)
         ];
         controller.addSystemMessage(lines.join("\n"));
         return true;
@@ -596,6 +847,10 @@ export function ChatTuiApp({
           return true;
         }
         setSessionTitle(nextTitle);
+        if (controller.activeSessionId !== null) {
+          service.updateSessionTitle(controller.activeSessionId, nextTitle);
+          flushActiveSessionState(nextTitle);
+        }
         controller.addSystemMessage(`Session title set to: ${nextTitle}`);
         return true;
       }
@@ -611,13 +866,14 @@ export function ChatTuiApp({
       config.workspaceRoot,
       controller,
       cwd,
-      refreshSessionSummaries,
-      reviewerId,
+      activateSessionById,
+      openSessionPicker,
+      refreshSessionIndex,
       restoreSession,
       service,
       interactionMode,
-      sessionId,
       sessionTitle,
+      activeSessionId,
       scrollback
     ]
   );
@@ -753,10 +1009,36 @@ export function ChatTuiApp({
     homeSummaryNavigation: {
       enabled:
         showTodaySummary &&
+        !sessionPickerOpen &&
         controller.pendingApproval === null &&
         controller.pendingClarifyPrompt === null &&
         homeEntries.length > 0
     },
+    sessionPickerNavigation: {
+      enabled:
+        sessionPickerOpen &&
+        controller.pendingApproval === null &&
+        controller.pendingClarifyPrompt === null,
+      onCancel: closeSessionPicker,
+      onFilterAppend: (char) => {
+        setSessionPickerFilter((current) => `${current}${char}`);
+        setSessionPickerIndex(0);
+      },
+      onFilterBackspace: () => {
+        setSessionPickerFilter((current) => current.slice(0, -1));
+        setSessionPickerIndex(0);
+      },
+      onMove: (delta) => {
+        setSessionPickerIndex((current) =>
+          clampPickerIndex(current + delta, filteredSessionEntries.length)
+        );
+      },
+      onSubmit: runSessionPickerEntry,
+      onTogglePreview: () => {
+        setSessionPickerPreviewOpen((current) => !current);
+      }
+    },
+    ...(recapSessionId !== null ? { onEscape: dismissRecap } : {}),
     onHistoryNext: navigateHistoryNext,
     onHistoryPrevious: navigateHistoryPrevious,
     onHomeSummaryMove: (delta) => {
@@ -851,6 +1133,7 @@ export function ChatTuiApp({
       if (handleSlashCommand(value)) {
         return true;
       }
+      dismissRecap();
       const accepted = controller.submitPrompt(value);
       if (!accepted) {
         return false;
@@ -890,9 +1173,13 @@ export function ChatTuiApp({
       ? "Arrows choose, Tab custom, Enter submit"
       : controller.pendingApproval !== null
         ? "1 once, 2 session, 3 always, 4 deny"
-        : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
-          ? "Up/Down + Enter resume"
-          : "";
+        : sessionPickerOpen
+          ? "Up/Down + Enter | Type filter | P preview | Esc cancel"
+          : recapSessionId !== null
+            ? "Esc dismiss recap"
+            : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
+              ? "Up/Down + Enter resume"
+              : "";
   const statusMetrics = hasBlockingPrompt
     ? []
     : [
@@ -909,7 +1196,29 @@ export function ChatTuiApp({
         productName="AUTOTALON"
         title={sessionTitle === "assistant" ? "Personal Assistant" : sessionTitle}
       />
-      {showTodaySummary ? <WelcomeHome selectedIndex={homeSelectionIndex} summary={welcomeHome} /> : null}
+      {recapSessionId !== null && !sessionPickerOpen ? (
+        <SessionRecap recapText={formatSessionRecapForTui(service, recapSessionId)} />
+      ) : null}
+      {sessionPickerOpen ? (
+        <SessionBrowser
+          entries={filteredSessionEntries}
+          filter={sessionPickerFilter}
+          mode="picker"
+          previewMessages={pickerPreviewMessages}
+          previewOpen={sessionPickerPreviewOpen}
+          selectedIndex={sessionPickerIndex}
+        />
+      ) : showTodaySummary ? (
+        <SessionBrowser
+          entries={[]}
+          filter=""
+          mode="welcome"
+          previewMessages={null}
+          previewOpen={false}
+          selectedIndex={homeSelectionIndex}
+          welcomeSummary={welcomeHome}
+        />
+      ) : null}
       <PromptZone
         approvalPrompt={
           controller.pendingApproval === null
@@ -1075,20 +1384,21 @@ function parseSlashInput(text: string): { args: string[]; command: string; rest:
 function buildDynamicSlashSuggestions(
   value: string,
   activeSessionId: string | null,
-  service: TuiRuntimeService
+  service: TuiRuntimeService,
+  sessionOwnerUserId = resolveRuntimeUserId()
 ): SlashSuggestion[] {
   const parsed = parseSlashInput(value);
   const userId = resolveRuntimeUserId();
 
-  if (parsed.command === "/session" && (parsed.args[0] === "switch" || parsed.args[0] === "summary")) {
+  if (parsed.command === "/resume") {
     return service
       .listSessions("active")
-      .filter((item) => item.ownerUserId === userId)
+      .filter((item) => item.ownerUserId === sessionOwnerUserId)
       .map((item) => ({
         description: item.title,
-        insertText: `/session ${parsed.args[0]} ${item.sessionId.slice(0, 8)}`,
+        insertText: `/resume ${item.sessionId.slice(0, 8)}`,
         key: `session:${item.sessionId}`,
-        label: `/session ${parsed.args[0]} ${item.sessionId.slice(0, 8)}`,
+        label: `/resume ${item.sessionId.slice(0, 8)}`,
         rank: 1
       }));
   }
@@ -1331,103 +1641,11 @@ function formatInboxDetailForTui(item: InboxItem): string {
   ].join("\n");
 }
 
-function handleSessionCommand(text: string, controller: ReturnType<typeof useChatController>, service: TuiRuntimeService): boolean {
-  const parsed = parseSlashInput(text);
-  const sub = parsed.args[0] ?? "summary";
-  if (parsed.command !== "/session") {
-    controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
-    return true;
-  }
-
-  if (sub === "new") {
-    const title = parsed.rest.slice("new".length).trim() || "Untitled session";
-    const sessionId = controller.createAndActivateSession(title);
-    controller.resetVisibleChatPreserveActiveSession("session created");
-    controller.addSystemMessage(`Switched to new session ${sessionId.slice(0, 8)} | ${title}`);
-    controller.addSystemMessage(formatSessionRecapForTui(service, sessionId));
-    return true;
-  }
-
-  if (sub === "switch") {
-    const prefix = parsed.args[1] ?? "";
-    if (prefix.length === 0) {
-      controller.addSystemMessage("Usage: /session switch <session-id-prefix>");
-      return true;
-    }
-    const userId = resolveRuntimeUserId();
-    const candidates = service
-      .listSessions("active")
-      .filter((item) => item.ownerUserId === userId && item.sessionId.startsWith(prefix));
-    if (candidates.length !== 1) {
-      controller.addSystemMessage(
-        candidates.length === 0
-          ? `No session matched prefix '${prefix}'.`
-          : `Ambiguous session prefix '${prefix}':\n${candidates.map((item) => `- ${item.sessionId.slice(0, 8)} | ${item.title}`).join("\n")}`
-      );
-      return true;
-    }
-    const match = candidates[0];
-    if (match === undefined) {
-      return true;
-    }
-    controller.switchActiveSession(match.sessionId);
-    controller.resetVisibleChatPreserveActiveSession("session selected");
-    controller.addSystemMessage(`Switched active session to ${match.sessionId.slice(0, 8)} | ${match.title}`);
-    controller.addSystemMessage(formatSessionRecapForTui(service, match.sessionId));
-    return true;
-  }
-
-  if (sub === "list") {
-    const userId = resolveRuntimeUserId();
-    const sessions = service
-      .listSessions("active")
-      .filter((item) => item.ownerUserId === userId)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, 20);
-    controller.addSystemMessage(
-      sessions.length === 0
-        ? `Active sessions (user=${userId}): none`
-        : `Active sessions (user=${userId}, showing ${sessions.length}):\n${sessions
-            .map((item) => `- ${item.sessionId.slice(0, 8)} | ${item.title} [${item.status}]`)
-            .join("\n")}`
-    );
-    return true;
-  }
-
-  if (sub === "summary") {
-    const maybePrefix = parsed.args[1] ?? "";
-    if (maybePrefix.length > 0) {
-      const userId = resolveRuntimeUserId();
-      const candidates = service
-        .listSessions("active")
-        .filter((item) => item.ownerUserId === userId && item.sessionId.startsWith(maybePrefix));
-      if (candidates.length !== 1) {
-        controller.addSystemMessage(
-          candidates.length === 0
-            ? `No session matched prefix '${maybePrefix}'.`
-            : `Ambiguous session prefix '${maybePrefix}':\n${candidates.map((item) => `- ${item.sessionId.slice(0, 8)} | ${item.title}`).join("\n")}`
-        );
-        return true;
-      }
-      controller.addSystemMessage(formatSessionDetailForTui(service, candidates[0]!.sessionId));
-      return true;
-    }
-    if (controller.activeSessionId !== null) {
-      controller.addSystemMessage(formatSessionDetailForTui(service, controller.activeSessionId));
-    } else {
-      return handleSessionCommand("/session list", controller, service);
-    }
-    return true;
-  }
-
-  controller.addSystemMessage("Usage: /session [new [title]|list|switch <session-id-prefix>|summary [session-id-prefix]]");
-  return true;
-}
-
 interface ResumeCommandSessionStore {
   listSessionSummaries: () => Promise<ChatSessionSummary[]>;
   loadSession: (id: string) => Promise<PersistedChatSession | null>;
   openPicker: () => void;
+  resolveSessionRef?: (ref: string) => { ambiguous: Array<{ id: string; label: string }>; sessionId: string | null };
   restoreSession: (session: PersistedChatSession) => boolean;
 }
 
@@ -1441,32 +1659,42 @@ export async function handleResumeCommand(
     controller.addSystemMessage(`Unknown command: ${text}. Try /help.`);
     return false;
   }
-  const prefix = parsed.args[0] ?? "";
+  const prefix = parsed.rest;
   const summaries = await sessions.listSessionSummaries();
   if (prefix.length === 0) {
-    sessions.openPicker();
-    if (summaries.length === 0) {
-      controller.addSystemMessage("No saved sessions yet. Start with a plain-language request.");
-    }
+    controller.addSystemMessage("Usage: /resume <ref>. Use /sessions to browse.");
     return false;
   }
-  const matches = summaries.filter((item) => item.id.startsWith(prefix));
-  if (matches.length !== 1) {
+
+  let targetId: string | null = null;
+  const idMatches = summaries.filter((item) => item.id.startsWith(prefix));
+  if (idMatches.length === 1) {
+    targetId = idMatches[0]?.id ?? null;
+  } else if (idMatches.length > 1) {
     controller.addSystemMessage(
-      matches.length === 0
-        ? `No saved session matched prefix '${prefix}'.`
-        : `Ambiguous session prefix '${prefix}':\n${matches.map((item) => `- ${item.id.slice(0, 8)} | ${item.label}`).join("\n")}`
+      `Ambiguous session prefix '${prefix}':\n${idMatches.map((item) => `- ${item.id.slice(0, 8)} | ${item.label}`).join("\n")}`
     );
     return false;
+  } else if (sessions.resolveSessionRef !== undefined) {
+    const resolved = sessions.resolveSessionRef(prefix);
+    if (resolved.sessionId !== null) {
+      targetId = resolved.sessionId;
+    } else if (resolved.ambiguous.length > 0) {
+      controller.addSystemMessage(
+        `Ambiguous session title '${prefix}':\n${resolved.ambiguous.map((item) => `- ${item.id.slice(0, 8)} | ${item.label}`).join("\n")}`
+      );
+      return false;
+    }
   }
-  const target = matches[0];
-  if (target === undefined) {
-    controller.addSystemMessage("No saved session to resume.");
+
+  if (targetId === null) {
+    controller.addSystemMessage(`No saved session matched '${prefix}'.`);
     return false;
   }
-  const session = await sessions.loadSession(target.id);
+
+  const session = await sessions.loadSession(targetId);
   if (session === null) {
-    controller.addSystemMessage(`Session ${target.id} could not be loaded.`);
+    controller.addSystemMessage(`Session ${targetId} could not be loaded.`);
     return false;
   }
   return sessions.restoreSession(session);
@@ -1879,5 +2107,35 @@ function resolveCommitmentByPrefix(
       matches.length === 0
         ? `No commitment matched prefix '${prefix}'.`
         : `Ambiguous commitment prefix '${prefix}':\n${matches.map((item) => `- ${item.commitmentId.slice(0, 8)} | ${item.title}`).join("\n")}`
+  };
+}
+
+function buildWelcomeHomeFromIndex(
+  sessions: SessionIndexEntry[],
+  currentSessionId: string
+): WelcomeHomeViewModel {
+  const entries = sessions
+    .filter((session) => session.sessionId !== currentSessionId)
+    .slice(0, 4)
+    .map((session) => ({
+      detail: `${session.source}${session.preview !== null ? ` - ${session.preview}` : ""}`,
+      key: `session:${session.sessionId}`,
+      label: session.title,
+      sessionId: session.sessionId
+    }));
+  return {
+    entries,
+    examples:
+      entries.length === 0
+        ? [
+            "Explain this project and point me to the entrypoints.",
+            "Fix the failing test and verify the change.",
+            "Turn this task into a small implementation plan."
+          ]
+        : [],
+    hint:
+      entries.length > 0
+        ? "Type a request below, or use Up/Down and Enter to resume a conversation."
+        : "Type a request below to start."
   };
 }

@@ -68,6 +68,7 @@ export interface QueuedPromptEntry {
 export interface ChatController {
   activeTaskId: string | null;
   activeSessionId: string | null;
+  activateSession: (sessionId: string, input?: ActivateSessionInput) => boolean;
   addSystemMessage: (text: string) => void;
   busy: boolean;
   clearConversation: () => void;
@@ -107,6 +108,13 @@ export interface ChatController {
   tokenHud: TokenHud;
   uiStatus: UiStatus;
   usedMemoryCount: number;
+}
+
+export interface ActivateSessionInput {
+  interactionMode?: TuiInteractionMode;
+  messages?: ChatMessage[];
+  sessionApprovalFingerprints?: string[];
+  title?: string;
 }
 
 const welcomeMessage: ChatMessage = {
@@ -418,11 +426,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       input.service.ensureRuntimeSession(sessionId, {
         agentProfileId: input.config.defaultProfileId,
         cwd: input.cwd,
-        ownerUserId: process.env.USERNAME ?? process.env.USER ?? "local-user",
+        ownerUserId: input.reviewerId,
         ...(title !== undefined ? { title } : {})
       });
     },
-    [input.config.defaultProfileId, input.cwd, input.service]
+    [input.config.defaultProfileId, input.cwd, input.reviewerId, input.service]
   );
 
   React.useEffect(() => {
@@ -432,15 +440,19 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     ensureRuntimeSession(input.initialSessionId);
   }, [ensureRuntimeSession, input.initialSessionId]);
 
-  const restoreSession = React.useCallback(
-    (session: PersistedChatSession) => {
-      if (session.sessionId !== undefined) {
-        ensureRuntimeSession(session.sessionId, session.title);
+  const activateSession = React.useCallback(
+    (sessionId: string, overrides?: ActivateSessionInput): boolean => {
+      if (busyCount > 0 || pendingApproval !== null || pendingClarifyPrompt !== null) {
+        return false;
       }
+      ensureRuntimeSession(sessionId, overrides?.title);
+      const loaded = overrides?.messages !== undefined ? null : input.service.loadSessionUiState(sessionId);
       const restoredMessages =
-        session.messages.length > 0
-          ? hydrateFailedTaskProgress(session.messages, input.service)
-          : [welcomeMessage];
+        overrides?.messages !== undefined && overrides.messages.length > 0
+          ? hydrateFailedTaskProgress(overrides.messages, input.service)
+          : loaded !== null && loaded.messages.length > 0
+            ? hydrateFailedTaskProgress(loaded.messages as ChatMessage[], input.service)
+            : [welcomeMessage];
       setMessages(restoredMessages);
       setStatusLine("session resumed");
       setUiStatus({
@@ -454,18 +466,45 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       setPendingApproval(null);
       setPendingClarifyPrompt(null);
       activeTaskIdRef.current = null;
-      activeSessionIdRef.current = session.sessionId ?? null;
+      activeSessionIdRef.current = sessionId;
       seenApprovalMessageIdsRef.current = collectApprovalMessageIds(restoredMessages);
-      setSessionApprovalFingerprints(session.sessionApprovalFingerprints ?? []);
+      setSessionApprovalFingerprints(
+        overrides?.sessionApprovalFingerprints ?? loaded?.sessionApprovalFingerprints ?? []
+      );
       setFileEdits([]);
       setQueuedPrompts([]);
       resetTokenHudState();
       setUsedMemoryCount(0);
-      setActiveSessionId(session.sessionId ?? null);
+      setActiveSessionId(sessionId);
       stopTraceSubscription();
       resetAssistantProgressBuffers();
+      return true;
     },
-    [ensureRuntimeSession, input.service, resetAssistantProgressBuffers, resetTokenHudState, stopTraceSubscription]
+    [
+      busyCount,
+      ensureRuntimeSession,
+      input.service,
+      pendingApproval,
+      pendingClarifyPrompt,
+      resetAssistantProgressBuffers,
+      resetTokenHudState,
+      stopTraceSubscription
+    ]
+  );
+
+  const restoreSession = React.useCallback(
+    (session: PersistedChatSession) => {
+      const sessionId = session.sessionId ?? session.id;
+      return activateSession(sessionId, {
+        messages: session.messages,
+        ...(session.interactionMode !== undefined ? { interactionMode: session.interactionMode } : {}),
+        ...(session.sessionApprovalFingerprints !== undefined
+          ? { sessionApprovalFingerprints: session.sessionApprovalFingerprints }
+          : {}),
+        ...(session.title !== undefined ? { title: session.title } : {})
+      });
+    },
+    [activateSession]
   );
 
   const switchActiveSession = React.useCallback((sessionId: string) => {
@@ -475,18 +514,25 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   const createAndActivateSession = React.useCallback(
     (title = "Untitled session"): string => {
-      const userId = process.env.USERNAME ?? process.env.USER ?? "local-user";
       const session = input.service.createSession({
         agentProfileId: input.config.defaultProfileId,
         cwd: input.cwd,
-        ownerUserId: userId,
+        metadata: { source: "tui" },
+        ownerUserId: input.reviewerId,
         providerName: input.config.provider.name,
         title
       });
       switchActiveSession(session.sessionId);
       return session.sessionId;
     },
-    [input.config.defaultProfileId, input.config.provider.name, input.cwd, input.service, switchActiveSession]
+    [
+      input.config.defaultProfileId,
+      input.config.provider.name,
+      input.cwd,
+      input.reviewerId,
+      input.service,
+      switchActiveSession
+    ]
   );
 
   const refresh = React.useCallback(() => {
@@ -1345,6 +1391,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   return {
     activeTaskId,
     activeSessionId,
+    activateSession,
     addSystemMessage,
     busy,
     clearConversation,

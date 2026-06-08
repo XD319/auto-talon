@@ -57,7 +57,8 @@ import type {
   ScheduleRunRecord,
   TaskRecord,
   ToolCallRecord,
-  TraceEvent
+  TraceEvent,
+  SessionRecord
 } from "../src/types/index.js";
 import type { CreateScheduleInput } from "../src/runtime/scheduler/index.js";
 
@@ -77,6 +78,33 @@ type ControllerServiceStub = Pick<
   | "subscribeToTaskTrace"
   | "traceTask"
 >;
+
+function createStubSessionRecord(sessionId: string, title = "Untitled session"): SessionRecord {
+  const timestamp = new Date().toISOString();
+  return {
+    agentProfileId: "executor",
+    archivedAt: null,
+    createdAt: timestamp,
+    cwd: process.cwd(),
+    metadata: {},
+    ownerUserId: "local-user",
+    providerName: "mock",
+    sessionId,
+    status: "active",
+    title,
+    updatedAt: timestamp
+  };
+}
+
+function asControllerService(service: ControllerServiceStub): AgentApplicationService {
+  return {
+    ensureRuntimeSession: (sessionId, input) =>
+      createStubSessionRecord(sessionId, input?.title ?? "Untitled session"),
+    loadSessionUiState: () => null,
+    saveSessionUiState: () => {},
+    ...service
+  } as AgentApplicationService;
+}
 
 type InkRenderResult = ReturnType<typeof render>;
 
@@ -389,7 +417,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -442,7 +470,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -500,7 +528,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -557,7 +585,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -679,7 +707,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -786,7 +814,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -904,7 +932,7 @@ describe("use-chat-controller helpers", () => {
         cwd: process.cwd(),
         interactionMode,
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -995,7 +1023,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
       React.useEffect(() => {
         controller = instance;
@@ -1119,7 +1147,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
       React.useEffect(() => {
         submitPrompt = instance.submitPrompt;
@@ -1138,6 +1166,7 @@ describe("use-chat-controller helpers", () => {
       expect(submitPrompt?.("after switch")).toBe(true);
       await waitFor(() => continueSession.mock.calls.length === 1);
       expect(createSession).toHaveBeenCalledTimes(1);
+      expect(createSession.mock.calls[0]?.[0]).toMatchObject({ ownerUserId: "reviewer" });
       expect(runTask).toHaveBeenCalledTimes(0);
       expect(continueSession.mock.calls[0]?.[0]).toBe("session-new");
     } finally {
@@ -1235,7 +1264,7 @@ describe("use-chat-controller helpers", () => {
         cwd: process.cwd(),
         initialSessionId: "session-visible",
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -1274,7 +1303,7 @@ describe("use-chat-controller helpers", () => {
         initialSessionApprovalFingerprints: ["fingerprint-1"],
         initialSessionId: "session-active",
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -1329,7 +1358,7 @@ describe("use-chat-controller helpers", () => {
         initialSessionApprovalFingerprints: ["fingerprint-1"],
         initialSessionId: "session-active",
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -1377,7 +1406,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
       React.useEffect(() => {
         controller = instance;
@@ -1411,7 +1440,7 @@ describe("use-chat-controller helpers", () => {
 
       expect(getController().messages).toMatchObject([{ kind: "user", text: "Resume me" }]);
       expect(getController().sessionApprovalFingerprints).toEqual(["resume-fingerprint"]);
-      expect(getController().uiStatus.primaryLabel).toBe("session resumed");
+      expect(getController().statusLine).toBe("session resumed");
     } finally {
       await unmountInkApp(app);
     }
@@ -1467,7 +1496,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as unknown as AgentApplicationService
+        service: asControllerService(service)
       });
       React.useEffect(() => {
         controller = instance;
@@ -1593,7 +1622,7 @@ describe("use-chat-controller helpers", () => {
         cwd: process.cwd(),
         initialSessionId: "session-visible",
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -1714,7 +1743,7 @@ describe("use-chat-controller helpers", () => {
         config,
         cwd: process.cwd(),
         reviewerId: "reviewer",
-        service: service as AgentApplicationService
+        service: asControllerService(service)
       });
 
       React.useEffect(() => {
@@ -2031,7 +2060,7 @@ describe("schedule slash command helper", () => {
 });
 
 describe("resume slash command helper", () => {
-  it("returns to the session picker when no prefix is provided", async () => {
+  it("shows usage when no ref is provided", async () => {
     const messages: string[] = [];
     const resets: string[] = [];
     const handled = await handleResumeCommand(
@@ -2057,8 +2086,8 @@ describe("resume slash command helper", () => {
     );
 
     expect(handled).toBe(false);
-    expect(resets).toEqual(["reset"]);
-    expect(messages).toEqual([]);
+    expect(resets).toEqual([]);
+    expect(messages).toEqual(["Usage: /resume <ref>. Use /sessions to browse."]);
   });
 
   it("restores the selected saved session by prefix", async () => {
@@ -2095,6 +2124,41 @@ describe("resume slash command helper", () => {
 
     expect(handled).toBe(true);
     expect(restored).toEqual(["session-new"]);
+    expect(messages).toEqual([]);
+  });
+
+  it("restores the selected saved session by title with spaces", async () => {
+    const messages: string[] = [];
+    const restored: string[] = [];
+    const resolved = vi.fn((ref: string) => ({
+      ambiguous: [],
+      sessionId: ref === "Project Alpha" ? "session-alpha-1234" : null
+    }));
+    const handled = await handleResumeCommand(
+      "/resume Project Alpha",
+      {
+        addSystemMessage: (text: string) => messages.push(text)
+      } as unknown as ReturnType<typeof useChatController>,
+      {
+        listSessionSummaries: () => Promise.resolve([]),
+        loadSession: () => Promise.resolve({
+          id: "session-alpha-1234",
+          messages: [{ id: "user:1", kind: "user", text: "Fix tests", timestamp: "2026-01-01T00:00:00.000Z" }],
+          sessionId: "session-alpha-1234",
+          updatedAt: "2026-01-01T02:00:00.000Z"
+        }),
+        openPicker: () => {},
+        resolveSessionRef: resolved,
+        restoreSession: (session) => {
+          restored.push(session.id);
+          return true;
+        }
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(resolved).toHaveBeenCalledWith("Project Alpha");
+    expect(restored).toEqual(["session-alpha-1234"]);
     expect(messages).toEqual([]);
   });
 });

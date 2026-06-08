@@ -8,10 +8,10 @@ import { ChatTuiApp } from "./chat-app.js";
 import { AgentTuiApp } from "./dashboard-app.js";
 import type { TuiResolveAppConfigOptions } from "./runtime-api.js";
 import type { ChatMessage } from "./view-models/chat-messages.js";
-import { loadSession } from "./session-store.js";
 import { RuntimeDashboardQueryService } from "./view-models/runtime-dashboard.js";
 
 export interface StartTuiOptions {
+  continueLatest?: boolean;
   cwd?: string;
   resumeSessionId?: string;
   sandbox?: TuiResolveAppConfigOptions;
@@ -24,27 +24,52 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {})
   });
   try {
-    const transcriptId = options.resumeSessionId ?? randomUUID();
-    let initialMessages = undefined;
-    let initialSessionApprovalFingerprints = undefined;
-    let initialSessionTitle = undefined;
-    let initialInteractionMode = undefined;
-    let initialRuntimeSessionId = undefined;
-    if (options.resumeSessionId !== undefined) {
-      const loaded = await loadSession(handle.config.workspaceRoot, options.resumeSessionId);
-      const missing: ChatMessage[] = [
+    await handle.service.migrateLegacyTranscripts();
+
+    const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
+    let initialSessionId = options.resumeSessionId;
+    if (options.continueLatest === true) {
+      initialSessionId = handle.service.latestSessionIndexForUser(ownerUserId)?.sessionId;
+    }
+    if (initialSessionId !== undefined && options.resumeSessionId !== undefined && options.continueLatest !== true) {
+      const resolved = handle.service.resolveSessionRef(initialSessionId, ownerUserId);
+      if (resolved.session !== null) {
+        initialSessionId = resolved.session.sessionId;
+      }
+    }
+    if (initialSessionId === undefined) {
+      initialSessionId = randomUUID();
+    }
+
+    let initialMessages: ChatMessage[] | undefined;
+    let initialSessionApprovalFingerprints: string[] | undefined;
+    let initialSessionTitle: string | undefined;
+    let initialInteractionMode: "agent" | "plan" | undefined;
+    let initialRuntimeSessionId: string | undefined;
+
+    const uiState = handle.service.loadSessionUiState(initialSessionId);
+    if (uiState !== null) {
+      initialMessages = uiState.messages as ChatMessage[];
+      initialSessionApprovalFingerprints = uiState.sessionApprovalFingerprints;
+      initialInteractionMode = uiState.interactionMode;
+      initialRuntimeSessionId = initialSessionId;
+      const session = handle.service.findSession(initialSessionId);
+      initialSessionTitle = session?.title;
+    } else if (options.resumeSessionId !== undefined || options.continueLatest === true) {
+      handle.service.ensureRuntimeSession(initialSessionId, {
+        cwd,
+        ownerUserId,
+        title: "Untitled session"
+      });
+      initialRuntimeSessionId = initialSessionId;
+      initialMessages = [
         {
-          id: "system:resume-missing",
+          id: "system:resume-empty",
           kind: "system",
-          text: `Session file not found for id ${options.resumeSessionId}. Starting a new transcript with this id.`,
+          text: `Session ${initialSessionId.slice(0, 8)} has no saved messages yet.`,
           timestamp: new Date().toISOString()
         }
       ];
-      initialMessages = loaded?.messages ?? missing;
-      initialSessionApprovalFingerprints = loaded?.sessionApprovalFingerprints;
-      initialSessionTitle = loaded?.title;
-      initialInteractionMode = loaded?.interactionMode;
-      initialRuntimeSessionId = loaded?.sessionId;
     }
 
     let app: ReturnType<typeof render> | null = null;
@@ -59,11 +84,9 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
             : {}),
           ...(initialSessionTitle !== undefined ? { initialSessionTitle } : {}),
           ...(initialInteractionMode !== undefined ? { initialInteractionMode } : {}),
-          initialTranscriptId: transcriptId,
-          ...(initialRuntimeSessionId !== undefined
-            ? { initialRuntimeSessionId }
-            : {}),
-          reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer",
+          initialSessionId,
+          ...(initialRuntimeSessionId !== undefined ? { initialRuntimeSessionId } : {}),
+          reviewerId: ownerUserId,
           service: handle.service
         }),
         {

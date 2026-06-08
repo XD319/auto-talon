@@ -11,7 +11,13 @@ const { closeApplication, createApplication, render, unmount, waitUntilExit } = 
       provider: { name: "mock" },
       workspaceRoot: "D:\\workspace"
     },
-    service: {}
+    service: {
+      ensureRuntimeSession: vi.fn((sessionId: string) => ({ sessionId })),
+      findSession: vi.fn(() => null),
+      latestSessionIndexForUser: vi.fn(() => null),
+      loadSessionUiState: vi.fn(() => null),
+      migrateLegacyTranscripts: vi.fn(() => Promise.resolve({ migratedFiles: 0, skippedFiles: 0 }))
+    }
   }));
   return { closeApplication, createApplication, render, unmount, waitUntilExit };
 });

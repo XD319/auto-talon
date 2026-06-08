@@ -23,16 +23,17 @@ describe("personal assistant slash commands", () => {
       "/today",
       "/inbox",
       "/inbox show ",
-      "/session",
-      "/session new ",
-      "/session list",
-      "/session switch ",
-      "/session summary ",
       "/next",
       "/next list",
       "/next done ",
-      "/next block "
+      "/next block ",
+      "/commitments",
+      "/commitments list",
+      "/commitments done ",
+      "/commitments block ",
+      "/schedule"
     ]);
+    expect(SLASH_COMMANDS.some((command) => command === "/session" || command.startsWith("/session "))).toBe(false);
     expect(SLASH_COMMANDS).not.toContain("/dashboard");
     expect(SLASH_COMMANDS).toContain("/schedule create ");
     expect(SLASH_COMMANDS).toContain("/schedule list ");
@@ -46,9 +47,9 @@ describe("personal assistant slash commands", () => {
   it("completes personal workflow commands by prefix", () => {
     expect(completeSlashCommand("/t")).toBe("/today ");
     expect(completeSlashCommand("/r")).toBe("/resume ");
-    expect(completeSlashCommand("/ses")).toBe("/session ");
+    expect(completeSlashCommand("/ses")).toBe("/sessions ");
     expect(completeSlashCommand("/co")).toBe("/commitments ");
-    expect(completeSlashCommand("/session s")).toBe("/session switch ");
+    expect(completeSlashCommand("/session")).toBe(null);
     expect(completeSlashCommand("/next d")).toBe("/next done ");
     expect(completeSlashCommand("/commitments b")).toBe("/commitments block ");
     expect(completeSlashCommand("/schedule c")).toBe("/schedule create ");

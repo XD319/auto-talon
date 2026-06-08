@@ -10,11 +10,6 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/today", "today", "Show today's summary"),
   suggestion("/inbox", "inbox", "List pending inbox items"),
   suggestion("/inbox show ", "inbox-show", "Show inbox details by prefix"),
-  suggestion("/session", "session", "Session commands"),
-  suggestion("/session new ", "session-new", "Create and switch to a new session"),
-  suggestion("/session list", "session-list", "List active sessions"),
-  suggestion("/session switch ", "session-switch", "Switch to a session by prefix"),
-  suggestion("/session summary ", "session-summary", "Show session details"),
   suggestion("/next", "next", "Next action commands"),
   suggestion("/next list", "next-list", "List next actions"),
   suggestion("/next done ", "next-done", "Mark a next action done"),
@@ -32,14 +27,18 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/schedule runs ", "schedule-runs", "List recent schedule runs"),
   suggestion("/schedule remove ", "schedule-remove", "Archive a schedule"),
   suggestion("/help", "help", "Show help"),
-  suggestion("/resume", "resume", "Resume a saved session"),
+  suggestion("/resume ", "resume", "Resume a saved session by id prefix or title"),
   suggestion("/mode", "mode", "Show or switch chat mode"),
   suggestion("/mode plan", "mode-plan", "Use read-only planning mode"),
   suggestion("/mode agent", "mode-agent", "Use normal agent mode"),
   suggestion("/ops", "ops", "Open ops guidance"),
   suggestion("/status", "status", "Show TUI status"),
-  suggestion("/clear", "clear", "Clear conversation and exit active session"),
+  suggestion("/clear", "clear", "Save current session and start a new one"),
+  suggestion("/clear ", "clear-name", "Name the current session and start a new one"),
   suggestion("/new", "new", "Start a fresh assistant session"),
+  suggestion("/new ", "new-title", "Start a named assistant session"),
+  suggestion("/branch ", "branch", "Branch the current session"),
+  suggestion("/handoff ", "handoff", "Hand off session to a gateway adapter"),
   suggestion("/stop", "stop", "Interrupt the current task"),
   suggestion("/history", "history", "Show recent prompts"),
   suggestion("/context", "context", "Show context budget summary"),
@@ -88,6 +87,9 @@ export function getMatchingSuggestions(
   value: string,
   suggestions: readonly SlashSuggestion[]
 ): SlashSuggestion[] {
+  if (value === "/session" || value.startsWith("/session ")) {
+    return [];
+  }
   return suggestions
     .filter((item) => item.insertText.startsWith(value))
     .sort((left, right) => (left.rank ?? 0) - (right.rank ?? 0));

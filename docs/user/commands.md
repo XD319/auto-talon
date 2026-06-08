@@ -5,6 +5,9 @@ Core:
 - `talon run`
 - `talon continue --last|--session <id> [task]`
 - `talon tui`
+- `talon tui --continue`
+- `talon tui --resume <session_id|title>`
+- `talon session-api serve`
 - `talon ops`
 - `talon dashboard` (compatibility alias of `talon ops`)
 - `talon init`
@@ -14,7 +17,8 @@ Core:
 Operational:
 
 - `talon task list|show|timeline`
-- `talon session list|show|archive <session_id>`
+- `talon session list|show|archive|search <query>`
+- `talon session handoff --session <id> --adapter <adapter> [--external-session <id>]`
 - `talon schedule create|list|show|edit|pause|resume|run-now|runs|remove|status|tick|run`
 - `talon inbox [--status <status>]`
 - `talon inbox list|show|done|dismiss`
@@ -50,11 +54,13 @@ Maintainer diagnostics for source checkouts:
 
 TUI slash commands (chat mode):
 
-- `/session` (alias of `/session summary`)
-- `/session new [title]`
-- `/session list`
-- `/session switch <session-id-prefix>`
-- `/session summary [session-id-prefix]`
+- `/clear [name]` (save current session and start a new one)
+- `/new [title]` (start a fresh named assistant session)
+- `/branch [name]` (fork current transcript)
+- `/handoff <adapter> [external-session-id]`
+- `/handoff status`
+- `/sessions` (session picker)
+- `/resume <session-id-prefix|title>`
 - `/next list [session-id-prefix]`
 - `/next done <next-action-id-prefix>`
 - `/next block <next-action-id-prefix> <reason...>`

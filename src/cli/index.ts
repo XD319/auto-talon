@@ -46,6 +46,7 @@ import {
 } from "../runtime/index.js";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing/index.js";
 import { startDashboardTui, startTui } from "../tui/index.js";
+import { startSessionApiServer } from "../session-api/server.js";
 
 import {
   formatApprovalList,
@@ -288,6 +289,83 @@ export async function main(argv = process.argv): Promise<void> {
           return;
         }
         console.log(formatSessionSummary(summary));
+      } finally {
+        handle.close();
+      }
+    });
+
+  sessionCommand
+    .command("search")
+    .argument("<query>", "Full-text query")
+    .option("--limit <count>", "Maximum hits", "20")
+    .action((query: string, commandOptions: { limit?: string }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const limit = Number.parseInt(commandOptions.limit ?? "20", 10);
+        const hits = handle.service.searchSessionMessages({
+          limit: Number.isFinite(limit) ? limit : 20,
+          query
+        });
+        if (hits.length === 0) {
+          console.log(`No session messages matched '${query}'.`);
+          return;
+        }
+        for (const hit of hits) {
+          console.log(`${hit.sessionId.slice(0, 8)} | ${hit.sessionTitle} | ${hit.preview.replace(/\s+/gu, " ").trim()}`);
+        }
+      } finally {
+        handle.close();
+      }
+    });
+
+  sessionCommand
+    .command("handoff")
+    .description("Bind a runtime session to a gateway external session")
+    .requiredOption("--session <session_id>", "Runtime session id")
+    .requiredOption("--adapter <adapter_id>", "Gateway adapter id")
+    .option("--external-session <id>", "External session id")
+    .action((commandOptions: { adapter: string; externalSession?: string; session: string }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
+        const externalSessionId =
+          commandOptions.externalSession ?? `${commandOptions.adapter}:handoff:${commandOptions.session.slice(0, 8)}`;
+        const result = handle.service.handoffSession({
+          adapterId: commandOptions.adapter,
+          externalSessionId,
+          ownerUserId,
+          runtimeSessionId: commandOptions.session,
+          runtimeUserId: `${commandOptions.adapter}:session:${externalSessionId}`,
+          source: "cli"
+        });
+        console.log(`Handoff complete: ${result.runtimeSessionId.slice(0, 8)} -> ${commandOptions.adapter}`);
+        console.log(result.resumeHint);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Handoff failed: ${message}`);
+        process.exitCode = 1;
+      } finally {
+        handle.close();
+      }
+    });
+
+  program
+    .command("session-api")
+    .description("Serve the session HTTP API for dashboards and integrations")
+    .command("serve")
+    .option("--host <host>", "Bind host", "127.0.0.1")
+    .option("--port <port>", "Bind port", "7080")
+    .action(async (commandOptions: { host?: string; port?: string }) => {
+      const handle = createApplication(process.cwd(), { scheduler: { autoStart: true } });
+      const port = Number.parseInt(commandOptions.port ?? "7080", 10);
+      try {
+        const started = await startSessionApiServer({
+          host: commandOptions.host ?? "127.0.0.1",
+          port: Number.isFinite(port) ? port : 7080,
+          service: handle.service
+        });
+        console.log(`Session API listening at ${started.url}`);
+        await new Promise<void>(() => {});
       } finally {
         handle.close();
       }
@@ -862,6 +940,12 @@ export async function main(argv = process.argv): Promise<void> {
     .action(async () => {
       const handle = createApplication(process.cwd());
       try {
+        const migration = await handle.service.migrateLegacyTranscripts();
+        if (migration.migratedFiles > 0 || migration.skippedFiles > 0) {
+          console.log(
+            `Transcript migration: migrated=${migration.migratedFiles} skipped=${migration.skippedFiles}`
+          );
+        }
         console.log(formatDoctorReport(await handle.service.configDoctor()));
       } finally {
         handle.close();
@@ -874,6 +958,12 @@ export async function main(argv = process.argv): Promise<void> {
     .action(async () => {
       const handle = createApplication(process.cwd());
       try {
+        const migration = await handle.service.migrateLegacyTranscripts();
+        if (migration.migratedFiles > 0 || migration.skippedFiles > 0) {
+          console.log(
+            `Transcript migration: migrated=${migration.migratedFiles} skipped=${migration.skippedFiles}`
+          );
+        }
         console.log(formatDoctorReport(await handle.service.configDoctor()));
       } finally {
         handle.close();
@@ -1834,8 +1924,10 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--mode <mode>", "UI mode: chat | ops", "chat")
-    .option("--resume <sessionId>", "Resume a saved session from .auto-talon/sessions")
-    .action(async (commandOptions: SandboxCommandOptions & { mode?: string; resume?: string }) => {
+    .option("--continue", "Resume the latest SQLite session")
+    .option("-c", "Alias for --continue")
+    .option("--resume <sessionId>", "Resume a session by runtime session_id")
+    .action(async (commandOptions: SandboxCommandOptions & { continue?: boolean; c?: boolean; mode?: string; resume?: string }) => {
       if (commandOptions.mode === "ops" || commandOptions.mode === "dashboard") {
         await startDashboardTui(commandOptions.cwd, resolveSandboxCliOptions(commandOptions));
         return;
@@ -1843,6 +1935,7 @@ export async function main(argv = process.argv): Promise<void> {
       await startTui({
         cwd: commandOptions.cwd,
         sandbox: resolveSandboxCliOptions(commandOptions),
+        ...(commandOptions.continue === true || commandOptions.c === true ? { continueLatest: true } : {}),
         ...(commandOptions.resume !== undefined ? { resumeSessionId: commandOptions.resume } : {})
       });
     });
@@ -2477,4 +2570,3 @@ function normalizeMemoryScope(
   }
   return scope;
 }
-
