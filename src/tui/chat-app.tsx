@@ -44,8 +44,10 @@ import {
 import { formatTranscriptForPrint } from "./view-models/scrollback-transcript.js";
 import { outputEventsToMarkdown } from "./view-models/transcript-output.js";
 import {
-  clampPickerIndex,
-  filterSessionIndexEntries
+  filterSessionIndexEntries,
+  movePickerSessionId,
+  pickerIndexForSession,
+  reconcilePickerSelection
 } from "./view-models/session-picker-model.js";
 
 export interface ChatTuiAppProps {
@@ -95,7 +97,7 @@ export function ChatTuiApp({
   );
   const [sessionPickerOpen, setSessionPickerOpen] = React.useState(false);
   const [sessionIndexEntries, setSessionIndexEntries] = React.useState<SessionIndexEntry[]>([]);
-  const [sessionPickerIndex, setSessionPickerIndex] = React.useState(0);
+  const [sessionPickerSessionId, setSessionPickerSessionId] = React.useState<string | null>(null);
   const [sessionPickerFilter, setSessionPickerFilter] = React.useState("");
   const [sessionPickerPreviewOpen, setSessionPickerPreviewOpen] = React.useState(false);
   const [recapSessionId, setRecapSessionId] = React.useState<string | null>(null);
@@ -146,7 +148,15 @@ export function ChatTuiApp({
     [activeSessionId, sessionIndexEntries]
   );
   const homeEntries = welcomeHome.entries;
+  const sessionPickerOpenRef = React.useRef(sessionPickerOpen);
+  React.useEffect(() => {
+    sessionPickerOpenRef.current = sessionPickerOpen;
+  }, [sessionPickerOpen]);
+
   const refreshSessionIndex = React.useCallback(() => {
+    if (sessionPickerOpenRef.current) {
+      return;
+    }
     setSessionIndexEntries(
       service.listSessionIndex({ ownerUserId: reviewerId, status: "active" }).slice(0, 20)
     );
@@ -155,17 +165,21 @@ export function ChatTuiApp({
     () => filterSessionIndexEntries(sessionIndexEntries, sessionPickerFilter),
     [sessionIndexEntries, sessionPickerFilter]
   );
+  const sessionPickerSelectedIndex = React.useMemo(
+    () => pickerIndexForSession(filteredSessionEntries, sessionPickerSessionId),
+    [filteredSessionEntries, sessionPickerSessionId]
+  );
+  const filteredSessionIds = React.useMemo(
+    () => filteredSessionEntries.map((entry) => entry.sessionId).join("\u0000"),
+    [filteredSessionEntries]
+  );
   const pickerPreviewMessages = React.useMemo(() => {
-    if (!sessionPickerPreviewOpen) {
+    if (!sessionPickerPreviewOpen || sessionPickerSessionId === null) {
       return null;
     }
-    const entry = filteredSessionEntries[sessionPickerIndex];
-    if (entry === undefined) {
-      return null;
-    }
-    const uiState = service.loadSessionUiState(entry.sessionId);
+    const uiState = service.loadSessionUiState(sessionPickerSessionId);
     return uiState === null ? null : (uiState.messages as ChatMessage[]);
-  }, [filteredSessionEntries, service, sessionPickerIndex, sessionPickerPreviewOpen]);
+  }, [service, sessionPickerPreviewOpen, sessionPickerSessionId]);
 
   const flushActiveSessionState = React.useCallback(
     (overrideTitle?: string) => {
@@ -242,8 +256,14 @@ export function ChatTuiApp({
   }, [refreshSessionIndex, activeSessionId]);
 
   React.useEffect(() => {
-    setSessionPickerIndex((current) => clampPickerIndex(current, filteredSessionEntries.length));
-  }, [filteredSessionEntries.length]);
+    if (!sessionPickerOpen) {
+      return;
+    }
+    const next = reconcilePickerSelection(filteredSessionEntries, sessionPickerSessionId);
+    if (next.sessionId !== sessionPickerSessionId) {
+      setSessionPickerSessionId(next.sessionId);
+    }
+  }, [filteredSessionIds, sessionPickerOpen, sessionPickerSessionId]);
 
   React.useEffect(() => {
     if (saveTimerRef.current !== null) {
@@ -397,9 +417,14 @@ export function ChatTuiApp({
       if (!activated) {
         return false;
       }
+      const uiState = service.loadSessionUiState(sessionId);
+      scrollbackRef.current?.replayMessages(
+        uiState !== null && uiState.messages.length > 0
+          ? (uiState.messages as ChatMessage[])
+          : controller.messages
+      );
       const session = service.findSession(sessionId);
       setSessionTitle(session?.title ?? "assistant");
-      const uiState = service.loadSessionUiState(sessionId);
       if (uiState !== null) {
         setInteractionMode(uiState.interactionMode);
       }
@@ -429,12 +454,19 @@ export function ChatTuiApp({
   );
 
   const openSessionPicker = React.useCallback(() => {
-    refreshSessionIndex();
-    setSessionPickerIndex(0);
+    const entries = service
+      .listSessionIndex({ ownerUserId: reviewerId, status: "active" })
+      .slice(0, 20);
+    setSessionIndexEntries(entries);
+    const initialSelection = reconcilePickerSelection(
+      filterSessionIndexEntries(entries, ""),
+      activeSessionId
+    );
+    setSessionPickerSessionId(initialSelection.sessionId);
     setSessionPickerFilter("");
     setSessionPickerPreviewOpen(false);
     setSessionPickerOpen(true);
-  }, [refreshSessionIndex]);
+  }, [activeSessionId, reviewerId, service]);
 
   const closeSessionPicker = React.useCallback(() => {
     setSessionPickerOpen(false);
@@ -443,11 +475,10 @@ export function ChatTuiApp({
   }, []);
 
   const runSessionPickerEntry = React.useCallback(() => {
-    const entry = filteredSessionEntries[sessionPickerIndex];
-    if (entry !== undefined) {
-      activateSessionById(entry.sessionId);
+    if (sessionPickerSessionId !== null) {
+      activateSessionById(sessionPickerSessionId);
     }
-  }, [activateSessionById, filteredSessionEntries, sessionPickerIndex]);
+  }, [activateSessionById, sessionPickerSessionId]);
 
   const handleSlashCommand = React.useCallback(
     (text: string): boolean => {
@@ -1022,15 +1053,13 @@ export function ChatTuiApp({
       onCancel: closeSessionPicker,
       onFilterAppend: (char) => {
         setSessionPickerFilter((current) => `${current}${char}`);
-        setSessionPickerIndex(0);
       },
       onFilterBackspace: () => {
         setSessionPickerFilter((current) => current.slice(0, -1));
-        setSessionPickerIndex(0);
       },
       onMove: (delta) => {
-        setSessionPickerIndex((current) =>
-          clampPickerIndex(current + delta, filteredSessionEntries.length)
+        setSessionPickerSessionId((current) =>
+          movePickerSessionId(filteredSessionEntries, current, delta)
         );
       },
       onSubmit: runSessionPickerEntry,
@@ -1206,7 +1235,7 @@ export function ChatTuiApp({
           mode="picker"
           previewMessages={pickerPreviewMessages}
           previewOpen={sessionPickerPreviewOpen}
-          selectedIndex={sessionPickerIndex}
+          selectedIndex={sessionPickerSelectedIndex}
         />
       ) : showTodaySummary ? (
         <SessionBrowser

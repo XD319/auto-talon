@@ -5,6 +5,7 @@ import type { SessionIndexEntry } from "../../types/index.js";
 import { theme } from "../theme.js";
 import type { WelcomeHomeViewModel } from "../view-models/welcome-home.js";
 import {
+  computePickerViewport,
   extractPreviewMessages,
   formatPreviewLine
 } from "../view-models/session-picker-model.js";
@@ -68,6 +69,8 @@ export function SessionBrowser({
     );
   }
 
+  const viewport = computePickerViewport(entries, selectedIndex);
+
   return (
     <Box borderStyle="round" flexDirection="column" marginBottom={1} paddingX={1}>
       <Text bold>Sessions</Text>
@@ -82,16 +85,24 @@ export function SessionBrowser({
       {entries.length === 0 ? (
         <Text color={theme.muted}>No sessions matched.</Text>
       ) : (
-        entries.map((entry, index) => {
-          const selected = index === selectedIndex;
-          return (
-            <Text key={entry.sessionId} {...(selected ? { color: theme.emphasis } : {})}>
-              {selected ? "> " : "  "}
-              {entry.sessionId.slice(0, 8)} | {entry.title} [{entry.source}] {entry.messageCount} msgs
-              {entry.preview !== null ? ` - ${entry.preview}` : ""}
+        <>
+          {viewport.total > viewport.visibleEntries.length ? (
+            <Text color={theme.muted}>
+              Showing {viewport.start + 1}-{viewport.end} of {viewport.total}
             </Text>
-          );
-        })
+          ) : null}
+          {viewport.visibleEntries.map((entry, localIndex) => {
+            const index = viewport.start + localIndex;
+            const selected = index === selectedIndex;
+            return (
+              <Text key={entry.sessionId} {...(selected ? { color: theme.emphasis } : {})}>
+                {selected ? "> " : "  "}
+                {entry.sessionId.slice(0, 8)} | {entry.title} [{entry.source}] {entry.messageCount} msgs
+                {entry.preview !== null ? ` - ${entry.preview}` : ""}
+              </Text>
+            );
+          })}
+        </>
       )}
       {previewOpen && previewMessages !== null ? (
         <Box marginTop={1} flexDirection="column">

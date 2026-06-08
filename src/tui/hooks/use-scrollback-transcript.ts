@@ -17,6 +17,7 @@ export interface ScrollbackTranscriptController {
   print: (text: string) => void;
   onOutputEvent: (event: RuntimeOutputEvent) => void;
   onTraceEvent: (event: TraceEvent) => void;
+  replayMessages: (messages: ChatMessage[]) => void;
 }
 
 export function useScrollbackTranscript(messages: ChatMessage[]): ScrollbackTranscriptController {
@@ -97,6 +98,25 @@ export function useScrollbackTranscript(messages: ChatMessage[]): ScrollbackTran
     [writeWrapped]
   );
 
+  const replayMessages = React.useCallback(
+    (messagesToReplay: ChatMessage[]) => {
+      for (const message of messagesToReplay) {
+        printedMessagesRef.current.delete(message.id);
+      }
+      for (const message of messagesToReplay) {
+        if (printedMessagesRef.current.has(message.id)) {
+          continue;
+        }
+        const text = formatScrollbackMessage(message);
+        printedMessagesRef.current.add(message.id);
+        if (text !== null) {
+          printRecord(text);
+        }
+      }
+    },
+    [printRecord]
+  );
+
   React.useEffect(() => {
     for (const message of messages) {
       if (printedMessagesRef.current.has(message.id)) {
@@ -156,6 +176,7 @@ export function useScrollbackTranscript(messages: ChatMessage[]): ScrollbackTran
   return {
     onOutputEvent,
     onTraceEvent,
-    print
+    print,
+    replayMessages
   };
 }

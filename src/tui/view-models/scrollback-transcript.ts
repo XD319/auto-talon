@@ -36,8 +36,16 @@ export function formatScrollbackMessage(message: ChatMessage): string | null {
         : null;
     case "activity":
       return null;
-    case "agent":
-      return null;
+    case "agent": {
+      if (message.streaming === true) {
+        return null;
+      }
+      const text = sanitizeTerminalText(message.text).trim();
+      if (text.length === 0) {
+        return null;
+      }
+      return `assistant\n${sanitizeTerminalText(message.text)}\n`;
+    }
   }
 }
 

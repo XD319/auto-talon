@@ -26,6 +26,7 @@ import {
   moveCursorVertical,
   resolveApprovalShortcut
 } from "../src/tui/hooks/use-text-input.js";
+import { useScrollbackTranscript } from "../src/tui/hooks/use-scrollback-transcript.js";
 import { completeSlashCommand } from "../src/tui/slash-commands.js";
 import {
   displayChatMessages,
@@ -285,6 +286,63 @@ describe("chat tui view-models", () => {
       text: "conversation cleared",
       timestamp: "2026-01-01T00:00:00.000Z"
     })).toBe("\u250a conversation cleared\n");
+  });
+
+  it("formats persisted agent messages for scrollback replay", () => {
+    expect(formatScrollbackMessage({
+      id: "agent-1",
+      kind: "agent",
+      text: "Done.",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    })).toBe("assistant\nDone.\n");
+    expect(formatScrollbackMessage({
+      id: "agent-stream",
+      kind: "agent",
+      streaming: true,
+      text: "partial",
+      timestamp: "2026-01-01T00:00:00.000Z"
+    })).toBeNull();
+  });
+
+  it("replays session messages including assistant output", async () => {
+    const stdout = new PassThrough();
+    const chunks: string[] = [];
+    stdout.on("data", (chunk: Buffer | string) => {
+      chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+    });
+    const sessionMessages: ChatMessage[] = [
+      { id: "user-a", kind: "user", text: "Resume me", timestamp: "2026-01-01T00:00:00.000Z" },
+      { id: "agent-a", kind: "agent", text: "Welcome back.", timestamp: "2026-01-01T00:00:01.000Z" }
+    ];
+    let scrollback: ReturnType<typeof useScrollbackTranscript> | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useScrollbackTranscript([]);
+      React.useEffect(() => {
+        scrollback = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => scrollback !== null);
+      scrollback!.replayMessages(sessionMessages);
+      await delay(20);
+      scrollback!.replayMessages(sessionMessages);
+      await delay(20);
+      const output = chunks.join("");
+      expect(output).toContain("> Resume me");
+      expect(output).toContain("assistant\nWelcome back.");
+      expect(output.match(/assistant\nWelcome back\./gu)?.length).toBe(2);
+    } finally {
+      await unmountInkApp(app);
+    }
   });
 
   it("wraps scrollback chunks and buffers incomplete streaming lines", () => {
@@ -1431,14 +1489,20 @@ describe("use-chat-controller helpers", () => {
       const activeController = getController();
       activeController.restoreSession({
         id: "session-resume",
-        messages: [{ id: "user:resume", kind: "user", text: "Resume me", timestamp: "2026-01-01T00:00:00.000Z" }],
+        messages: [
+          { id: "user:resume", kind: "user", text: "Resume me", timestamp: "2026-01-01T00:00:00.000Z" },
+          { id: "agent:resume", kind: "agent", text: "Back again.", timestamp: "2026-01-01T00:00:01.000Z" }
+        ],
         sessionApprovalFingerprints: ["resume-fingerprint"],
         sessionId: "session-resume",
         updatedAt: "2026-01-01T01:00:00.000Z"
       });
       await waitFor(() => getController().activeSessionId === "session-resume");
 
-      expect(getController().messages).toMatchObject([{ kind: "user", text: "Resume me" }]);
+      expect(getController().messages).toMatchObject([
+        { kind: "user", text: "Resume me" },
+        { kind: "agent", text: "Back again." }
+      ]);
       expect(getController().sessionApprovalFingerprints).toEqual(["resume-fingerprint"]);
       expect(getController().statusLine).toBe("session resumed");
     } finally {
