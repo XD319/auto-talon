@@ -1,4 +1,9 @@
-﻿import type { GatewaySessionBinding } from "./adapter.js";
+﻿import type {
+  SessionMessageDraft,
+  SessionMessageRecord,
+  SessionMessageSearchHit
+} from "./session-message.js";
+import type { GatewaySessionBinding } from "./adapter.js";
 import type { GatewaySessionBindingDraft } from "./gateway.js";
 import type {
   SessionDraft,
@@ -256,6 +261,16 @@ export interface MemorySnapshotRepository {
   listByScope(scope: MemorySnapshotRecord["scope"], scopeKey: string): MemorySnapshotRecord[];
 }
 
+export interface SessionMessageRepository {
+  append(record: SessionMessageDraft): SessionMessageRecord;
+  countBySessionId(sessionId: string): number;
+  deleteBySessionId(sessionId: string): void;
+  findLatestUserPreview(sessionId: string): string | null;
+  listBySessionId(sessionId: string): SessionMessageRecord[];
+  replaceAll(sessionId: string, messages: SessionMessageDraft[]): SessionMessageRecord[];
+  search(input: { limit: number; query: string; sessionIdPrefix?: string }): SessionMessageSearchHit[];
+}
+
 export interface GatewaySessionRepository {
   create(record: GatewaySessionBindingDraft): GatewaySessionBinding;
   findLatestByExternalSession(
@@ -263,6 +278,7 @@ export interface GatewaySessionRepository {
     externalSessionId: string
   ): GatewaySessionBinding | null;
   listByExternalSession(adapterId: string, externalSessionId: string): GatewaySessionBinding[];
+  listByRuntimeSessionId(runtimeSessionId: string): GatewaySessionBinding[];
   findByTaskId(taskId: string): GatewaySessionBinding | null;
 }
 

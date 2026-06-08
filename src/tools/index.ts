@@ -13,3 +13,4 @@ export * from "./availability/index.js";
 export * from "./policy/index.js";
 export * from "./web-fetch-tool.js";
 export * from "./web-search-tool.js";
+export * from "./session-search-tool.js";

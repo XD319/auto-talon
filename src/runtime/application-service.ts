@@ -30,6 +30,7 @@ import type {
   ExperienceRecord,
   InboxDeliveryEvent,
   InboxItem,
+  GatewaySessionRepository,
   JsonValue,
   InboxListQuery,
   JsonObject,
@@ -55,6 +56,10 @@ import type {
   SessionTaskRecord,
   SessionSummaryRecord,
   SessionCommitmentState,
+  SessionIndexEntry,
+  SessionMessageSearchHit,
+  SessionListQuery,
+  SessionUiState,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -65,6 +70,17 @@ import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import type { ExecutionKernel } from "./execution-kernel.js";
 import type { ResumePacketBuilder, SessionService } from "./sessions/index.js";
+import type {
+  SessionUiStateService,
+  SaveSessionUiStateInput
+} from "./sessions/session-ui-state-service.js";
+import type { SessionIndexService } from "./sessions/session-index-service.js";
+import type { SessionMessageSearchService } from "./sessions/session-message-search-service.js";
+import type { SessionBranchService } from "./sessions/session-branch-service.js";
+import type { SessionHandoffService, SessionHandoffRequest } from "./sessions/session-handoff-service.js";
+import { resolveSessionRef, type ResolveSessionRefResult } from "./sessions/session-resolver.js";
+import type { TranscriptMigrationResult } from "./sessions/transcript-migrator.js";
+import { migrateLegacyTranscriptFiles } from "./sessions/transcript-migrator.js";
 import type { CreateScheduleInput, SchedulerService, UpdateScheduleInput } from "./scheduler/index.js";
 import type { InboxService } from "./inbox/index.js";
 import type {
@@ -266,6 +282,12 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   testCommands: WorkflowTestCommand[];
   outputService: RuntimeOutputService;
   assistantSessionProjectionService: AssistantSessionProjectionService;
+  sessionUiStateService: SessionUiStateService;
+  sessionIndexService: SessionIndexService;
+  sessionMessageSearchService: SessionMessageSearchService;
+  sessionBranchService: SessionBranchService;
+  sessionHandoffService: SessionHandoffService;
+  gatewaySessionRepository: GatewaySessionRepository;
   providerRouter?: ProviderRouter;
   budgetService?: BudgetService;
   workspaceRoot: string;
@@ -336,6 +358,7 @@ export class AgentApplicationService {
   public createSession(input: {
     agentProfileId: SessionRecord["agentProfileId"];
     cwd: string;
+    metadata?: JsonObject;
     ownerUserId: string;
     providerName?: string;
     title?: string;
@@ -343,8 +366,100 @@ export class AgentApplicationService {
     return this.sessionFacade.createSession(input);
   }
 
+  public loadSessionUiState(sessionId: string): SessionUiState | null {
+    return this.dependencies.sessionUiStateService.load(sessionId);
+  }
+
+  public saveSessionUiState(sessionId: string, input: SaveSessionUiStateInput): void {
+    this.dependencies.sessionUiStateService.save(sessionId, input);
+  }
+
+  public updateSessionTitle(sessionId: string, title: string): SessionRecord {
+    return this.dependencies.sessionService.updateTitle(sessionId, title);
+  }
+
+  public resolveSessionRef(ref: string, ownerUserId: string): ResolveSessionRefResult {
+    return resolveSessionRef(ref, ownerUserId, this.listSessions());
+  }
+
+  public branchSession(input: {
+    agentProfileId: SessionRecord["agentProfileId"];
+    cwd: string;
+    ownerUserId: string;
+    providerName?: string;
+    sourceSessionId: string;
+    title?: string;
+  }): SessionRecord {
+    return this.dependencies.sessionBranchService.branch({
+      agentProfileId: input.agentProfileId,
+      cwd: input.cwd,
+      ownerUserId: input.ownerUserId,
+      providerName: input.providerName ?? this.dependencies.provider.name,
+      sourceSessionId: input.sourceSessionId,
+      ...(input.title !== undefined ? { title: input.title } : {})
+    });
+  }
+
+  public handoffSession(request: SessionHandoffRequest) {
+    return this.dependencies.sessionHandoffService.handoff(request);
+  }
+
+  public rebindGatewaySession(input: {
+    adapterId: string;
+    externalSessionId: string;
+    externalUserId?: string | null;
+    ownerUserId: string;
+    runtimeSessionId: string;
+    runtimeUserId: string;
+  }) {
+    return this.dependencies.sessionHandoffService.rebindExternalSession(input);
+  }
+
+  public resolveGatewayRuntimeSessionId(adapterId: string, externalSessionId: string): string | null {
+    const latest = this.dependencies.gatewaySessionRepository.findLatestByExternalSession(
+      adapterId,
+      externalSessionId
+    );
+    return latest?.runtimeSessionId ?? null;
+  }
+
+  public listGatewayBindingsForRuntimeSession(runtimeSessionId: string) {
+    return this.dependencies.sessionHandoffService.listBindingsForSession(runtimeSessionId);
+  }
+
+  public listSessionIndex(query?: SessionListQuery): SessionIndexEntry[] {
+    return this.dependencies.sessionIndexService.list(query);
+  }
+
+  public latestSessionIndexForUser(ownerUserId: string): SessionIndexEntry | null {
+    return this.dependencies.sessionIndexService.latestForUser(ownerUserId);
+  }
+
+  public searchSessionMessages(input: {
+    limit?: number;
+    query: string;
+    sessionIdPrefix?: string;
+  }): SessionMessageSearchHit[] {
+    return this.dependencies.sessionMessageSearchService.search(input);
+  }
+
+  public async migrateLegacyTranscripts(): Promise<TranscriptMigrationResult> {
+    return migrateLegacyTranscriptFiles({
+      sessionRepository: {
+        create: (draft) => this.dependencies.sessionService.createSession(draft),
+        findById: (sessionId) => this.findSession(sessionId)
+      },
+      sessionUiStateService: this.dependencies.sessionUiStateService,
+      workspaceRoot: this.dependencies.workspaceRoot
+    });
+  }
+
   public listSessions(status?: SessionRecord["status"]): SessionRecord[] {
     return this.sessionFacade.listSessions(status);
+  }
+
+  public findSession(sessionId: string): SessionRecord | null {
+    return this.dependencies.findSession(sessionId);
   }
 
   public showSession(sessionId: string): {

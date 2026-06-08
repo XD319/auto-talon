@@ -19,6 +19,7 @@ import { SqliteRunMetadataRepository } from "./repositories/run-metadata-reposit
 import { SqliteRuntimeOutputRepository } from "./repositories/runtime-output-repository.js";
 import { SqliteScheduleRepository } from "./repositories/schedules/schedule-repository.js";
 import { SqliteScheduleRunRepository } from "./repositories/schedules/schedule-run-repository.js";
+import { SqliteSessionMessageRepository } from "./repositories/session-message-repository.js";
 import { SqliteSessionTranscriptRepository } from "./repositories/session-transcript-repository.js";
 import { SqliteTaskRepository } from "./repositories/task-repository.js";
 import { SqliteSessionLineageRepository } from "./repositories/session-lineage-repository.js";
@@ -38,6 +39,7 @@ export class StorageManager {
   public readonly sessions: SqliteSessionRepository;
   public readonly sessionTasks: SqliteSessionTaskRepository;
   public readonly sessionLineage: SqliteSessionLineageRepository;
+  public readonly sessionMessages: SqliteSessionMessageRepository;
   public readonly sessionTranscripts: SqliteSessionTranscriptRepository;
   public readonly sessionSummaries: SqliteSessionSummaryRepository;
   public readonly schedules: SqliteScheduleRepository;
@@ -71,6 +73,7 @@ export class StorageManager {
     this.sessions = new SqliteSessionRepository(this.database);
     this.sessionTasks = new SqliteSessionTaskRepository(this.database);
     this.sessionLineage = new SqliteSessionLineageRepository(this.database);
+    this.sessionMessages = new SqliteSessionMessageRepository(this.database);
     this.sessionTranscripts = new SqliteSessionTranscriptRepository(this.database);
     this.sessionSummaries = new SqliteSessionSummaryRepository(this.database);
     this.schedules = new SqliteScheduleRepository(this.database);

@@ -51,3 +51,10 @@ Core data path:
 9. CommitmentCollector maps task/snapshot/approval/success/failure trace signals into `commitments` and `next_actions` so continuation can restore the next step.
 10. Resume packets include commitment summaries (`current objective`, `next action`, `blocked reason`, `pending decision`) in `sessionResume` metadata.
 11. External channels must consume runtime delivery subscriptions and must not bypass runtime to write direct notifications.
+
+Unified session model:
+
+- Runtime `session_id` is the canonical identifier across TUI, CLI, gateway, and the session HTTP API.
+- Canonical TUI-visible messages live in SQLite `session_messages`, indexed by `session_messages_fts`.
+- Gateway bindings store `runtime_session_id` and resume via `continueSession` instead of creating a fresh session per message.
+- Legacy `.auto-talon/sessions/*.json` transcripts migrate into SQLite through `talon doctor`.

@@ -91,6 +91,16 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "repair session core tables",
     up: migrateV17,
     version: 17
+  },
+  {
+    description: "add session messages fts and gateway runtime session id",
+    up: migrateV18,
+    version: 18
+  },
+  {
+    description: "scope session message ids per session",
+    up: migrateV19,
+    version: 19
   }
 ];
 
@@ -858,6 +868,183 @@ function migrateV16(database: DatabaseSync): void {
 
 function migrateV17(database: DatabaseSync): void {
   ensureSessionSchemaRepairs(database);
+}
+
+function migrateV18(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_messages (
+      message_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      sequence INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      entry_source TEXT NOT NULL DEFAULT 'unknown'
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_seq
+      ON session_messages(session_id, sequence);
+
+    CREATE INDEX IF NOT EXISTS idx_session_messages_session_updated
+      ON session_messages(session_id, created_at DESC);
+  `);
+
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts USING fts5(
+        message_id UNINDEXED,
+        session_id UNINDEXED,
+        content,
+        tokenize='unicode61'
+      );
+    `);
+  } catch {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_messages_fts (
+        message_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        content TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_messages_fts_session
+        ON session_messages_fts(session_id);
+    `);
+  }
+
+  addColumnIfMissing(database, "gateway_session_bindings", "runtime_session_id", "TEXT");
+  if (tableExists(database, "gateway_session_bindings")) {
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_gateway_session_bindings_runtime_session
+        ON gateway_session_bindings(runtime_session_id, created_at DESC);
+    `);
+  }
+}
+
+function migrateV19(database: DatabaseSync): void {
+  rebuildSessionMessagesCompositeKey(database);
+  rebuildSessionMessagesFts(database);
+}
+
+function rebuildSessionMessagesCompositeKey(database: DatabaseSync): void {
+  if (!tableExists(database, "session_messages")) {
+    database.exec(`
+      CREATE TABLE session_messages (
+        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+        message_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        entry_source TEXT NOT NULL DEFAULT 'unknown',
+        PRIMARY KEY (session_id, message_id)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_seq
+        ON session_messages(session_id, sequence);
+
+      CREATE INDEX IF NOT EXISTS idx_session_messages_session_updated
+        ON session_messages(session_id, created_at DESC);
+    `);
+    return;
+  }
+
+  const primaryKeyColumns = readPrimaryKeyColumns(database, "session_messages");
+  if (
+    primaryKeyColumns.length === 2 &&
+    primaryKeyColumns.includes("session_id") &&
+    primaryKeyColumns.includes("message_id")
+  ) {
+    return;
+  }
+
+  database.exec(`
+    CREATE TABLE session_messages__v19 (
+      session_id TEXT NOT NULL REFERENCES sessions(session_id),
+      message_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      entry_source TEXT NOT NULL DEFAULT 'unknown',
+      PRIMARY KEY (session_id, message_id)
+    );
+  `);
+  database.exec(`
+    INSERT OR IGNORE INTO session_messages__v19 (
+      session_id, message_id, sequence, kind, payload_json, created_at, entry_source
+    )
+    SELECT session_id, message_id, sequence, kind, payload_json, created_at, entry_source
+    FROM session_messages;
+  `);
+  database.exec(`
+    DROP TABLE session_messages;
+    ALTER TABLE session_messages__v19 RENAME TO session_messages;
+  `);
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_seq
+      ON session_messages(session_id, sequence);
+
+    CREATE INDEX IF NOT EXISTS idx_session_messages_session_updated
+      ON session_messages(session_id, created_at DESC);
+  `);
+}
+
+function rebuildSessionMessagesFts(database: DatabaseSync): void {
+  if (!tableExists(database, "session_messages")) {
+    return;
+  }
+
+  if (tableExists(database, "session_messages_fts")) {
+    database.exec("DROP TABLE session_messages_fts");
+  }
+
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE session_messages_fts USING fts5(
+        message_id UNINDEXED,
+        session_id UNINDEXED,
+        content,
+        tokenize='unicode61'
+      );
+    `);
+  } catch {
+    database.exec(`
+      CREATE TABLE session_messages_fts (
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        PRIMARY KEY (session_id, message_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_messages_fts_session
+        ON session_messages_fts(session_id);
+    `);
+  }
+
+  database.exec(`
+    INSERT INTO session_messages_fts(session_id, message_id, content)
+    SELECT
+      session_id,
+      message_id,
+      trim(
+        coalesce(json_extract(payload_json, '$.text'), '') || char(10) ||
+        coalesce(json_extract(payload_json, '$.message'), '') || char(10) ||
+        coalesce(json_extract(payload_json, '$.code'), '') || char(10) ||
+        coalesce(json_extract(payload_json, '$.title'), '')
+      )
+    FROM session_messages
+    WHERE length(trim(
+      coalesce(json_extract(payload_json, '$.text'), '') ||
+      coalesce(json_extract(payload_json, '$.message'), '') ||
+      coalesce(json_extract(payload_json, '$.code'), '') ||
+      coalesce(json_extract(payload_json, '$.title'), '')
+    )) > 0;
+  `);
+}
+
+function readPrimaryKeyColumns(database: DatabaseSync, tableName: string): string[] {
+  const rows = database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name: string; pk: number }>;
+  return rows.filter((row) => row.pk > 0).sort((left, right) => left.pk - right.pk).map((row) => row.name);
 }
 
 function ensureSessionSchemaRepairs(database: DatabaseSync): void {

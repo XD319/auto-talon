@@ -16,7 +16,8 @@ import type {
   SessionLineageRecord,
   SessionRecord,
   SessionTaskRecord,
-  SessionSummaryRecord
+  SessionSummaryRecord,
+  JsonObject
 } from "../../types/index.js";
 
 export class SessionFacade {
@@ -79,6 +80,7 @@ export class SessionFacade {
   public createSession(input: {
     agentProfileId: SessionRecord["agentProfileId"];
     cwd: string;
+    metadata?: JsonObject;
     ownerUserId: string;
     providerName?: string;
     title?: string;
@@ -86,6 +88,7 @@ export class SessionFacade {
     return this.dependencies.sessionService.createSession({
       agentProfileId: input.agentProfileId,
       cwd: input.cwd,
+      metadata: { source: "tui", ...(input.metadata ?? {}) },
       ownerUserId: input.ownerUserId,
       providerName: input.providerName ?? this.dependencies.provider.name,
       sessionId: randomUUID(),

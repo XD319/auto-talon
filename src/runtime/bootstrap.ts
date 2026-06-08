@@ -58,7 +58,8 @@ import {
   TestRunTool,
   ToolOrchestrator,
   WebFetchTool,
-  WebSearchTool
+  WebSearchTool,
+  SessionSearchTool
 } from "../tools/index.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
@@ -81,6 +82,14 @@ import {
 import { JobRunner } from "./jobs/index.js";
 import { SchedulerService } from "./scheduler/index.js";
 import { ResumePacketBuilder, SessionService, SessionStateProjector } from "./sessions/index.js";
+import {
+  SessionBranchService,
+  SessionHandoffService,
+  SessionIndexService,
+  SessionMessageProjector,
+  SessionMessageSearchService,
+  SessionUiStateService
+} from "./sessions/index.js";
 import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import {
@@ -351,6 +360,9 @@ export function createApplication(
     workspaceRoot: config.workspaceRoot
   });
   const mcpClientManager = new McpClientManager(config.workspaceRoot);
+  const sessionMessageSearchService = new SessionMessageSearchService({
+    messageRepository: storage.sessionMessages
+  });
   const mcpTools = mcpClientManager.discover();
   const skillVersionRegistry = new SkillVersionRegistry(config.workspaceRoot);
   const skillDraftManager = new SkillDraftManager({
@@ -391,6 +403,7 @@ export function createApplication(
       ),
       new WebFetchTool(sandboxService),
       new WebSearchTool(sandboxService, config.webSearch),
+      new SessionSearchTool({ searchService: sessionMessageSearchService }),
       ...mcpTools
     ],
     traceService
@@ -501,6 +514,32 @@ export function createApplication(
     toolOrchestrator,
     traceService
   });
+  const sessionService = new SessionService({
+    sessionLineageRepository: storage.sessionLineage,
+    sessionRepository: storage.sessions,
+    sessionTaskRepository: storage.sessionTasks
+  });
+  const sessionUiStateService = new SessionUiStateService({
+    messageRepository: storage.sessionMessages,
+    sessionRepository: storage.sessions
+  });
+  const sessionBranchService = new SessionBranchService({
+    sessionLineageRepository: storage.sessionLineage,
+    sessionRepository: storage.sessions,
+    sessionUiStateService
+  });
+  const sessionHandoffService = new SessionHandoffService({
+    gatewaySessionRepository: storage.gatewaySessions,
+    sessionRepository: storage.sessions
+  });
+  const sessionMessageProjector = new SessionMessageProjector(
+    storage.sessionMessages,
+    storage.sessions
+  );
+  const sessionIndexService = new SessionIndexService({
+    messageRepository: storage.sessionMessages,
+    sessionRepository: storage.sessions
+  });
 
   const executionKernel = new ExecutionKernel({
     compact: config.compact,
@@ -527,17 +566,13 @@ export function createApplication(
     sessionLineageRepository: storage.sessionLineage,
     sessionTaskRepository: storage.sessionTasks,
     sessionTranscriptRepository: storage.sessionTranscripts,
+    sessionMessageProjector,
     toolExposurePlanner,
     toolOrchestrator,
     traceService,
     outputService,
     workflow: config.workflow,
     workspaceRoot: config.workspaceRoot
-  });
-  const sessionService = new SessionService({
-    sessionLineageRepository: storage.sessionLineage,
-    sessionRepository: storage.sessions,
-    sessionTaskRepository: storage.sessionTasks
   });
   const sessionStateProjector = new SessionStateProjector({
     commitmentProjector: sessionCommitmentProjector,
@@ -674,6 +709,12 @@ export function createApplication(
     sessionCommitmentProjector,
     testCommands: config.workflow.testCommands,
     assistantSessionProjectionService,
+    sessionUiStateService,
+    sessionIndexService,
+    sessionMessageSearchService,
+    sessionBranchService,
+    sessionHandoffService,
+    gatewaySessionRepository: storage.gatewaySessions,
     workspaceRoot: config.workspaceRoot
   });
   if (options.scheduler?.autoStart === true) {

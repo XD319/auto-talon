@@ -65,6 +65,7 @@ import type {
   SessionCommitmentState,
   SessionLineageRepository,
   SessionTaskRepository,
+  SessionEntrySource,
   ToolExecutionResult,
   TokenBudget,
   BudgetPricingEntry
@@ -81,6 +82,7 @@ import type { ToolOrchestrator } from "../tools/index.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
+import type { SessionMessageProjector } from "./sessions/session-message-projector.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -96,6 +98,7 @@ export interface ExecutionKernelDependencies {
   sessionTaskRepository: SessionTaskRepository;
   sessionLineageRepository: SessionLineageRepository;
   sessionTranscriptRepository: SessionTranscriptRepository;
+  sessionMessageProjector?: SessionMessageProjector;
   contextCompactor: ContextCompactor;
   sessionSummaryService: SessionSummaryService;
   toolOrchestrator: ToolOrchestrator;
@@ -1571,10 +1574,29 @@ export class ExecutionKernel {
       });
     }
 
+    this.projectSessionMessages(completedTask, finalOutput);
+
     return {
       output: finalOutput,
       task: completedTask
     };
+  }
+
+  private projectSessionMessages(task: TaskRecord, assistantText: string): void {
+    if (
+      task.sessionId === null ||
+      task.sessionId === undefined ||
+      this.dependencies.sessionMessageProjector === undefined
+    ) {
+      return;
+    }
+    this.dependencies.sessionMessageProjector.projectTaskExchange({
+      assistantText,
+      entrySource: resolveTaskEntrySource(task),
+      sessionId: task.sessionId,
+      taskId: task.taskId,
+      userText: task.input
+    });
   }
 
   private async compactMessages(
@@ -1729,6 +1751,9 @@ export class ExecutionKernel {
       status: isCancelled ? "cancelled" : "failed"
     });
 
+    const updatedTask = this.dependencies.taskRepository.findById(task.taskId) ?? task;
+    this.projectSessionMessages(updatedTask, error.message);
+
     return new AppError({
       cause: error,
       code: error.code,
@@ -1818,5 +1843,20 @@ function toolResultSummary(result: ToolExecutionResult, toolName: string): strin
   return result.success
     ? result.summary
     : `Tool ${toolName} failed: ${result.errorMessage}`;
+}
+
+function resolveTaskEntrySource(task: TaskRecord): SessionEntrySource {
+  const gateway = task.metadata?.gateway;
+  if (gateway !== null && gateway !== undefined && typeof gateway === "object") {
+    const adapterId = (gateway as { adapterId?: unknown }).adapterId;
+    if (typeof adapterId === "string" && adapterId.length > 0) {
+      return "gateway";
+    }
+  }
+  const source = task.metadata?.source;
+  if (source === "tui" || source === "cli" || source === "schedule" || source === "gateway") {
+    return source;
+  }
+  return "cli";
 }
 

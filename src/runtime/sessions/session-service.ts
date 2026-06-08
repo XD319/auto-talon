@@ -94,4 +94,8 @@ export class SessionService {
   public findLatestSession(ownerUserId: string): SessionRecord | null {
     return this.dependencies.sessionRepository.findLatestByOwner(ownerUserId);
   }
+
+  public updateTitle(sessionId: string, title: string): SessionRecord {
+    return this.dependencies.sessionRepository.update(sessionId, { title });
+  }
 }
