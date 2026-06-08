@@ -137,7 +137,6 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
   public readonly privacyLevel = "internal" as const;
   public readonly costLevel = "free" as const;
   public readonly sideEffectLevel = "workspace_mutation" as const;
-  public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = patchSchema;
 

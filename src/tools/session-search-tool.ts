@@ -39,7 +39,6 @@ export class SessionSearchTool
   public readonly privacyLevel = "internal" as const;
   public readonly costLevel = "free" as const;
   public readonly sideEffectLevel = "read_only" as const;
-  public readonly approvalDefault = "never" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = sessionSearchSchema;
 

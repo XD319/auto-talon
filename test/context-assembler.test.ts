@@ -55,7 +55,6 @@ function createProfile(): AgentProfile {
     description: "Executor profile",
     displayName: "Executor",
     id: "executor",
-    allowedToolNames: ["read_file", "web_extract"],
     systemPrompt: "You are a coding agent."
   };
 }

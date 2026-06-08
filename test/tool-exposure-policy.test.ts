@@ -6,7 +6,6 @@ import type { ToolDefinition } from "../src/types/index.js";
 
 function createTool(partial: Partial<ToolDefinition> & { name: string }): ToolDefinition {
   return {
-    approvalDefault: "when_needed",
     capability: "filesystem.read",
     costLevel: "cheap",
     description: partial.name,

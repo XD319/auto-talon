@@ -37,7 +37,6 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
   public readonly privacyLevel = "restricted" as const;
   public readonly costLevel = "cheap" as const;
   public readonly sideEffectLevel = "external_read_only" as const;
-  public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = webFetchSchema;
 

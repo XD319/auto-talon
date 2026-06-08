@@ -6,7 +6,6 @@ import type { ToolCapability, ToolRiskLevel, PrivacyLevel, PathScope } from "./g
 import type { SandboxExecutionPlan } from "./sandbox.js";
 import type { AgentProfileId } from "./profile.js";
 import type {
-  ToolApprovalDefault,
   ToolAvailabilityResult,
   ToolCostLevel,
   ToolKind,
@@ -135,7 +134,6 @@ export interface ToolDefinition<
   privacyLevel: PrivacyLevel;
   costLevel: ToolCostLevel;
   sideEffectLevel: ToolSideEffectLevel;
-  approvalDefault: ToolApprovalDefault;
   toolKind: ToolKind;
   inputSchema: TSchema;
   /** Override when inputSchema cannot represent the provider-facing shape (e.g. MCP). */

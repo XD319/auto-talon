@@ -8,7 +8,6 @@ export type ToolSideEffectLevel =
   | "external_read_only"
   | "workspace_mutation"
   | "external_mutation";
-export type ToolApprovalDefault = "never" | "when_needed" | "always";
 export type ToolKind = "runtime_primitive" | "external_tool" | "control_command";
 
 export interface ToolAvailabilityResult extends JsonObject {

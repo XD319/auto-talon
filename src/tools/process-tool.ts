@@ -66,7 +66,6 @@ export class ProcessTool implements ToolDefinition<typeof processSchema, Prepare
   public readonly privacyLevel = "restricted" as const;
   public readonly costLevel = "moderate" as const;
   public readonly sideEffectLevel = "external_mutation" as const;
-  public readonly approvalDefault = "always" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = processSchema;
 

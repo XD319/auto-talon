@@ -9,7 +9,6 @@ Each tool now declares:
 - `riskLevel`
 - `costLevel`
 - `sideEffectLevel`
-- `approvalDefault`
 - `toolKind`
 
 This metadata supports stable tool visibility, budget hints, and downstream governance decisions.

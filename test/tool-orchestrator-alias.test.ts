@@ -98,7 +98,6 @@ function createShellLikeTool(
     command: z.string()
   });
   return {
-    approvalDefault: "when_needed",
     capability: "shell.execute",
     costLevel: "moderate",
     description: "Execute shell command",

@@ -18,7 +18,6 @@ export class SkillsListTool implements ToolDefinition<typeof skillsListSchema, R
   public readonly privacyLevel = "internal" as const;
   public readonly costLevel = "free" as const;
   public readonly sideEffectLevel = "read_only" as const;
-  public readonly approvalDefault = "never" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = skillsListSchema;
 

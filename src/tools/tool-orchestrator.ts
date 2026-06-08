@@ -76,9 +76,9 @@ export class ToolOrchestrator {
     }
   }
 
-  public listTools(allowedToolNames?: string[]): ProviderToolDescriptor[] {
+  public listTools(toolNames?: string[]): ProviderToolDescriptor[] {
     return [...this.tools.values()]
-      .filter((tool) => allowedToolNames === undefined || allowedToolNames.includes(tool.name))
+      .filter((tool) => toolNames === undefined || toolNames.includes(tool.name))
       .map((tool) => ({
         capability: tool.capability,
         description: tool.description,

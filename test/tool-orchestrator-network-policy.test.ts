@@ -21,7 +21,6 @@ describe("ToolOrchestrator network policy", () => {
       url: z.string().url()
     });
     const tool: ToolDefinition<typeof fetchSchema, { url: string }> = {
-      approvalDefault: "when_needed",
       capability: "network.fetch_public_readonly",
       costLevel: "cheap",
       description: "Fetch a public URL",
@@ -122,7 +121,6 @@ describe("ToolOrchestrator network policy", () => {
   it("fails early when a tool becomes unavailable at execution time", async () => {
     const records = new Map<string, ToolCallRecord>();
     const tool: ToolDefinition<z.ZodObject<{ value: z.ZodString }>, { value: string }> = {
-      approvalDefault: "when_needed",
       capability: "filesystem.read",
       checkAvailability: () => ({
         available: false,

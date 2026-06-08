@@ -7,7 +7,6 @@ import type { ToolDefinition, ToolExecutionContext } from "../src/types/index.js
 describe("tool availability checker", () => {
   it("uses tool checkAvailability when present", async () => {
     const tool = {
-      approvalDefault: "when_needed",
       capability: "filesystem.read",
       checkAvailability: () => ({ available: false, reason: "missing binary" }),
       costLevel: "cheap",
