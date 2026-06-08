@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { McpToolAdapter } from "../src/mcp/index.js";
-import { ToolOrchestrator } from "../src/tools/index.js";
+import { ToolOrchestrator, ToolRegistry } from "../src/tools/index.js";
 import type {
   AuditAction,
   AuditOutcome,
@@ -87,7 +87,8 @@ describe("McpToolAdapter orchestration", () => {
         })
       } as never,
       toolCallRepository: createToolCallRepository(records),
-      tools: [adapter],
+      clarifyService: {} as never,
+      toolRegistry: new ToolRegistry().register(adapter),
       traceService: {
         record: (entry: { eventType: TraceEventType }) => {
           traceEvents.push(entry.eventType);

@@ -57,7 +57,7 @@ const webSearchSchema = z.object({
 export class WebSearchTool implements ToolDefinition<typeof webSearchSchema, PreparedWebSearchInput> {
   public readonly name = "web_search";
   public readonly description =
-    "Search the public web and return normalized search results for follow-up web_fetch reads.";
+    "Search the public web and return normalized search results for follow-up web_extract reads.";
   public readonly capability = "network.fetch_public_readonly" as const;
   public readonly riskLevel = "medium" as const;
   public readonly privacyLevel = "restricted" as const;

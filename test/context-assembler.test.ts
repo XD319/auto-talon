@@ -13,7 +13,7 @@ describe("ExecutionContextAssembler", () => {
           capability: "network.fetch_public_readonly",
           description: "Fetch a public URL",
           inputSchema: { type: "object" },
-          name: "web_fetch",
+          name: "web_extract",
           privacyLevel: "restricted",
           riskLevel: "medium"
         }
@@ -21,10 +21,10 @@ describe("ExecutionContextAssembler", () => {
       createProfile()
     );
 
-    expect(messages[0]?.content).toContain("When web_fetch is available");
+    expect(messages[0]?.content).toContain("When web_extract is available");
     expect(messages[0]?.content).toContain("read public web pages");
     expect(messages[0]?.content).toContain("Visible tools may still be denied");
-    expect(messages[0]?.content).toContain("Available tools: web_fetch.");
+    expect(messages[0]?.content).toContain("Available tools: web_extract.");
   });
 
   it("keeps the initial system prompt concise when web fetch is unavailable", () => {
@@ -44,7 +44,7 @@ describe("ExecutionContextAssembler", () => {
       createProfile()
     );
 
-    expect(messages[0]?.content).not.toContain("When web_fetch is available");
+    expect(messages[0]?.content).not.toContain("When web_extract is available");
     expect(messages[0]?.content).toContain("Visible tools may still be denied");
     expect(messages[0]?.content).toContain("Available tools: file_read.");
   });
@@ -55,7 +55,7 @@ function createProfile(): AgentProfile {
     description: "Executor profile",
     displayName: "Executor",
     id: "executor",
-    allowedToolNames: ["file_read", "web_fetch"],
+    allowedToolNames: ["file_read", "web_extract"],
     systemPrompt: "You are a coding agent."
   };
 }

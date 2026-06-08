@@ -122,7 +122,7 @@ describe("RecallPlanner", () => {
       task: createTask(),
       sessionCommitmentState: null,
       tokenBudget: createTask().tokenBudget,
-      toolPlan: ["shell", "test_run"]
+      toolPlan: ["shell"]
     });
 
     expect(result.explain.candidateCount).toBe(1);

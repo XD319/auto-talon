@@ -4,6 +4,7 @@ import { z } from "zod";
 import { PolicyEngine } from "../src/policy/policy-engine.js";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../src/policy/default-policy-config.js";
 import { ToolOrchestrator } from "../src/tools/tool-orchestrator.js";
+import { ToolRegistry } from "../src/tools/tool-registry.js";
 import type {
   ApprovalRecord,
   ToolCallRecord,
@@ -94,7 +95,8 @@ describe("ToolOrchestrator network policy", () => {
       } as never,
       policyEngine: new PolicyEngine(DEFAULT_LOCAL_POLICY_CONFIG),
       toolCallRepository: createToolCallRepository(records),
-      tools: [tool],
+      clarifyService: {} as never,
+      toolRegistry: new ToolRegistry().register(tool),
       traceService: {
         record: () => undefined
       } as never
@@ -180,7 +182,8 @@ describe("ToolOrchestrator network policy", () => {
       } as never,
       policyEngine: new PolicyEngine(DEFAULT_LOCAL_POLICY_CONFIG),
       toolCallRepository: createToolCallRepository(records),
-      tools: [tool],
+      clarifyService: {} as never,
+      toolRegistry: new ToolRegistry().register(tool),
       traceService: {
         record: () => undefined
       } as never

@@ -65,7 +65,7 @@ describe("tool exposure policy", () => {
       }),
       createTool({
         capability: "shell.execute",
-        name: "test_run",
+        name: "process",
         riskLevel: "high",
         sideEffectLevel: "workspace_mutation"
       })
@@ -100,13 +100,13 @@ describe("tool exposure policy", () => {
     const tools = [
       createTool({
         capability: "network.fetch_public_readonly",
-        name: "web_fetch",
+        name: "web_extract",
         riskLevel: "medium",
         sideEffectLevel: "external_read_only"
       })
     ];
     const decisions = evaluateToolExposure({
-      availability: new Map([["web_fetch", { available: true, reason: "ok" }]]),
+      availability: new Map([["web_extract", { available: true, reason: "ok" }]]),
       budgetDowngradeActive: false,
       tools
     });

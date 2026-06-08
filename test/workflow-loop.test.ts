@@ -24,11 +24,11 @@ const WORKFLOW_POLICY_CONFIG: LocalPolicyConfig = {
   defaultEffect: "deny",
   rules: [
     {
-      description: "Allow configured test runner tool in workflow tests.",
+      description: "Allow shell verification in workflow tests.",
       effect: "allow",
-      id: "allow-test-run",
+      id: "allow-shell",
       match: {
-        toolNames: ["test_run"]
+        toolNames: ["shell"]
       },
       priority: 100
     },
@@ -76,7 +76,7 @@ describe("coding workflow loop", () => {
     expect(repoMap.summary).toContain("Repository map");
   });
 
-  it("feeds repo map context and test_run failures back into a repair loop", async () => {
+  it("feeds repo map context and shell verification failures back into a repair loop", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
     const handle = createApplication(workspaceRoot, {
       config: {
@@ -95,8 +95,8 @@ describe("coding workflow loop", () => {
       },
       policyConfig: WORKFLOW_POLICY_CONFIG,
       provider: new ScriptedProvider((input) => {
-        if (!input.availableTools.some((tool) => tool.name === "test_run")) {
-          throw new Error(`missing test_run tool: ${input.availableTools.map((tool) => tool.name).join(",")}`);
+        if (!input.availableTools.some((tool) => tool.name === "shell")) {
+          throw new Error(`missing shell tool: ${input.availableTools.map((tool) => tool.name).join(",")}`);
         }
         if (!input.messages.some((message) => message.content.includes("Repository map"))) {
           throw new Error(`missing repo map message: ${input.messages.map((message) => message.content).join(" | ")}`);
@@ -112,12 +112,12 @@ describe("coding workflow loop", () => {
               },
               reason: "Verify current code before repair.",
               toolCallId: "workflow-test-1",
-              toolName: "test_run"
+              toolName: "shell"
             }
           ]);
         }
 
-        if (lastToolMessage.includes("\"passed\": false")) {
+        if (lastToolMessage.includes("exited with code 1")) {
           return toolCallResponse("Repair the failing check.", [
             {
               input: {
@@ -133,7 +133,7 @@ describe("coding workflow loop", () => {
           ]);
         }
 
-        if (lastToolMessage.includes("\"passed\": true")) {
+        if (lastToolMessage.includes("\"exitCode\":0")) {
           return finalResponse("Repair loop complete; configured test passes.");
         }
 
@@ -145,7 +145,7 @@ describe("coding workflow loop", () => {
               },
               reason: "Confirm the repair.",
               toolCallId: `workflow-test-${toolMessages.length + 1}`,
-              toolName: "test_run"
+              toolName: "shell"
             }
           ]);
         }
@@ -161,14 +161,14 @@ describe("coding workflow loop", () => {
       const details = handle.service.showTask(result.task.taskId);
 
       expect(details.trace.some((event) => event.eventType === "repo_map_created")).toBe(true);
-      if (result.error?.message?.startsWith("missing test_run tool:")) {
+      if (result.error?.message?.startsWith("missing shell tool:")) {
         expect(result.task.status).toBe("failed");
-        expect(result.error.message).toContain("test_run");
+        expect(result.error.message).toContain("shell");
       } else {
         expect(result.error?.message).toBeUndefined();
         expect(result.task.status).toBe("succeeded");
         expect(await fs.readFile(join(workspaceRoot, "check.js"), "utf8")).toBe("process.exit(0);\n");
-        expect(details.toolCalls.filter((toolCall) => toolCall.toolName === "test_run")).toHaveLength(2);
+        expect(details.toolCalls.filter((toolCall) => toolCall.toolName === "shell")).toHaveLength(2);
         expect(details.toolCalls.every((toolCall) => toolCall.status === "finished")).toBe(true);
       }
     } finally {
@@ -418,7 +418,7 @@ describe("coding workflow loop", () => {
               },
               reason: "Satisfy completion verification.",
               toolCallId: "guard-test",
-              toolName: "test_run"
+              toolName: "shell"
             }
           ]);
         }

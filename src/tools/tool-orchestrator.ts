@@ -28,6 +28,7 @@ import type {
 } from "../types/index.js";
 import type { PreparedAskUserInput } from "./ask-user-tool.js";
 import { getToolInputSchemaDescriptor } from "./schema/index.js";
+import type { ToolRegistry } from "./tool-registry.js";
 
 export interface ToolOrchestratorDependencies {
   approvalService: ApprovalService;
@@ -39,7 +40,7 @@ export interface ToolOrchestratorDependencies {
   policyEngine: PolicyEngine;
   toolCallRepository: ToolCallRepository;
   traceService: TraceService;
-  tools: ToolDefinition[];
+  toolRegistry: ToolRegistry;
 }
 
 export interface ToolExecutionCompletedOutcome {
@@ -69,7 +70,7 @@ export class ToolOrchestrator {
   private readonly tools = new Map<string, ToolDefinition>();
 
   public constructor(private readonly dependencies: ToolOrchestratorDependencies) {
-    for (const tool of dependencies.tools) {
+    for (const tool of dependencies.toolRegistry.list()) {
       this.tools.set(tool.name, tool);
     }
   }
@@ -108,7 +109,7 @@ export class ToolOrchestrator {
   }
 
   private resolveTool(toolName: string): ToolDefinition | undefined {
-    return this.tools.get(toolName) ?? this.tools.get(resolveToolAlias(toolName));
+    return this.tools.get(toolName);
   }
 
   public async execute(
@@ -648,7 +649,7 @@ export class ToolOrchestrator {
         : tool.capability === "shell.execute"
           ? "shell_execution"
           : tool.capability === "network.fetch_public_readonly"
-            ? "web_fetch"
+            ? "web_extract"
             : null;
 
     if (action === null) {
@@ -1022,19 +1023,6 @@ function readSessionApprovalFingerprints(metadata: ToolExecutionContext["taskMet
     return [];
   }
   return fingerprints.filter((value): value is string => typeof value === "string");
-}
-
-function resolveToolAlias(toolName: string): string {
-  if (toolName === "ask_user") {
-    return "AskUserQuestion";
-  }
-  if (toolName === "bash" || toolName === "Bash") {
-    return "shell";
-  }
-  if (toolName === "run_tests" || toolName === "test" || toolName === "tests") {
-    return "test_run";
-  }
-  return toolName;
 }
 
 function sanitizePersistedOutput(

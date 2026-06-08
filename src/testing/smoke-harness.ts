@@ -663,10 +663,7 @@ function countReadBackVerification(toolCalls: ToolCallRecord[]): number {
       (toolCall) =>
         toolCall.status === "finished" &&
         (toolCall.toolName === "file_read" ||
-          toolCall.toolName === "shell" ||
-          toolCall.toolName === "bash" ||
-          toolCall.toolName === "Bash" ||
-          toolCall.toolName === "test_run")
+          toolCall.toolName === "shell")
     ).length;
 }
 
@@ -674,10 +671,7 @@ function isVerificationToolCall(toolCall: ToolCallRecord): boolean {
   if (toolCall.status !== "finished") {
     return false;
   }
-  if (toolCall.toolName === "test_run") {
-    return true;
-  }
-  if (toolCall.toolName !== "shell" && toolCall.toolName !== "bash" && toolCall.toolName !== "Bash") {
+  if (toolCall.toolName !== "shell") {
     return false;
   }
   const command = readCommandFromInput(toolCall.input) ?? readCommandFromOutput(toolCall.output);

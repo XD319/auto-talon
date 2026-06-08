@@ -6,16 +6,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
 import { SandboxService } from "../src/sandbox/sandbox-service.js";
+import { ProcessTool } from "../src/tools/process-tool.js";
 import { TerminalSessionManager } from "../src/tools/terminal-session-manager.js";
-import {
-  TerminalReadTool,
-  TerminalStartTool,
-  TerminalStopTool,
-  TerminalWriteTool
-} from "../src/tools/terminal-tools.js";
 import type { ToolExecutionContext } from "../src/types/index.js";
 
-describe("terminal session tools", () => {
+describe("process tool", () => {
   it("resolves named long-running commands before sandbox preparation", () => {
     const workspace = createWorkspace();
     const manager = new TerminalSessionManager();
@@ -25,7 +20,7 @@ describe("terminal session tools", () => {
       workspaceRoot: workspace
     });
     const context = createContext(workspace);
-    const start = new TerminalStartTool(manager, sandbox, [
+    const processTool = new ProcessTool(manager, sandbox, [
       {
         command: "node server.cjs",
         env: {
@@ -36,11 +31,16 @@ describe("terminal session tools", () => {
     ]);
 
     try {
-      const prepared = start.prepare({ env: { NODE_ENV: "development" }, name: "dev" }, context).preparedInput;
+      const prepared = processTool
+        .prepare({ action: "start", env: { NODE_ENV: "development" }, name: "dev" }, context)
+        .preparedInput;
+      if (prepared.action !== "start") {
+        throw new Error("Expected start action.");
+      }
 
-      expect(prepared.command).toBe("node server.cjs");
-      expect(prepared.cwd).toBe(workspace);
-      expect(prepared.env).toEqual({
+      expect(prepared.preparedShell.command).toBe("node server.cjs");
+      expect(prepared.preparedShell.cwd).toBe(workspace);
+      expect(prepared.preparedShell.env).toEqual({
         NODE_ENV: "development",
         PORT: "4321"
       });
@@ -49,7 +49,7 @@ describe("terminal session tools", () => {
     }
   });
 
-  it("starts, reads, writes, and stops a long-running terminal session", async () => {
+  it("starts, reads, writes, and stops a long-running process session", async () => {
     const workspace = createWorkspace();
     writeFileSync(
       join(workspace, "terminal-fixture.cjs"),
@@ -67,29 +67,30 @@ describe("terminal session tools", () => {
     const manager = new TerminalSessionManager();
     const sandbox = new SandboxService({ allowedShellCommands: ["node"], workspaceRoot: workspace });
     const context = createContext(workspace);
-    const start = new TerminalStartTool(manager, sandbox);
-    const read = new TerminalReadTool(manager);
-    const write = new TerminalWriteTool(manager);
-    const stop = new TerminalStopTool(manager);
+    const processTool = new ProcessTool(manager, sandbox);
 
     try {
-      const started = await start.execute(
-        start.prepare({ command: "node terminal-fixture.cjs" }, context).preparedInput
+      const started = await processTool.execute(
+        processTool.prepare({ action: "start", command: "node terminal-fixture.cjs" }, context).preparedInput
       );
       expect(started.success).toBe(true);
       if (!started.success) {
-        throw new Error("terminal_start failed");
+        throw new Error("process start failed");
       }
       const sessionId = (started.output as { sessionId: string }).sessionId;
 
-      await expect(readUntil(read, sessionId, "ready")).resolves.toContain("ready");
+      await expect(
+        readUntil(processTool, sessionId, "ready")
+      ).resolves.toContain("ready");
 
-      await write.execute({ data: "hello\n", sessionId });
-      await expect(readUntil(read, sessionId, "echo:hello")).resolves.toContain("echo:hello");
+      await processTool.execute({ action: "write", data: "hello\n", sessionId });
+      await expect(
+        readUntil(processTool, sessionId, "echo:hello")
+      ).resolves.toContain("echo:hello");
 
-      await write.execute({ data: "quit\n", sessionId });
+      await processTool.execute({ action: "write", data: "quit\n", sessionId });
       await delay(500);
-      const stopped = await stop.execute({ sessionId });
+      const stopped = await processTool.execute({ action: "stop", sessionId });
       expect(stopped.success && (stopped.output as { running: boolean }).running).toBe(false);
     } finally {
       cleanupWorkspace(workspace);
@@ -98,11 +99,11 @@ describe("terminal session tools", () => {
 });
 
 function createWorkspace(): string {
-  const tempRoot = process.platform === "win32"
-    ? "D:\\tmp\\auto-talon-tests"
-    : join(tmpdir(), "auto-talon-tests");
-  mkdirSync(tempRoot, { recursive: true });
-  return mkdtempSync(join(tempRoot, "terminal-tools-"));
+  return mkdtempSync(join(tmpdir(), "auto-talon-process-"));
+}
+
+function cleanupWorkspace(workspace: string): void {
+  rmSync(workspace, { force: true, recursive: true });
 }
 
 function createContext(workspace: string): ToolExecutionContext {
@@ -111,34 +112,28 @@ function createContext(workspace: string): ToolExecutionContext {
     cwd: workspace,
     iteration: 1,
     signal: new AbortController().signal,
-    taskId: "task-terminal",
-    taskMetadata: {},
-    userId: "user",
+    taskId: "task-process",
+    userId: "user-1",
     workspaceRoot: workspace
   };
 }
 
-function cleanupWorkspace(workspace: string): void {
-  try {
-    rmSync(workspace, { force: true, recursive: true });
-  } catch {
-    // Windows can briefly keep a child-process cwd handle open after process exit.
-  }
-}
-
-async function readUntil(read: TerminalReadTool, sessionId: string, needle: string): Promise<string> {
-  let output = "";
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    await delay(200);
-    const result = await read.execute({ sessionId });
-    if (result.success) {
-      const chunk = result.output as { stderr: string; stdout: string };
-      output += chunk.stdout;
-      output += chunk.stderr;
-      if (output.includes(needle)) {
-        return output;
-      }
+async function readUntil(
+  processTool: ProcessTool,
+  sessionId: string,
+  needle: string,
+  attempts = 20
+): Promise<string> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const result = await processTool.execute({ action: "read", sessionId });
+    if (!result.success) {
+      throw new Error("process read failed");
     }
+    const text = JSON.stringify(result.output);
+    if (text.includes(needle)) {
+      return text;
+    }
+    await delay(100);
   }
-  return output;
+  throw new Error(`Timed out waiting for ${needle}`);
 }

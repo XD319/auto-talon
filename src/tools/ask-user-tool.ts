@@ -110,10 +110,9 @@ export interface PreparedAskUserInput {
 }
 
 export class AskUserTool implements ToolDefinition<typeof askUserSchema, PreparedAskUserInput> {
-  public constructor(
-    public readonly name = "AskUserQuestion",
-    private readonly descriptorMode: "canonical" | "legacy" = "canonical"
-  ) {}
+  public readonly name = "clarify";
+
+  public constructor(private readonly descriptorMode: "canonical" | "legacy" = "canonical") {}
 
   public readonly description =
     "Ask the interactive TUI user clarifying question(s). Use this for user preferences or missing requirements, not tool permissions.";
@@ -133,7 +132,7 @@ export class AskUserTool implements ToolDefinition<typeof askUserSchema, Prepare
   public checkAvailability(context: ToolExecutionContext): ToolAvailabilityResult {
     return context.taskMetadata?.["interactivePromptMode"] === "tui"
       ? { available: true, reason: "interactive TUI prompt mode enabled" }
-      : { available: false, reason: "AskUserQuestion is only available in interactive chat TUI runs" };
+      : { available: false, reason: "clarify is only available in interactive chat TUI runs" };
   }
 
   public prepare(input: unknown): ToolPreparation<PreparedAskUserInput> {
@@ -156,7 +155,7 @@ export class AskUserTool implements ToolDefinition<typeof askUserSchema, Prepare
   public execute(): Promise<ToolExecutionResult> {
     return Promise.resolve({
       errorCode: "invalid_state",
-      errorMessage: "AskUserQuestion should be intercepted before execute.",
+      errorMessage: "clarify should be intercepted before execute.",
       success: false
     });
   }

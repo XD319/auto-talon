@@ -226,15 +226,7 @@ export function isSuccessfulVerificationToolCall(
     return false;
   }
   const output = result.output;
-  if (toolName === "test_run") {
-    return (
-      typeof output === "object" &&
-      output !== null &&
-      !Array.isArray(output) &&
-      (output as { passed?: unknown }).passed === true
-    );
-  }
-  if (toolName !== "shell" && toolName !== "bash" && toolName !== "Bash") {
+  if (toolName !== "shell") {
     return false;
   }
   if (typeof output !== "object" || output === null || Array.isArray(output)) {

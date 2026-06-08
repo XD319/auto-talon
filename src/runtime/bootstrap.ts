@@ -47,16 +47,13 @@ import {
   CodeSearchTool,
   FileReadTool,
   FileWriteTool,
-  GitTool,
+  ProcessTool,
   ShellTool,
+  SkillsListTool,
   SkillViewTool,
-  TerminalReadTool,
   TerminalSessionManager,
-  TerminalStartTool,
-  TerminalStopTool,
-  TerminalWriteTool,
-  TestRunTool,
   ToolOrchestrator,
+  ToolRegistry,
   WebFetchTool,
   WebSearchTool,
   SessionSearchTool
@@ -374,6 +371,20 @@ export function createApplication(
     registry: skillRegistry
   });
   const terminalSessionManager = new TerminalSessionManager();
+  const toolRegistry = new ToolRegistry().registerAll([
+    new AskUserTool(),
+    new CodeSearchTool(sandboxService),
+    new FileReadTool(sandboxService),
+    new FileWriteTool(sandboxService),
+    new ProcessTool(terminalSessionManager, sandboxService, config.workflow.longRunningCommands),
+    new SkillsListTool(skillRegistry),
+    new SkillViewTool(skillRegistry),
+    new ShellTool(shellExecutor, sandboxService),
+    new WebFetchTool(sandboxService),
+    new WebSearchTool(sandboxService, config.webSearch),
+    new SessionSearchTool({ searchService: sessionMessageSearchService }),
+    ...mcpTools
+  ]);
   const toolOrchestrator = new ToolOrchestrator({
     approvalService,
     approvalRuleStore,
@@ -383,29 +394,7 @@ export function createApplication(
     contextPolicy,
     policyEngine,
     toolCallRepository: storage.toolCalls,
-    tools: [
-      new AskUserTool(),
-      new CodeSearchTool(sandboxService),
-      new FileReadTool(sandboxService),
-      new FileWriteTool(sandboxService),
-      new GitTool(shellExecutor, sandboxService),
-      new SkillViewTool(skillRegistry),
-      new ShellTool(shellExecutor, sandboxService),
-      new TerminalStartTool(terminalSessionManager, sandboxService, config.workflow.longRunningCommands),
-      new TerminalReadTool(terminalSessionManager),
-      new TerminalWriteTool(terminalSessionManager),
-      new TerminalStopTool(terminalSessionManager),
-      new TestRunTool(
-        shellExecutor,
-        sandboxService,
-        config.workflow.testCommands,
-        config.workflow.failureGuidedRetry.maxRepairAttempts
-      ),
-      new WebFetchTool(sandboxService),
-      new WebSearchTool(sandboxService, config.webSearch),
-      new SessionSearchTool({ searchService: sessionMessageSearchService }),
-      ...mcpTools
-    ],
+    toolRegistry,
     traceService
   });
   const memoryPlane = new MemoryPlane({

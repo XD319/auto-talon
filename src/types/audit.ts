@@ -18,7 +18,7 @@ export const AUDIT_ACTIONS = [
   "shell_execution",
   "tool_failure",
   "tool_rejected",
-  "web_fetch",
+  "web_extract",
   "skill_promoted",
   "skill_rolled_back",
   "route_decided",

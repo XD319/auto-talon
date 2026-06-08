@@ -4,6 +4,7 @@ import { z } from "zod";
 import { PolicyEngine } from "../src/policy/policy-engine.js";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../src/policy/default-policy-config.js";
 import { ToolOrchestrator } from "../src/tools/tool-orchestrator.js";
+import { ToolRegistry } from "../src/tools/tool-registry.js";
 import type {
   ToolCallRecord,
   ToolCallRepository,
@@ -12,17 +13,24 @@ import type {
   ToolExecutionResult
 } from "../src/types/index.js";
 
-describe("ToolOrchestrator aliases", () => {
-  it("resolves bash-style tool names to the governed shell tool", async () => {
+describe("ToolOrchestrator canonical tool names", () => {
+  it("does not resolve legacy alias names", async () => {
     const records = new Map<string, ToolCallRecord>();
     const shellTool = createShellLikeTool();
     const orchestrator = createOrchestrator(shellTool, records);
 
-    expect(orchestrator.describeTool("bash")).toMatchObject({
-      capability: "shell.execute",
-      name: "shell"
-    });
-    expect(orchestrator.describeTool("Bash")).toMatchObject({
+    expect(orchestrator.describeTool("bash")).toBeNull();
+    expect(orchestrator.describeTool("Bash")).toBeNull();
+    expect(orchestrator.describeTool("run_tests")).toBeNull();
+    expect(orchestrator.describeTool("AskUserQuestion")).toBeNull();
+  });
+
+  it("executes the canonical shell tool name", async () => {
+    const records = new Map<string, ToolCallRecord>();
+    const shellTool = createShellLikeTool();
+    const orchestrator = createOrchestrator(shellTool, records);
+
+    expect(orchestrator.describeTool("shell")).toMatchObject({
       capability: "shell.execute",
       name: "shell"
     });
@@ -32,45 +40,15 @@ describe("ToolOrchestrator aliases", () => {
         input: { command: "node -v" },
         iteration: 1,
         reason: "Check runtime",
-        taskId: "task-alias",
-        toolCallId: "call-alias",
-        toolName: "Bash"
+        taskId: "task-shell",
+        toolCallId: "call-shell",
+        toolName: "shell"
       },
       createContext()
     );
 
     expect(outcome.kind).toBe("completed");
-    expect(records.get("call-alias")?.status).toBe("finished");
-  });
-
-  it("resolves common test runner aliases to test_run", async () => {
-    const records = new Map<string, ToolCallRecord>();
-    const testRunTool = createShellLikeTool("test_run");
-    const orchestrator = createOrchestrator(testRunTool, records);
-
-    expect(orchestrator.describeTool("run_tests")).toMatchObject({
-      capability: "shell.execute",
-      name: "test_run"
-    });
-    expect(orchestrator.describeTool("test")).toMatchObject({
-      capability: "shell.execute",
-      name: "test_run"
-    });
-
-    const outcome = await orchestrator.execute(
-      {
-        input: { command: "npm test" },
-        iteration: 1,
-        reason: "Verify task",
-        taskId: "task-test-alias",
-        toolCallId: "call-test-alias",
-        toolName: "run_tests"
-      },
-      createContext()
-    );
-
-    expect(outcome.kind).toBe("completed");
-    expect(records.get("call-test-alias")?.status).toBe("finished");
+    expect(records.get("call-shell")?.status).toBe("finished");
   });
 
   it("feeds shell execution failures back as recoverable tool results", async () => {
@@ -89,7 +67,7 @@ describe("ToolOrchestrator aliases", () => {
         reason: "Run verification",
         taskId: "task-shell-failure",
         toolCallId: "call-shell-failure",
-        toolName: "bash"
+        toolName: "shell"
       },
       createContext()
     );
@@ -141,9 +119,7 @@ function createShellLikeTool(
           envKeys: [],
           executable: "node",
           kind: "shell",
-          networkAccess: "disabled",
-          pathScope: "workspace",
-          timeoutMs: 1_000
+          pathScope: "workspace"
         }
       };
     },
@@ -179,7 +155,7 @@ function createOrchestrator(
     } as never,
     policyEngine: new PolicyEngine(DEFAULT_LOCAL_POLICY_CONFIG),
     toolCallRepository: createToolCallRepository(records),
-    tools: [tool],
+    toolRegistry: new ToolRegistry().register(tool),
     traceService: {
       record: () => undefined
     } as never

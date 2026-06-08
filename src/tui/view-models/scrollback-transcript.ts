@@ -223,11 +223,8 @@ function toolAction(toolName: string): string {
   if (toolName.includes("write")) {
     return "write";
   }
-  if (toolName.includes("read") || toolName === "web_fetch") {
+  if (toolName.includes("read") || toolName === "web_extract") {
     return "read";
-  }
-  if (toolName === "test_run") {
-    return "test";
   }
   if (toolName === "shell" || toolName.includes("shell")) {
     return "run";

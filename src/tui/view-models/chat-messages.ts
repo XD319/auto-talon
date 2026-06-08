@@ -169,7 +169,7 @@ function formatTraceEvent(event: TraceEvent): string {
 
 function formatFinishedToolCall(event: Extract<TraceEvent, { eventType: "tool_call_finished" }>): string {
   const { summary, toolCallId, toolName, outputPreview } = event.payload;
-  if (toolName === "web_fetch") {
+  if (toolName === "web_extract") {
     const urlTarget = extractUrlTarget(`${summary} ${outputPreview}`);
     return urlTarget === null ? "Fetched webpage" : `Fetched ${urlTarget}`;
   }
@@ -262,5 +262,5 @@ export function activityDisplayKey(message: Extract<ChatMessage, { kind: "activi
 }
 
 function isHighValueFinishedTool(toolName: string): boolean {
-  return toolName.includes("write") || toolName === "test_run" || toolName === "shell";
+  return toolName.includes("write") || toolName === "shell";
 }

@@ -72,7 +72,7 @@ describe("tool exposure planner", () => {
   });
 
   it("hides only tools that fail availability checks", async () => {
-    const webFetch = makeTool("web_fetch", "medium");
+    const webFetch = makeTool("web_extract", "medium");
     webFetch.capability = "network.fetch_public_readonly";
     webFetch.sideEffectLevel = "external_read_only";
     webFetch.checkAvailability = () => ({ available: false, reason: "network disabled" });
@@ -112,7 +112,7 @@ describe("tool exposure planner", () => {
     });
 
     expect(plan.tools.map((tool) => tool.name)).toEqual(["file_read"]);
-    expect(plan.decisions.find((decision) => decision.toolName === "web_fetch")).toMatchObject({
+    expect(plan.decisions.find((decision) => decision.toolName === "web_extract")).toMatchObject({
       exposed: false,
       reason: "unavailable: network disabled"
     });

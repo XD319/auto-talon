@@ -29,7 +29,7 @@ const webFetchSchema = z.object({
 });
 
 export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, PreparedWebFetchInput> {
-  public readonly name = "web_fetch";
+  public readonly name = "web_extract";
   public readonly description =
     "Fetch a public text-oriented HTTP resource through a sandboxed allowlist.";
   public readonly capability = "network.fetch_public_readonly" as const;

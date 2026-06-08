@@ -540,7 +540,7 @@ describe("Phase 2 governance runtime", () => {
                 },
                 reason: "Ask a batched user question.",
                 toolCallId: "ask-claude-style",
-                toolName: "AskUserQuestion"
+                toolName: "clarify"
               }
             ],
             usage: {
@@ -617,7 +617,7 @@ describe("Phase 2 governance runtime", () => {
             },
             reason: "Ask a user question with provider-stringified fields.",
             toolCallId: "ask-stringified-options",
-            toolName: "AskUserQuestion"
+            toolName: "clarify"
           }
         ],
         usage: {
@@ -665,7 +665,7 @@ describe("Phase 2 governance runtime", () => {
             },
             reason: "Ask with stringified questions.",
             toolCallId: "ask-stringified-questions",
-            toolName: "AskUserQuestion"
+            toolName: "clarify"
           }
         ],
         usage: {
@@ -707,7 +707,7 @@ describe("Phase 2 governance runtime", () => {
             },
             reason: "Ask with malformed options.",
             toolCallId: "ask-malformed-options",
-            toolName: "AskUserQuestion"
+            toolName: "clarify"
           }
         ],
         usage: {
