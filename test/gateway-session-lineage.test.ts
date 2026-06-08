@@ -76,8 +76,13 @@ describe("gateway session lineage", () => {
 
       const secondSnapshot = gateway.getTaskSnapshot(second.result.taskId);
       const received = secondSnapshot?.trace.find((trace) => trace.eventType === "gateway_request_received");
+      const firstTask = handle.service.showTask(first.result.taskId).task;
+      const secondTask = handle.service.showTask(second.result.taskId).task;
       expect(first.sessionBinding.runtimeUserId).toBe("lineage-sdk:session:session-1");
       expect(second.sessionBinding.runtimeUserId).toBe("lineage-sdk:session:session-1");
+      expect(firstTask?.sessionId).toBeTruthy();
+      expect(secondTask?.sessionId).toBe(firstTask?.sessionId);
+      expect(second.sessionBinding.runtimeSessionId).toBe(firstTask?.sessionId ?? null);
       expect(received?.eventType).toBe("gateway_request_received");
       if (received?.eventType === "gateway_request_received") {
         expect(received.payload.previousTaskId).toBe(first.result.taskId);

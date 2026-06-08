@@ -5,6 +5,7 @@ export interface GatewaySessionBindingDraft {
   externalSessionId: string;
   externalUserId: string | null;
   metadata: JsonObject;
+  runtimeSessionId?: string | null;
   runtimeUserId: string;
   sessionBindingId: string;
   taskId: string;

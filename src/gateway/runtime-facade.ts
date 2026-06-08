@@ -26,6 +26,7 @@ import type {
 } from "../types/index.js";
 
 import { collectCapabilityNotices } from "./capability-policy.js";
+import { tryHandleGatewayResumeCommand } from "./session-commands.js";
 import type { GatewayGuard } from "./gateway-guard.js";
 import type { GatewayIdentityMapper } from "./identity-mapper.js";
 import type { GatewaySessionMapper } from "./session-mapper.js";
@@ -75,7 +76,39 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       }
     }
 
+    const ownerUserId = request.requester.externalUserId ?? process.env.USERNAME ?? process.env.USER ?? "local-user";
     const identityBinding = this.dependencies.identityMapper.bind(adapter.adapterId, request.requester);
+    const resumeCommand = tryHandleGatewayResumeCommand({
+      adapterId: adapter.adapterId,
+      externalSessionId: request.requester.externalSessionId,
+      externalUserId: request.requester.externalUserId,
+      ownerUserId,
+      runtimeUserId: identityBinding.runtimeUserId,
+      sessions: this.dependencies.applicationService,
+      taskInput: request.taskInput
+    });
+    if (resumeCommand.handled) {
+      const taskId = randomUUID();
+      const sessionBinding = this.dependencies.sessionMapper.bindTask({
+        adapterId: adapter.adapterId,
+        externalSessionId: request.requester.externalSessionId,
+        externalUserId: request.requester.externalUserId,
+        metadata: request.metadata ?? {},
+        runtimeSessionId: this.dependencies.applicationService.resolveGatewayRuntimeSessionId(
+          adapter.adapterId,
+          request.requester.externalSessionId
+        ),
+        runtimeUserId: identityBinding.runtimeUserId,
+        taskId
+      });
+      return {
+        adapter,
+        notices: [],
+        result: toGatewayTaskResult(taskId, "succeeded", resumeCommand.message, undefined, null),
+        sessionBinding
+      };
+    }
+
     const continuation =
       request.continuation === "new"
         ? null
@@ -92,6 +125,8 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     runOptions.agentProfileId = request.agentProfileId ?? runOptions.agentProfileId;
     runOptions.metadata = {
       ...(request.metadata ?? {}),
+      source: "gateway",
+      sourceDetail: `${adapter.adapterId}:${request.requester.externalSessionId}`,
       gateway: {
         adapterId: adapter.adapterId,
         adapterKind: adapter.kind,
@@ -100,7 +135,8 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
         runtimeUserId: continuation?.runtimeUserId ?? identityBinding.runtimeUserId,
         lineage: {
           continuationMode: request.continuation ?? "resume-latest",
-          previousTaskId: continuation?.previousTaskId ?? null
+          previousTaskId: continuation?.previousTaskId ?? null,
+          runtimeSessionId: continuation?.runtimeSessionId ?? null
         }
       }
     };
@@ -128,12 +164,27 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       });
     }
 
-    const run = await this.dependencies.applicationService.runTask(runOptions);
+    const run =
+      continuation?.runtimeSessionId !== null &&
+      continuation?.runtimeSessionId !== undefined &&
+      request.continuation !== "new"
+        ? await this.dependencies.applicationService.continueSession(
+            continuation.runtimeSessionId,
+            request.taskInput,
+            runOptions
+          )
+        : await this.dependencies.applicationService.runTask({
+            ...runOptions,
+            ...(continuation?.runtimeSessionId !== null && continuation?.runtimeSessionId !== undefined
+              ? { sessionId: continuation.runtimeSessionId }
+              : {})
+          });
     const sessionBinding = this.dependencies.sessionMapper.bindTask({
       adapterId: adapter.adapterId,
       externalSessionId: request.requester.externalSessionId,
       externalUserId: request.requester.externalUserId,
       metadata: request.metadata ?? {},
+      runtimeSessionId: run.task.sessionId ?? continuation?.runtimeSessionId ?? null,
       runtimeUserId: continuation?.runtimeUserId ?? identityBinding.runtimeUserId,
       taskId: run.task.taskId
     });

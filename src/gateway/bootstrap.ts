@@ -21,9 +21,10 @@ export function createGatewayRuntime(runtimeHandle: AppRuntimeHandle): GatewayRu
     }),
     identityMapper: new DefaultGatewayIdentityMapper(),
     providerName: runtimeHandle.config.provider.name,
-    sessionMapper: new RepositoryBackedGatewaySessionMapper(
-      runtimeHandle.infrastructure.storage.gatewaySessions
-    ),
+    sessionMapper: new RepositoryBackedGatewaySessionMapper({
+      findTaskById: (taskId) => runtimeHandle.infrastructure.storage.tasks.findById(taskId),
+      repository: runtimeHandle.infrastructure.storage.gatewaySessions
+    }),
     traceService: runtimeHandle.infrastructure.traceService
   });
 }

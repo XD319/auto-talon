@@ -15,6 +15,7 @@ interface GatewaySessionBindingRow {
   external_session_id: string;
   external_user_id: string | null;
   metadata_json: string;
+  runtime_session_id: string | null;
   runtime_user_id: string;
   session_binding_id: string;
   task_id: string;
@@ -35,11 +36,12 @@ export class SqliteGatewaySessionRepository implements GatewaySessionRepository 
             external_session_id,
             external_user_id,
             runtime_user_id,
+            runtime_session_id,
             task_id,
             created_at,
             updated_at,
             metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -48,6 +50,7 @@ export class SqliteGatewaySessionRepository implements GatewaySessionRepository 
         record.externalSessionId,
         record.externalUserId,
         record.runtimeUserId,
+        record.runtimeSessionId ?? null,
         record.taskId,
         now,
         now,
@@ -105,6 +108,20 @@ export class SqliteGatewaySessionRepository implements GatewaySessionRepository 
     return rows.map((row) => this.mapRow(row));
   }
 
+  public listByRuntimeSessionId(runtimeSessionId: string): GatewaySessionBinding[] {
+    const rows = this.database
+      .prepare(
+        `
+          SELECT * FROM gateway_session_bindings
+          WHERE runtime_session_id = ?
+          ORDER BY created_at DESC
+        `
+      )
+      .all(runtimeSessionId) as unknown as GatewaySessionBindingRow[];
+
+    return rows.map((row) => this.mapRow(row));
+  }
+
   private mapRow(row: GatewaySessionBindingRow): GatewaySessionBinding {
     return {
       adapterId: row.adapter_id,
@@ -112,6 +129,7 @@ export class SqliteGatewaySessionRepository implements GatewaySessionRepository 
       externalSessionId: row.external_session_id,
       externalUserId: row.external_user_id,
       metadata: parseJsonValue<JsonObject>(row.metadata_json),
+      runtimeSessionId: row.runtime_session_id,
       runtimeUserId: row.runtime_user_id,
       sessionBindingId: row.session_binding_id,
       taskId: row.task_id,

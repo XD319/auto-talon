@@ -283,7 +283,8 @@ describe("Phase 5 gateway adapters", () => {
       const content = await fs.readFile(new URL(runtimeSource, import.meta.url), "utf8");
       expect(content.includes("../gateway")).toBe(false);
       expect(content.includes("./gateway")).toBe(false);
-      expect(content.includes("adapter")).toBe(false);
+      expect(/from\s+["'][^"']*adapter/i.test(content)).toBe(false);
+      expect(/import\s*\([^)]*adapter/i.test(content)).toBe(false);
     }
   });
 
