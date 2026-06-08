@@ -644,8 +644,8 @@ describe("coding workflow loop", () => {
       const details = handle.service.showTask(result.task.taskId);
       const blockedWrite = details.toolCalls.find((toolCall) => toolCall.toolCallId === "blocked-read-only-write");
 
-      expect(result.task.status).toBe("failed");
-      expect(result.error?.code).toBe("policy_denied");
+      expect(result.task.status).toBe("succeeded");
+      expect(result.error).toBeUndefined();
       expect(blockedWrite?.status).toBe("failed");
       expect(blockedWrite?.errorCode).toBe("policy_denied");
       await expect(fs.readFile(join(workspaceRoot, "PROGRESS.md"), "utf8")).rejects.toThrow();

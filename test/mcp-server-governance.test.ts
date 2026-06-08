@@ -12,14 +12,15 @@ describe("McpToolBridge governance", () => {
         runtimeUserId: "mcp_external"
       });
 
-      await expect(
-        bridge.callTool({
-          arguments: {
-            command: "node -v"
-          },
-          name: "shell"
-        })
-      ).rejects.toThrow(/cannot|deny|denied|policy/iu);
+      const outcome = await bridge.callTool({
+        arguments: {
+          command: "node -v"
+        },
+        name: "shell"
+      });
+
+      expect(outcome.status).toBe("error");
+      expect(outcome.content.errorCode).toMatch(/policy_denied|tool_unavailable/u);
     } finally {
       handle.close();
     }

@@ -53,7 +53,8 @@ describe("SkillDraftManager", () => {
     ]);
 
     expect(groups[0]).toMatchObject({
-      query: "sqlite migration", sourceExperienceIds: ["exp-1", "exp-2"]
+      keyword: "sqlite migration",
+      sourceExperienceIds: ["exp-1", "exp-2"]
     });
   });
 

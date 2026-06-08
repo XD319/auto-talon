@@ -602,6 +602,7 @@ function summarizeTrace(trace: TraceEvent[]): string[] {
       (event) =>
         event.eventType === "approval_requested" ||
         event.eventType === "approval_resolved" ||
+        event.eventType === "policy_decision" ||
         event.eventType === "session_compacted" ||
         event.eventType === "final_outcome"
     )
