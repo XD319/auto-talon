@@ -806,6 +806,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           runOptions.taskId = taskId;
           if ((input.interactionMode ?? "agent") === "plan") {
             runOptions.agentProfileId = "planner";
+            runOptions.interactionMode = "plan";
           }
           runOptions.metadata = {
             ...(runOptions.metadata ?? {}),

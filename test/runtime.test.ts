@@ -808,9 +808,11 @@ describe("Phase 2 governance runtime", () => {
       options.agentProfileId = "reviewer";
 
       const result = await handle.service.runTask(options);
+      const details = handle.service.showTask(result.task.taskId);
+      const writeCall = details.toolCalls.find((toolCall) => toolCall.toolName === "write_file");
 
-      expect(result.error?.code).toBe("policy_denied");
-      expect(result.task.status).toBe("failed");
+      expect(writeCall?.status).toBe("failed");
+      expect(writeCall?.errorCode).toBe("policy_denied");
       expect(handle.service.listPendingApprovals()).toHaveLength(0);
     } finally {
       handle.close();
@@ -826,9 +828,11 @@ describe("Phase 2 governance runtime", () => {
       options.agentProfileId = "planner";
 
       const result = await handle.service.runTask(options);
+      const details = handle.service.showTask(result.task.taskId);
+      const writeCall = details.toolCalls.find((toolCall) => toolCall.toolName === "write_file");
 
-      expect(result.error?.code).toBe("policy_denied");
-      expect(result.task.status).toBe("failed");
+      expect(writeCall?.status).toBe("failed");
+      expect(writeCall?.errorCode).toBe("policy_denied");
       expect(handle.service.listPendingApprovals()).toHaveLength(0);
     } finally {
       handle.close();

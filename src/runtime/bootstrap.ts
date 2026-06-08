@@ -45,6 +45,7 @@ import type {
 import {
   AskUserTool,
   CodeSearchTool,
+  DelegateTaskTool,
   GlobTool,
   PatchTool,
   ProcessTool,
@@ -58,8 +59,10 @@ import {
   ToolRegistry,
   WebFetchTool,
   WebSearchTool,
-  SessionSearchTool
+  SessionSearchTool,
+  TodoTool
 } from "../tools/index.js";
+import { TodoSessionStore } from "../tools/todo-session-store.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
 
@@ -97,6 +100,7 @@ import {
   type WorkflowCustomShell,
   type WorkflowRuntimeConfig
 } from "./runtime-config.js";
+import { ToolOverrideStore } from "../tools/tool-overrides.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles } from "./workspace-setup.js";
 
@@ -373,9 +377,12 @@ export function createApplication(
     registry: skillRegistry
   });
   const terminalSessionManager = new TerminalSessionManager();
+  const todoSessionStore = new TodoSessionStore();
+  const delegateTaskTool = new DelegateTaskTool();
   const toolRegistry = new ToolRegistry().registerAll([
     new AskUserTool(),
     new CodeSearchTool(sandboxService),
+    delegateTaskTool,
     new GlobTool(sandboxService),
     new PatchTool(sandboxService),
     new ReadFileTool(sandboxService),
@@ -387,6 +394,7 @@ export function createApplication(
     new WebFetchTool(sandboxService),
     new WebSearchTool(sandboxService, config.webSearch),
     new SessionSearchTool({ searchService: sessionMessageSearchService }),
+    new TodoTool(todoSessionStore),
     ...mcpTools
   ]);
   const toolOrchestrator = new ToolOrchestrator({
@@ -502,9 +510,11 @@ export function createApplication(
     commitmentService,
     nextActionService
   });
+  const toolOverrideStore = new ToolOverrideStore(config.workspaceRoot);
   const toolExposurePlanner = new ToolExposurePlanner({
     budgetService,
     toolOrchestrator,
+    toolOverrideStore,
     traceService
   });
   const sessionService = new SessionService({
@@ -566,6 +576,36 @@ export function createApplication(
     outputService,
     workflow: config.workflow,
     workspaceRoot: config.workspaceRoot
+  });
+  delegateTaskTool.bindExecutor(async (request) => {
+    const parentTask = storage.tasks.findById(request.parentTaskId);
+    const result = await executionKernel.run({
+      agentProfileId: request.profile ?? config.defaultProfileId,
+      cwd: request.cwd,
+      interactionMode: "agent",
+      maxIterations: request.maxIterations ?? config.defaultMaxIterations,
+      metadata: {
+        delegatedFromTaskId: request.parentTaskId
+      },
+      ...(parentTask?.sessionId !== null && parentTask?.sessionId !== undefined
+        ? { sessionId: parentTask.sessionId }
+        : {}),
+      signal: request.signal,
+      taskInput: request.prompt,
+      timeoutMs: config.defaultTimeoutMs,
+      tokenBudget: {
+        ...config.tokenBudget,
+        usedCostUsd: 0,
+        usedInput: 0,
+        usedOutput: 0
+      },
+      userId: request.userId
+    });
+    return {
+      output: result.output,
+      status: result.task.status,
+      taskId: result.task.taskId
+    };
   });
   const sessionStateProjector = new SessionStateProjector({
     commitmentProjector: sessionCommitmentProjector,
@@ -696,6 +736,8 @@ export function createApplication(
     experiencePlane,
     skillDraftManager,
     skillRegistry,
+    toolOverrideStore,
+    toolRegistry,
     inboxService,
     commitmentService,
     nextActionService,

@@ -227,6 +227,8 @@ export interface RuntimeRunOptions {
   timeoutMs: number;
   tokenBudget: TokenBudget;
   signal?: AbortSignal;
+  /** Limits tool exposure to the plan-safe read-only subset when set to plan. */
+  interactionMode?: TuiInteractionMode;
   metadata?: JsonObject;
   /** Forwarded to the provider as `onTextDelta` when supported (e.g. OpenAI-compatible streaming). */
   onAssistantTextDelta?: (delta: string) => void;

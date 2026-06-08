@@ -138,6 +138,7 @@ interface ExecutionLoopState {
   completionVerificationSatisfied: boolean;
   completionVerificationSatisfiedEmitted: boolean;
   criticalBudgetPressureEmitted: boolean;
+  interactionMode?: RuntimeRunOptions["interactionMode"];
   postCompletionVerificationReads: number;
   selectedSkillContext: ContextFragment[];
   silentToolTurns: number;
@@ -209,7 +210,10 @@ export class ExecutionKernel {
 
   public async run(options: RuntimeRunOptions): Promise<RuntimeRunResult> {
     const taskId = options.taskId ?? randomUUID();
-    const taskMetadata = options.metadata ?? {};
+    const taskMetadata = {
+      ...(options.metadata ?? {}),
+      ...(options.interactionMode !== undefined ? { interactionMode: options.interactionMode } : {})
+    };
     let task = this.dependencies.taskRepository.create({
       agentProfileId: options.agentProfileId,
       cwd: options.cwd,
@@ -330,10 +334,11 @@ export class ExecutionKernel {
               iteration: 1,
               signal: managedAbortController.abortController.signal,
               taskId,
-              taskMetadata: task.metadata,
+              taskMetadata: buildToolTaskMetadata(task),
               userId: options.userId,
               workspaceRoot: this.dependencies.workspaceRoot
             },
+            interactionMode: options.interactionMode,
             iteration: 1,
             taskId,
             sessionId
@@ -390,6 +395,7 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
+        interactionMode: options.interactionMode,
         managedAbortController,
         maxIterations: options.maxIterations,
         memoryContext: [...recallPlan.fragments, ...resumeMemoryContext],
@@ -474,6 +480,7 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
+        interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
@@ -612,10 +619,11 @@ export class ExecutionKernel {
               iteration,
               signal: state.managedAbortController.abortController.signal,
               taskId: task.taskId,
-              taskMetadata: task.metadata,
+              taskMetadata: buildToolTaskMetadata(task),
               userId: task.requesterUserId,
               workspaceRoot: this.dependencies.workspaceRoot
             },
+            interactionMode: state.interactionMode,
             iteration,
             taskId: task.taskId,
             sessionId: task.sessionId ?? null
@@ -1719,7 +1727,7 @@ export class ExecutionKernel {
         iteration,
         signal: state.managedAbortController.abortController.signal,
         taskId: task.taskId,
-        taskMetadata: task.metadata,
+        taskMetadata: buildToolTaskMetadata(task),
         userId: task.requesterUserId,
         workspaceRoot: this.dependencies.workspaceRoot
       }
@@ -1978,5 +1986,16 @@ function resolveTaskEntrySource(task: TaskRecord): SessionEntrySource {
     return source;
   }
   return "cli";
+}
+
+function readInteractionModeFromMetadata(metadata: Record<string, unknown> | undefined): RuntimeRunOptions["interactionMode"] {
+  return metadata?.interactionMode === "plan" ? "plan" : "agent";
+}
+
+function buildToolTaskMetadata(task: TaskRecord): TaskRecord["metadata"] {
+  return {
+    ...task.metadata,
+    ...(task.sessionId !== null && task.sessionId !== undefined ? { sessionId: task.sessionId } : {})
+  };
 }
 
