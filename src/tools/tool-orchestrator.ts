@@ -29,6 +29,7 @@ import type {
 import type { PreparedAskUserInput } from "./ask-user-tool.js";
 import { getToolInputSchemaDescriptor } from "./schema/index.js";
 import type { ToolRegistry } from "./tool-registry.js";
+import { isMutationTool } from "./tool-parallel-policy.js";
 
 export interface ToolOrchestratorDependencies {
   approvalService: ApprovalService;
@@ -891,15 +892,6 @@ function formatClarifyResponse(prompt: ClarifyPromptRecord): string | null {
       return `${question}\nAnswer: ${answerText}`;
     })
     .join("\n\n");
-}
-
-function isMutationTool(tool: ToolDefinition): boolean {
-  return (
-    tool.capability === "interaction.ask_user" ||
-    tool.capability === "filesystem.write" ||
-    tool.sideEffectLevel === "workspace_mutation" ||
-    tool.sideEffectLevel === "external_mutation"
-  );
 }
 
 function summarizeValidationIssues(issues: z.ZodIssue[]): string {

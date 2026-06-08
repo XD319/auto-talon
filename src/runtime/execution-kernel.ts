@@ -78,7 +78,8 @@ import {
   ProviderSubagentSummarizer
 } from "../memory/compact-summarizer.js";
 import type { CompactTriggerPolicy } from "../memory/compact-policy.js";
-import type { ToolOrchestrator } from "../tools/index.js";
+import type { ToolOrchestrator, ToolExecutionOutcome } from "../tools/index.js";
+import { buildParallelSafeLookup } from "../tools/tool-parallel-policy.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
@@ -961,210 +962,97 @@ export class ExecutionKernel {
       }
 
       let toolCallCount = 0;
-      for (const [toolIndex, toolCall] of pendingToolCalls.entries()) {
+      const parallelSafeByToolName = buildParallelSafeLookup(
+        this.dependencies.toolOrchestrator.listToolsWithMetadata()
+      );
+      const isParallelSafe = (toolName: string): boolean =>
+        parallelSafeByToolName.get(toolName) ?? false;
+
+      let toolCallIndex = 0;
+      while (toolCallIndex < pendingToolCalls.length) {
         throwIfAborted(
           state.managedAbortController.abortController.signal,
           state.managedAbortController.getReason()
         );
-        emitTaskEvent(state.onTaskEvent, {
-          iteration,
-          kind: "tool",
-          status: "started",
-          taskId: task.taskId,
-          toolCallId: toolCall.toolCallId,
-          toolName: toolCall.toolName
-        });
-        state.managedAbortController.touchActivity("tool_call_started");
 
-        const outcome = await this.dependencies.toolOrchestrator.execute(
-          {
-            input: toolCall.input,
-            iteration,
-            reason: toolCall.reason,
-            taskId: task.taskId,
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName
-          },
-          {
-            agentProfileId: task.agentProfileId,
-            cwd: state.cwd,
-            iteration,
-            signal: state.managedAbortController.abortController.signal,
-            taskId: task.taskId,
-            taskMetadata: task.metadata,
-            userId: task.requesterUserId,
-            workspaceRoot: this.dependencies.workspaceRoot
-          }
-        );
-        state.managedAbortController.touchActivity(`tool_call_${outcome.kind}`);
-
-        if (outcome.kind === "approval_required") {
-          task = this.dependencies.taskRepository.update(task.taskId, {
-            status: "waiting_approval"
-          });
-
-          emitTaskEvent(state.onTaskEvent, {
-            iteration,
-            kind: "tool",
-            status: "approval_required",
-            taskId: task.taskId,
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName
-          });
-          this.checkpointManager.save({
-            iteration,
-            memoryContext: state.memoryContext,
+        if (!isParallelSafe(pendingToolCalls[toolCallIndex].toolName)) {
+          const toolCall = pendingToolCalls[toolCallIndex];
+          const invocation = await this.invokeToolCall(state, task, iteration, toolCall);
+          const paused = this.tryPauseToolExecution(
+            state,
             messages,
-            pendingToolCalls: pendingToolCalls.slice(toolIndex),
-            pendingClarifyPromptId: null,
-            taskId: task.taskId
-          });
-
-          return {
-            output: null,
-            task
-          };
-        }
-
-        if (outcome.kind === "clarify_required") {
-          task = this.dependencies.taskRepository.update(task.taskId, {
-            status: "waiting_clarification"
-          });
-
-          emitTaskEvent(state.onTaskEvent, {
+            pendingToolCalls,
+            toolCallIndex,
+            task,
             iteration,
-            kind: "tool",
-            status: "clarify_required",
-            taskId: task.taskId,
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName
-          });
-          this.checkpointManager.save({
-            iteration,
-            memoryContext: state.memoryContext,
+            invocation
+          );
+          if (paused !== null) {
+            return paused;
+          }
+          this.applyCompletedToolCallOutcome(
+            state,
             messages,
-            pendingClarifyPromptId: outcome.prompt.promptId,
-            pendingToolCalls: pendingToolCalls.slice(toolIndex),
-            taskId: task.taskId
-          });
-
-          return {
-            output: null,
-            task
-          };
-        }
-
-        toolCallCount += 1;
-        state.cumulativeToolCallCount += 1;
-        const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
-        const writeToolResult =
-          toolDescriptor?.capability === "filesystem.write" || toolCall.toolName.includes("write");
-        if (
-          outcome.result.success &&
-          outcome.result.replayed !== true &&
-          writeToolResult
-        ) {
-          state.writeToolSucceeded = true;
-          state.completionVerificationSatisfied = false;
-        }
-        if (
-          outcome.kind === "completed" &&
-          isSuccessfulVerificationToolExecution(toolCall.toolName, outcome.result)
-        ) {
-          state.completionVerificationSatisfied = true;
-          if (!state.completionVerificationSatisfiedEmitted) {
-            this.dependencies.traceService.record({
-              actor: "runtime.kernel",
-              eventType: "completion_verification_satisfied",
-              payload: {
-                iteration,
-                toolCallId: toolCall.toolCallId,
-                toolName: toolCall.toolName
-              },
-              stage: "completion",
-              summary: "Completion verification evidence recorded",
-              taskId: task.taskId
-            });
-            state.completionVerificationSatisfiedEmitted = true;
-          }
-        }
-        const toolResultOutput = toolResultOutputForModel(outcome.result);
-        const toolSummary = toolResultSummary(outcome.result, toolCall.toolName);
-        const structuredOutputSummary = summarizeToolOutput(toolResultOutput);
-        const isDeduplicatable =
-          toolDescriptor !== null &&
-          (toolDescriptor.capability === "filesystem.read" ||
-            toolDescriptor.capability === "network.fetch_public_readonly");
-        const signature = isDeduplicatable
-          ? toolCallSignature(toolCall.toolName, toolCall.input)
-          : null;
-        const priorCall =
-          signature === null ? null : state.toolCallSignatures.get(signature) ?? null;
-        const duplicateNotice =
-          priorCall === null
-            ? null
-            : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments 鈥?synthesize from the prior result and answer the user.`;
-        const finishedSummary =
-          priorCall === null
-            ? `${toolSummary} | ${structuredOutputSummary}`
-            : `${toolSummary} | ${structuredOutputSummary} (duplicate of iter ${priorCall.iteration})`;
-        const privacyLevel = toolDescriptor?.privacyLevel ?? "internal";
-
-        if (toolDescriptor !== null) {
-          if (toolDescriptor.capability !== "interaction.ask_user") {
-            messages.push(
-              duplicateNotice === null
-                ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
-                : createToolFeedbackMessageWithNotice(
-                    toolResultOutput,
-                    toolCall,
-                    privacyLevel,
-                    duplicateNotice
-                  )
-            );
-          }
-          if (signature !== null && priorCall === null) {
-            state.toolCallSignatures.set(signature, {
-              iteration,
-              toolCallId: toolCall.toolCallId
-            });
-          }
-          emitTaskEvent(state.onTaskEvent, {
+            task,
             iteration,
-            kind: "tool",
-            status: outcome.result.success ? "finished" : "failed",
-            summary: finishedSummary,
-            taskId: task.taskId,
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName
-          });
+            invocation.toolCall,
+            invocation.outcome
+          );
+          toolCallCount += 1;
+          toolCallIndex += 1;
           continue;
         }
-        messages.push(
-          duplicateNotice === null
-            ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
-            : createToolFeedbackMessageWithNotice(
-                toolResultOutput,
-                toolCall,
-                privacyLevel,
-                duplicateNotice
-              )
-        );
-        if (signature !== null && priorCall === null) {
-          state.toolCallSignatures.set(signature, {
-            iteration,
-            toolCallId: toolCall.toolCallId
-          });
+
+        const batchStartIndex = toolCallIndex;
+        const batchCalls: ProviderToolCall[] = [];
+        while (
+          toolCallIndex < pendingToolCalls.length &&
+          isParallelSafe(pendingToolCalls[toolCallIndex].toolName)
+        ) {
+          batchCalls.push(pendingToolCalls[toolCallIndex]);
+          toolCallIndex += 1;
         }
-        emitTaskEvent(state.onTaskEvent, {
-          iteration,
-          kind: "tool",
-          status: outcome.result.success ? "finished" : "failed",
-          summary: finishedSummary,
-          taskId: task.taskId,
-          toolCallId: toolCall.toolCallId,
-          toolName: toolCall.toolName
-        });
+
+        const batchInvocations = await Promise.all(
+          batchCalls.map((toolCall) => this.invokeToolCall(state, task, iteration, toolCall))
+        );
+
+        for (let batchOffset = 0; batchOffset < batchInvocations.length; batchOffset += 1) {
+          const invocation = batchInvocations[batchOffset];
+          const paused = this.tryPauseToolExecution(
+            state,
+            messages,
+            pendingToolCalls,
+            batchStartIndex + batchOffset,
+            task,
+            iteration,
+            invocation
+          );
+          if (paused !== null) {
+            for (let priorOffset = 0; priorOffset < batchOffset; priorOffset += 1) {
+              const priorInvocation = batchInvocations[priorOffset];
+              this.applyCompletedToolCallOutcome(
+                state,
+                messages,
+                task,
+                iteration,
+                priorInvocation.toolCall,
+                priorInvocation.outcome
+              );
+              toolCallCount += 1;
+            }
+            return paused;
+          }
+          this.applyCompletedToolCallOutcome(
+            state,
+            messages,
+            task,
+            iteration,
+            invocation.toolCall,
+            invocation.outcome
+          );
+          toolCallCount += 1;
+        }
       }
 
       pendingToolCalls = [];
@@ -1797,6 +1685,238 @@ export class ExecutionKernel {
       },
       taskId: task.taskId,
       sessionId: task.sessionId
+    });
+  }
+
+  private async invokeToolCall(
+    state: ExecutionLoopState,
+    task: TaskRecord,
+    iteration: number,
+    toolCall: ProviderToolCall
+  ): Promise<{ outcome: ToolExecutionOutcome; toolCall: ProviderToolCall }> {
+    emitTaskEvent(state.onTaskEvent, {
+      iteration,
+      kind: "tool",
+      status: "started",
+      taskId: task.taskId,
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName
+    });
+    state.managedAbortController.touchActivity("tool_call_started");
+
+    const outcome = await this.dependencies.toolOrchestrator.execute(
+      {
+        input: toolCall.input,
+        iteration,
+        reason: toolCall.reason,
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      },
+      {
+        agentProfileId: task.agentProfileId,
+        cwd: state.cwd,
+        iteration,
+        signal: state.managedAbortController.abortController.signal,
+        taskId: task.taskId,
+        taskMetadata: task.metadata,
+        userId: task.requesterUserId,
+        workspaceRoot: this.dependencies.workspaceRoot
+      }
+    );
+    state.managedAbortController.touchActivity(`tool_call_${outcome.kind}`);
+
+    return { outcome, toolCall };
+  }
+
+  private tryPauseToolExecution(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    pendingToolCalls: ProviderToolCall[],
+    checkpointIndex: number,
+    task: TaskRecord,
+    iteration: number,
+    invocation: { outcome: ToolExecutionOutcome; toolCall: ProviderToolCall }
+  ): RuntimeRunResult | null {
+    const { outcome, toolCall } = invocation;
+
+    if (outcome.kind === "approval_required") {
+      task = this.dependencies.taskRepository.update(task.taskId, {
+        status: "waiting_approval"
+      });
+
+      emitTaskEvent(state.onTaskEvent, {
+        iteration,
+        kind: "tool",
+        status: "approval_required",
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      });
+      this.checkpointManager.save({
+        iteration,
+        memoryContext: state.memoryContext,
+        messages,
+        pendingToolCalls: pendingToolCalls.slice(checkpointIndex),
+        pendingClarifyPromptId: null,
+        taskId: task.taskId
+      });
+
+      return {
+        output: null,
+        task
+      };
+    }
+
+    if (outcome.kind === "clarify_required") {
+      task = this.dependencies.taskRepository.update(task.taskId, {
+        status: "waiting_clarification"
+      });
+
+      emitTaskEvent(state.onTaskEvent, {
+        iteration,
+        kind: "tool",
+        status: "clarify_required",
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      });
+      this.checkpointManager.save({
+        iteration,
+        memoryContext: state.memoryContext,
+        messages,
+        pendingClarifyPromptId: outcome.prompt.promptId,
+        pendingToolCalls: pendingToolCalls.slice(checkpointIndex),
+        taskId: task.taskId
+      });
+
+      return {
+        output: null,
+        task
+      };
+    }
+
+    return null;
+  }
+
+  private applyCompletedToolCallOutcome(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    task: TaskRecord,
+    iteration: number,
+    toolCall: ProviderToolCall,
+    outcome: ToolExecutionOutcome
+  ): void {
+    if (outcome.kind !== "completed") {
+      return;
+    }
+
+    state.cumulativeToolCallCount += 1;
+    const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
+    const writeToolResult =
+      toolDescriptor?.capability === "filesystem.write" || toolCall.toolName.includes("write");
+    if (
+      outcome.result.success &&
+      outcome.result.replayed !== true &&
+      writeToolResult
+    ) {
+      state.writeToolSucceeded = true;
+      state.completionVerificationSatisfied = false;
+    }
+    if (isSuccessfulVerificationToolExecution(toolCall.toolName, outcome.result)) {
+      state.completionVerificationSatisfied = true;
+      if (!state.completionVerificationSatisfiedEmitted) {
+        this.dependencies.traceService.record({
+          actor: "runtime.kernel",
+          eventType: "completion_verification_satisfied",
+          payload: {
+            iteration,
+            toolCallId: toolCall.toolCallId,
+            toolName: toolCall.toolName
+          },
+          stage: "completion",
+          summary: "Completion verification evidence recorded",
+          taskId: task.taskId
+        });
+        state.completionVerificationSatisfiedEmitted = true;
+      }
+    }
+    const toolResultOutput = toolResultOutputForModel(outcome.result);
+    const toolSummary = toolResultSummary(outcome.result, toolCall.toolName);
+    const structuredOutputSummary = summarizeToolOutput(toolResultOutput);
+    const isDeduplicatable =
+      toolDescriptor !== null &&
+      (toolDescriptor.capability === "filesystem.read" ||
+        toolDescriptor.capability === "network.fetch_public_readonly");
+    const signature = isDeduplicatable
+      ? toolCallSignature(toolCall.toolName, toolCall.input)
+      : null;
+    const priorCall =
+      signature === null ? null : state.toolCallSignatures.get(signature) ?? null;
+    const duplicateNotice =
+      priorCall === null
+        ? null
+        : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments 鈥?synthesize from the prior result and answer the user.`;
+    const finishedSummary =
+      priorCall === null
+        ? `${toolSummary} | ${structuredOutputSummary}`
+        : `${toolSummary} | ${structuredOutputSummary} (duplicate of iter ${priorCall.iteration})`;
+    const privacyLevel = toolDescriptor?.privacyLevel ?? "internal";
+
+    if (toolDescriptor !== null) {
+      if (toolDescriptor.capability !== "interaction.ask_user") {
+        messages.push(
+          duplicateNotice === null
+            ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
+            : createToolFeedbackMessageWithNotice(
+                toolResultOutput,
+                toolCall,
+                privacyLevel,
+                duplicateNotice
+              )
+        );
+      }
+      if (signature !== null && priorCall === null) {
+        state.toolCallSignatures.set(signature, {
+          iteration,
+          toolCallId: toolCall.toolCallId
+        });
+      }
+      emitTaskEvent(state.onTaskEvent, {
+        iteration,
+        kind: "tool",
+        status: outcome.result.success ? "finished" : "failed",
+        summary: finishedSummary,
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      });
+      return;
+    }
+    messages.push(
+      duplicateNotice === null
+        ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
+        : createToolFeedbackMessageWithNotice(
+            toolResultOutput,
+            toolCall,
+            privacyLevel,
+            duplicateNotice
+          )
+    );
+    if (signature !== null && priorCall === null) {
+      state.toolCallSignatures.set(signature, {
+        iteration,
+        toolCallId: toolCall.toolCallId
+      });
+    }
+    emitTaskEvent(state.onTaskEvent, {
+      iteration,
+      kind: "tool",
+      status: outcome.result.success ? "finished" : "failed",
+      summary: finishedSummary,
+      taskId: task.taskId,
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName
     });
   }
 

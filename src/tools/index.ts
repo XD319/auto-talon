@@ -10,6 +10,7 @@ export * from "./skills-list-tool.js";
 export * from "./skill-view-tool.js";
 export * from "./terminal-session-manager.js";
 export * from "./tool-orchestrator.js";
+export * from "./tool-parallel-policy.js";
 export * from "./tool-registry.js";
 export * from "./availability/index.js";
 export * from "./policy/index.js";
