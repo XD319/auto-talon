@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { evaluateToolExposure } from "../src/tools/policy/tool-exposure-policy.js";
 import type { ToolDefinition } from "../src/types/index.js";
@@ -10,8 +11,7 @@ function createTool(partial: Partial<ToolDefinition> & { name: string }): ToolDe
     costLevel: "cheap",
     description: partial.name,
     execute: () => Promise.resolve({ output: {}, success: true, summary: "ok" }),
-    inputSchema: {} as never,
-    inputSchemaDescriptor: { type: "object" },
+    inputSchema: z.object({}),
     name: partial.name,
     prepare: () => ({
       governance: { pathScope: "workspace", summary: "ok" },

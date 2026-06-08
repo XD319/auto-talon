@@ -155,62 +155,6 @@ export class FileWriteTool implements ToolDefinition<typeof fileWriteSchema, Pre
   public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = fileWriteSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      action: {
-        enum: ["write_file", "update_file", "apply_patch", "apply_unified_diff", "delete_file", "rename_file"],
-        type: "string"
-      },
-      content: {
-        type: "string"
-      },
-      diff: {
-        type: "string"
-      },
-      dryRun: {
-        type: "boolean"
-      },
-      newText: {
-        type: "string"
-      },
-      overwrite: {
-        type: "boolean"
-      },
-      path: {
-        type: "string"
-      },
-      patches: {
-        description:
-          "Only for apply_patch. Array of text replacements. Each item uses find/replace; oldText/newText and targetText/newText are accepted as aliases.",
-        items: {
-          properties: {
-            afterContext: { type: "string" },
-            beforeContext: { type: "string" },
-            expectedOccurrences: { type: "number" },
-            find: { type: "string" },
-            newText: { description: "Alias for replace.", type: "string" },
-            oldText: { description: "Alias for find.", type: "string" },
-            replace: { type: "string" },
-            replaceAll: { type: "boolean" },
-            targetText: { description: "Alias for find.", type: "string" }
-          },
-          type: "object"
-        },
-        type: "array"
-      },
-      replaceAll: {
-        type: "boolean"
-      },
-      targetText: {
-        type: "string"
-      },
-      toPath: {
-        type: "string"
-      }
-    },
-    required: ["action", "path"],
-    type: "object"
-  };
 
   public constructor(private readonly sandboxService: SandboxService) {}
 

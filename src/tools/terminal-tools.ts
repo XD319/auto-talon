@@ -46,16 +46,6 @@ export class TerminalStartTool implements ToolDefinition<typeof terminalStartSch
   public readonly approvalDefault = "always" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = terminalStartSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      command: { type: "string" },
-      cwd: { type: "string" },
-      env: { type: "object" },
-      name: { type: "string" }
-    },
-    required: [],
-    type: "object"
-  };
 
   public constructor(
     private readonly manager: TerminalSessionManager,
@@ -127,7 +117,6 @@ export class TerminalReadTool implements ToolDefinition<typeof terminalSessionSc
   public readonly approvalDefault = "never" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = terminalSessionSchema;
-  public readonly inputSchemaDescriptor = sessionDescriptor();
 
   public constructor(private readonly manager: TerminalSessionManager) {}
 
@@ -157,14 +146,6 @@ export class TerminalWriteTool implements ToolDefinition<typeof terminalWriteSch
   public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = terminalWriteSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      data: { type: "string" },
-      sessionId: { type: "string" }
-    },
-    required: ["sessionId", "data"],
-    type: "object"
-  };
 
   public constructor(private readonly manager: TerminalSessionManager) {}
 
@@ -194,7 +175,6 @@ export class TerminalStopTool implements ToolDefinition<typeof terminalSessionSc
   public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = terminalSessionSchema;
-  public readonly inputSchemaDescriptor = sessionDescriptor();
 
   public constructor(private readonly manager: TerminalSessionManager) {}
 
@@ -228,19 +208,5 @@ function createSessionPreparation<TPreparedInput>(
       pathScope: "workspace",
       target: "interactive_user"
     }
-  };
-}
-
-function sessionDescriptor(): {
-  properties: { sessionId: { type: "string" } };
-  required: string[];
-  type: "object";
-} {
-  return {
-    properties: {
-      sessionId: { type: "string" }
-    },
-    required: ["sessionId"],
-    type: "object"
   };
 }

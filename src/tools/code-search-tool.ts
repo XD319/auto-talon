@@ -78,22 +78,6 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
   public readonly approvalDefault = "never" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = codeSearchSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      caseSensitive: { type: "boolean" },
-      contextLines: { maximum: 5, minimum: 0, type: "number" },
-      excludeGlobs: { items: { type: "string" }, type: "array" },
-      includeGlobs: { items: { type: "string" }, type: "array" },
-      maxFileSizeBytes: { type: "number" },
-      maxResults: { type: "number" },
-      path: { type: "string" },
-      query: { type: "string" },
-      regex: { type: "boolean" },
-      searchFilenames: { type: "boolean" }
-    },
-    required: ["query"],
-    type: "object"
-  };
 
   public constructor(
     private readonly sandboxService: SandboxService,

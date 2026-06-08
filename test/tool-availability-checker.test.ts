@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { checkToolAvailability } from "../src/tools/availability/tool-availability-checker.js";
 import type { ToolDefinition, ToolExecutionContext } from "../src/types/index.js";
@@ -12,8 +13,7 @@ describe("tool availability checker", () => {
       costLevel: "cheap",
       description: "t",
       execute: () => Promise.resolve({ output: {}, success: true, summary: "ok" }),
-      inputSchema: {} as never,
-      inputSchemaDescriptor: { type: "object" },
+      inputSchema: z.object({}),
       name: "tool_a",
       prepare: () => ({
         governance: { pathScope: "workspace", summary: "ok" },

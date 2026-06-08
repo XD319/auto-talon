@@ -82,62 +82,6 @@ export class FileReadTool implements ToolDefinition<typeof fileReadSchema, Prepa
   public readonly approvalDefault = "never" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = fileReadSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      action: {
-        description:
-          "Operation to perform. Use list_dir to inspect a folder, read_file to read file contents, and search_text to find a keyword inside files.",
-        enum: ["list_dir", "read_file", "search_text"],
-        type: "string"
-      },
-      contextLines: {
-        description:
-          "Only for search_text. Number of lines of context before and after each match. Maximum 5. Values above 5 are clamped to 5.",
-        maximum: 5,
-        minimum: 0,
-        type: "number"
-      },
-      fileExtensions: {
-        description:
-          "Only for search_text. Optional file extensions to include, for example ['.ts', '.md']. Bare extensions like 'md' are normalized to '.md'.",
-        items: {
-          type: "string"
-        },
-        type: "array"
-      },
-      keyword: {
-        description: "Required for search_text. The literal text to search for.",
-        type: "string"
-      },
-      limit: {
-        description: "Only for read_file. Maximum number of lines to return.",
-        type: "number"
-      },
-      maxResults: {
-        description: "Only for search_text. Maximum number of matches to return.",
-        type: "number"
-      },
-      maxSizeBytes: {
-        description: "Only for search_text. Skip files larger than this byte size.",
-        type: "number"
-      },
-      offset: {
-        description: "Only for read_file. Zero-based starting line offset.",
-        type: "number"
-      },
-      path: {
-        description:
-          "Target workspace path. Required for list_dir and read_file. For search_text, defaults to the current directory when omitted.",
-        type: "string"
-      },
-      recursive: {
-        description: "Only for search_text. Whether to search subdirectories.",
-        type: "boolean"
-      }
-    },
-    required: ["action"],
-    type: "object"
-  };
 
   public constructor(private readonly sandboxService: SandboxService) {}
 

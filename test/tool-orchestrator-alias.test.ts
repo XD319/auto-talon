@@ -126,13 +126,6 @@ function createShellLikeTool(
     description: "Execute shell command",
     execute: () => Promise.resolve(result),
     inputSchema: schema,
-    inputSchemaDescriptor: {
-      properties: {
-        command: { type: "string" }
-      },
-      required: ["command"],
-      type: "object"
-    },
     name,
     prepare: (input) => {
       const parsed = schema.parse(input);

@@ -40,21 +40,6 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
   public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = webFetchSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      maxBytes: {
-        type: "number"
-      },
-      maxRedirects: {
-        type: "number"
-      },
-      url: {
-        type: "string"
-      }
-    },
-    required: ["url"],
-    type: "object"
-  };
 
   public constructor(
     private readonly sandboxService: SandboxService,

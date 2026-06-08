@@ -27,18 +27,6 @@ export class SkillViewTool implements ToolDefinition<typeof skillViewSchema, Ski
   public readonly approvalDefault = "never" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = skillViewSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      attachmentKinds: {
-        type: "array"
-      },
-      skillId: {
-        type: "string"
-      }
-    },
-    required: ["skillId"],
-    type: "object"
-  };
 
   public constructor(private readonly registry: SkillRegistry) {}
 

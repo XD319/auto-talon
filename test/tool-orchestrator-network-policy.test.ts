@@ -33,13 +33,6 @@ describe("ToolOrchestrator network policy", () => {
         summary: "fetched"
       }),
       inputSchema: fetchSchema,
-      inputSchemaDescriptor: {
-        properties: {
-          url: { type: "string" }
-        },
-        required: ["url"],
-        type: "object"
-      },
       name: "fake_web_fetch",
       prepare: (input) => {
         const parsedInput = fetchSchema.parse(input);
@@ -146,13 +139,6 @@ describe("ToolOrchestrator network policy", () => {
       inputSchema: z.object({
         value: z.string()
       }),
-      inputSchemaDescriptor: {
-        properties: {
-          value: { type: "string" }
-        },
-        required: ["value"],
-        type: "object"
-      },
       name: "unstable_reader",
       prepare: () => ({
         governance: {

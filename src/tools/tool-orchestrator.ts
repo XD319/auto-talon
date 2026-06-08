@@ -27,6 +27,7 @@ import type {
   ToolExecutionSuccess
 } from "../types/index.js";
 import type { PreparedAskUserInput } from "./ask-user-tool.js";
+import { getToolInputSchemaDescriptor } from "./schema/index.js";
 
 export interface ToolOrchestratorDependencies {
   approvalService: ApprovalService;
@@ -79,7 +80,7 @@ export class ToolOrchestrator {
       .map((tool) => ({
         capability: tool.capability,
         description: tool.description,
-        inputSchema: tool.inputSchemaDescriptor,
+        inputSchema: getToolInputSchemaDescriptor(tool),
         name: tool.name,
         privacyLevel: tool.privacyLevel,
         riskLevel: tool.riskLevel
@@ -99,7 +100,7 @@ export class ToolOrchestrator {
     return {
       capability: tool.capability,
       description: tool.description,
-      inputSchema: tool.inputSchemaDescriptor,
+      inputSchema: getToolInputSchemaDescriptor(tool),
       name: tool.name,
       privacyLevel: tool.privacyLevel,
       riskLevel: tool.riskLevel

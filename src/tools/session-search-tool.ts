@@ -42,15 +42,6 @@ export class SessionSearchTool
   public readonly approvalDefault = "never" as const;
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = sessionSearchSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      limit: { type: "number" },
-      query: { type: "string" },
-      sessionIdPrefix: { type: "string" }
-    },
-    required: ["query"],
-    type: "object"
-  };
 
   public constructor(private readonly options: SessionSearchToolOptions) {}
 

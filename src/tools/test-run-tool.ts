@@ -7,7 +7,8 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
   ToolExecutionResult,
-  ToolPreparation
+  ToolPreparation,
+  ToolSchemaDescriptor
 } from "../types/index.js";
 
 import type { ShellCommandExecutor } from "./shell/shell-executor.js";
@@ -70,7 +71,7 @@ export class TestRunTool implements ToolDefinition<typeof testRunSchema, Prepare
       : { available: false, reason: "no test commands configured" };
   }
 
-  public get inputSchemaDescriptor(): ToolDefinition<typeof testRunSchema, PreparedTestRunInputWithMetadata>["inputSchemaDescriptor"] {
+  public getInputSchemaDescriptor(): ToolSchemaDescriptor {
     return {
       properties: {
         command: {

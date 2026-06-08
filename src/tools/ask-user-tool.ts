@@ -126,7 +126,7 @@ export class AskUserTool implements ToolDefinition<typeof askUserSchema, Prepare
   public readonly toolKind = "runtime_primitive" as const;
   public readonly inputSchema = askUserSchema;
 
-  public get inputSchemaDescriptor() {
+  public getInputSchemaDescriptor(): ToolSchemaDescriptor {
     return this.descriptorMode === "legacy" ? legacyAskUserSchemaDescriptor : askUserSchemaDescriptor;
   }
 

@@ -138,7 +138,8 @@ export interface ToolDefinition<
   approvalDefault: ToolApprovalDefault;
   toolKind: ToolKind;
   inputSchema: TSchema;
-  inputSchemaDescriptor: ToolSchemaDescriptor;
+  /** Override when inputSchema cannot represent the provider-facing shape (e.g. MCP). */
+  getInputSchemaDescriptor?: () => ToolSchemaDescriptor;
   checkAvailability?(
     context: ToolExecutionContext
   ): Promise<ToolAvailabilityResult> | ToolAvailabilityResult;

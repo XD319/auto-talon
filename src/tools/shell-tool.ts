@@ -35,27 +35,6 @@ export class ShellTool implements ToolDefinition<typeof shellToolSchema, Prepare
   public readonly approvalDefault = "always" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = shellToolSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      allowNonZeroExit: {
-        type: "boolean"
-      },
-      command: {
-        type: "string"
-      },
-      cwd: {
-        type: "string"
-      },
-      env: {
-        type: "object"
-      },
-      timeoutMs: {
-        type: "number"
-      }
-    },
-    required: ["command"],
-    type: "object"
-  };
 
   public constructor(
     private readonly executor: ShellCommandExecutor,

@@ -66,24 +66,6 @@ export class WebSearchTool implements ToolDefinition<typeof webSearchSchema, Pre
   public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = webSearchSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      domains: {
-        type: "array"
-      },
-      maxResults: {
-        type: "number"
-      },
-      query: {
-        type: "string"
-      },
-      recencyDays: {
-        type: "number"
-      }
-    },
-    required: ["query"],
-    type: "object"
-  };
 
   public constructor(
     private readonly sandboxService: SandboxService,

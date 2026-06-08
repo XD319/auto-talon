@@ -8,7 +8,8 @@ import type {
   SandboxMcpPlan,
   ToolDefinition,
   ToolExecutionResult,
-  ToolPreparation
+  ToolPreparation,
+  ToolSchemaDescriptor
 } from "../../types/index.js";
 
 interface PreparedMcpToolInput {
@@ -30,11 +31,7 @@ export class McpToolAdapter implements ToolDefinition<typeof mcpToolInputSchema,
   public readonly approvalDefault = "always" as const;
   public readonly toolKind = "control_command" as const;
   public readonly inputSchema = mcpToolInputSchema;
-  public readonly inputSchemaDescriptor: {
-    properties: JsonObject;
-    required: string[];
-    type: string;
-  };
+  private readonly mcpInputSchemaDescriptor: ToolSchemaDescriptor;
 
   public constructor(
     private readonly tool: McpToolDescriptor,
@@ -45,7 +42,7 @@ export class McpToolAdapter implements ToolDefinition<typeof mcpToolInputSchema,
     this.description = tool.description || `Invoke MCP tool ${tool.serverId}/${tool.name}`;
     this.riskLevel = config.riskLevel;
     this.privacyLevel = config.privacyLevel;
-    this.inputSchemaDescriptor = {
+    this.mcpInputSchemaDescriptor = {
       properties: toJsonObject(
         typeof tool.inputSchema.properties === "object" && tool.inputSchema.properties !== null
           ? tool.inputSchema.properties
@@ -56,6 +53,10 @@ export class McpToolAdapter implements ToolDefinition<typeof mcpToolInputSchema,
         : [],
       type: "object"
     };
+  }
+
+  public getInputSchemaDescriptor(): ToolSchemaDescriptor {
+    return this.mcpInputSchemaDescriptor;
   }
 
   public prepare(input: unknown): ToolPreparation<PreparedMcpToolInput> {

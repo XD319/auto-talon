@@ -38,29 +38,6 @@ export class GitTool implements ToolDefinition<typeof gitToolSchema, PreparedGit
   public readonly approvalDefault = "when_needed" as const;
   public readonly toolKind = "external_tool" as const;
   public readonly inputSchema = gitToolSchema;
-  public readonly inputSchemaDescriptor = {
-    properties: {
-      action: {
-        enum: ["status", "diff", "stage", "commit", "branch"],
-        type: "string"
-      },
-      message: {
-        type: "string"
-      },
-      paths: {
-        items: { type: "string" },
-        type: "array"
-      },
-      target: {
-        type: "string"
-      },
-      timeoutMs: {
-        type: "number"
-      }
-    },
-    required: ["action"],
-    type: "object"
-  };
 
   public constructor(
     private readonly executor: ShellCommandExecutor,

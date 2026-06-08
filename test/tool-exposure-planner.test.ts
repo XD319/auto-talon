@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { ToolExposurePlanner } from "../src/runtime/tool-exposure-planner.js";
+import { getToolInputSchemaDescriptor } from "../src/tools/schema/index.js";
 import type { ToolDefinition } from "../src/types/index.js";
 
 function makeTool(name: string, riskLevel: "low" | "medium" | "high"): ToolDefinition {
@@ -10,8 +12,7 @@ function makeTool(name: string, riskLevel: "low" | "medium" | "high"): ToolDefin
     costLevel: "cheap",
     description: name,
     execute: () => Promise.resolve({ output: {}, success: true, summary: "ok" }),
-    inputSchema: {} as never,
-    inputSchemaDescriptor: { type: "object" },
+    inputSchema: z.object({}),
     name,
     prepare: () => ({
       governance: { pathScope: "workspace", summary: "ok" },
@@ -44,7 +45,7 @@ describe("tool exposure planner", () => {
             .map((tool) => ({
               capability: tool.capability,
               description: tool.description,
-              inputSchema: tool.inputSchemaDescriptor,
+              inputSchema: getToolInputSchemaDescriptor(tool),
               name: tool.name,
               privacyLevel: tool.privacyLevel,
               riskLevel: tool.riskLevel
@@ -85,7 +86,7 @@ describe("tool exposure planner", () => {
             .map((tool) => ({
               capability: tool.capability,
               description: tool.description,
-              inputSchema: tool.inputSchemaDescriptor,
+              inputSchema: getToolInputSchemaDescriptor(tool),
               name: tool.name,
               privacyLevel: tool.privacyLevel,
               riskLevel: tool.riskLevel
