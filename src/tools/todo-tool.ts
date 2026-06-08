@@ -57,23 +57,28 @@ export class TodoTool implements ToolDefinition<typeof todoSchema, PreparedTodoI
       sandbox: {
         kind: "prompt",
         pathScope: "workspace",
-        target: "todo"
+        target: "interactive_user"
       }
     };
   }
 
-  public execute(preparedInput: PreparedTodoInput, context: ToolExecutionContext): ToolExecutionResult {
+  public execute(
+    preparedInput: PreparedTodoInput,
+    context: ToolExecutionContext
+  ): Promise<ToolExecutionResult> {
     const sessionKey = resolveTodoSessionKey(context);
     const todos = this.store.update(sessionKey, preparedInput.todos, preparedInput.merge);
-    return {
-      output: {
-        merge: preparedInput.merge,
-        sessionKey,
-        todos
-      },
+    return Promise.resolve({
+      output: JSON.parse(
+        JSON.stringify({
+          merge: preparedInput.merge,
+          sessionKey,
+          todos
+        })
+      ),
       success: true,
       summary: `Updated ${todos.length} todo item(s) for session ${sessionKey}`
-    };
+    });
   }
 }
 

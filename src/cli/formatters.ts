@@ -1,4 +1,10 @@
-﻿import type { ToolListResult } from "../tools/tool-overrides.js";
+﻿import type {
+  AgentDoctorReport,
+  ContextTraceDebugReport,
+  TaskTimelineEntry,
+  TaskTimelineReport
+} from "../runtime/application-service.js";
+import type { ToolListResult } from "../tools/tool-overrides.js";
 import type {
   BetaReadinessReport,
   CodingEvalReport,
@@ -380,7 +386,7 @@ export function formatTaskTimeline(report: TaskTimelineReport): string {
     `Timeline for ${report.task.taskId}`,
     `Status: ${report.task.status}`,
     ...report.entries.map(
-      (entry) =>
+      (entry: TaskTimelineEntry) =>
         `#${entry.sequence} ${entry.iteration === null ? "iter=-" : `iter=${entry.iteration}`} [${entry.stage}] ${entry.eventType} ${entry.actor} | ${entry.detail}`
     )
   ].join("\n");
@@ -482,8 +488,8 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
     `Database Reachable: ${report.databaseReachable ? "yes" : "no"}`,
     `Schema Version: ${report.schemaVersion ?? "-"}`,
     `Build Fresh: ${formatTernary(report.distFresh)}`,
-    `Config Files: ${report.configFiles.map((entry) => `${entry.file}=${entry.exists ? (entry.parseable ? "ok" : "invalid") : "missing"}`).join(", ")}`,
-    `Workspace Secrets: ${report.workspaceSecretFindings.length === 0 ? "none" : report.workspaceSecretFindings.map((entry) => `${entry.file}:${entry.fields.join(",")}`).join("; ")}`,
+    `Config Files: ${report.configFiles.map((entry: AgentDoctorReport["configFiles"][number]) => `${entry.file}=${entry.exists ? (entry.parseable ? "ok" : "invalid") : "missing"}`).join(", ")}`,
+    `Workspace Secrets: ${report.workspaceSecretFindings.length === 0 ? "none" : report.workspaceSecretFindings.map((entry: AgentDoctorReport["workspaceSecretFindings"][number]) => `${entry.file}:${entry.fields.join(",")}`).join("; ")}`,
     `Experience Records: total=${report.experienceStats.total} candidate=${report.experienceStats.candidate} accepted=${report.experienceStats.accepted} promoted=${report.experienceStats.promoted} rejected=${report.experienceStats.rejected} stale=${report.experienceStats.stale}`,
     `Skills: total=${report.skillStats.total} enabled=${report.skillStats.enabled} issues=${report.skillStats.issues}`,
     `Shell: ${report.shell ?? "-"}`,

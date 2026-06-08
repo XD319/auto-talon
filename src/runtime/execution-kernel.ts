@@ -38,7 +38,7 @@ import type { ContextCompactor, SessionSummaryService } from "./context/index.js
 import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
-import type { ToolExposurePlanner } from "./tool-exposure-planner.js";
+import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-exposure-planner.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type {
@@ -327,22 +327,24 @@ export class ExecutionKernel {
       const profile = this.dependencies.agentProfileRegistry.get(options.agentProfileId);
       const sessionId = task.sessionId ?? null;
       const initialToolExposure = this.dependencies.toolExposurePlanner
-        ? await this.dependencies.toolExposurePlanner.plan({
-            context: {
-              agentProfileId: options.agentProfileId,
-              cwd: options.cwd,
+        ? await this.dependencies.toolExposurePlanner.plan(
+            buildToolExposurePlannerInput({
+              context: {
+                agentProfileId: options.agentProfileId,
+                cwd: options.cwd,
+                iteration: 1,
+                signal: managedAbortController.abortController.signal,
+                taskId,
+                taskMetadata: buildToolTaskMetadata(task),
+                userId: options.userId,
+                workspaceRoot: this.dependencies.workspaceRoot
+              },
+              interactionMode: options.interactionMode,
               iteration: 1,
-              signal: managedAbortController.abortController.signal,
               taskId,
-              taskMetadata: buildToolTaskMetadata(task),
-              userId: options.userId,
-              workspaceRoot: this.dependencies.workspaceRoot
-            },
-            interactionMode: options.interactionMode,
-            iteration: 1,
-            taskId,
-            sessionId
-          })
+              sessionId
+            })
+          )
         : null;
       managedAbortController.touchActivity("tool_exposure_planned");
       const availableTools =
@@ -612,22 +614,24 @@ export class ExecutionKernel {
       if (pendingToolCalls.length === 0) {
         const baseAvailableTools = this.dependencies.toolOrchestrator.listTools();
         if (this.dependencies.toolExposurePlanner !== undefined) {
-          const exposure = await this.dependencies.toolExposurePlanner.plan({
-            context: {
-              agentProfileId: state.task.agentProfileId,
-              cwd: state.cwd,
+          const exposure = await this.dependencies.toolExposurePlanner.plan(
+            buildToolExposurePlannerInput({
+              context: {
+                agentProfileId: state.task.agentProfileId,
+                cwd: state.cwd,
+                iteration,
+                signal: state.managedAbortController.abortController.signal,
+                taskId: task.taskId,
+                taskMetadata: buildToolTaskMetadata(task),
+                userId: task.requesterUserId,
+                workspaceRoot: this.dependencies.workspaceRoot
+              },
+              interactionMode: state.interactionMode,
               iteration,
-              signal: state.managedAbortController.abortController.signal,
               taskId: task.taskId,
-              taskMetadata: buildToolTaskMetadata(task),
-              userId: task.requesterUserId,
-              workspaceRoot: this.dependencies.workspaceRoot
-            },
-            interactionMode: state.interactionMode,
-            iteration,
-            taskId: task.taskId,
-            sessionId: task.sessionId ?? null
-          });
+              sessionId: task.sessionId ?? null
+            })
+          );
           availableTools = exposure.tools;
           state.costWarnedToolNames = exposure.decisions
             .filter((decision) => decision.costWarning === true)
@@ -983,9 +987,13 @@ export class ExecutionKernel {
           state.managedAbortController.getReason()
         );
 
-        if (!isParallelSafe(pendingToolCalls[toolCallIndex].toolName)) {
-          const toolCall = pendingToolCalls[toolCallIndex];
-          const invocation = await this.invokeToolCall(state, task, iteration, toolCall);
+        const currentToolCall = pendingToolCalls[toolCallIndex];
+        if (currentToolCall === undefined) {
+          break;
+        }
+
+        if (!isParallelSafe(currentToolCall.toolName)) {
+          const invocation = await this.invokeToolCall(state, task, iteration, currentToolCall);
           const paused = this.tryPauseToolExecution(
             state,
             messages,
@@ -1013,11 +1021,12 @@ export class ExecutionKernel {
 
         const batchStartIndex = toolCallIndex;
         const batchCalls: ProviderToolCall[] = [];
-        while (
-          toolCallIndex < pendingToolCalls.length &&
-          isParallelSafe(pendingToolCalls[toolCallIndex].toolName)
-        ) {
-          batchCalls.push(pendingToolCalls[toolCallIndex]);
+        while (toolCallIndex < pendingToolCalls.length) {
+          const batchToolCall = pendingToolCalls[toolCallIndex];
+          if (batchToolCall === undefined || !isParallelSafe(batchToolCall.toolName)) {
+            break;
+          }
+          batchCalls.push(batchToolCall);
           toolCallIndex += 1;
         }
 
@@ -1027,6 +1036,9 @@ export class ExecutionKernel {
 
         for (let batchOffset = 0; batchOffset < batchInvocations.length; batchOffset += 1) {
           const invocation = batchInvocations[batchOffset];
+          if (invocation === undefined) {
+            continue;
+          }
           const paused = this.tryPauseToolExecution(
             state,
             messages,
@@ -1039,6 +1051,9 @@ export class ExecutionKernel {
           if (paused !== null) {
             for (let priorOffset = 0; priorOffset < batchOffset; priorOffset += 1) {
               const priorInvocation = batchInvocations[priorOffset];
+              if (priorInvocation === undefined) {
+                continue;
+              }
               this.applyCompletedToolCallOutcome(
                 state,
                 messages,
@@ -1997,5 +2012,24 @@ function buildToolTaskMetadata(task: TaskRecord): TaskRecord["metadata"] {
     ...task.metadata,
     ...(task.sessionId !== null && task.sessionId !== undefined ? { sessionId: task.sessionId } : {})
   };
+}
+
+function buildToolExposurePlannerInput(input: {
+  context: ToolExposurePlannerInput["context"];
+  interactionMode: RuntimeRunOptions["interactionMode"];
+  iteration: number;
+  taskId: string;
+  sessionId: string | null;
+}): ToolExposurePlannerInput {
+  const plannerInput: ToolExposurePlannerInput = {
+    context: input.context,
+    iteration: input.iteration,
+    sessionId: input.sessionId,
+    taskId: input.taskId
+  };
+  if (input.interactionMode !== undefined) {
+    plannerInput.interactionMode = input.interactionMode;
+  }
+  return plannerInput;
 }
 

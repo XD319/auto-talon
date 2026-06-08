@@ -60,16 +60,21 @@ export class DelegateTaskTool
 
   public prepare(input: unknown): ToolPreparation<PreparedDelegateTaskInput> {
     const parsed = this.inputSchema.parse(input);
+    const preparedInput: PreparedDelegateTaskInput = {
+      prompt: parsed.prompt,
+      ...(parsed.maxIterations !== undefined ? { maxIterations: parsed.maxIterations } : {}),
+      ...(parsed.profile !== undefined ? { profile: parsed.profile } : {})
+    };
     return {
       governance: {
         pathScope: "workspace",
         summary: `Delegate task: ${parsed.prompt.slice(0, 120)}`
       },
-      preparedInput: parsed,
+      preparedInput,
       sandbox: {
         kind: "prompt",
         pathScope: "workspace",
-        target: "delegate_task"
+        target: "interactive_user"
       }
     };
   }
@@ -88,12 +93,14 @@ export class DelegateTaskTool
 
     const result = await this.executor({
       cwd: context.cwd,
-      maxIterations: preparedInput.maxIterations,
       parentTaskId: context.taskId,
-      profile: preparedInput.profile,
       prompt: preparedInput.prompt,
       signal: context.signal,
-      userId: context.userId
+      userId: context.userId,
+      ...(preparedInput.maxIterations !== undefined
+        ? { maxIterations: preparedInput.maxIterations }
+        : {}),
+      ...(preparedInput.profile !== undefined ? { profile: preparedInput.profile } : {})
     });
 
     return {
