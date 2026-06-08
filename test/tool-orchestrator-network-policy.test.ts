@@ -189,21 +189,24 @@ describe("ToolOrchestrator network policy", () => {
       } as never
     });
 
-    await expect(
-      orchestrator.execute(
-        {
-          input: { value: "hello" },
-          iteration: 1,
-          reason: "Need file context",
-          taskId: "task-2",
-          toolCallId: "call-2",
-          toolName: "unstable_reader"
-        },
-        createContext()
-      )
-    ).rejects.toMatchObject({
-      code: "tool_unavailable"
-    });
+    const outcome = await orchestrator.execute(
+      {
+        input: { value: "hello" },
+        iteration: 1,
+        reason: "Need file context",
+        taskId: "task-2",
+        toolCallId: "call-2",
+        toolName: "unstable_reader"
+      },
+      createContext()
+    );
+
+    expect(outcome.kind).toBe("completed");
+    if (outcome.kind !== "completed") {
+      throw new Error("Expected completed tool-unavailable failure.");
+    }
+    expect(outcome.result.success).toBe(false);
+    expect(outcome.result.errorCode).toBe("tool_unavailable");
     expect(records.get("call-2")?.status).toBe("failed");
   });
 });

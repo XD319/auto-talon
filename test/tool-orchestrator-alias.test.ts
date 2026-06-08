@@ -51,7 +51,7 @@ describe("ToolOrchestrator canonical tool names", () => {
     expect(records.get("call-shell")?.status).toBe("finished");
   });
 
-  it("feeds shell execution failures back as recoverable tool results", async () => {
+  it("feeds shell execution failures back as tool results", async () => {
     const records = new Map<string, ToolCallRecord>();
     const failingShellTool = createShellLikeTool("shell", {
       errorCode: "tool_execution_error",

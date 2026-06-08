@@ -125,7 +125,7 @@ export class ToolOrchestrator {
     );
 
     if (tool === undefined) {
-      return this.failToolCall(
+      return this.completeToolCallFailure(
         toolCall,
         new AppError({
           code: "tool_not_found",
@@ -160,7 +160,7 @@ export class ToolOrchestrator {
     if (tool.checkAvailability !== undefined) {
       const availability = await tool.checkAvailability(context);
       if (!availability.available) {
-        return this.failToolCall(
+        return this.completeToolCallFailure(
           toolCall,
           new AppError({
             code: "tool_unavailable",
@@ -183,10 +183,7 @@ export class ToolOrchestrator {
         },
         message: validationSummary
       });
-      if (isRecoverableToolFailure(tool)) {
-        return this.completeToolCallFailure(toolCall, validationError);
-      }
-      return this.failToolCall(toolCall, validationError);
+      return this.completeToolCallFailure(toolCall, validationError);
     }
 
     let prepared: Awaited<ReturnType<typeof tool.prepare>>;
@@ -196,7 +193,7 @@ export class ToolOrchestrator {
     } catch (error) {
       const appError = toAppError(error);
       this.recordSandboxFailure(request, tool.name, appError);
-      return this.failToolCall(toolCall, appError);
+      return this.completeToolCallFailure(toolCall, appError);
     }
 
     const policyDecision = this.dependencies.policyEngine.evaluate({
@@ -261,7 +258,7 @@ export class ToolOrchestrator {
     });
 
     if (policyDecision.effect === "deny") {
-      return this.failToolCall(
+      return this.completeToolCallFailure(
         toolCall,
         new AppError({
           code: "policy_denied",
@@ -337,7 +334,7 @@ export class ToolOrchestrator {
         }
 
         if (approval.status === "denied") {
-          return this.failToolCall(
+          return this.completeToolCallFailure(
             toolCall,
             new AppError({
               code: "approval_denied",
@@ -351,7 +348,7 @@ export class ToolOrchestrator {
         }
 
         if (approval.status === "timed_out") {
-          return this.failToolCall(
+          return this.completeToolCallFailure(
             toolCall,
             new AppError({
               code: "approval_timeout",
@@ -423,10 +420,7 @@ export class ToolOrchestrator {
                 details: result.details,
                 message: result.errorMessage
               });
-        if (isRecoverableToolFailure(tool)) {
-          return this.completeToolCallFailure(toolCall, toolError);
-        }
-        return this.failToolCall(toolCall, toolError);
+        return this.completeToolCallFailure(toolCall, toolError);
       }
 
       this.dependencies.artifactRepository.createMany(
@@ -471,10 +465,7 @@ export class ToolOrchestrator {
       };
     } catch (error) {
       const appError = toToolExecutionError(error);
-      if (isRecoverableToolFailure(tool)) {
-        return this.completeToolCallFailure(toolCall, appError);
-      }
-      return this.failToolCall(toolCall, appError);
+      return this.completeToolCallFailure(toolCall, appError);
     }
   }
 
@@ -671,15 +662,6 @@ export class ToolOrchestrator {
     });
   }
 
-  private failToolCall(
-    toolCall: ToolCallRecord,
-    error: AppError,
-    status: ToolCallRecord["status"] = "failed"
-  ): never {
-    this.recordFailedToolCall(toolCall, error, status);
-    throw error;
-  }
-
   private completeToolCallFailure(
     toolCall: ToolCallRecord,
     error: AppError,
@@ -793,7 +775,7 @@ export class ToolOrchestrator {
     }
 
     if (prompt.status === "cancelled") {
-      return this.failToolCall(
+      return this.completeToolCallFailure(
         toolCall,
         new AppError({
           code: "clarification_cancelled",
@@ -806,7 +788,7 @@ export class ToolOrchestrator {
     }
 
     if (prompt.status === "timed_out") {
-      return this.failToolCall(
+      return this.completeToolCallFailure(
         toolCall,
         new AppError({
           code: "approval_timeout",
@@ -969,14 +951,6 @@ function extractSandboxKind(sandboxDetails: Record<string, unknown>): "file" | "
   return kind === "file" || kind === "network" || kind === "shell" || kind === "mcp" || kind === "prompt"
     ? kind
     : "shell";
-}
-
-function isRecoverableToolFailure(tool: ToolDefinition): boolean {
-  return (
-    tool.capability === "filesystem.read" ||
-    tool.capability === "filesystem.write" ||
-    tool.capability === "shell.execute"
-  );
 }
 
 function toToolExecutionError(error: unknown): AppError {
