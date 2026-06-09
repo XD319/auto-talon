@@ -398,7 +398,7 @@ describe("loop discipline", () => {
         databasePath: join(workspace, "runtime.db")
       },
       provider: new ScriptedProvider((input) => {
-        if (input.messages.some((message) => message.content.includes("Session summary:"))) {
+        if (input.messages.some((message) => message.content.includes("Session handoff:"))) {
           sawSessionSummary = true;
         }
         iteration += 1;

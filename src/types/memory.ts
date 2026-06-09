@@ -198,6 +198,8 @@ export interface SessionCompactInput {
   originalGoal?: string;
   /** Human-readable list of paths still pinned in context after compaction. */
   recentlyReadFilesSummary?: string;
+  /** Prior session handoff summary for iterative compaction updates. */
+  previousSummary?: string;
 }
 
 export interface SessionCompactResult {

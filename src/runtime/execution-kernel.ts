@@ -1,4 +1,5 @@
 ﻿import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 import { createManagedAbortController, throwIfAborted } from "./abort-controller.js";
 import { AppError, toAppError } from "./app-error.js";
@@ -10,10 +11,9 @@ import {
   buildFinalSessionCompactInput,
   buildReviewerTracePayload,
   createToolFeedbackMessage,
-  createToolFeedbackMessageWithNotice,
   emitTaskEvent,
-  estimateTokenCount,
   injectResumeContextMessages,
+  safeSerializeToolOutputForBudget,
   normalizeProviderFailure,
   providerUsageToJson,
   readSessionResumeMemoryContext,
@@ -33,8 +33,24 @@ import {
 } from "./kernel/index.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
+import {
+  RecentFileReadCache,
+  formatRecentlyReadFilesSummary,
+  recordRecentFileReadFromToolCall,
+  syncPinnedRecentFilesMessage
+} from "./context/recent-file-reads.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
+import {
+  computeCompactThreshold,
+  computePromptTokens,
+  createHybridTokenCounterState,
+  recordApiUsage,
+  type HybridTokenCounterState
+} from "./context/token-counter.js";
+import { applyToolOutputBudget } from "./context/tool-output-budget.js";
+import { pruneOldToolResults } from "./context/tool-result-pruner.js";
+import { selectTailMessages } from "./context/tail-selector.js";
 import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
@@ -120,11 +136,13 @@ export interface ExecutionKernelDependencies {
 }
 
 interface ExecutionLoopState {
+  compactedCount: number;
   costWarnedToolNames: string[];
   cumulativeToolCallCount: number;
   cwd: string;
   managedAbortController: ReturnType<typeof createManagedAbortController>;
   maxIterations: number;
+  microPrunedCount: number;
   memoryContext: ContextFragment[];
   memoryRecall: MemoryRecallResult | null;
   messages: ConversationMessage[];
@@ -145,9 +163,12 @@ interface ExecutionLoopState {
   toolCallSignatures: Map<string, { iteration: number; toolCallId: string }>;
   turnFilteredFragments: ContextAssemblyDebugView["filteredOutFragments"];
   turnProviderMessages: ConversationMessage[];
+  recentFileReadCache: RecentFileReadCache | null;
   repoMapSummary?: string;
   task: TaskRecord;
   tokenBudget: TokenBudget;
+  tokenCounter: HybridTokenCounterState;
+  toolArtifactsRoot: string;
   warningBudgetPressureEmitted: boolean;
   writeToolSucceeded: boolean;
 }
@@ -389,6 +410,7 @@ export class ExecutionKernel {
       }
 
       return await this.executeLoop({
+        ...this.createContextLoopFields(),
         cwd: options.cwd,
         costWarnedToolNames: [],
         completionIntentSeenAt: null,
@@ -474,6 +496,7 @@ export class ExecutionKernel {
 
     try {
       return await this.executeLoop({
+        ...this.createContextLoopFields(),
         cwd: resumedTask.cwd,
         costWarnedToolNames: [],
         completionIntentSeenAt: null,
@@ -640,6 +663,24 @@ export class ExecutionKernel {
         } else {
           availableTools = baseAvailableTools;
         }
+        this.syncRecentFileCacheMode(state, pendingToolCalls, availableTools);
+        const pruneResult = pruneOldToolResults(state.turnProviderMessages);
+        if (pruneResult.prunedCount > 0) {
+          state.microPrunedCount += pruneResult.prunedCount;
+          this.dependencies.traceService.record({
+            actor: "runtime.context",
+            eventType: "micro_compact_pruned",
+            payload: {
+              iteration,
+              prunedCount: pruneResult.prunedCount,
+              savedTokensEstimate: pruneResult.savedTokensEstimate
+            },
+            stage: "planning",
+            summary: `Micro-compaction pruned ${pruneResult.prunedCount} old tool results`,
+            taskId: task.taskId
+          });
+        }
+        syncPinnedRecentFilesMessage(state.turnProviderMessages, state.recentFileReadCache);
         const assembled = this.contextAssembler.assemble({
           availableTools,
           filteredOutFragments: state.turnFilteredFragments,
@@ -715,8 +756,11 @@ export class ExecutionKernel {
           actor: "runtime.context",
           eventType: "context_assembled",
           payload: {
+            compactedCount: state.compactedCount,
             debugView: assembled.debug,
-            iteration
+            iteration,
+            microPrunedCount: state.microPrunedCount,
+            promptTokenEstimate: computePromptTokens(state.tokenCounter, state.turnProviderMessages)
           },
           stage: "planning",
           summary: `Context assembled with ${assembled.debug.memoryRecallFragments.length} recall fragments`,
@@ -885,6 +929,11 @@ export class ExecutionKernel {
         });
         task = budgetResult.task;
         state.tokenBudget = budgetResult.tokenBudget;
+        state.tokenCounter = recordApiUsage(
+          state.tokenCounter,
+          providerResponse.usage.inputTokens,
+          messages.length
+        );
 
         if (task.agentProfileId === "reviewer") {
           this.dependencies.traceService.record({
@@ -1121,20 +1170,14 @@ export class ExecutionKernel {
         summary: "Pre-compress lifecycle hook published",
         taskId: task.taskId
       });
-      const compacted = await this.compactMessages({
+      const compactInputBase = this.buildCompactInput({
         iteration,
-        iterationThreshold: this.dependencies.compact.iterationThreshold,
-        maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
         messages,
-        originalGoal: task.input,
         pendingToolCalls,
-        sessionScopeKey: task.sessionId ?? task.taskId,
-        taskId: task.taskId,
-        tokenEstimate: estimateTokenCount(messages),
-        tokenThreshold: this.dependencies.compact.tokenThreshold,
-        toolCallCount: state.cumulativeToolCallCount,
-        toolCallThreshold: this.dependencies.compact.toolCallThreshold
+        state,
+        task
       });
+      const compacted = await this.compactMessages(compactInputBase);
       if (compacted.triggered) {
         const compactReason = compacted.reason ?? "message_count";
         const preCompactMessages = [...messages];
@@ -1152,44 +1195,18 @@ export class ExecutionKernel {
             sessionId: task.sessionId
           });
           const compactInput = {
-            iteration,
-            iterationThreshold: this.dependencies.compact.iterationThreshold,
-            maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
-            messages: preCompactMessages,
-            originalGoal: task.input,
-            pendingToolCalls,
-            reason: compactReason,
-            sessionScopeKey: task.sessionId,
-            taskId: task.taskId,
-            tokenEstimate: estimateTokenCount(preCompactMessages),
-            tokenThreshold: this.dependencies.compact.tokenThreshold,
-            toolCallCount: state.cumulativeToolCallCount,
-            toolCallThreshold: this.dependencies.compact.toolCallThreshold
+            ...this.buildCompactInput({
+              iteration,
+              messages: preCompactMessages,
+              pendingToolCalls,
+              state,
+              task
+            }),
+            reason: compactReason
           } as const;
           const workerDispatcher = this.dependencies.workerDispatcher;
           const summarizerWorker = this.dependencies.summarizerWorker;
-          if (workerDispatcher !== undefined && summarizerWorker !== undefined) {
-            await workerDispatcher.dispatch(
-              {
-                backoffBaseMs: 150,
-                backoffMaxMs: 1000,
-                input: {
-                  availableTools,
-                  compactInput,
-                  compactResult: compacted,
-                  runId: latestRun?.runId ?? null,
-                  task
-                },
-                maxAttempts: 2,
-                taskId: task.taskId,
-                sessionId: task.sessionId,
-                timeoutMs: 5_000,
-                workerId: randomUUID(),
-                workerKind: "summarizer"
-              },
-              (input) => summarizerWorker.execute(input)
-            );
-          } else {
+          const persistCompactSummary = (): void => {
             const sessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
               availableTools,
               compact: compactInput,
@@ -1209,6 +1226,33 @@ export class ExecutionKernel {
               sessionId: task.sessionId,
               trigger: "compact"
             });
+          };
+          if (workerDispatcher !== undefined && summarizerWorker !== undefined) {
+            const workerResult = await workerDispatcher.dispatch(
+              {
+                backoffBaseMs: 150,
+                backoffMaxMs: 1000,
+                input: {
+                  availableTools,
+                  compactInput,
+                  compactResult: compacted,
+                  runId: latestRun?.runId ?? null,
+                  task
+                },
+                maxAttempts: 2,
+                taskId: task.taskId,
+                sessionId: task.sessionId,
+                timeoutMs: 5_000,
+                workerId: randomUUID(),
+                workerKind: "summarizer"
+              },
+              (input) => summarizerWorker.execute(input)
+            );
+            if (workerResult.status !== "succeeded") {
+              persistCompactSummary();
+            }
+          } else {
+            persistCompactSummary();
           }
         }
         const initialSystemPrompt =
@@ -1245,6 +1289,8 @@ export class ExecutionKernel {
           role: "system"
         });
         messages.push(...compacted.replacementMessages);
+        syncPinnedRecentFilesMessage(messages, state.recentFileReadCache);
+        state.compactedCount += 1;
         const refreshSessionId = task.sessionId ?? null;
         const refreshedContext = await this.planRecall({
           task,
@@ -1510,19 +1556,109 @@ export class ExecutionKernel {
     });
   }
 
+  private buildCompactInput(input: {
+    iteration: number;
+    messages: ConversationMessage[];
+    pendingToolCalls: ProviderToolCall[];
+    state: ExecutionLoopState;
+    task: TaskRecord;
+  }): Parameters<CompactTriggerPolicy["shouldCompact"]>[0] {
+    const tokenThreshold =
+      this.dependencies.compact.tokenThreshold ??
+      computeCompactThreshold(
+        input.state.tokenBudget.inputLimit,
+        input.state.tokenBudget.reservedOutput,
+        this.dependencies.compact.thresholdRatio,
+        this.dependencies.compact.bufferTokens
+      );
+    const previousSummary =
+      input.task.sessionId === null || input.task.sessionId === undefined
+        ? undefined
+        : this.dependencies.sessionSummaryService.findLatestBySession(input.task.sessionId)?.summary;
+    return {
+      iteration: input.iteration,
+      iterationThreshold: this.dependencies.compact.iterationThreshold,
+      maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
+      messages: input.messages,
+      originalGoal: input.task.input,
+      pendingToolCalls: input.pendingToolCalls.map((call) => ({
+        toolCallId: call.toolCallId,
+        toolName: call.toolName
+      })),
+      ...(previousSummary !== undefined ? { previousSummary } : {}),
+      recentlyReadFilesSummary:
+        input.state.recentFileReadCache === null
+          ? undefined
+          : formatRecentlyReadFilesSummary(input.state.recentFileReadCache.list()),
+      sessionScopeKey: input.task.sessionId ?? input.task.taskId,
+      taskId: input.task.taskId,
+      tokenEstimate: computePromptTokens(input.state.tokenCounter, input.messages),
+      tokenThreshold,
+      toolCallCount: input.state.cumulativeToolCallCount,
+      toolCallThreshold: this.dependencies.compact.toolCallThreshold
+    };
+  }
+
+  private createContextLoopFields(): Pick<
+    ExecutionLoopState,
+    "compactedCount" | "microPrunedCount" | "recentFileReadCache" | "tokenCounter" | "toolArtifactsRoot"
+  > {
+    return {
+      compactedCount: 0,
+      microPrunedCount: 0,
+      recentFileReadCache:
+        this.dependencies.contextRetention === undefined
+          ? null
+          : new RecentFileReadCache(this.dependencies.contextRetention),
+      tokenCounter: createHybridTokenCounterState(),
+      toolArtifactsRoot: join(this.dependencies.workspaceRoot, ".auto-talon", "artifacts")
+    };
+  }
+
+  private syncRecentFileCacheMode(
+    state: ExecutionLoopState,
+    pendingToolCalls: ProviderToolCall[],
+    availableTools: ProviderToolDescriptor[]
+  ): void {
+    if (state.recentFileReadCache === null) {
+      return;
+    }
+    const writePending = pendingToolCalls.some((call) => {
+      const descriptor = availableTools.find((tool) => tool.name === call.toolName);
+      return (
+        descriptor?.capability === "filesystem.write" || descriptor?.capability === "filesystem.patch"
+      );
+    });
+    state.recentFileReadCache.setMode(writePending ? "write_required" : "normal");
+  }
+
   private async compactMessages(
     input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0]
   ): Promise<SessionCompactResult> {
     const decision = this.dependencies.compactPolicy.shouldCompact(input);
+    this.dependencies.traceService.record({
+      actor: "runtime.context",
+      eventType: "compact_evaluated",
+      payload: {
+        messageCount: input.messages.length,
+        maxMessagesBeforeCompact: input.maxMessagesBeforeCompact,
+        reason: decision.reason,
+        tokenEstimate: input.tokenEstimate ?? null,
+        tokenThreshold: input.tokenThreshold ?? null,
+        toolCallCount: input.toolCallCount ?? null,
+        toolCallThreshold: input.toolCallThreshold ?? null,
+        triggered: decision.triggered
+      },
+      stage: "memory",
+      summary: decision.triggered
+        ? `Compaction triggered (${decision.reason ?? "unknown"})`
+        : `Compaction skipped (${decision.reason ?? "below_threshold"})`,
+      taskId: input.taskId
+    });
     if (!decision.triggered) {
       return Promise.resolve({
         reason: null,
-        replacementMessages: input.messages.map((message) => ({
-          content: message.content,
-          role: toConversationRole(message.role),
-          ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
-          ...(message.toolName !== undefined ? { toolName: message.toolName } : {})
-        })),
+        replacementMessages: input.messages.map((message) => mapCompactConversationMessage(message)),
         summaryMemory: null,
         triggered: false
       });
@@ -1530,19 +1666,37 @@ export class ExecutionKernel {
 
     const messagesToSummarize = input.messages as ConversationMessage[];
     const summarizer = this.selectCompactSummarizer(input.taskId, input.sessionScopeKey);
-    const summarized = await summarizer.summarize({
-      maxMessagesBeforeCompact: input.maxMessagesBeforeCompact,
-      messages: messagesToSummarize,
-      ...(input.originalGoal !== undefined ? { originalGoal: input.originalGoal } : {}),
-      sessionScopeKey: input.sessionScopeKey,
-      taskId: input.taskId
-    });
-    const preserved = messagesToSummarize.slice(-3).map((message) => ({
-      content: message.content,
-      role: toConversationRole(message.role),
-      ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
-      ...(message.toolName !== undefined ? { toolName: message.toolName } : {})
-    }));
+    let summarized;
+    try {
+      summarized = await summarizer.summarize({
+        maxMessagesBeforeCompact: input.maxMessagesBeforeCompact,
+        messages: messagesToSummarize,
+        ...(input.originalGoal !== undefined ? { originalGoal: input.originalGoal } : {}),
+        ...(input.previousSummary !== undefined ? { previousSummary: input.previousSummary } : {}),
+        ...(input.recentlyReadFilesSummary !== undefined
+          ? { recentlyReadFilesSummary: input.recentlyReadFilesSummary }
+          : {}),
+        sessionScopeKey: input.sessionScopeKey,
+        taskId: input.taskId
+      });
+    } catch (error) {
+      this.dependencies.traceService.record({
+        actor: "runtime.context",
+        eventType: "compact_summarizer_failed",
+        payload: {
+          error: error instanceof Error ? error.message : String(error),
+          summarizer: this.dependencies.compact.summarizer
+        },
+        stage: "memory",
+        summary: "Session compaction summarizer failed",
+        taskId: input.taskId
+      });
+      throw error;
+    }
+    const preserved = selectTailMessages(messagesToSummarize, {
+      tailMinMessages: this.dependencies.compact.tailMinMessages,
+      tailTokenBudget: this.dependencies.compact.tailTokenBudget
+    }).map((message) => mapCompactConversationMessage(message));
 
     return {
       reason:
@@ -1553,7 +1707,11 @@ export class ExecutionKernel {
           : "message_count",
       replacementMessages: [
         {
-          content: `Session summary:\n${summarized.summary}`,
+          content: [
+            "Session handoff:",
+            "Earlier work may already be reflected in pinned files, todos, or workspace state.",
+            summarized.summary
+          ].join("\n"),
           role: "system"
         },
         ...preserved
@@ -1865,6 +2023,15 @@ export class ExecutionKernel {
       }
     }
     const toolResultOutput = toolResultOutputForModel(outcome.result);
+    if (state.recentFileReadCache !== null && outcome.result.success) {
+      recordRecentFileReadFromToolCall(
+        state.recentFileReadCache,
+        toolCall.toolName,
+        toolCall.input as { path?: unknown },
+        toolResultOutput,
+        toolCall.toolCallId
+      );
+    }
     const toolSummary = toolResultSummary(outcome.result, toolCall.toolName);
     const structuredOutputSummary = summarizeToolOutput(toolResultOutput);
     const isDeduplicatable =
@@ -1889,14 +2056,14 @@ export class ExecutionKernel {
     if (toolDescriptor !== null) {
       if (toolDescriptor.capability !== "interaction.ask_user") {
         messages.push(
-          duplicateNotice === null
-            ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
-            : createToolFeedbackMessageWithNotice(
-                toolResultOutput,
-                toolCall,
-                privacyLevel,
-                duplicateNotice
-              )
+          this.buildToolFeedbackMessage(
+            state,
+            task,
+            toolCall,
+            toolResultOutput,
+            privacyLevel,
+            duplicateNotice
+          )
         );
       }
       if (signature !== null && priorCall === null) {
@@ -1917,14 +2084,14 @@ export class ExecutionKernel {
       return;
     }
     messages.push(
-      duplicateNotice === null
-        ? createToolFeedbackMessage(toolResultOutput, toolCall, privacyLevel)
-        : createToolFeedbackMessageWithNotice(
-            toolResultOutput,
-            toolCall,
-            privacyLevel,
-            duplicateNotice
-          )
+      this.buildToolFeedbackMessage(
+        state,
+        task,
+        toolCall,
+        toolResultOutput,
+        privacyLevel,
+        duplicateNotice
+      )
     );
     if (signature !== null && priorCall === null) {
       state.toolCallSignatures.set(signature, {
@@ -1941,6 +2108,42 @@ export class ExecutionKernel {
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName
     });
+  }
+
+  private buildToolFeedbackMessage(
+    state: ExecutionLoopState,
+    task: TaskRecord,
+    toolCall: ProviderToolCall,
+    toolResultOutput: unknown,
+    privacyLevel: "public" | "internal" | "restricted",
+    duplicateNotice: string | null
+  ): ConversationMessage {
+    const serialized = safeSerializeToolOutputForBudget(toolResultOutput);
+    const maxTokens = this.dependencies.contextRetention?.toolOutputMaxTokens ?? 2_500;
+    const budgeted = applyToolOutputBudget(
+      {
+        serialized,
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId
+      },
+      {
+        artifactsRoot: state.toolArtifactsRoot,
+        maxTokensPerResult: maxTokens
+      }
+    );
+    const base = createToolFeedbackMessage(
+      toolResultOutput,
+      toolCall,
+      privacyLevel,
+      budgeted.content
+    );
+    if (duplicateNotice === null) {
+      return base;
+    }
+    return {
+      ...base,
+      content: `${duplicateNotice}\n\n${base.content}`
+    };
   }
 
   private appendSessionTranscript(
@@ -2011,6 +2214,17 @@ function buildToolTaskMetadata(task: TaskRecord): TaskRecord["metadata"] {
   return {
     ...task.metadata,
     ...(task.sessionId !== null && task.sessionId !== undefined ? { sessionId: task.sessionId } : {})
+  };
+}
+
+function mapCompactConversationMessage(message: ConversationMessage): ConversationMessage {
+  return {
+    content: message.content,
+    role: toConversationRole(message.role),
+    ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
+    ...(message.toolName !== undefined ? { toolName: message.toolName } : {}),
+    ...(message.toolCalls !== undefined ? { toolCalls: message.toolCalls } : {}),
+    ...(message.metadata !== undefined ? { metadata: message.metadata } : {})
   };
 }
 

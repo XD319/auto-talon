@@ -63,7 +63,7 @@ describe("compact summarizer", () => {
     expect(result.summary).toContain("filesTouched=");
     expect(result.summary).toContain("commandsRun=");
     expect(result.summary).toContain("blockers=");
-    expect(result.summary).toContain("nextActions=");
+    expect(result.summary).toContain("remaining_work=");
     expect(result.summary).toContain("apiKey=[REDACTED]");
     expect(result.summary).toContain("[REDACTED_EMAIL]");
   });
@@ -72,15 +72,18 @@ describe("compact summarizer", () => {
     const summarizer = new ProviderSubagentSummarizer(() => new FinalSummaryProvider());
     const result = await summarizer.summarize(compactInput);
     expect(result.summarizerId).toContain("provider_subagent:final-summary-provider");
-    expect(result.fallbackReason).toBeUndefined();
     expect(result.summary).toContain("completedWork=done");
   });
 
-  it("falls back to deterministic summary when provider_subagent fails", async () => {
+  it("throws when provider_subagent fails", async () => {
     const summarizer = new ProviderSubagentSummarizer(() => new ThrowingSummaryProvider());
-    const result = await summarizer.summarize(compactInput);
-    expect(result.summarizerId).toContain("fallback_deterministic");
-    expect(result.fallbackReason).toBe("provider_error");
-    expect(result.summary).toContain("commandsRun=");
+    await expect(summarizer.summarize(compactInput)).rejects.toThrow("provider failed");
+  });
+
+  it("throws when provider_subagent is unavailable", async () => {
+    const summarizer = new ProviderSubagentSummarizer(() => null);
+    await expect(summarizer.summarize(compactInput)).rejects.toMatchObject({
+      code: "compact_summarizer_unavailable"
+    });
   });
 });

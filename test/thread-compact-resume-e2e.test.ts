@@ -57,7 +57,7 @@ class LongCodingCompactClarifyProvider implements Provider {
 
   public generate(input: ProviderInput): Promise<ProviderResponse> {
     this.callCount += 1;
-    const sawSessionSummary = input.messages.some((message) => message.content.includes("Session summary:"));
+    const sawSessionSummary = input.messages.some((message) => message.content.includes("Session handoff:"));
     if (this.callCount === 1) {
       return Promise.resolve({
         kind: "tool_calls",

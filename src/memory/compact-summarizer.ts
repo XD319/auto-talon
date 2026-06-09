@@ -1,10 +1,10 @@
+import { AppError } from "../core/app-error.js";
 import type { SessionCompactInput } from "../types/index.js";
 import type { Provider } from "../types/index.js";
 
 export interface CompactSummarizerResult {
   summary: string;
   summarizerId: string;
-  fallbackReason?: string;
 }
 
 export interface CompactSummarizer {
@@ -26,59 +26,46 @@ export class ProviderSubagentSummarizer implements CompactSummarizer {
   ) {}
 
   public async summarize(input: SessionCompactInput): Promise<CompactSummarizerResult> {
-    const fallback = new DeterministicCompactSummarizer();
     const helperProvider = this.helperProviderFactory?.({ kind: "summarize" }) ?? null;
     if (helperProvider === null) {
-      const fallbackResult = await fallback.summarize(input);
-      return {
-        fallbackReason: "provider_unavailable",
-        summarizerId: "provider_subagent:fallback_deterministic",
-        summary: fallbackResult.summary
-      };
+      throw new AppError({
+        code: "compact_summarizer_unavailable",
+        message:
+          "Provider subagent summarizer is configured but no summarize provider is available. Set compact.summarizer to deterministic or configure routing.helpers.summarize."
+      });
     }
 
-    try {
-      const response = await helperProvider.generate({
-        agentProfileId: "planner",
-        availableTools: [],
-        iteration: 1,
-        memoryContext: [],
-        messages: buildSummarizerPrompt(input),
-        signal: new AbortController().signal,
-        task: buildSummaryTask(input),
-        tokenBudget: {
-          inputLimit: 2_000,
-          outputLimit: 800,
-          reservedOutput: 100,
-          usedInput: 0,
-          usedOutput: 0
-        }
-      });
-      if (response.kind !== "final" || response.message.trim().length === 0) {
-        const fallbackResult = await fallback.summarize(input);
-        return {
-          fallbackReason: "invalid_provider_response",
-          summarizerId: `provider_subagent:${helperProvider.name}:fallback_deterministic`,
-          summary: fallbackResult.summary
-        };
+    const response = await helperProvider.generate({
+      agentProfileId: "planner",
+      availableTools: [],
+      iteration: 1,
+      memoryContext: [],
+      messages: buildSummarizerPrompt(input),
+      signal: new AbortController().signal,
+      task: buildSummaryTask(input),
+      tokenBudget: {
+        inputLimit: 32_000,
+        outputLimit: 2_000,
+        reservedOutput: 200,
+        usedInput: 0,
+        usedOutput: 0
       }
-      return {
-        summarizerId: `provider_subagent:${helperProvider.name}`,
-        summary: redactSensitiveSummary(response.message)
-      };
-    } catch {
-      const fallbackResult = await fallback.summarize(input);
-      return {
-        fallbackReason: "provider_error",
-        summarizerId: `provider_subagent:${helperProvider.name}:fallback_deterministic`,
-        summary: fallbackResult.summary
-      };
+    });
+    if (response.kind !== "final" || response.message.trim().length === 0) {
+      throw new AppError({
+        code: "compact_summarizer_failed",
+        message: `Provider subagent summarizer returned an invalid response (kind=${response.kind}).`
+      });
     }
+    return {
+      summarizerId: `provider_subagent:${helperProvider.name}`,
+      summary: redactSensitiveSummary(response.message)
+    };
   }
 }
 
-function summarizeMessages(messages: SessionCompactInput): string {
-  const structured = collectStructuredSummaryFields(messages);
+function summarizeMessages(input: SessionCompactInput): string {
+  const structured = collectStructuredSummaryFields(input);
   return formatStructuredSummary(structured);
 }
 
@@ -86,11 +73,12 @@ export interface StructuredSummaryFields {
   goal: string;
   latestUserRequest: string;
   completedWork: string;
+  evidenceAndVerification: string;
   filesTouched: string[];
   recentlyReadFiles: string;
   commandsRun: string[];
   blockers: string[];
-  nextActions: string[];
+  remainingWork: string[];
   toolSignals: string;
 }
 
@@ -116,9 +104,8 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
   const filesTouched = extractFilesTouched(toolMessages);
   const commandsRun = extractCommands(toolMessages);
   const blockers = extractBlockers(toolMessages, assistantMessages);
-  const nextActions = extractNextActions(assistantMessages);
-  // Fall back to the task's original goal so repeated compactions cannot wipe the
-  // user's intent from the structured summary surfaced to the next iteration.
+  const remainingWork = extractRemainingWork(assistantMessages);
+  const evidenceAndVerification = extractEvidence(toolMessages, assistantMessages);
   const fallbackGoal = summarize(input.originalGoal ?? "", 220);
   const firstUserGoal = summarize(userMessages.at(0)?.content ?? "", 220);
   const latestUserGoal = summarize(userMessages.at(-1)?.content ?? "", 220);
@@ -126,11 +113,12 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
     blockers,
     commandsRun,
     completedWork: completedWork || "[n/a]",
+    evidenceAndVerification: evidenceAndVerification || "[n/a]",
     filesTouched,
     goal: firstUserGoal || fallbackGoal || "[n/a]",
     latestUserRequest: latestUserGoal || fallbackGoal || "[n/a]",
-    nextActions,
     recentlyReadFiles: input.recentlyReadFilesSummary ?? "[none]",
+    remainingWork,
     toolSignals: keyToolSignals || "[n/a]"
   };
 }
@@ -141,11 +129,12 @@ export function formatStructuredSummary(fields: StructuredSummaryFields): string
       `goal=${fields.goal}`,
       `latest_user_request=${fields.latestUserRequest}`,
       `completedWork=${fields.completedWork}`,
+      `evidence_and_verification=${fields.evidenceAndVerification}`,
       `filesTouched=${fields.filesTouched.join("; ") || "[none]"}`,
       `recentlyReadFiles=${fields.recentlyReadFiles}`,
       `commandsRun=${fields.commandsRun.join("; ") || "[none]"}`,
       `blockers=${fields.blockers.join("; ") || "[none]"}`,
-      `nextActions=${fields.nextActions.join("; ") || "[none]"}`,
+      `remaining_work=${fields.remainingWork.join("; ") || "[none]"}`,
       `tool_signals=${fields.toolSignals}`
     ].join("\n")
   );
@@ -192,26 +181,55 @@ function extractBlockers(
   return uniqueList(candidates).slice(0, 6);
 }
 
-function extractNextActions(assistantMessages: SessionCompactInput["messages"]): string[] {
+function extractEvidence(
+  toolMessages: SessionCompactInput["messages"],
+  assistantMessages: SessionCompactInput["messages"]
+): string {
+  const source = [...toolMessages.slice(-6), ...assistantMessages.slice(-4)]
+    .map((message) => message.content)
+    .join("\n");
+  const candidates = source
+    .split(/\n+/u)
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        (/\b(test|assert|exit code|status|path|url|error|verified|failed)\b/iu.test(line) ||
+          /\d{3}\b/.test(line))
+    )
+    .map((line) => summarize(line, 180));
+  return uniqueList(candidates).slice(0, 8).join(" | ");
+}
+
+function extractRemainingWork(assistantMessages: SessionCompactInput["messages"]): string[] {
   const tails = assistantMessages.slice(-4).map((message) => message.content);
   const candidates = tails
     .flatMap((text) => text.split(/[\n.;]+/u))
     .map((item) => item.trim())
-    .filter((item) => /\b(next|then|will|should|need to|plan)\b/iu.test(item))
+    .filter((item) => /\b(next|then|will|should|need to|plan|remaining|todo|blocker)\b/iu.test(item))
     .map((item) => summarize(item, 140));
   return uniqueList(candidates).slice(0, 8);
 }
 
 function buildSummarizerPrompt(input: SessionCompactInput): Array<{ content: string; role: "system" | "user" }> {
   const structured = collectStructuredSummaryFields(input);
+  const previousSummary =
+    input.previousSummary !== undefined && input.previousSummary.trim().length > 0
+      ? `Previous handoff summary (update and preserve durable facts):\n${input.previousSummary.trim()}\n\n`
+      : "";
   return [
     {
-      content:
-        "You summarize an execution session. Return plain text with exactly these keys, one per line: goal, latest_user_request, completedWork, filesTouched, commandsRun, blockers, nextActions, tool_signals. No markdown.",
+      content: [
+        "You produce a decision-oriented session handoff for another agent continuing this work.",
+        "Compress for continuity, not chronology. Omit lookup chatter unless it is the only evidence.",
+        "Return plain text with exactly these keys, one per line:",
+        "goal, latest_user_request, completedWork, evidence_and_verification, filesTouched, recentlyReadFiles, commandsRun, blockers, remaining_work, tool_signals.",
+        "No markdown."
+      ].join(" "),
       role: "system"
     },
     {
-      content: formatStructuredSummary(structured),
+      content: `${previousSummary}Source material:\n${formatStructuredSummary(structured)}`,
       role: "user"
     }
   ];
@@ -263,9 +281,9 @@ function buildSummaryTask(input: SessionCompactInput): {
     taskId: input.taskId,
     sessionId: null,
     tokenBudget: {
-      inputLimit: 2_000,
-      outputLimit: 800,
-      reservedOutput: 100,
+      inputLimit: 32_000,
+      outputLimit: 2_000,
+      reservedOutput: 200,
       usedInput: 0,
       usedOutput: 0
     },
