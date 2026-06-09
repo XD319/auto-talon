@@ -3,18 +3,10 @@ import { Box, Text } from "ink";
 
 import { theme } from "../theme.js";
 import type { DiffViewModel } from "../view-models/runtime-dashboard.js";
+import { diffLineProps, summarizeDiffLines } from "../view-models/diff-format.js";
 
 export interface DiffPanelProps {
   diff: DiffViewModel[];
-}
-const MAX_DIFF_LINES = 40;
-
-export function summarizeDiffLines(unifiedDiff: string): { hiddenLineCount: number; visibleLines: string[] } {
-  const diffLines = unifiedDiff.split(/\r?\n/u);
-  return {
-    hiddenLineCount: Math.max(0, diffLines.length - MAX_DIFF_LINES),
-    visibleLines: diffLines.slice(0, MAX_DIFF_LINES)
-  };
 }
 
 export function DiffPanel({ diff }: DiffPanelProps): React.ReactElement {
@@ -61,15 +53,4 @@ export function DiffPanel({ diff }: DiffPanelProps): React.ReactElement {
   );
 }
 
-function diffLineProps(line: string): { color?: string } {
-  if (line.startsWith("+++ ") || line.startsWith("--- ") || line.startsWith("@@")) {
-    return { color: theme.muted };
-  }
-  if (line.startsWith("+")) {
-    return { color: theme.success };
-  }
-  if (line.startsWith("-")) {
-    return { color: theme.danger };
-  }
-  return {};
-}
+export { summarizeDiffLines } from "../view-models/diff-format.js";

@@ -27,6 +27,7 @@ import {
   moveCursorVertical,
   resolveApprovalShortcut
 } from "../src/tui/hooks/use-text-input.js";
+import { stripAnsi } from "../src/tui/ansi.js";
 import { useScrollbackTranscript } from "../src/tui/hooks/use-scrollback-transcript.js";
 import { completeSlashCommand } from "../src/tui/slash-commands.js";
 import {
@@ -367,7 +368,7 @@ describe("chat tui view-models", () => {
     expect(state.pending).toBe("");
   });
 
-  it("formats tool trace completion as a Hermes-like transcript line", () => {
+  it("formats file edit trace completion with colored line counts and diff preview", () => {
     const state = new Map<string, ScrollbackToolState>();
     const requested = createTraceEvent("tool_call_requested", {
       input: { path: "src/app.ts" },
@@ -385,9 +386,16 @@ describe("chat tui view-models", () => {
     };
     const finished = {
       ...createTraceEvent("tool_call_finished", {
+        fileChange: {
+          addedLineCount: 2,
+          changedLineCount: 2,
+          path: "src/app.ts",
+          removedLineCount: 1,
+          unifiedDiffPreview: "--- a/src/app.ts\n+++ b/src/app.ts\n-old\n+new"
+        },
         iteration: 1,
         outputPreview: "ok",
-        summary: "wrote file",
+        summary: "Wrote src/app.ts (+2 -1)",
         toolCallId: "call-1",
         toolName: "write_file"
       }),
@@ -396,7 +404,44 @@ describe("chat tui view-models", () => {
 
     expect(updateScrollbackToolState(state, requested)).toBeNull();
     expect(updateScrollbackToolState(state, started)).toBeNull();
-    expect(updateScrollbackToolState(state, finished)).toBe("\u250a \u270d write src/app.ts 0.2s\n");
+    const output = updateScrollbackToolState(state, finished);
+    expect(output).toContain("\u001b[32m+2\u001b[0m");
+    expect(output).toContain("\u001b[31m-1\u001b[0m");
+    expect(stripAnsi(output ?? "")).toContain("\u250a \u270d write src/app.ts +2 -1");
+    expect(stripAnsi(output ?? "")).toContain("\u250a   -old");
+    expect(stripAnsi(output ?? "")).toContain("\u250a   +new");
+  });
+
+  it("keeps elapsed time for non-file tool trace completion", () => {
+    const state = new Map<string, ScrollbackToolState>();
+    const requested = createTraceEvent("tool_call_requested", {
+      input: { command: "npm test" },
+      iteration: 1,
+      toolCallId: "call-2",
+      toolName: "shell"
+    });
+    const started = {
+      ...createTraceEvent("tool_call_started", {
+        iteration: 1,
+        toolCallId: "call-2",
+        toolName: "shell"
+      }),
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const finished = {
+      ...createTraceEvent("tool_call_finished", {
+        iteration: 1,
+        outputPreview: "ok",
+        summary: "done",
+        toolCallId: "call-2",
+        toolName: "shell"
+      }),
+      timestamp: "2026-01-01T00:00:00.200Z"
+    };
+
+    updateScrollbackToolState(state, requested);
+    updateScrollbackToolState(state, started);
+    expect(updateScrollbackToolState(state, finished)).toBe("\u250a \u25b6 run npm test 0.2s\n");
   });
 
   it("prints transcript command output to stdout-oriented text instead of opening a viewer", () => {

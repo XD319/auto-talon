@@ -1,6 +1,7 @@
-import type { RuntimeOutputEvent, TraceEvent } from "../../types/index.js";
+import type { FileChangeTracePayload, RuntimeOutputEvent, TraceEvent } from "../../types/index.js";
 import { sanitizeTerminalText } from "../text-sanitize.js";
 import type { ChatMessage } from "./chat-messages.js";
+import { formatDiffLineBadge, formatScrollbackDiffPreview } from "./diff-format.js";
 import { buildTranscriptRows, type TranscriptViewerMode } from "./transcript-output.js";
 
 export interface ScrollbackTurnState {
@@ -141,8 +142,6 @@ export function updateScrollbackToolState(
     return null;
   }
 
-  const startedAt = current.startedAt ?? current.requestedAt;
-  const elapsed = formatElapsed(startedAt, event.timestamp);
   const action = toolAction(event.payload.toolName);
   const target = toolTarget(current.input, event);
   const icon = event.eventType === "tool_call_failed" ? "❌" : toolIcon(action);
@@ -151,6 +150,18 @@ export function updateScrollbackToolState(
       ? ` failed: ${sanitizeTerminalText(event.payload.errorMessage)}`
       : "";
   state.delete(toolCallId);
+
+  if (event.eventType === "tool_call_finished") {
+    const fileChange = readFileChange(event.payload.fileChange);
+    if (fileChange !== null) {
+      const summaryLine = `┊ ${icon} ${action} ${target} ${formatDiffLineBadge(fileChange.addedLineCount, fileChange.removedLineCount)}${status}\n`;
+      const diffPreview = formatScrollbackDiffPreview(fileChange.unifiedDiffPreview);
+      return diffPreview.length > 0 ? `${summaryLine}${diffPreview}` : summaryLine;
+    }
+  }
+
+  const startedAt = current.startedAt ?? current.requestedAt;
+  const elapsed = formatElapsed(startedAt, event.timestamp);
   return `┊ ${icon} ${action} ${target}${elapsed.length > 0 ? ` ${elapsed}` : ""}${status}\n`;
 }
 
@@ -220,7 +231,7 @@ export function formatTranscriptForPrint(
 }
 
 function toolAction(toolName: string): string {
-  if (toolName.includes("write")) {
+  if (toolName.includes("write") || toolName === "patch") {
     return "write";
   }
   if (toolName.includes("read") || toolName === "web_extract") {
@@ -266,6 +277,23 @@ function toolTarget(input: Record<string, unknown> | undefined, event: TraceEven
   }
   const sanitized = sanitizeTerminalText(value).replace(/\s+/gu, " ").trim();
   return sanitized.length > 96 ? `${sanitized.slice(0, 93)}...` : sanitized;
+}
+
+function readFileChange(value: unknown): FileChangeTracePayload | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.path !== "string") {
+    return null;
+  }
+  return {
+    addedLineCount: typeof record.addedLineCount === "number" ? record.addedLineCount : 0,
+    changedLineCount: typeof record.changedLineCount === "number" ? record.changedLineCount : 0,
+    path: record.path,
+    removedLineCount: typeof record.removedLineCount === "number" ? record.removedLineCount : 0,
+    unifiedDiffPreview: typeof record.unifiedDiffPreview === "string" ? record.unifiedDiffPreview : ""
+  };
 }
 
 function formatElapsed(startedAt: string | undefined, finishedAt: string): string {

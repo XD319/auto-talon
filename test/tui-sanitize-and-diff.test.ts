@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { summarizeDiffLines } from "../src/tui/panels/diff-panel.js";
+import { summarizeDiffLines } from "../src/tui/view-models/diff-format.js";
 import { sanitizeTerminalText } from "../src/tui/text-sanitize.js";
 
 describe("tui sanitization and diff helpers", () => {
