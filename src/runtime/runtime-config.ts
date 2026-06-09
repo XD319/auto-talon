@@ -48,20 +48,25 @@ const runtimeConfigFileSchema = z.object({
     .optional(),
   compact: z
     .object({
+      bufferTokens: z.number().int().nonnegative().optional(),
+      iterationThreshold: z.number().int().positive().optional(),
       messageThreshold: z.number().int().positive().optional(),
       summarizer: z.enum(["deterministic", "provider_subagent"]).optional(),
+      tailMinMessages: z.number().int().positive().optional(),
+      tailTokenBudget: z.number().int().positive().optional(),
+      thresholdRatio: z.number().positive().max(1).optional(),
       tokenThreshold: z.number().int().positive().optional(),
-      toolCallThreshold: z.number().int().positive().optional(),
-      iterationThreshold: z.number().int().positive().optional()
+      toolCallThreshold: z.number().int().positive().optional()
     })
     .optional(),
   contextRetention: z
     .object({
-      maxFiles: z.number().int().positive().optional(),
       maxBytesPerFile: z.number().int().positive().optional(),
-      maxTotalBytes: z.number().int().positive().optional(),
       maxBytesPerFileUnderGuard: z.number().int().positive().optional(),
-      maxTotalBytesUnderGuard: z.number().int().positive().optional()
+      maxFiles: z.number().int().positive().optional(),
+      maxTotalBytes: z.number().int().positive().optional(),
+      maxTotalBytesUnderGuard: z.number().int().positive().optional(),
+      toolOutputMaxTokens: z.number().int().positive().optional()
     })
     .optional(),
   recall: z
@@ -207,11 +212,15 @@ export interface RuntimeConfig {
   defaultMaxIterations: number;
   defaultTimeoutMs: number;
   compact: {
+    bufferTokens: number;
     iterationThreshold: number;
     messageThreshold: number;
-    tokenThreshold: number;
-    toolCallThreshold: number;
     summarizer: "deterministic" | "provider_subagent";
+    tailMinMessages: number;
+    tailTokenBudget: number;
+    thresholdRatio: number;
+    tokenThreshold: number | null;
+    toolCallThreshold: number;
   };
   contextRetention: ContextRetentionConfig;
   recall: {
@@ -262,18 +271,23 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     maxResults: 5
   },
   compact: {
-    iterationThreshold: 8,
-    messageThreshold: 8,
-    summarizer: "deterministic",
-    tokenThreshold: 48_000,
-    toolCallThreshold: 20
+    bufferTokens: 8_000,
+    iterationThreshold: 24,
+    messageThreshold: 100,
+    summarizer: "provider_subagent",
+    tailMinMessages: 10,
+    tailTokenBudget: 20_000,
+    thresholdRatio: 0.8,
+    tokenThreshold: null,
+    toolCallThreshold: 40
   },
   contextRetention: {
-    maxFiles: 5,
-    maxBytesPerFile: 8_000,
-    maxTotalBytes: 32_000,
-    maxBytesPerFileUnderGuard: 16_000,
-    maxTotalBytesUnderGuard: 48_000
+    maxBytesPerFile: 24_000,
+    maxBytesPerFileUnderGuard: 24_000,
+    maxFiles: 8,
+    maxTotalBytes: 128_000,
+    maxTotalBytesUnderGuard: 200_000,
+    toolOutputMaxTokens: 2_500
   },
   recall: {
     budgetRatio: 0.25,
@@ -425,6 +439,14 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       fileConfig?.defaultTimeoutMs ??
       DEFAULT_RUNTIME_CONFIG.defaultTimeoutMs,
     compact: {
+      bufferTokens:
+        envConfig.compact?.bufferTokens ??
+        fileConfig?.compact?.bufferTokens ??
+        DEFAULT_RUNTIME_CONFIG.compact.bufferTokens,
+      iterationThreshold:
+        envConfig.compact?.iterationThreshold ??
+        fileConfig?.compact?.iterationThreshold ??
+        DEFAULT_RUNTIME_CONFIG.compact.iterationThreshold,
       messageThreshold:
         envConfig.compact?.messageThreshold ??
         fileConfig?.compact?.messageThreshold ??
@@ -433,6 +455,18 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         envConfig.compact?.summarizer ??
         fileConfig?.compact?.summarizer ??
         DEFAULT_RUNTIME_CONFIG.compact.summarizer,
+      tailMinMessages:
+        envConfig.compact?.tailMinMessages ??
+        fileConfig?.compact?.tailMinMessages ??
+        DEFAULT_RUNTIME_CONFIG.compact.tailMinMessages,
+      tailTokenBudget:
+        envConfig.compact?.tailTokenBudget ??
+        fileConfig?.compact?.tailTokenBudget ??
+        DEFAULT_RUNTIME_CONFIG.compact.tailTokenBudget,
+      thresholdRatio:
+        envConfig.compact?.thresholdRatio ??
+        fileConfig?.compact?.thresholdRatio ??
+        DEFAULT_RUNTIME_CONFIG.compact.thresholdRatio,
       tokenThreshold:
         envConfig.compact?.tokenThreshold ??
         fileConfig?.compact?.tokenThreshold ??
@@ -440,11 +474,7 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       toolCallThreshold:
         envConfig.compact?.toolCallThreshold ??
         fileConfig?.compact?.toolCallThreshold ??
-        DEFAULT_RUNTIME_CONFIG.compact.toolCallThreshold,
-      iterationThreshold:
-        envConfig.compact?.iterationThreshold ??
-        fileConfig?.compact?.iterationThreshold ??
-        DEFAULT_RUNTIME_CONFIG.compact.iterationThreshold
+        DEFAULT_RUNTIME_CONFIG.compact.toolCallThreshold
     },
     recall: {
       budgetRatio:
@@ -545,7 +575,11 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       maxTotalBytesUnderGuard:
         envConfig.contextRetention?.maxTotalBytesUnderGuard ??
         fileConfig?.contextRetention?.maxTotalBytesUnderGuard ??
-        DEFAULT_RUNTIME_CONFIG.contextRetention.maxTotalBytesUnderGuard
+        DEFAULT_RUNTIME_CONFIG.contextRetention.maxTotalBytesUnderGuard,
+      toolOutputMaxTokens:
+        envConfig.contextRetention?.toolOutputMaxTokens ??
+        fileConfig?.contextRetention?.toolOutputMaxTokens ??
+        DEFAULT_RUNTIME_CONFIG.contextRetention.toolOutputMaxTokens
     },
     tokenBudget,
     webSearch,

@@ -27,6 +27,9 @@ describe("runtime config", () => {
     expect(config.allowedFetchHosts).toEqual(["*"]);
     expect(config.tokenBudget.inputLimit).toBe(64_000);
     expect(config.tokenBudget.outputLimit).toBe(8_000);
+    expect(config.compact.messageThreshold).toBe(100);
+    expect(config.compact.thresholdRatio).toBe(0.8);
+    expect(config.contextRetention.toolOutputMaxTokens).toBe(2_500);
 
     const sandbox = new SandboxService({
       allowedFetchHosts: config.allowedFetchHosts,

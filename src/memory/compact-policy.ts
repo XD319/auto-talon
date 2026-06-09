@@ -14,6 +14,13 @@ export class CompactTriggerPolicy {
       };
     }
 
+    if ((input.tokenThreshold ?? Number.POSITIVE_INFINITY) <= (input.tokenEstimate ?? 0)) {
+      return {
+        reason: "token_budget",
+        triggered: true
+      };
+    }
+
     if ((input.toolCallThreshold ?? Number.POSITIVE_INFINITY) <= (input.toolCallCount ?? 0)) {
       return {
         reason: "tool_call_count",
@@ -24,13 +31,6 @@ export class CompactTriggerPolicy {
     if ((input.iterationThreshold ?? Number.POSITIVE_INFINITY) <= (input.iteration ?? 0)) {
       return {
         reason: "iteration_count",
-        triggered: true
-      };
-    }
-
-    if ((input.tokenThreshold ?? Number.POSITIVE_INFINITY) <= (input.tokenEstimate ?? 0)) {
-      return {
-        reason: "token_budget",
         triggered: true
       };
     }
@@ -52,6 +52,13 @@ export class CompactTriggerPolicy {
 function isSafeCompactPoint(input: SessionCompactInput): boolean {
   if ((input.pendingToolCalls?.length ?? 0) > 0) {
     return false;
+  }
+  const lastMessage = input.messages[input.messages.length - 1];
+  if (lastMessage?.role === "tool") {
+    return true;
+  }
+  if (lastMessage?.role === "assistant" && (lastMessage.toolCalls?.length ?? 0) === 0) {
+    return true;
   }
   const lastAssistantWithCalls = [...input.messages]
     .reverse()
