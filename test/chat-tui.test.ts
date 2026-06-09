@@ -178,6 +178,45 @@ describe("chat tui view-models", () => {
     expect(visible[0]?.kind).toBe("activity");
   });
 
+  it("formats file edit activity with line counts from fileChange", () => {
+    const activity = toTraceActivityMessage(createTraceEvent("tool_call_finished", {
+      fileChange: {
+        addedLineCount: 4,
+        changedLineCount: 3,
+        path: "src/app.ts",
+        removedLineCount: 2,
+        unifiedDiffPreview: "--- a/src/app.ts\n+++ b/src/app.ts"
+      },
+      iteration: 1,
+      toolCallId: "call-00112233",
+      toolName: "write_file",
+      summary: "Wrote src/app.ts (+4 -2)",
+      outputPreview: "ok"
+    }));
+
+    expect(activity.text).toBe("Write src/app.ts (+4 -2)");
+  });
+
+  it("treats patch completions as high-value activity", () => {
+    const activity = toTraceActivityMessage(createTraceEvent("tool_call_finished", {
+      fileChange: {
+        addedLineCount: 1,
+        changedLineCount: 1,
+        path: "src/app.ts",
+        removedLineCount: 1,
+        unifiedDiffPreview: ""
+      },
+      iteration: 1,
+      toolCallId: "call-00112233",
+      toolName: "patch",
+      summary: "Updated src/app.ts (+1 -1)",
+      outputPreview: "ok"
+    }));
+
+    expect(displayChatMessages([activity])).toHaveLength(1);
+    expect(activity.text).toBe("Write src/app.ts (+1 -1)");
+  });
+
   it("hides successful low-value file reads in chat mode", () => {
     const activity = toTraceActivityMessage(createTraceEvent("tool_call_finished", {
       iteration: 1,

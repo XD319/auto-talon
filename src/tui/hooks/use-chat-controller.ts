@@ -8,12 +8,14 @@ import type {
   ApprovalAllowScope,
   ApprovalRecord,
   ClarifyPromptRecord,
+  FileChangeTracePayload,
   RuntimeOutputEvent,
   TaskRecord,
   ToolCallRecord,
   TraceEvent,
   TuiInteractionMode
 } from "../../types/index.js";
+import { colorizeDiffLine, formatDiffLineBadge as formatColoredDiffLineBadge } from "../view-models/diff-format.js";
 import {
   contextWindowPercent,
   estimateSessionCostUsd
@@ -56,8 +58,10 @@ interface TokenUsageSnapshot {
 }
 
 export interface FileEditEntry {
+  addedLineCount: number;
   at: string;
   path: string;
+  removedLineCount: number;
   taskId: string;
 }
 
@@ -268,15 +272,24 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   }, []);
 
   const recordFileWrite = React.useCallback(
-    (taskId: string, toolCallId: string, at: string) => {
+    (taskId: string, toolCallId: string, at: string, fileChange?: FileChangeTracePayload) => {
       const detail = input.service.showTask(taskId);
       const toolCall = detail.toolCalls.find((item) => item.toolCallId === toolCallId);
       if (toolCall === undefined || (toolCall.toolName !== "write_file" && toolCall.toolName !== "patch")) {
         return;
       }
       const pathValue = toolCall.input["path"];
-      const path = typeof pathValue === "string" ? pathValue : "?";
-      setFileEdits((current) => [...current, { at, path, taskId }]);
+      const path = fileChange?.path ?? (typeof pathValue === "string" ? pathValue : "?");
+      setFileEdits((current) => [
+        ...current,
+        {
+          addedLineCount: fileChange?.addedLineCount ?? 0,
+          at,
+          path,
+          removedLineCount: fileChange?.removedLineCount ?? 0,
+          taskId
+        }
+      ]);
     },
     [input.service]
   );
@@ -298,7 +311,12 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           event.eventType === "tool_call_finished" &&
           (event.payload.toolName === "write_file" || event.payload.toolName === "patch")
         ) {
-          recordFileWrite(event.taskId, event.payload.toolCallId, event.timestamp);
+          recordFileWrite(
+            event.taskId,
+            event.payload.toolCallId,
+            event.timestamp,
+            event.payload.fileChange
+          );
         }
       });
     },
@@ -697,7 +715,12 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           event.eventType === "tool_call_finished" &&
           (event.payload.toolName === "write_file" || event.payload.toolName === "patch")
         ) {
-          recordFileWrite(event.taskId, event.payload.toolCallId, event.timestamp);
+          recordFileWrite(
+            event.taskId,
+            event.payload.toolCallId,
+            event.timestamp,
+            event.payload.fileChange
+          );
         }
       }
     },
@@ -1111,6 +1134,22 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               typeof content === "object" && content !== null && !Array.isArray(content) && typeof content.path === "string"
                 ? content.path
                 : artifact.uri;
+            const diffSummary =
+              typeof content === "object" && content !== null && !Array.isArray(content) ? content.diffSummary : null;
+            const addedLineCount =
+              typeof diffSummary === "object" &&
+              diffSummary !== null &&
+              !Array.isArray(diffSummary) &&
+              typeof diffSummary.addedLineCount === "number"
+                ? diffSummary.addedLineCount
+                : 0;
+            const removedLineCount =
+              typeof diffSummary === "object" &&
+              diffSummary !== null &&
+              !Array.isArray(diffSummary) &&
+              typeof diffSummary.removedLineCount === "number"
+                ? diffSummary.removedLineCount
+                : 0;
             const unifiedDiff =
               typeof content === "object" &&
               content !== null &&
@@ -1118,10 +1157,15 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               typeof content.unifiedDiff === "string"
                 ? content.unifiedDiff
                 : "";
-            return [
-              `${String(index + 1).padStart(2, " ")}. ${path}`,
-              unifiedDiff.length === 0 ? "(no unified diff recorded)" : unifiedDiff
-            ].join("\n");
+            const header = `${String(index + 1).padStart(2, " ")}. ${path} ${formatColoredDiffLineBadge(addedLineCount, removedLineCount)}`;
+            if (unifiedDiff.length === 0) {
+              return `${header}\n(no unified diff recorded)`;
+            }
+            const coloredDiff = unifiedDiff
+              .split(/\r?\n/u)
+              .map((line) => colorizeDiffLine(line))
+              .join("\n");
+            return `${header}\n${coloredDiff}`;
           })
           .join("\n\n");
       }
@@ -1130,7 +1174,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     if (fileEdits.length === 0) {
       return "No file changes recorded in this session yet.";
     }
-    const lines = fileEdits.map((entry, index) => `${String(index + 1).padStart(2, " ")}. ${entry.path} (task ${entry.taskId.slice(0, 8)})`);
+    const lines = fileEdits.map(
+      (entry, index) =>
+        `${String(index + 1).padStart(2, " ")}. ${entry.path} ${formatColoredDiffLineBadge(entry.addedLineCount, entry.removedLineCount)} (task ${entry.taskId.slice(0, 8)})`
+    );
     return `Session file changes (${fileEdits.length}):\n${lines.join("\n")}`;
   }, [fileEdits, input.service]);
 

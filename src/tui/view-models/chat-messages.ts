@@ -1,4 +1,5 @@
-import type { ApprovalRecord, ToolCallRecord, TraceEvent } from "../../types/index.js";
+import type { ApprovalRecord, FileChangeTracePayload, ToolCallRecord, TraceEvent } from "../../types/index.js";
+import { formatDiffLineBadge } from "../../presentation/file-change-summary.js";
 import { formatToolCallFailureForUser } from "../../presentation/tool-failure-formatters.js";
 
 export type ChatMessage =
@@ -173,15 +174,9 @@ function formatFinishedToolCall(event: Extract<TraceEvent, { eventType: "tool_ca
     const urlTarget = extractUrlTarget(`${summary} ${outputPreview}`);
     return urlTarget === null ? "Fetched webpage" : `Fetched ${urlTarget}`;
   }
-  const target = extractPathLikeValue(summary) ?? extractPathLikeValue(outputPreview);
-  const diff = extractDiffSummary(`${summary} ${outputPreview}`);
-  if (toolName.includes("write")) {
-    if (target !== null && diff !== null) {
-      return `Write ${target} (${diff})`;
-    }
-    if (target !== null) {
-      return `Write ${target}`;
-    }
+  const fileChange = readFileChange(event.payload.fileChange);
+  if (fileChange !== null && isFileEditTool(toolName)) {
+    return `Write ${fileChange.path} (${formatDiffLineBadge(fileChange)})`;
   }
   const compact = collapseWhitespace(summary).slice(0, 120);
   return compact.length > 0 ? `${toolName} done: ${compact}` : `${toolName} done (${toolCallId.slice(0, 8)})`;
@@ -194,27 +189,6 @@ function summarizeToolTarget(input: Record<string, unknown>): string | null {
     return null;
   }
   return value.length > 72 ? `${value.slice(0, 69)}...` : value;
-}
-
-function extractPathLikeValue(value: string): string | null {
-  const pathMatch = /(path|file)\s*[=:]\s*([^\s,;]+)/iu.exec(value);
-  if (pathMatch?.[2] !== undefined) {
-    return pathMatch[2];
-  }
-  const quoted = /["']([^"']+\.[a-z0-9]{1,8})["']/iu.exec(value);
-  if (quoted?.[1] !== undefined) {
-    return quoted[1];
-  }
-  return null;
-}
-
-function extractDiffSummary(value: string): string | null {
-  const plus = /\+(\d{1,5})/u.exec(value);
-  const minus = /-(\d{1,5})/u.exec(value);
-  if (plus === null && minus === null) {
-    return null;
-  }
-  return `+${plus?.[1] ?? "0"} -${minus?.[1] ?? "0"}`;
 }
 
 function extractUrlTarget(value: string): string | null {
@@ -262,5 +236,26 @@ export function activityDisplayKey(message: Extract<ChatMessage, { kind: "activi
 }
 
 function isHighValueFinishedTool(toolName: string): boolean {
-  return toolName.includes("write") || toolName === "shell";
+  return toolName.includes("write") || toolName === "patch" || toolName === "shell";
+}
+
+function isFileEditTool(toolName: string): boolean {
+  return toolName.includes("write") || toolName === "patch";
+}
+
+function readFileChange(value: unknown): FileChangeTracePayload | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.path !== "string") {
+    return null;
+  }
+  return {
+    addedLineCount: typeof record.addedLineCount === "number" ? record.addedLineCount : 0,
+    changedLineCount: typeof record.changedLineCount === "number" ? record.changedLineCount : 0,
+    path: record.path,
+    removedLineCount: typeof record.removedLineCount === "number" ? record.removedLineCount : 0,
+    unifiedDiffPreview: typeof record.unifiedDiffPreview === "string" ? record.unifiedDiffPreview : ""
+  };
 }
