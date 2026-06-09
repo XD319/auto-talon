@@ -52,9 +52,20 @@ export function normalizeStatusLabel(label: string, maxLength = 72): string {
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3)}...`;
 }
 
-export function buildContextMetric(contextPercent: number): StatusItem {
+export function buildContextMetric(
+  contextPercent: number,
+  options?: { compactedCount?: number; microPrunedCount?: number }
+): StatusItem {
   const contextTone = contextPercent < 50 ? "success" : contextPercent < 80 ? "warn" : "danger";
-  return { label: `ctx ${contextPercent}%`, tone: contextTone };
+  const compactionParts: string[] = [];
+  if ((options?.microPrunedCount ?? 0) > 0) {
+    compactionParts.push(`micro-pruned: ${options?.microPrunedCount}`);
+  }
+  if ((options?.compactedCount ?? 0) > 0) {
+    compactionParts.push(`compacted: ${options?.compactedCount}`);
+  }
+  const suffix = compactionParts.length > 0 ? ` (${compactionParts.join(", ")})` : "";
+  return { label: `ctx ${contextPercent}%${suffix}`, tone: contextTone };
 }
 
 function statusToneToColor(tone: StatusTone): string {

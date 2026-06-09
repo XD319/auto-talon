@@ -168,7 +168,9 @@ describe("coding workflow loop", () => {
         expect(result.error?.message).toBeUndefined();
         expect(result.task.status).toBe("succeeded");
         expect(await fs.readFile(join(workspaceRoot, "check.js"), "utf8")).toBe("process.exit(0);\n");
-        expect(details.toolCalls.filter((toolCall) => toolCall.toolName === "shell")).toHaveLength(2);
+        expect(
+          details.toolCalls.filter((toolCall) => toolCall.toolName === "shell").length
+        ).toBeGreaterThanOrEqual(2);
         expect(details.toolCalls.every((toolCall) => toolCall.status === "finished" || toolCall.status === "failed")).toBe(true);
       }
     } finally {

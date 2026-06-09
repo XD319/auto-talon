@@ -40,10 +40,15 @@ export function estimateSessionCostUsd(
   return (input * inPerM + output * outPerM) / 1_000_000;
 }
 
-export function contextWindowPercent(usage: ProviderUsage, inputLimit: number, outputLimit: number): number {
-  const used = usage.inputTokens + usage.outputTokens;
-  const cap = Math.max(inputLimit + outputLimit, 1);
-  return Math.min(100, Math.round((used / cap) * 100));
+export function contextWindowPercent(
+  usage: ProviderUsage,
+  inputLimit: number,
+  outputLimit: number,
+  reservedOutput = 0
+): number {
+  const effectiveInput = Math.max(inputLimit - reservedOutput, 1);
+  const promptTokens = usage.inputTokens;
+  return Math.min(100, Math.round((promptTokens / effectiveInput) * 100));
 }
 
 export function contextUsageColor(percent: number): "green" | "yellow" | "red" {

@@ -41,6 +41,8 @@ export interface SmokeTaskRunResult {
   durationMs: number;
   failureReason: string | null;
   keyTraceSummary: string[];
+  compactEvaluations?: Array<Record<string, unknown>>;
+  traceEventTypes: string[];
   memoryLeakDetected: boolean;
   modelName: string | null;
   output: string | null;
@@ -171,6 +173,21 @@ export async function runSmokeTask(
   const runtimeProviderName = options.providerName === "scripted-smoke" ? "mock" : options.providerName;
   const createOptions = {
     config: {
+      compact: taskFixture.traceExpectations.expectSessionCompact
+        ? {
+            bufferTokens: 8_000,
+            iterationThreshold: 999,
+            messageThreshold: 8,
+            summarizer: "deterministic" as const,
+            tailMinMessages: 10,
+            tailTokenBudget: 20_000,
+            thresholdRatio: 0.8,
+            tokenThreshold: null,
+            toolCallThreshold: 4
+          }
+        : {
+            summarizer: "deterministic" as const
+          },
       databasePath: ":memory:",
       provider: createSmokeProviderConfig(runtimeProviderName),
       workspaceRoot
@@ -205,6 +222,10 @@ export async function runSmokeTask(
       durationMs: computeDuration(snapshot.task),
       failureReason: evaluation.failureReason,
       keyTraceSummary: summarizeTrace(snapshot.trace),
+      compactEvaluations: snapshot.trace
+        .filter((event) => event.eventType === "compact_evaluated")
+        .map((event) => event.payload),
+      traceEventTypes: snapshot.trace.map((event) => event.eventType),
       memoryLeakDetected: detectRestrictedMemoryLeak(snapshot.trace),
       modelName: detectModelName(snapshot.trace),
       output: snapshot.output,

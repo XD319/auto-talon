@@ -58,6 +58,9 @@ export const TRACE_EVENT_TYPES = [
   "task_failure",
   "review_resolved",
   "pre_compress",
+  "compact_evaluated",
+  "micro_compact_pruned",
+  "compact_summarizer_failed",
   "session_end",
   "delegation_complete",
   "context_assembled",
@@ -433,8 +436,28 @@ export interface DelegationCompletePayload extends JsonObject {
 }
 
 export interface ContextAssembledPayload extends JsonObject {
-  iteration: number;
+  compactedCount?: number;
   debugView: ContextAssemblyDebugView;
+  iteration: number;
+  microPrunedCount?: number;
+  promptTokenEstimate?: number;
+}
+
+export interface CompactEvaluatedPayload extends JsonObject {
+  maxMessagesBeforeCompact: number;
+  messageCount: number;
+  reason: string | null;
+  tokenEstimate: number | null;
+  tokenThreshold: number | null;
+  toolCallCount: number | null;
+  toolCallThreshold: number | null;
+  triggered: boolean;
+}
+
+export interface MicroCompactPrunedPayload extends JsonObject {
+  iteration: number;
+  prunedCount: number;
+  savedTokensEstimate: number;
 }
 
 export interface RecentFilesRefetchedPayload extends JsonObject {
@@ -889,6 +912,8 @@ export type TraceEvent =
   | TraceEventBase<"task_failure", TaskFailurePayload>
   | TraceEventBase<"review_resolved", ReviewResolvedPayload>
   | TraceEventBase<"pre_compress", PreCompressPayload>
+  | TraceEventBase<"compact_evaluated", CompactEvaluatedPayload>
+  | TraceEventBase<"micro_compact_pruned", MicroCompactPrunedPayload>
   | TraceEventBase<"session_end", SessionEndPayload>
   | TraceEventBase<"delegation_complete", DelegationCompletePayload>
   | TraceEventBase<"context_assembled", ContextAssembledPayload>

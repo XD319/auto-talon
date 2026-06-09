@@ -1212,7 +1212,10 @@ export function ChatTuiApp({
   const statusMetrics = hasBlockingPrompt
     ? []
     : [
-        buildContextMetric(controller.tokenHud.contextPercent),
+        buildContextMetric(controller.tokenHud.contextPercent, {
+          compactedCount: controller.tokenHud.compactedCount,
+          microPrunedCount: controller.tokenHud.microPrunedCount
+        }),
         ...(controller.usedMemoryCount > 0
           ? [{ label: `mem ${controller.usedMemoryCount}`, tone: "accent" as const }]
           : [])

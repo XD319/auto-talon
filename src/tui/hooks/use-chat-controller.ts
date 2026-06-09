@@ -41,9 +41,11 @@ export interface UseChatControllerOptions {
 }
 
 export interface TokenHud {
+  compactedCount: number;
   contextPercent: number;
   estimatedCostUsd: number;
   inputTokens: number;
+  microPrunedCount: number;
   outputTokens: number;
 }
 
@@ -152,9 +154,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const [fileEdits, setFileEdits] = React.useState<FileEditEntry[]>([]);
   const [queuedPrompts, setQueuedPrompts] = React.useState<QueuedPromptEntry[]>([]);
   const [tokenHud, setTokenHud] = React.useState<TokenHud>({
+    compactedCount: 0,
     contextPercent: 0,
     estimatedCostUsd: 0,
     inputTokens: 0,
+    microPrunedCount: 0,
     outputTokens: 0
   });
   const [uiStatus, setUiStatus] = React.useState<UiStatus>({
@@ -343,9 +347,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const resetTokenHudState = React.useCallback(() => {
     tokenHudBaselineRef.current = { source: null, usage: null };
     setTokenHud({
+      compactedCount: 0,
       contextPercent: 0,
       estimatedCostUsd: 0,
       inputTokens: 0,
+      microPrunedCount: 0,
       outputTokens: 0
     });
   }, []);
@@ -612,20 +618,24 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         const pct = contextWindowPercent(
           usage,
           input.config.tokenBudget.inputLimit,
-          input.config.tokenBudget.outputLimit
+          input.config.tokenBudget.outputLimit,
+          input.config.tokenBudget.reservedOutput
         );
         const cost = estimateSessionCostUsd(
           typedStats.providerName,
           input.config.provider.model ?? undefined,
           usage
         );
-        const nextTokenHud = {
-          contextPercent: pct,
-          estimatedCostUsd: cost,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens
-        };
-        setTokenHud((current) => (tokenHudEquals(current, nextTokenHud) ? current : nextTokenHud));
+        setTokenHud((current) => {
+          const nextTokenHud = {
+            ...current,
+            contextPercent: pct,
+            estimatedCostUsd: cost,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens
+          };
+          return tokenHudEquals(current, nextTokenHud) ? current : nextTokenHud;
+        });
       }
     } catch (error) {
       setStatusLine(error instanceof Error ? `refresh failed: ${error.message}` : "refresh failed");
@@ -669,6 +679,19 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       for (const event of unseen) {
         if (event.eventType === "memory_recalled") {
           setUsedMemoryCount(event.payload.selectedMemoryIds.length);
+        }
+        if (event.eventType === "context_assembled") {
+          setTokenHud((current) => ({
+            ...current,
+            compactedCount:
+              typeof event.payload.compactedCount === "number"
+                ? event.payload.compactedCount
+                : current.compactedCount,
+            microPrunedCount:
+              typeof event.payload.microPrunedCount === "number"
+                ? event.payload.microPrunedCount
+                : current.microPrunedCount
+          }));
         }
         if (
           event.eventType === "tool_call_finished" &&
@@ -1565,9 +1588,11 @@ function clarifyPromptRefEquals(left: ClarifyPromptRecord | null, right: Clarify
 
 function tokenHudEquals(left: TokenHud, right: TokenHud): boolean {
   return (
+    left.compactedCount === right.compactedCount &&
     left.contextPercent === right.contextPercent &&
     left.estimatedCostUsd === right.estimatedCostUsd &&
     left.inputTokens === right.inputTokens &&
+    left.microPrunedCount === right.microPrunedCount &&
     left.outputTokens === right.outputTokens
   );
 }
