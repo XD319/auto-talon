@@ -4,6 +4,12 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 
 import { AppError } from "../../core/app-error.js";
 import {
+  aggregateFileDiffSummaries,
+  buildFileChangeOutput,
+  formatDiffLineBadge,
+  formatFileEditSummary
+} from "../../presentation/file-change-summary.js";
+import {
   buildPatchTargetNotFoundMessage,
   type PatchTargetHint
 } from "../patch-target-hints.js";
@@ -165,6 +171,7 @@ export async function executeWriteFile(
   await fs.mkdir(dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, content, "utf8");
 
+  const diffSummary = summarizeFileChange("", content);
   return {
     artifacts: [
       checkpoint,
@@ -173,7 +180,7 @@ export async function executeWriteFile(
         content: {
           afterText: clipText(content),
           beforeText: null,
-          diffSummary: summarizeFileChange("", content),
+          diffSummary,
           unifiedDiff: createUnifiedDiff("", content, targetPath),
           operation: "write_file",
           path: targetPath
@@ -181,12 +188,11 @@ export async function executeWriteFile(
         uri: targetPath
       }
     ],
-    output: {
-      path: targetPath,
+    output: buildFileChangeOutput(targetPath, diffSummary, {
       size: Buffer.byteLength(content, "utf8")
-    },
+    }),
     success: true,
-    summary: `Wrote ${targetPath}`
+    summary: formatFileEditSummary("Wrote", targetPath, diffSummary)
   };
 }
 
@@ -258,6 +264,7 @@ export async function executeUpdateFile(
 
   await fs.writeFile(targetPath, updatedContent, "utf8");
 
+  const diffSummary = summarizeFileChange(originalContent, updatedContent);
   return {
     artifacts: [
       checkpoint,
@@ -266,7 +273,7 @@ export async function executeUpdateFile(
         content: {
           afterText: clipText(updatedContent),
           beforeText: clipText(originalContent),
-          diffSummary: summarizeFileChange(originalContent, updatedContent),
+          diffSummary,
           unifiedDiff: createUnifiedDiff(originalContent, updatedContent, targetPath),
           operation: "update_file",
           path: targetPath
@@ -274,12 +281,9 @@ export async function executeUpdateFile(
         uri: targetPath
       }
     ],
-    output: {
-      path: targetPath,
-      updated: true
-    },
+    output: buildFileChangeOutput(targetPath, diffSummary, { updated: true }),
     success: true,
-    summary: `Updated ${targetPath}`
+    summary: formatFileEditSummary("Updated", targetPath, diffSummary)
   };
 }
 
@@ -374,6 +378,7 @@ export async function executeApplyPatch(
 
   await fs.writeFile(targetPath, workingContent, "utf8");
 
+  const diffSummary = summarizeFileChange(originalContent, workingContent);
   return {
     artifacts: [
       checkpoint,
@@ -382,7 +387,7 @@ export async function executeApplyPatch(
         content: {
           afterText: clipText(workingContent),
           beforeText: clipText(originalContent),
-          diffSummary: summarizeFileChange(originalContent, workingContent),
+          diffSummary,
           unifiedDiff: createUnifiedDiff(originalContent, workingContent, targetPath),
           operation: "apply_patch",
           path: targetPath
@@ -390,12 +395,9 @@ export async function executeApplyPatch(
         uri: targetPath
       }
     ],
-    output: {
-      appliedPatchCount,
-      path: targetPath
-    },
+    output: buildFileChangeOutput(targetPath, diffSummary, { appliedPatchCount }),
     success: true,
-    summary: `Applied ${appliedPatchCount} patches to ${targetPath}`
+    summary: formatFileEditSummary(`Applied ${appliedPatchCount} patches to`, targetPath, diffSummary)
   };
 }
 
@@ -419,6 +421,7 @@ export async function executeDeleteFile(
   );
 
   await fs.unlink(targetPath);
+  const diffSummary = summarizeFileChange(originalContent, "");
   return {
     artifacts: [
       checkpoint,
@@ -427,7 +430,7 @@ export async function executeDeleteFile(
         content: {
           afterText: null,
           beforeText: clipText(originalContent),
-          diffSummary: summarizeFileChange(originalContent, ""),
+          diffSummary,
           operation: "delete_file",
           path: targetPath,
           unifiedDiff: createUnifiedDiff(originalContent, "", targetPath)
@@ -435,12 +438,9 @@ export async function executeDeleteFile(
         uri: targetPath
       }
     ],
-    output: {
-      deleted: true,
-      path: targetPath
-    },
+    output: buildFileChangeOutput(targetPath, diffSummary, { deleted: true }),
     success: true,
-    summary: `Deleted ${targetPath}`
+    summary: formatFileEditSummary("Deleted", targetPath, diffSummary)
   };
 }
 
@@ -462,6 +462,7 @@ export async function executeRenameFile(
   }
 
   if (dryRun) {
+    const diffSummary = summarizeFileChange(originalContent, originalContent);
     return {
       artifacts: [
         {
@@ -469,7 +470,7 @@ export async function executeRenameFile(
           content: {
             afterText: clipText(originalContent),
             beforeText: clipText(originalContent),
-            diffSummary: summarizeFileChange(originalContent, originalContent),
+            diffSummary,
             dryRun: true,
             operation: "rename_file",
             path: fromPath,
@@ -479,13 +480,9 @@ export async function executeRenameFile(
           uri: fromPath
         }
       ],
-      output: {
-        dryRun: true,
-        path: fromPath,
-        toPath
-      },
+      output: buildFileChangeOutput(fromPath, diffSummary, { dryRun: true, toPath }),
       success: true,
-      summary: `Dry run: would rename ${fromPath} to ${toPath}`
+      summary: `${formatFileEditSummary("Dry run: would rename", fromPath, diffSummary)} to ${toPath}`
     };
   }
 
@@ -498,6 +495,7 @@ export async function executeRenameFile(
 
   await fs.mkdir(dirname(toPath), { recursive: true });
   await fs.rename(fromPath, toPath);
+  const diffSummary = summarizeFileChange(originalContent, originalContent);
   return {
     artifacts: [
       checkpoint,
@@ -506,7 +504,7 @@ export async function executeRenameFile(
         content: {
           afterText: clipText(originalContent),
           beforeText: clipText(originalContent),
-          diffSummary: summarizeFileChange(originalContent, originalContent),
+          diffSummary,
           operation: "rename_file",
           path: fromPath,
           toPath,
@@ -515,13 +513,9 @@ export async function executeRenameFile(
         uri: toPath
       }
     ],
-    output: {
-      path: fromPath,
-      renamed: true,
-      toPath
-    },
+    output: buildFileChangeOutput(fromPath, diffSummary, { renamed: true, toPath }),
     success: true,
-    summary: `Renamed ${fromPath} to ${toPath}`
+    summary: `${formatFileEditSummary("Renamed", fromPath, diffSummary)} to ${toPath}`
   };
 }
 
@@ -576,14 +570,33 @@ export async function executeApplyUnifiedDiff(
     });
   }
 
+  const aggregatedDiff = aggregateFileDiffSummaries(
+    fileArtifacts.map((artifact) => {
+      const content = artifact.content;
+      if (typeof content !== "object" || content === null || Array.isArray(content)) {
+        return { addedLineCount: 0, changedLineCount: 0, removedLineCount: 0 };
+      }
+      const diffSummary = content.diffSummary;
+      if (typeof diffSummary !== "object" || diffSummary === null || Array.isArray(diffSummary)) {
+        return { addedLineCount: 0, changedLineCount: 0, removedLineCount: 0 };
+      }
+      return {
+        addedLineCount: typeof diffSummary.addedLineCount === "number" ? diffSummary.addedLineCount : 0,
+        changedLineCount: typeof diffSummary.changedLineCount === "number" ? diffSummary.changedLineCount : 0,
+        removedLineCount: typeof diffSummary.removedLineCount === "number" ? diffSummary.removedLineCount : 0
+      };
+    })
+  );
+  const action = dryRun ? "Dry run: would apply unified diff to" : "Applied unified diff to";
   return {
     artifacts: [...rollbackArtifacts, ...fileArtifacts],
-    output: {
+    output: buildFileChangeOutput(`${outputs.length} files`, aggregatedDiff, {
       dryRun,
+      fileCount: outputs.length,
       files: outputs
-    },
+    }),
     success: true,
-    summary: `${dryRun ? "Dry run: would apply" : "Applied"} unified diff to ${outputs.length} files`
+    summary: `${action} ${outputs.length} files (${formatDiffLineBadge(aggregatedDiff)})`
   };
 }
 
@@ -822,6 +835,7 @@ function fileWriteDryRunResult(
   originalContent: string,
   updatedContent: string
 ): ToolExecutionResult {
+  const diffSummary = summarizeFileChange(originalContent, updatedContent);
   return {
     artifacts: [
       {
@@ -829,7 +843,7 @@ function fileWriteDryRunResult(
         content: {
           afterText: clipText(updatedContent),
           beforeText: clipText(originalContent),
-          diffSummary: summarizeFileChange(originalContent, updatedContent),
+          diffSummary,
           dryRun: true,
           operation,
           path: targetPath,
@@ -838,12 +852,9 @@ function fileWriteDryRunResult(
         uri: targetPath
       }
     ],
-    output: {
-      dryRun: true,
-      path: targetPath
-    },
+    output: buildFileChangeOutput(targetPath, diffSummary, { dryRun: true }),
     success: true,
-    summary: `Dry run: would ${operation} ${targetPath}`
+    summary: formatFileEditSummary(`Dry run: would ${operation}`, targetPath, diffSummary)
   };
 }
 
