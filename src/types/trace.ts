@@ -460,6 +460,11 @@ export interface MicroCompactPrunedPayload extends JsonObject {
   savedTokensEstimate: number;
 }
 
+export interface CompactSummarizerFailedPayload extends JsonObject {
+  error: string;
+  summarizer: string;
+}
+
 export interface RecentFilesRefetchedPayload extends JsonObject {
   evicted: string[];
   paths: string[];
@@ -914,6 +919,7 @@ export type TraceEvent =
   | TraceEventBase<"pre_compress", PreCompressPayload>
   | TraceEventBase<"compact_evaluated", CompactEvaluatedPayload>
   | TraceEventBase<"micro_compact_pruned", MicroCompactPrunedPayload>
+  | TraceEventBase<"compact_summarizer_failed", CompactSummarizerFailedPayload>
   | TraceEventBase<"session_end", SessionEndPayload>
   | TraceEventBase<"delegation_complete", DelegationCompletePayload>
   | TraceEventBase<"context_assembled", ContextAssembledPayload>

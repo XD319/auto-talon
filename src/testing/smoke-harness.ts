@@ -171,23 +171,20 @@ export async function runSmokeTask(
 
   const provider = createHarnessProvider(options.providerName);
   const runtimeProviderName = options.providerName === "scripted-smoke" ? "mock" : options.providerName;
+  const expectSessionCompact = taskFixture.traceExpectations.expectSessionCompact;
   const createOptions = {
     config: {
-      compact: taskFixture.traceExpectations.expectSessionCompact
-        ? {
-            bufferTokens: 8_000,
-            iterationThreshold: 999,
-            messageThreshold: 8,
-            summarizer: "deterministic" as const,
-            tailMinMessages: 10,
-            tailTokenBudget: 20_000,
-            thresholdRatio: 0.8,
-            tokenThreshold: null,
-            toolCallThreshold: 4
-          }
-        : {
-            summarizer: "deterministic" as const
-          },
+      compact: {
+        bufferTokens: 8_000,
+        iterationThreshold: expectSessionCompact ? 999 : 24,
+        messageThreshold: expectSessionCompact ? 8 : 100,
+        summarizer: "deterministic" as const,
+        tailMinMessages: 10,
+        tailTokenBudget: 20_000,
+        thresholdRatio: 0.8,
+        tokenThreshold: null,
+        toolCallThreshold: expectSessionCompact ? 4 : 40
+      },
       databasePath: ":memory:",
       provider: createSmokeProviderConfig(runtimeProviderName),
       workspaceRoot

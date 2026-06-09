@@ -1182,7 +1182,8 @@ export class ExecutionKernel {
         const compactReason = compacted.reason ?? "message_count";
         const preCompactMessages = [...messages];
         if (task.sessionId !== null && task.sessionId !== undefined) {
-          const latestRun = this.dependencies.sessionTaskRepository.findLatestBySessionId(task.sessionId);
+          const sessionId = task.sessionId;
+          const latestRun = this.dependencies.sessionTaskRepository.findLatestBySessionId(sessionId);
           this.dependencies.sessionLineageRepository.append({
             eventType: "compress",
             lineageId: randomUUID(),
@@ -1192,7 +1193,7 @@ export class ExecutionKernel {
             },
             sourceRunId: latestRun?.runId ?? null,
             targetRunId: latestRun?.runId ?? null,
-            sessionId: task.sessionId
+            sessionId
           });
           const compactInput = {
             ...this.buildCompactInput({
@@ -1223,7 +1224,7 @@ export class ExecutionKernel {
                 )
               },
               runId: latestRun?.runId ?? null,
-              sessionId: task.sessionId,
+              sessionId,
               trigger: "compact"
             });
           };
@@ -1241,7 +1242,7 @@ export class ExecutionKernel {
                 },
                 maxAttempts: 2,
                 taskId: task.taskId,
-                sessionId: task.sessionId,
+                sessionId,
                 timeoutMs: 5_000,
                 workerId: randomUUID(),
                 workerKind: "summarizer"
@@ -1586,10 +1587,13 @@ export class ExecutionKernel {
         toolName: call.toolName
       })),
       ...(previousSummary !== undefined ? { previousSummary } : {}),
-      recentlyReadFilesSummary:
-        input.state.recentFileReadCache === null
-          ? undefined
-          : formatRecentlyReadFilesSummary(input.state.recentFileReadCache.list()),
+      ...(input.state.recentFileReadCache === null
+        ? {}
+        : {
+            recentlyReadFilesSummary: formatRecentlyReadFilesSummary(
+              input.state.recentFileReadCache.list()
+            )
+          }),
       sessionScopeKey: input.task.sessionId ?? input.task.taskId,
       taskId: input.task.taskId,
       tokenEstimate: computePromptTokens(input.state.tokenCounter, input.messages),
@@ -1625,9 +1629,7 @@ export class ExecutionKernel {
     }
     const writePending = pendingToolCalls.some((call) => {
       const descriptor = availableTools.find((tool) => tool.name === call.toolName);
-      return (
-        descriptor?.capability === "filesystem.write" || descriptor?.capability === "filesystem.patch"
-      );
+      return descriptor?.capability === "filesystem.write";
     });
     state.recentFileReadCache.setMode(writePending ? "write_required" : "normal");
   }
@@ -2217,15 +2219,31 @@ function buildToolTaskMetadata(task: TaskRecord): TaskRecord["metadata"] {
   };
 }
 
-function mapCompactConversationMessage(message: ConversationMessage): ConversationMessage {
-  return {
+function mapCompactConversationMessage(message: {
+  role: string;
+  content: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolCalls?: Array<{ toolCallId: string; toolName: string }>;
+  metadata?: ConversationMessage["metadata"];
+}): ConversationMessage {
+  const mapped: ConversationMessage = {
     content: message.content,
-    role: toConversationRole(message.role),
-    ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
-    ...(message.toolName !== undefined ? { toolName: message.toolName } : {}),
-    ...(message.toolCalls !== undefined ? { toolCalls: message.toolCalls } : {}),
-    ...(message.metadata !== undefined ? { metadata: message.metadata } : {})
+    role: toConversationRole(message.role)
   };
+  if (message.toolCallId !== undefined) {
+    mapped.toolCallId = message.toolCallId;
+  }
+  if (message.toolName !== undefined) {
+    mapped.toolName = message.toolName;
+  }
+  if (message.toolCalls !== undefined) {
+    mapped.toolCalls = message.toolCalls as ProviderToolCall[];
+  }
+  if (message.metadata !== undefined) {
+    mapped.metadata = message.metadata;
+  }
+  return mapped;
 }
 
 function buildToolExposurePlannerInput(input: {

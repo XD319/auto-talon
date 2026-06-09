@@ -19,7 +19,9 @@ export const RUNTIME_ERROR_CODES = [
   "tool_execution_error",
   "tool_not_found",
   "tool_unavailable",
-  "tool_validation_error"
+  "tool_validation_error",
+  "compact_summarizer_unavailable",
+  "compact_summarizer_failed"
 ] as const;
 
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
