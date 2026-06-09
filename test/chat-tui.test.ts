@@ -23,6 +23,7 @@ import {
   deleteCharacterAfter,
   deleteCharacterBefore,
   deletePreviousWord,
+  isReturnKey,
   moveCursorVertical,
   resolveApprovalShortcut
 } from "../src/tui/hooks/use-text-input.js";
@@ -1922,6 +1923,13 @@ describe("use-text-input helpers", () => {
     expect(canSubmitTextInput("hello", true)).toBe(true);
     expect(canSubmitTextInput("hello", false)).toBe(true);
     expect(canSubmitTextInput("   ", false)).toBe(false);
+  });
+
+  it("recognizes raw terminal return input as Enter", () => {
+    expect(isReturnKey("", { return: true })).toBe(true);
+    expect(isReturnKey("\r", {})).toBe(true);
+    expect(isReturnKey("\n", {})).toBe(true);
+    expect(isReturnKey("x", {})).toBe(false);
   });
 
   it("completes new memory slash commands", () => {

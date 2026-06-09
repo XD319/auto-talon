@@ -81,6 +81,10 @@ export function canSubmitTextInput(value: string, busy: boolean): boolean {
   return value.trim().length > 0;
 }
 
+export function isReturnKey(input: string, key: { return?: boolean }): boolean {
+  return key.return === true || input === "\r" || input === "\n";
+}
+
 export function useTextInput(options: UseTextInputOptions): TextInputController {
   const [value, setValue] = React.useState("");
   const [cursorIndex, setCursorIndex] = React.useState(0);
@@ -176,7 +180,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         options.onPromptMove?.(1);
         return;
       }
-      if (key.return) {
+      if (isReturnKey(input, key)) {
         options.onPromptSubmit?.(value);
         return;
       }
@@ -205,7 +209,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         options.onPromptToggleSelection?.();
         return;
       }
-      if (key.return) {
+      if (isReturnKey(input, key)) {
         options.onPromptSubmit?.(value);
         return;
       }
@@ -228,7 +232,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         picker.onMove(1);
         return;
       }
-      if (key.return) {
+      if (isReturnKey(input, key)) {
         picker.onSubmit();
         return;
       }
@@ -256,7 +260,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         options.onHomeSummaryMove?.(1);
         return;
       }
-      if (key.return) {
+      if (isReturnKey(input, key)) {
         options.onHomeSummarySubmit?.();
         return;
       }
@@ -381,7 +385,7 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
       return;
     }
 
-    if (key.return) {
+    if (isReturnKey(input, key)) {
       if (key.meta) {
         setValue((current) => insertAt(current, cursorIndex, "\n"));
         setCursorIndex((current) => current + 1);
