@@ -124,11 +124,15 @@ export interface AppConfig {
   defaultProfileId: "executor" | "planner" | "reviewer";
   defaultTimeoutMs: number;
   compact: {
+    bufferTokens: number;
     iterationThreshold: number;
     messageThreshold: number;
-    tokenThreshold: number;
-    toolCallThreshold: number;
     summarizer: "deterministic" | "provider_subagent";
+    tailMinMessages: number;
+    tailTokenBudget: number;
+    thresholdRatio: number;
+    tokenThreshold: number | null;
+    toolCallThreshold: number;
   };
   contextRetention: ContextRetentionConfig;
   recall: {
@@ -286,9 +290,69 @@ export function createApplication(
   const config = {
     ...resolvedConfig,
     ...options.config,
+    budget: {
+      ...resolvedConfig.budget,
+      ...options.config?.budget,
+      pricing: {
+        ...resolvedConfig.budget.pricing,
+        ...options.config?.budget?.pricing
+      },
+      session: {
+        ...resolvedConfig.budget.session,
+        ...options.config?.budget?.session
+      },
+      task: {
+        ...resolvedConfig.budget.task,
+        ...options.config?.budget?.task
+      }
+    },
+    compact: {
+      ...resolvedConfig.compact,
+      ...options.config?.compact
+    },
+    contextRetention: {
+      ...resolvedConfig.contextRetention,
+      ...options.config?.contextRetention
+    },
+    recall: {
+      ...resolvedConfig.recall,
+      ...options.config?.recall
+    },
+    routing: {
+      ...resolvedConfig.routing,
+      ...options.config?.routing,
+      helpers: {
+        ...resolvedConfig.routing.helpers,
+        ...options.config?.routing?.helpers
+      },
+      providers: {
+        ...resolvedConfig.routing.providers,
+        ...options.config?.routing?.providers
+      }
+    },
     sandbox: {
       ...resolvedSandbox,
       ...options.config?.sandbox
+    },
+    tokenBudget: {
+      ...resolvedConfig.tokenBudget,
+      ...options.config?.tokenBudget
+    },
+    webSearch: {
+      ...resolvedConfig.webSearch,
+      ...options.config?.webSearch
+    },
+    workflow: {
+      ...resolvedConfig.workflow,
+      ...options.config?.workflow,
+      failureGuidedRetry: {
+        ...resolvedConfig.workflow.failureGuidedRetry,
+        ...options.config?.workflow?.failureGuidedRetry
+      },
+      repoMap: {
+        ...resolvedConfig.workflow.repoMap,
+        ...options.config?.workflow?.repoMap
+      }
     }
   };
   const provider =
