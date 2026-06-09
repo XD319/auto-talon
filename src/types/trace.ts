@@ -327,7 +327,16 @@ export interface ToolCallStartedPayload extends JsonObject {
   toolName: string;
 }
 
+export interface FileChangeTracePayload extends JsonObject {
+  addedLineCount: number;
+  changedLineCount: number;
+  path: string;
+  removedLineCount: number;
+  unifiedDiffPreview: string;
+}
+
 export interface ToolCallFinishedPayload extends JsonObject {
+  fileChange?: FileChangeTracePayload;
   iteration: number;
   toolCallId: string;
   toolName: string;
