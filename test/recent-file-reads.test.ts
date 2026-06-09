@@ -18,7 +18,8 @@ describe("RecentFileReadCache", () => {
       maxBytesPerFile: 10_000,
       maxTotalBytes: 20_000,
       maxBytesPerFileUnderGuard: 10_000,
-      maxTotalBytesUnderGuard: 20_000
+      maxTotalBytesUnderGuard: 20_000,
+      toolOutputMaxTokens: 2_500
     });
     cache.record("/a.txt", "a", null);
     cache.record("/b.txt", "b", null);
@@ -32,7 +33,8 @@ describe("RecentFileReadCache", () => {
       maxBytesPerFile: 20,
       maxTotalBytes: 100,
       maxBytesPerFileUnderGuard: 80,
-      maxTotalBytesUnderGuard: 100
+      maxTotalBytesUnderGuard: 100,
+      toolOutputMaxTokens: 2_500
     });
     const longContent = "x".repeat(100);
     cache.setMode("normal");

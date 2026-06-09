@@ -10,14 +10,16 @@ export interface ContextRetentionConfig {
   maxTotalBytes: number;
   maxBytesPerFileUnderGuard: number;
   maxTotalBytesUnderGuard: number;
+  toolOutputMaxTokens: number;
 }
 
 export const DEFAULT_CONTEXT_RETENTION: ContextRetentionConfig = {
-  maxFiles: 5,
-  maxBytesPerFile: 8_000,
-  maxTotalBytes: 32_000,
-  maxBytesPerFileUnderGuard: 16_000,
-  maxTotalBytesUnderGuard: 48_000
+  maxFiles: 8,
+  maxBytesPerFile: 24_000,
+  maxTotalBytes: 128_000,
+  maxBytesPerFileUnderGuard: 24_000,
+  maxTotalBytesUnderGuard: 200_000,
+  toolOutputMaxTokens: 2_500
 };
 
 export type RecentFileReadCacheMode = "normal" | "write_required";

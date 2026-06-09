@@ -39,12 +39,17 @@ export function providerUsageToJson(usage: {
   return payload;
 }
 
+export function safeSerializeToolOutputForBudget(output: unknown): string {
+  return safeSerializeToolOutput(output);
+}
+
 export function createToolFeedbackMessage(
   output: unknown,
   toolCall: { toolCallId: string; toolName: string },
-  privacyLevel: "public" | "internal" | "restricted"
+  privacyLevel: "public" | "internal" | "restricted",
+  contentOverride?: string
 ): ConversationMessage {
-  const serializedOutput = safeSerializeToolOutput(output);
+  const serializedOutput = contentOverride ?? safeSerializeToolOutput(output);
   return {
     content: serializedOutput ?? "null",
     metadata: {
@@ -376,7 +381,7 @@ export function rebuildTurnProviderMessages(
 
 export function estimateTokenCount(messages: ConversationMessage[]): number {
   const joined = messages.map((message) => message.content).join("\n");
-  return Math.ceil(joined.length / 4);
+  return Math.ceil((joined.length / 4) * 1.33);
 }
 
 export function toConversationRole(role: string): "assistant" | "system" | "tool" | "user" {
