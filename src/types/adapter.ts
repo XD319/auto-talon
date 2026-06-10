@@ -135,6 +135,12 @@ export interface GatewayTaskResultView {
   errorCode: string | null;
   errorMessage: string | null;
   output: string | null;
+  pendingApprovalContext?: {
+    detailLines: string[];
+    riskLevel: string;
+    summaryLine: string;
+    toolName: string;
+  };
   pendingApprovalId: string | null;
   status: string;
   taskId: string;
@@ -210,6 +216,7 @@ export interface GatewayRuntimeApi {
   registerOutboundAdapter(adapterId: string, adapter: OutboundResponseAdapter): void;
   resolveApproval(params: {
     adapterId: string;
+    allowScope?: "once" | "session" | "always";
     approvalId: string;
     decision: "allow" | "deny";
     reviewerExternalUserId: string | null;

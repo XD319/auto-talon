@@ -1,6 +1,8 @@
 import React from "react";
 import { Box, Text } from "ink";
 
+import { APPROVAL_SCOPE_ACTIONS } from "../../approvals/approval-actions.js";
+import { buildApprovalPromptContext } from "../../approvals/approval-prompt-view-model.js";
 import type { ApprovalRecord, ClarifyPromptRecord, ToolCallRecord } from "../../types/index.js";
 import { theme } from "../theme.js";
 
@@ -25,8 +27,6 @@ export interface PromptZoneProps {
   clarifyPrompt?: ClarifyPromptViewModel | null;
 }
 
-const APPROVAL_ACTIONS = ["Allow once", "Allow session", "Allow always", "Deny"];
-
 export function PromptZone({ approvalPrompt, clarifyPrompt }: PromptZoneProps): React.ReactElement | null {
   if (clarifyPrompt !== undefined && clarifyPrompt !== null) {
     return <ClarifyPromptCard {...clarifyPrompt} />;
@@ -38,29 +38,31 @@ export function PromptZone({ approvalPrompt, clarifyPrompt }: PromptZoneProps): 
 }
 
 function ApprovalPromptCard({ approval, selectedIndex, toolCall }: ApprovalPromptViewModel): React.ReactElement {
-  const commandPreview =
-    typeof toolCall?.input["command"] === "string" ? toolCall.input["command"] : null;
-  const pathPreview =
-    typeof toolCall?.input["path"] === "string"
-      ? toolCall.input["path"]
-      : extractReasonLine(approval.reason, "Resolved path:");
+  const context = buildApprovalPromptContext(approval, toolCall);
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={1}>
       <Text color={theme.warn}>Tool Permission</Text>
       <Text>
-        <Text color={theme.fg}>{approval.toolName}</Text>
-        <Text color={theme.muted}> [{toolCall?.riskLevel ?? "unknown"}]</Text>
+        <Text color={theme.fg}>{context.toolName}</Text>
+        <Text color={theme.muted}> [{context.riskLevel}]</Text>
+        {context.riskTags.length > 0 ? (
+          <Text color={theme.danger}> {context.riskTags.join(" ")}</Text>
+        ) : null}
       </Text>
-      {pathPreview !== null ? <Text color={theme.muted}>path {pathPreview}</Text> : null}
-      {commandPreview !== null ? <Text color={theme.muted}>command {commandPreview}</Text> : null}
+      <Text color={theme.fg}>{context.summaryLine}</Text>
+      {context.detailLines.map((line) => (
+        <Text key={line} color={theme.muted}>
+          {line}
+        </Text>
+      ))}
       <Text color={theme.muted}>reason {approval.reason.split("\n")[0] ?? approval.reason}</Text>
       <Text color={theme.muted}>keys 1-4, arrows, Enter, Ctrl+C deny</Text>
       <Box marginTop={1} flexDirection="column">
-        {APPROVAL_ACTIONS.map((label, index) => (
-          <Text key={label} color={index === selectedIndex ? theme.emphasis : theme.fg}>
+        {APPROVAL_SCOPE_ACTIONS.map((action, index) => (
+          <Text key={action.label} color={index === selectedIndex ? theme.emphasis : theme.fg}>
             {index === selectedIndex ? "> " : "  "}
-            {index + 1}. {label}
+            {index + 1}. {action.label}
           </Text>
         ))}
       </Box>
@@ -120,12 +122,4 @@ function ClarifyPromptCard({
       ) : null}
     </Box>
   );
-}
-
-function extractReasonLine(reason: string, prefix: string): string | null {
-  const line = reason.split("\n").find((entry) => entry.startsWith(prefix));
-  if (line === undefined) {
-    return null;
-  }
-  return line.slice(prefix.length).trim();
 }

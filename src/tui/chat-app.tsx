@@ -590,17 +590,25 @@ export function ChatTuiApp({
       }
 
       if (text === "/mode") {
-        controller.addSystemMessage(`Current mode: ${interactionMode}. Use /mode plan for read-only planning or /mode agent for normal agent runs.`);
+        controller.addSystemMessage(
+          `Current mode: ${interactionMode}. Use /mode plan, /mode acceptEdits, or /mode agent.`
+        );
         return true;
       }
 
-      if (text === "/mode plan" || text === "/mode agent") {
-        const nextMode = text.endsWith("plan") ? "plan" : "agent";
+      if (text === "/mode plan" || text === "/mode agent" || text === "/mode acceptEdits") {
+        const nextMode = text.endsWith("plan")
+          ? "plan"
+          : text.endsWith("acceptEdits")
+            ? "acceptEdits"
+            : "agent";
         setInteractionMode(nextMode);
         controller.addSystemMessage(
           nextMode === "plan"
             ? "Mode set to plan. Future prompts are read-only until you switch back with /mode agent."
-            : "Mode set to agent. Future prompts can edit files when the request clearly asks for changes."
+            : nextMode === "acceptEdits"
+              ? "Mode set to acceptEdits. Workspace file edits stay allowed; shell and other high-risk tools still require approval."
+              : "Mode set to agent. Future prompts can edit files when the request clearly asks for changes."
         );
         return true;
       }

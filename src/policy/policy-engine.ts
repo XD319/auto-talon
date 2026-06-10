@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { z } from "zod";
 
@@ -80,6 +82,22 @@ function matchesRule(rule: PolicyRule, input: PolicyEvaluationInput): boolean {
     includesIfPresent(match.privacyLevels, input.privacyLevel) &&
     includesIfPresent(match.pathScopes, input.pathScope)
   );
+}
+
+export function loadLocalPolicyConfig(workspaceRoot: string): LocalPolicyConfig | null {
+  const configPath = join(workspaceRoot, ".auto-talon", "policy.config.json");
+  if (!existsSync(configPath)) {
+    return null;
+  }
+
+  const content = readFileSync(configPath, "utf8").trim();
+  if (content.length === 0) {
+    return null;
+  }
+
+  const parsed = JSON.parse(content) as Record<string, unknown>;
+  delete parsed.version;
+  return localPolicyConfigSchema.parse(parsed);
 }
 
 function includesIfPresent<T extends string>(values: readonly T[] | undefined, candidate: T): boolean {

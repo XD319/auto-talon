@@ -282,7 +282,8 @@ export class ToolOrchestrator {
       const sessionApprovalFingerprints = readSessionApprovalFingerprints(context.taskMetadata);
       const autoApproved =
         sessionApprovalFingerprints.includes(fingerprint.fingerprint) ||
-        this.dependencies.approvalRuleStore.hasFingerprint(fingerprint.fingerprint);
+        this.dependencies.approvalRuleStore.hasFingerprint(fingerprint.fingerprint) ||
+        this.dependencies.approvalRuleStore.matches(prepared.sandbox, tool.name);
 
       if (!autoApproved) {
         const approvalRequest = this.dependencies.approvalService.ensureApprovalRequest({
@@ -916,17 +917,37 @@ function summarizeValidationIssues(issues: z.ZodIssue[]): string {
 }
 
 function formatApprovalReason(reason: string, sandboxPlan: SandboxExecutionPlan): string {
-  if (sandboxPlan.kind !== "file") {
-    return reason;
+  const lines = [reason];
+
+  switch (sandboxPlan.kind) {
+    case "file":
+      lines.push(
+        `Resolved path: ${sandboxPlan.resolvedPath}`,
+        `Operation: ${sandboxPlan.operation}`,
+        `Path scope: ${sandboxPlan.pathScope}`,
+        `Extra write root: ${sandboxPlan.withinExtraWriteRoot === true ? "yes" : "no"}`
+      );
+      break;
+    case "shell":
+      lines.push(
+        `Command: ${sandboxPlan.command}`,
+        `CWD: ${sandboxPlan.cwd}`,
+        `Network: ${sandboxPlan.networkAccess}`
+      );
+      break;
+    case "network":
+      lines.push(`URL: ${sandboxPlan.url}`, `Method: ${sandboxPlan.method}`);
+      break;
+    case "mcp":
+      lines.push(
+        `MCP server: ${sandboxPlan.serverId}`,
+        `MCP tool: ${sandboxPlan.toolName}`,
+        `Target: ${sandboxPlan.target}`
+      );
+      break;
   }
 
-  return [
-    reason,
-    `Resolved path: ${sandboxPlan.resolvedPath}`,
-    `Operation: ${sandboxPlan.operation}`,
-    `Path scope: ${sandboxPlan.pathScope}`,
-    `Extra write root: ${sandboxPlan.withinExtraWriteRoot === true ? "yes" : "no"}`
-  ].join("\n");
+  return lines.join("\n");
 }
 
 function getSandboxTarget(sandboxPlan: SandboxExecutionPlan): string {

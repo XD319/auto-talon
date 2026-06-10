@@ -893,14 +893,8 @@ export class AgentApplicationService {
       reviewerId: parsed.reviewerId,
       ...(parsed.allowScope !== undefined ? { allowScope: parsed.allowScope } : {})
     });
-    if (approval.status === "approved" && approval.fingerprint !== null && approval.allowScope === "always") {
-      this.dependencies.approvalRuleStore.add({
-        createdAt: new Date().toISOString(),
-        createdBy: reviewerId,
-        description: approval.reason.split("\n")[0] ?? approval.toolName,
-        fingerprint: approval.fingerprint,
-        toolName: approval.toolName
-      });
+    if (approval.status === "approved" && approval.allowScope === "always") {
+      this.dependencies.approvalRuleStore.addAlwaysRulesFromApproval(approval, reviewerId);
     }
 
     this.dependencies.traceService.record({

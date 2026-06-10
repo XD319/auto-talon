@@ -110,6 +110,7 @@ interface FeishuCardActionResponse {
 type FeishuCardActionEvent =
   | {
       actionType: "approval";
+      allowScope?: "once" | "session" | "always";
       approvalId: string;
       chatId: string;
       decision: "allow" | "deny";
@@ -405,7 +406,10 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
         reviewerRuntimeUserId:
           event.openId === null
             ? `${this.descriptor.adapterId}:session:${event.chatId}`
-            : `${this.descriptor.adapterId}:${event.openId}`
+            : `${this.descriptor.adapterId}:${event.openId}`,
+        ...(event.decision === "allow" && event.allowScope !== undefined
+          ? { allowScope: event.allowScope }
+          : {})
       });
       await this.patchApprovalCard(event, renderApprovalResolvedCard(event.taskId, event.approvalId, event.decision));
       if (result !== null) {
@@ -936,7 +940,11 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
     this.inFlightApprovalCardIds.add(approvalId);
     try {
       const sent = await this.createMessageWithRetry(
-        createInteractiveMessagePayload(chatId, renderApprovalCard(result.taskId, approvalId), createApprovalCardUuid(approvalId))
+        createInteractiveMessagePayload(
+          chatId,
+          renderApprovalCard(result.taskId, approvalId, result.pendingApprovalContext ?? undefined),
+          createApprovalCardUuid(approvalId)
+        )
       );
       const messageId = sent.data?.message_id ?? null;
       this.sentApprovalCardIds.add(approvalId);
@@ -1496,7 +1504,10 @@ function parseCardActionEvent(payload: unknown): FeishuCardActionEvent {
 
   const approvalId = readString(value, "approvalId") ?? "";
   const decisionRaw = readString(value, "decision");
+  const scopeRaw = readString(value, "scope");
   const taskId = readString(value, "taskId") ?? "";
+  const allowScope =
+    scopeRaw === "session" || scopeRaw === "always" || scopeRaw === "once" ? scopeRaw : undefined;
 
   return {
     actionType: "approval",
@@ -1505,7 +1516,8 @@ function parseCardActionEvent(payload: unknown): FeishuCardActionEvent {
     decision: decisionRaw === "deny" ? "deny" : "allow",
     messageId,
     openId,
-    taskId
+    taskId,
+    ...(allowScope !== undefined ? { allowScope } : {})
   };
 }
 

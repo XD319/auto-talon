@@ -26,18 +26,44 @@ export function renderTaskResultCard(output: string | null): string {
   });
 }
 
-export function renderApprovalCard(taskId: string, approvalId: string): string {
+export function renderApprovalCard(
+  taskId: string,
+  approvalId: string,
+  context?: { summaryLine: string; detailLines: string[]; toolName: string; riskLevel: string }
+): string {
+  const detailText =
+    context === undefined
+      ? `Task \`${taskId}\` requires approval.`
+      : [
+          `Task \`${taskId}\` requires approval.`,
+          `**${context.toolName}** [${context.riskLevel}]`,
+          context.summaryLine,
+          ...context.detailLines.slice(0, 4)
+        ].join("\n");
+
   return JSON.stringify({
     config: { update_multi: true, wide_screen_mode: true },
     elements: [
-      { tag: "markdown", content: `Task \`${taskId}\` requires approval.` },
+      { tag: "markdown", content: detailText },
       {
         actions: [
           {
             tag: "button",
-            text: { content: "Approve", tag: "plain_text" },
+            text: { content: "Allow once", tag: "plain_text" },
             type: "primary",
-            value: { approvalId, decision: "allow", taskId }
+            value: { approvalId, decision: "allow", scope: "once", taskId }
+          },
+          {
+            tag: "button",
+            text: { content: "Allow session", tag: "plain_text" },
+            type: "default",
+            value: { approvalId, decision: "allow", scope: "session", taskId }
+          },
+          {
+            tag: "button",
+            text: { content: "Allow always", tag: "plain_text" },
+            type: "default",
+            value: { approvalId, decision: "allow", scope: "always", taskId }
           },
           {
             tag: "button",

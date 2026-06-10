@@ -202,7 +202,7 @@ export interface ProviderStatsSnapshot {
   totalRequests: number;
 }
 
-export type TuiInteractionMode = "agent" | "plan";
+export type TuiInteractionMode = "agent" | "plan" | "acceptEdits";
 
 export interface Provider {
   name: string;

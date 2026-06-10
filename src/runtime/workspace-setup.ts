@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config.js";
+
 type JsonObject = Record<string, unknown>;
 
 const CONFIG_VERSION = 1;
@@ -12,6 +14,7 @@ const DEFAULT_PROVIDER_CONFIG: JsonObject = {
 
 const DEFAULT_RUNTIME_CONFIG: JsonObject = {
   version: CONFIG_VERSION,
+  approvalTtlMs: 300000,
   defaultMaxIterations: 12,
   defaultTimeoutMs: 120000,
   allowedFetchHosts: ["*"],
@@ -39,6 +42,11 @@ const DEFAULT_RUNTIME_CONFIG: JsonObject = {
       enabled: true
     }
   }
+};
+
+const DEFAULT_POLICY_CONFIG: JsonObject = {
+  version: CONFIG_VERSION,
+  ...DEFAULT_LOCAL_POLICY_CONFIG
 };
 
 const DEFAULT_SANDBOX_CONFIG: JsonObject = {
@@ -113,6 +121,7 @@ export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceRe
   createdFiles.push(
     ...writeConfigIfMissing(workspaceRoot, "provider.config.json", DEFAULT_PROVIDER_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "runtime.config.json", DEFAULT_RUNTIME_CONFIG),
+    ...writeConfigIfMissing(workspaceRoot, "policy.config.json", DEFAULT_POLICY_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "sandbox.config.json", DEFAULT_SANDBOX_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "gateway.config.json", DEFAULT_GATEWAY_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "feishu.config.json", DEFAULT_FEISHU_CONFIG),

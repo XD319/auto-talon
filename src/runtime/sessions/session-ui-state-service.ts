@@ -17,7 +17,7 @@ export interface SessionUiStateServiceDependencies {
 
 export interface SaveSessionUiStateInput {
   entrySource?: SessionEntrySource;
-  interactionMode?: "agent" | "plan";
+  interactionMode?: "agent" | "plan" | "acceptEdits";
   messages: JsonObject[];
   sessionApprovalFingerprints?: string[];
   title?: string;
@@ -98,8 +98,12 @@ function readMessageKind(payload: JsonObject): SessionMessageKind {
   return "system";
 }
 
-function readInteractionMode(metadata: JsonObject): "agent" | "plan" {
-  return metadata.interactionMode === "plan" ? "plan" : "agent";
+function readInteractionMode(metadata: JsonObject): "agent" | "plan" | "acceptEdits" {
+  return metadata.interactionMode === "plan"
+    ? "plan"
+    : metadata.interactionMode === "acceptEdits"
+      ? "acceptEdits"
+      : "agent";
 }
 
 function readApprovalFingerprints(metadata: JsonObject): string[] {

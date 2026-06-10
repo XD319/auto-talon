@@ -69,7 +69,8 @@ export async function loadSession(workspaceRoot: string, sessionId: string): Pro
     if (
       parsed.interactionMode !== undefined &&
       parsed.interactionMode !== "agent" &&
-      parsed.interactionMode !== "plan"
+      parsed.interactionMode !== "plan" &&
+      parsed.interactionMode !== "acceptEdits"
     ) {
       return null;
     }

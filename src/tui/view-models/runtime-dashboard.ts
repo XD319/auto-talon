@@ -1,7 +1,9 @@
+import { buildApprovalPromptContext } from "../../approvals/approval-prompt-view-model.js";
 import type { TuiApprovalActionResult, TuiRuntimeService } from "../runtime-api.js";
 import { formatToolCallFailureForUser } from "../../presentation/tool-failure-formatters.js";
 import type {
   ApprovalRecord,
+  ApprovalAllowScope,
   ArtifactRecord,
   ExperienceRecord,
   JsonObject,
@@ -58,6 +60,7 @@ export interface ApprovalListItemViewModel {
   riskLevel: ToolCallRecord["riskLevel"] | "unknown";
   shortTaskId: string;
   status: ApprovalRecord["status"];
+  summaryLine: string;
   taskId: string;
   taskLabel: string;
   toolName: string;
@@ -166,9 +169,10 @@ export class RuntimeDashboardQueryService {
   public async resolveApproval(
     approvalId: string,
     action: "allow" | "deny",
-    reviewerId: string
+    reviewerId: string,
+    allowScope?: ApprovalAllowScope
   ): Promise<TuiApprovalActionResult> {
-    return this.service.resolveApproval(approvalId, action, reviewerId);
+    return this.service.resolveApproval(approvalId, action, reviewerId, allowScope);
   }
 
   public getDashboard(options: RuntimeDashboardQueryOptions): RuntimeDashboardViewModel {
@@ -280,6 +284,7 @@ function toApprovalItem(
   const detail = service.showTask(approval.taskId);
   const task = tasks.find((item) => item.taskId === approval.taskId) ?? detail.task;
   const toolCall = detail.toolCalls.find((item) => item.toolCallId === approval.toolCallId);
+  const context = buildApprovalPromptContext(approval, toolCall ?? null);
 
   return {
     approvalId: approval.approvalId,
@@ -289,6 +294,7 @@ function toApprovalItem(
     riskLevel: toolCall?.riskLevel ?? "unknown",
     shortTaskId: approval.taskId.slice(0, 8),
     status: approval.status,
+    summaryLine: context.summaryLine,
     taskId: approval.taskId,
     taskLabel: task === null ? approval.taskId : summarizeText(task.input, 40),
     toolName: approval.toolName

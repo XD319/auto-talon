@@ -257,6 +257,7 @@ describe("Phase 2 governance runtime", () => {
       );
 
       expect(resumed.approval.status).toBe("approved");
+      expect(resumed.approval.allowScope).toBe("once");
       expect(resumed.task.status).toBe("succeeded");
       expect(resumed.output).toContain("governed.txt created after approval");
       expect(resumed.output).toContain("Unverified: workspace changes were made");
@@ -1094,6 +1095,67 @@ describe("Phase 2 governance runtime", () => {
       expect(actions).toContain("approval_resolved");
       expect(actions).toContain("sandbox_enforced");
       expect(actions).toContain("file_write");
+    } finally {
+      handle.close();
+    }
+  });
+  it("loads governance policy from policy.config.json", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "policy.config.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          defaultEffect: "deny",
+          source: "local",
+          rules: [
+            {
+              description: "Custom workspace writes need approval.",
+              effect: "allow_with_approval",
+              id: "custom-workspace-write-approval",
+              match: {
+                capabilities: ["filesystem.write"]
+              },
+              priority: 85
+            }
+          ]
+        },
+        null,
+        2
+      )}\n`
+    );
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "tool_calls",
+        message: "Create the governed file.",
+        toolCalls: [
+          {
+            input: {
+              content: "policy-file-governed",
+              path: "governed.txt"
+            },
+            reason: "Persist the governed file after review.",
+            toolCallId: "policy-file-write",
+            toolName: "write_file"
+          }
+        ],
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5
+        }
+      }))
+    });
+
+    try {
+      const result = await handle.service.runTask(
+        createDefaultRunOptions("write governed file from policy file", workspaceRoot, handle.config)
+      );
+      expect(result.task.status).toBe("waiting_approval");
+      expect(handle.service.listPendingApprovals()[0]?.toolName).toBe("write_file");
     } finally {
       handle.close();
     }

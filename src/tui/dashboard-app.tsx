@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput, useWindowSize } from "ink";
 
 import { Banner } from "./components/banner.js";
 import { StatusBar } from "./components/status-bar.js";
+import { APPROVAL_SCOPE_ACTIONS } from "../approvals/approval-actions.js";
 import { useDashboardController, nextPanel, previousPanel } from "./hooks/use-dashboard-controller.js";
 import {
   ApprovalPanel,
@@ -36,6 +37,7 @@ export function AgentTuiApp({
   const { exit } = useApp();
   const terminalSize = useWindowSize();
   const ctrlCRequestedAtRef = React.useRef<number | null>(null);
+  const [selectedApprovalActionIndex, setSelectedApprovalActionIndex] = React.useState(0);
   const controller = useDashboardController({
     queryService,
     refreshIntervalMs,
@@ -113,8 +115,37 @@ export function AgentTuiApp({
         return;
       }
 
+      if (key.leftArrow) {
+        setSelectedApprovalActionIndex((current) => Math.max(current - 1, 0));
+        return;
+      }
+
+      if (key.rightArrow) {
+        setSelectedApprovalActionIndex((current) =>
+          Math.min(current + 1, APPROVAL_SCOPE_ACTIONS.length - 1)
+        );
+        return;
+      }
+
+      const scopeActionIndex = Number.parseInt(input, 10);
+      if (Number.isInteger(scopeActionIndex) && scopeActionIndex >= 1 && scopeActionIndex <= 4) {
+        const action = APPROVAL_SCOPE_ACTIONS[scopeActionIndex - 1];
+        if (action !== undefined) {
+          void controller.resolveSelectedApproval(action.action, action.scope);
+        }
+        return;
+      }
+
+      if (key.return) {
+        const action = APPROVAL_SCOPE_ACTIONS[selectedApprovalActionIndex];
+        if (action !== undefined) {
+          void controller.resolveSelectedApproval(action.action, action.scope);
+        }
+        return;
+      }
+
       if (input === "a") {
-        void controller.resolveSelectedApproval("allow");
+        void controller.resolveSelectedApproval("allow", "once");
         return;
       }
 
@@ -206,6 +237,7 @@ export function AgentTuiApp({
               <ApprovalPanel
                 approvals={controller.snapshot.pendingApprovals}
                 busy={controller.busy}
+                selectedApprovalActionIndex={selectedApprovalActionIndex}
                 selectedApprovalIndex={controller.selectedApprovalIndex}
               />
             ) : controller.selectedPanel === "diff" ? (
@@ -231,7 +263,7 @@ export function AgentTuiApp({
           details={[`task ${controller.uiStatus.taskLabel ?? "none"}`]}
           hints={[
             controller.selectedPanel === "approvals"
-              ? "a/d approval, r refresh, q quit"
+              ? "1-4 scope, arrows, Enter, a/d legacy, r refresh, q quit"
               : "[ ] task, Tab switch, r refresh, q quit"
           ]}
           primary={{

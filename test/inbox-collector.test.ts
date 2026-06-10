@@ -218,6 +218,9 @@ describe("inbox collector", () => {
 
       const items = storage.inbox.list({ userId: "u1" });
       expect(items.some((item) => item.category === "approval_requested")).toBe(true);
+      const approvalItem = items.find((item) => item.category === "approval_requested");
+      expect(approvalItem?.actionHint).toContain("talon approve allow");
+      expect(approvalItem?.actionHint).toContain("--scope");
       expect(items.some((item) => item.category === "task_completed")).toBe(true);
       expect(items.some((item) => item.category === "task_blocked")).toBe(true);
       expect(

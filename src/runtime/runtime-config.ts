@@ -40,6 +40,7 @@ const diffDisplaySchema = z.enum(["summary", "collapsed", "full"]);
 
 const runtimeConfigFileSchema = z.object({
   allowedFetchHosts: z.array(z.string().min(1)).optional(),
+  approvalTtlMs: z.number().int().positive().optional(),
   defaultMaxIterations: z.number().int().positive().optional(),
   defaultTimeoutMs: z.number().int().positive().optional(),
   webSearch: z
@@ -218,6 +219,7 @@ export type { DiffDisplayMode } from "../presentation/diff-display.js";
 
 export interface RuntimeConfig {
   allowedFetchHosts: string[];
+  approvalTtlMs: number;
   configPath: string;
   configSource: "defaults" | "env" | "file";
   defaultMaxIterations: number;
@@ -275,6 +277,7 @@ export interface RuntimeConfig {
 
 const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource"> = {
   allowedFetchHosts: ["*"],
+  approvalTtlMs: 300_000,
   defaultMaxIterations: 12,
   defaultTimeoutMs: 120_000,
   webSearch: {
@@ -447,6 +450,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       envConfig.allowedFetchHosts ??
       fileConfig?.allowedFetchHosts ??
       DEFAULT_RUNTIME_CONFIG.allowedFetchHosts,
+    approvalTtlMs:
+      envConfig.approvalTtlMs ??
+      fileConfig?.approvalTtlMs ??
+      DEFAULT_RUNTIME_CONFIG.approvalTtlMs,
     defaultMaxIterations:
       envConfig.defaultMaxIterations ??
       fileConfig?.defaultMaxIterations ??

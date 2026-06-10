@@ -77,7 +77,8 @@ export class InboxCollector {
           const scheduleRun = this.findRelatedScheduleRun(event.taskId);
           const schedule = scheduleRun === null ? null : this.dependencies.findSchedule(scheduleRun.scheduleId);
           this.dependencies.inboxService.append({
-            actionHint: "talon approve resolve <approval-id> --action allow --reviewer <user>",
+            actionHint:
+              "talon approve allow <approval-id> [--scope once|session|always] --reviewer <user> | talon approve deny <approval-id>",
             category: "approval_requested",
             dedupKey: `approval_requested:${event.payload.approvalId}`,
             metadata: buildApprovalInboxMetadata(schedule, event.payload.approvalId),

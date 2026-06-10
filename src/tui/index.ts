@@ -44,7 +44,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     let initialMessages: ChatMessage[] | undefined;
     let initialSessionApprovalFingerprints: string[] | undefined;
     let initialSessionTitle: string | undefined;
-    let initialInteractionMode: "agent" | "plan" | undefined;
+    let initialInteractionMode: "agent" | "plan" | "acceptEdits" | undefined;
     let initialRuntimeSessionId: string | undefined;
 
     const uiState = handle.service.loadSessionUiState(initialSessionId);

@@ -8,7 +8,7 @@ The Phase 2 policy engine lives in `src/policy/policy-engine.ts` and evaluates a
 - `allow_with_approval`
 - `deny`
 
-Rule source is local-only for now. Rules are defined in `src/policy/default-policy-config.ts` and matched by descending `priority`.
+Rule source is workspace-local. Defaults live in `src/policy/default-policy-config.ts`; active workspaces load overrides from `.auto-talon/policy.config.json` when present. Rules are matched by descending `priority`.
 
 Supported policy dimensions:
 
@@ -43,8 +43,12 @@ Runtime lifecycle around approvals:
 CLI commands:
 
 - `talon approve pending`
-- `talon approve allow <approval_id>`
+- `talon approve allow <approval_id> [--scope once|session|always]`
 - `talon approve deny <approval_id>`
+
+Always-allow grants persist in `.auto-talon/approval-rules.json` as exact fingerprints and, for shell/file operations, optional prefix rules (`shell_prefix`, `tool_prefix`). Only a single matching prefix rule auto-approves a request; ambiguous matches still prompt.
+
+TUI chat, ops dashboard, CLI, and Feishu cards share the same scope semantics: once, session, always, deny.
 
 ## Sandbox
 

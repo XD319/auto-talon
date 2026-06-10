@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { AuditService } from "../audit/audit-service.js";
+import { buildApprovalPromptContext } from "../approvals/approval-prompt-view-model.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { AgentApplicationService } from "../runtime/application-service.js";
 import type {
@@ -266,12 +267,11 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     const launchResult = {
       adapter,
       notices,
-      result: toGatewayTaskResult(
+      result: this.buildGatewayTaskResult(
         run.task.taskId,
         run.task.status,
         run.output,
-        run.error,
-        this.findPendingApprovalId(run.task.taskId)
+        run.error
       ),
       sessionBinding
     };
@@ -459,6 +459,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
 
   public async resolveApproval(params: {
     adapterId: string;
+    allowScope?: "once" | "session" | "always";
     approvalId: string;
     decision: "allow" | "deny";
     reviewerExternalUserId: string | null;
@@ -467,7 +468,8 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     const approvalResult = await this.dependencies.applicationService.resolveApproval(
       params.approvalId,
       params.decision,
-      params.reviewerRuntimeUserId
+      params.reviewerRuntimeUserId,
+      params.decision === "allow" ? params.allowScope : undefined
     );
 
     this.dependencies.traceService.record({
@@ -523,12 +525,11 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
         lifecycleState: "running"
       },
       notices: [],
-      result: toGatewayTaskResult(
+      result: this.buildGatewayTaskResult(
         approvalResult.task.taskId,
         approvalResult.task.status,
         approvalResult.output,
-        approvalResult.error,
-        this.findPendingApprovalId(approvalResult.task.taskId)
+        approvalResult.error
       ),
       sessionBinding
     };
@@ -571,14 +572,17 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       audit: auditEntries,
       notices,
       output: details.output,
-      task: {
-        errorCode: details.task.errorCode,
-        errorMessage: details.task.errorMessage,
-        output: details.task.finalOutput,
-        pendingApprovalId: this.findPendingApprovalId(details.task.taskId),
-        status: details.task.status,
-        taskId: details.task.taskId
-      },
+      task: this.buildGatewayTaskResult(
+        details.task.taskId,
+        details.task.status,
+        details.task.finalOutput,
+        details.task.errorCode === null || details.task.errorMessage === null
+          ? undefined
+          : {
+              code: details.task.errorCode,
+              message: details.task.errorMessage
+            }
+      ),
       trace: details.trace
     };
   }
@@ -720,6 +724,57 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
         .showTask(taskId)
         .approvals.find((approval) => approval.status === "pending")?.approvalId ?? null
     );
+  }
+
+  private buildGatewayTaskResult(
+    taskId: string,
+    status: string,
+    output: string | null,
+    error:
+      | {
+          code: string;
+          message: string;
+        }
+      | undefined
+  ): GatewayTaskResultView {
+    const pendingApprovalId = this.findPendingApprovalId(taskId);
+    const pendingApprovalContext =
+      pendingApprovalId === null
+        ? undefined
+        : this.buildPendingApprovalContext(taskId, pendingApprovalId);
+
+    const result: GatewayTaskResultView = {
+      errorCode: error?.code ?? null,
+      errorMessage: error?.message ?? null,
+      output,
+      pendingApprovalId,
+      status,
+      taskId
+    };
+    if (pendingApprovalContext !== undefined) {
+      result.pendingApprovalContext = pendingApprovalContext;
+    }
+    return result;
+  }
+
+  private buildPendingApprovalContext(
+    taskId: string,
+    approvalId: string
+  ): GatewayTaskResultView["pendingApprovalContext"] | undefined {
+    const details = this.dependencies.applicationService.showTask(taskId);
+    const approval = details.approvals.find((entry) => entry.approvalId === approvalId) ?? null;
+    if (approval === null) {
+      return undefined;
+    }
+    const toolCall =
+      details.toolCalls.find((entry) => entry.toolCallId === approval.toolCallId) ?? null;
+    const context = buildApprovalPromptContext(approval, toolCall);
+    return {
+      detailLines: context.detailLines,
+      riskLevel: context.riskLevel,
+      summaryLine: context.summaryLine,
+      toolName: context.toolName
+    };
   }
 
   private recordGuardDecision(

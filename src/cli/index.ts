@@ -99,6 +99,7 @@ import {
   summarizeTrace
 } from "./formatters.js";
 import type {
+  ApprovalAllowScope,
   CommitmentRecord,
   ExperienceQuery,
   ExperienceSourceType,
@@ -901,12 +902,19 @@ export async function main(argv = process.argv): Promise<void> {
     .command("allow")
     .argument("<approval_id>", "Approval identifier")
     .option("--reviewer <reviewer>", "Reviewer id")
-    .action(async (approvalId: string, commandOptions: { reviewer?: string }) => {
+    .option("--scope <scope>", "Allow scope: once | session | always", "once")
+    .action(async (approvalId: string, commandOptions: { reviewer?: string; scope?: string }) => {
       const handle = createApplication(process.cwd());
       try {
         const reviewerId =
           commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
-        const result = await handle.service.resolveApproval(approvalId, "allow", reviewerId);
+        const scope = parseApprovalAllowScope(commandOptions.scope);
+        const result = await handle.service.resolveApproval(
+          approvalId,
+          "allow",
+          reviewerId,
+          scope
+        );
         console.log(`Approval: ${result.approval.approvalId} ${result.approval.status}`);
         console.log(`Task ID: ${result.task.taskId}`);
         console.log(`Status: ${result.task.status}`);
@@ -2611,4 +2619,14 @@ function normalizeMemoryScope(
     return "profile";
   }
   return scope;
+}
+
+function parseApprovalAllowScope(value: string | undefined): ApprovalAllowScope {
+  if (value === undefined || value === "once") {
+    return "once";
+  }
+  if (value === "session" || value === "always") {
+    return value;
+  }
+  throw new InvalidArgumentError("Scope must be once, session, or always.");
 }

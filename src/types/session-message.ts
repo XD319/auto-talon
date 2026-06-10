@@ -61,7 +61,7 @@ export interface SessionIndexEntry {
 }
 
 export interface SessionUiState {
-  interactionMode: "agent" | "plan";
+  interactionMode: "agent" | "plan" | "acceptEdits";
   messages: JsonObject[];
   sessionApprovalFingerprints: string[];
 }

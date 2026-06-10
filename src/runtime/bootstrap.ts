@@ -15,7 +15,7 @@ import { CompactTriggerPolicy } from "../memory/compact-policy.js";
 import { McpClientManager } from "../mcp/index.js";
 import { ContextPolicy } from "../policy/context-policy.js";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config.js";
-import { PolicyEngine } from "../policy/policy-engine.js";
+import { loadLocalPolicyConfig, PolicyEngine } from "../policy/policy-engine.js";
 import { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import {
   createProvider,
@@ -200,7 +200,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
   const runtimeConfig = resolveRuntimeConfig(workspaceRoot);
 
   return {
-    approvalTtlMs: 5 * 60_000,
+    approvalTtlMs: runtimeConfig.approvalTtlMs,
     allowedFetchHosts: runtimeConfig.allowedFetchHosts,
     databasePath:
       process.env.AGENT_RUNTIME_DB_PATH ??
@@ -403,7 +403,9 @@ export function createApplication(
   });
   const approvalRuleStore = new ApprovalRuleStore(config.workspaceRoot);
   const contextPolicy = new ContextPolicy();
-  const policyEngine = new PolicyEngine(options.policyConfig ?? DEFAULT_LOCAL_POLICY_CONFIG);
+  const policyEngine = new PolicyEngine(
+    options.policyConfig ?? loadLocalPolicyConfig(config.workspaceRoot) ?? DEFAULT_LOCAL_POLICY_CONFIG
+  );
   const agentProfileRegistry = new AgentProfileRegistry();
   const sandboxService = new SandboxService({
     allowedEnvKeys: ["CI", "FORCE_COLOR", "NODE_ENV", "NO_COLOR"],

@@ -416,11 +416,26 @@ export function formatApprovalList(approvals: ApprovalRecord[]): string {
     return "No pending approvals.";
   }
 
+  const now = Date.now();
   return approvals
-    .map(
-      (approval) =>
-        `${approval.approvalId} | ${approval.taskId} | ${approval.toolName} | ${approval.status} | expires=${approval.expiresAt}`
-    )
+    .map((approval) => {
+      const reasonLine = approval.reason.split("\n")[0] ?? approval.reason;
+      const expiresMs = Date.parse(approval.expiresAt) - now;
+      const expiresLabel =
+        expiresMs <= 0
+          ? "expired"
+          : expiresMs < 60_000
+            ? `${Math.ceil(expiresMs / 1000)}s`
+            : `${Math.ceil(expiresMs / 60_000)}m`;
+      return [
+        approval.approvalId,
+        approval.taskId,
+        approval.toolName,
+        approval.status,
+        `expires=${expiresLabel}`,
+        reasonLine
+      ].join(" | ");
+    })
     .join("\n");
 }
 

@@ -2209,7 +2209,13 @@ function resolveTaskEntrySource(task: TaskRecord): SessionEntrySource {
 }
 
 function readInteractionModeFromMetadata(metadata: Record<string, unknown> | undefined): RuntimeRunOptions["interactionMode"] {
-  return metadata?.interactionMode === "plan" ? "plan" : "agent";
+  if (metadata?.interactionMode === "plan") {
+    return "plan";
+  }
+  if (metadata?.interactionMode === "acceptEdits") {
+    return "acceptEdits";
+  }
+  return "agent";
 }
 
 function buildToolTaskMetadata(task: TaskRecord): TaskRecord["metadata"] {

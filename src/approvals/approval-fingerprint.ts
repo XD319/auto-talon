@@ -76,3 +76,20 @@ export function buildApprovalFingerprint(
     toolName
   };
 }
+
+export function buildShellPrefixPattern(command: string): string[] {
+  return command.trim().split(/\s+/u).filter((token) => token.length > 0);
+}
+
+export function matchesShellPrefixPattern(command: string, pattern: string[]): boolean {
+  const tokens = buildShellPrefixPattern(command);
+  if (pattern.length === 0 || tokens.length < pattern.length) {
+    return false;
+  }
+  for (let index = 0; index < pattern.length; index += 1) {
+    if (tokens[index]?.toLowerCase() !== pattern[index]?.toLowerCase()) {
+      return false;
+    }
+  }
+  return true;
+}

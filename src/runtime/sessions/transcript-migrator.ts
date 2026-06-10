@@ -6,7 +6,7 @@ import type { SessionUiStateService } from "./session-ui-state-service.js";
 
 export interface PersistedChatSessionFile {
   id: string;
-  interactionMode?: "agent" | "plan";
+  interactionMode?: "agent" | "plan" | "acceptEdits";
   messages: Array<Record<string, unknown>>;
   sessionApprovalFingerprints?: string[];
   sessionId?: string;

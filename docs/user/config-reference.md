@@ -4,6 +4,7 @@ All config files live under `.auto-talon/` and include `version`.
 
 - `provider.config.json`
 - `runtime.config.json`
+- `policy.config.json`
 - `sandbox.config.json`
 - `gateway.config.json`
 - `feishu.config.json`
@@ -56,8 +57,9 @@ and never prints the secret value.
 
 Runtime shell and test commands are capped by
 `.auto-talon/runtime.config.json` `workflow.maxShellTimeoutMs`, defaulting to
-`30000`. Set `AGENT_SHELL_MAX_TIMEOUT_MS` to override it for long local builds
-or test suites without changing workspace config. `workflow.shellBackend`
+`30000`. Pending approval requests expire after `approvalTtlMs` (default
+`300000`, five minutes). Set `AGENT_SHELL_MAX_TIMEOUT_MS` to override shell
+timeout for long local builds or test suites without changing workspace config. `workflow.shellBackend`
 selects `default`, `powershell`, `cmd`, `git-bash`, `wsl`, `docker-sh`, or
 `custom`; set `AGENT_SHELL_BACKEND` to override it per environment. When using
 `custom`, set `workflow.customShell` with `executable` and optional `args`.
@@ -132,6 +134,11 @@ Web search controls:
 - `AGENT_WEB_SEARCH_BACKEND=firecrawl` enables the Firecrawl-backed `web_search` tool when `FIRECRAWL_API_KEY` is set.
 - `FIRECRAWL_API_URL` can override the default Firecrawl search endpoint; the endpoint is still checked by the sandbox host policy.
 - `web_search` returns normalized `{ provider, query, results[] }`; use `web_fetch` to expand selected result URLs.
+
+Governance:
+- `policy.config.json` controls default policy effect and rule list (`allow`, `allow_with_approval`, `deny`) matched by capability, tool, profile, and path scope.
+- `approval-rules.json` stores user-granted always-allow fingerprints and optional shell/file prefix rules.
+- See also `docs/user/approvals.md` and `docs/phase2-governance.md`.
 
 Scheduled info-flow examples:
 - Daily AI news: `talon schedule create "Search recent AI news, fetch the top sources, and summarize action items." --name "Daily AI news" --cron "0 8 * * *" --timezone Asia/Shanghai`

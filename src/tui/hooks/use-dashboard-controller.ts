@@ -1,5 +1,6 @@
 import React from "react";
 
+import type { ApprovalAllowScope } from "../../types/index.js";
 import {
   PANEL_ORDER,
   type ApprovalListItemViewModel,
@@ -12,7 +13,7 @@ import type { UiStatus } from "../ui-status.js";
 export interface DashboardController {
   busy: boolean;
   refresh: () => void;
-  resolveSelectedApproval: (action: "allow" | "deny") => Promise<void>;
+  resolveSelectedApproval: (action: "allow" | "deny", allowScope?: ApprovalAllowScope) => Promise<void>;
   selectedApproval: ApprovalListItemViewModel | null;
   selectedApprovalIndex: number;
   selectedPanel: TuiPanelId;
@@ -35,7 +36,7 @@ export function useDashboardController(input: {
   const [selectedApprovalIndex, setSelectedApprovalIndex] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
   const [statusLine, setStatusLine] = React.useState(
-    `Keys: 1-${PANEL_ORDER.length} panels, tab switch, arrows browse, a allow, d deny, r refresh, q quit`
+    `Keys: 1-${PANEL_ORDER.length} panels, tab switch, arrows browse, 1-4 approval scope, a/d legacy, r refresh, q quit`
   );
   const [uiStatus, setUiStatus] = React.useState<UiStatus>({
     approvalLabel: null,
@@ -116,7 +117,10 @@ export function useDashboardController(input: {
 
   const selectedApproval = snapshot.pendingApprovals[selectedApprovalIndex] ?? null;
 
-  const resolveSelectedApproval = async (action: "allow" | "deny"): Promise<void> => {
+  const resolveSelectedApproval = async (
+    action: "allow" | "deny",
+    allowScope?: ApprovalAllowScope
+  ): Promise<void> => {
     if (selectedApproval === null || busy) {
       return;
     }
@@ -126,7 +130,8 @@ export function useDashboardController(input: {
       const result = await input.queryService.resolveApproval(
         selectedApproval.approvalId,
         action,
-        input.reviewerId
+        input.reviewerId,
+        allowScope
       );
       const nextSnapshot = input.queryService.getDashboard({
         selectedPanel,
