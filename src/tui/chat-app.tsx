@@ -129,7 +129,7 @@ export function ChatTuiApp({
     service
   });
 
-  const scrollback = useScrollbackTranscript(controller.messages);
+  const scrollback = useScrollbackTranscript(controller.messages, config.tui.diffDisplay);
   React.useEffect(() => {
     scrollbackRef.current = scrollback;
   }, [scrollback]);
@@ -492,7 +492,8 @@ export function ChatTuiApp({
             "Most used: /resume <session> /sessions /today /inbox /new <title> /schedule create <when> | <prompt>",
             "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
             "Session: /mode [agent|plan] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
-            "File edits: scrollback shows +added/-removed line counts with a folded diff preview; use /diff for the full colored diff.",
+            "File edits: scrollback shows +added/-removed line counts with a folded diff preview; use /diff for more detail.",
+            `Diff display: ${config.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history",
             "Saved sessions: use `talon tui --resume <id>` to restore transcript files from .auto-talon/sessions.",

@@ -1,6 +1,7 @@
 import React from "react";
 import { useStdout } from "ink";
 
+import type { DiffDisplayMode } from "../../presentation/diff-display.js";
 import type { RuntimeOutputEvent, TraceEvent } from "../../types/index.js";
 import type { ChatMessage } from "../view-models/chat-messages.js";
 import {
@@ -20,7 +21,10 @@ export interface ScrollbackTranscriptController {
   replayMessages: (messages: ChatMessage[]) => void;
 }
 
-export function useScrollbackTranscript(messages: ChatMessage[]): ScrollbackTranscriptController {
+export function useScrollbackTranscript(
+  messages: ChatMessage[],
+  diffDisplay: DiffDisplayMode = "collapsed"
+): ScrollbackTranscriptController {
   const { stdout, write } = useStdout();
   const printedMessagesRef = React.useRef<Set<string>>(new Set());
   const printedOutputEventsRef = React.useRef<Set<string>>(new Set());
@@ -165,12 +169,12 @@ export function useScrollbackTranscript(messages: ChatMessage[]): ScrollbackTran
         return;
       }
       printedTraceEventsRef.current.add(event.eventId);
-      const text = updateScrollbackToolState(toolsRef.current, event);
+      const text = updateScrollbackToolState(toolsRef.current, event, { diffDisplay });
       if (text !== null) {
         printRecord(text);
       }
     },
-    [printRecord]
+    [diffDisplay, printRecord]
   );
 
   return {

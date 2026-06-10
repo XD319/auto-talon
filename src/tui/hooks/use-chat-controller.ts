@@ -15,7 +15,10 @@ import type {
   TraceEvent,
   TuiInteractionMode
 } from "../../types/index.js";
-import { colorizeDiffLine, formatDiffLineBadge as formatColoredDiffLineBadge } from "../view-models/diff-format.js";
+import {
+  formatCommandDiffPreview,
+  formatDiffLineBadge as formatColoredDiffLineBadge
+} from "../view-models/diff-format.js";
 import {
   contextWindowPercent,
   estimateSessionCostUsd
@@ -1158,13 +1161,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
                 ? content.unifiedDiff
                 : "";
             const header = `${String(index + 1).padStart(2, " ")}. ${path} ${formatColoredDiffLineBadge(addedLineCount, removedLineCount)}`;
-            if (unifiedDiff.length === 0) {
-              return `${header}\n(no unified diff recorded)`;
-            }
-            const coloredDiff = unifiedDiff
-              .split(/\r?\n/u)
-              .map((line) => colorizeDiffLine(line))
-              .join("\n");
+            const coloredDiff = formatCommandDiffPreview(unifiedDiff, {
+              diffDisplay: input.config.tui.diffDisplay,
+              path
+            });
             return `${header}\n${coloredDiff}`;
           })
           .join("\n\n");
@@ -1179,7 +1179,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         `${String(index + 1).padStart(2, " ")}. ${entry.path} ${formatColoredDiffLineBadge(entry.addedLineCount, entry.removedLineCount)} (task ${entry.taskId.slice(0, 8)})`
     );
     return `Session file changes (${fileEdits.length}):\n${lines.join("\n")}`;
-  }, [fileEdits, input.service]);
+  }, [fileEdits, input.config.tui.diffDisplay, input.service]);
 
   const resolvePendingApproval = React.useCallback(
     async (action: "allow" | "deny", allowScope?: ApprovalAllowScope) => {

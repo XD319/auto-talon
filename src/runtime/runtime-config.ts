@@ -3,6 +3,8 @@ import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
+import type { DiffDisplayMode } from "../presentation/diff-display.js";
+import { DEFAULT_DIFF_DISPLAY_MODE } from "../presentation/diff-display.js";
 import type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import type { BudgetLimits, BudgetPricingEntry, ProviderTier, RoutingMode, TokenBudget } from "../types/index.js";
@@ -33,6 +35,8 @@ const workflowLongRunningCommandSchema = z.object({
 });
 
 const shellBackendSchema = z.enum(["default", "powershell", "cmd", "git-bash", "wsl", "docker-sh", "custom"]);
+
+const diffDisplaySchema = z.enum(["summary", "collapsed", "full"]);
 
 const runtimeConfigFileSchema = z.object({
   allowedFetchHosts: z.array(z.string().min(1)).optional(),
@@ -164,6 +168,11 @@ const runtimeConfigFileSchema = z.object({
       longRunningCommands: z.array(workflowLongRunningCommandSchema).optional(),
       testCommands: z.array(workflowTestCommandSchema).optional()
     })
+    .optional(),
+  tui: z
+    .object({
+      diffDisplay: diffDisplaySchema.optional()
+    })
     .optional()
 });
 
@@ -204,6 +213,8 @@ export interface WorkflowLongRunningCommand {
   env?: Record<string, string> | undefined;
   name: string;
 }
+
+export type { DiffDisplayMode } from "../presentation/diff-display.js";
 
 export interface RuntimeConfig {
   allowedFetchHosts: string[];
@@ -255,6 +266,9 @@ export interface RuntimeConfig {
     pricing: Record<string, BudgetPricingEntry>;
   };
   tokenBudget: TokenBudget;
+  tui: {
+    diffDisplay: DiffDisplayMode;
+  };
   webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
 }
@@ -323,6 +337,9 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     task: {},
     session: {},
     pricing: {}
+  },
+  tui: {
+    diffDisplay: DEFAULT_DIFF_DISPLAY_MODE
   },
   workflow: {
     failureGuidedRetry: {
@@ -582,6 +599,12 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         DEFAULT_RUNTIME_CONFIG.contextRetention.toolOutputMaxTokens
     },
     tokenBudget,
+    tui: {
+      diffDisplay:
+        envConfig.tui?.diffDisplay ??
+        fileConfig?.tui?.diffDisplay ??
+        DEFAULT_RUNTIME_CONFIG.tui.diffDisplay
+    },
     webSearch,
     workflow
   };

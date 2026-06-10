@@ -2639,6 +2639,9 @@ function createControllerConfig(): AppConfig {
       usedInput: 0,
       usedOutput: 0
     },
+    tui: {
+      diffDisplay: "collapsed"
+    },
     workflow: {
       failureGuidedRetry: {
         enabled: false,

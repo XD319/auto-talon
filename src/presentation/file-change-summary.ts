@@ -1,4 +1,5 @@
 import type { JsonObject } from "../types/common.js";
+import { normalizeDiffDisplayPath } from "./file-diff.js";
 
 export interface FileDiffSummary {
   addedLineCount: number;
@@ -18,8 +19,14 @@ export function formatDiffLineBadge(
   return "+0 -0";
 }
 
-export function formatFileEditSummary(action: string, path: string, diffSummary: FileDiffSummary): string {
-  return `${action} ${path} (${formatDiffLineBadge(diffSummary)})`;
+export function formatFileEditSummary(
+  action: string,
+  path: string,
+  diffSummary: FileDiffSummary,
+  workspaceRoot?: string
+): string {
+  const displayPath = normalizeDiffDisplayPath(path, workspaceRoot);
+  return `${action} ${displayPath} (${formatDiffLineBadge(diffSummary)})`;
 }
 
 export function buildFileChangeOutput(

@@ -1,5 +1,6 @@
 import type { ApprovalRecord, FileChangeTracePayload, ToolCallRecord, TraceEvent } from "../../types/index.js";
 import { formatDiffLineBadge } from "../../presentation/file-change-summary.js";
+import { resolveFileChangeDisplayPath } from "../../presentation/file-diff.js";
 import { formatToolCallFailureForUser } from "../../presentation/tool-failure-formatters.js";
 
 export type ChatMessage =
@@ -176,7 +177,7 @@ function formatFinishedToolCall(event: Extract<TraceEvent, { eventType: "tool_ca
   }
   const fileChange = readFileChange(event.payload.fileChange);
   if (fileChange !== null && isFileEditTool(toolName)) {
-    return `Write ${fileChange.path} (${formatDiffLineBadge(fileChange)})`;
+    return `Write ${resolveFileChangeDisplayPath(fileChange.path, { unifiedDiffPreview: fileChange.unifiedDiffPreview })} (${formatDiffLineBadge(fileChange)})`;
   }
   const compact = collapseWhitespace(summary).slice(0, 120);
   return compact.length > 0 ? `${toolName} done: ${compact}` : `${toolName} done (${toolCallId.slice(0, 8)})`;

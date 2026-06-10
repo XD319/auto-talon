@@ -42,9 +42,9 @@ describe("file-change-trace", () => {
         "--- a/src/app.ts",
         "+++ b/src/app.ts",
         "@@ -1,3 +1,3 @@",
+        ...Array.from({ length: 10 }, (_, index) => ` line-${index + 1}`),
         "-old-line",
-        "+new-line",
-        ...Array.from({ length: 10 }, (_, index) => ` line-${index + 1}`)
+        "+new-line"
       ].join("\n")
     });
   });

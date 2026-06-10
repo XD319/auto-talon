@@ -1,4 +1,5 @@
 import { createTwoFilesPatch, structuredPatch } from "diff";
+import { isAbsolute, relative, sep } from "node:path";
 
 import type { JsonObject } from "../types/common.js";
 import type { FileDiffSummary } from "./file-change-summary.js";
@@ -16,11 +17,21 @@ export interface FileDiffResult {
   unifiedDiff: string;
 }
 
-export function buildFileDiff(beforeText: string, afterText: string, path: string): FileDiffResult {
+export interface BuildFileDiffOptions {
+  workspaceRoot?: string;
+}
+
+export function buildFileDiff(
+  beforeText: string,
+  afterText: string,
+  path: string,
+  options: BuildFileDiffOptions = {}
+): FileDiffResult {
+  const displayPath = normalizeDiffDisplayPath(path, options.workspaceRoot);
   const beforeLines = splitLines(beforeText);
   const afterLines = splitLines(afterText);
-  const oldFileName = `a/${path}`;
-  const newFileName = `b/${path}`;
+  const oldFileName = `a/${displayPath}`;
+  const newFileName = `b/${displayPath}`;
   const patch = structuredPatch(oldFileName, newFileName, beforeText, afterText, "", "", {
     context: DIFF_CONTEXT
   });
@@ -39,9 +50,11 @@ export function buildFileDiff(beforeText: string, afterText: string, path: strin
 
   const changedLineCount = addedLineCount + removedLineCount;
   const unifiedDiff = clipText(
-    createTwoFilesPatch(oldFileName, newFileName, beforeText, afterText, "", "", {
-      context: DIFF_CONTEXT
-    }),
+    stripDiffNoise(
+      createTwoFilesPatch(oldFileName, newFileName, beforeText, afterText, "", "", {
+        context: DIFF_CONTEXT
+      })
+    ),
     MAX_UNIFIED_DIFF_BYTES
   );
 
@@ -57,6 +70,44 @@ export function buildFileDiff(beforeText: string, afterText: string, path: strin
     diffSummary,
     unifiedDiff
   };
+}
+
+export function extractPathFromDiffHeader(diff: string): string | undefined {
+  const match = /^--- a\/(.+?)(?:\t|$)/mu.exec(diff);
+  return match?.[1];
+}
+
+export function resolveFileChangeDisplayPath(
+  path: string,
+  options: { unifiedDiffPreview?: string; workspaceRoot?: string } = {}
+): string {
+  const fromDiff = extractPathFromDiffHeader(options.unifiedDiffPreview ?? "");
+  if (fromDiff !== undefined && fromDiff.length > 0) {
+    return fromDiff;
+  }
+  return normalizeDiffDisplayPath(path, options.workspaceRoot);
+}
+
+export function normalizeDiffDisplayPath(path: string, workspaceRoot?: string): string {
+  const normalized = path.replace(/\\/gu, "/");
+  if (workspaceRoot === undefined || workspaceRoot.length === 0) {
+    return normalized;
+  }
+  if (!isAbsolute(path)) {
+    return normalized;
+  }
+  try {
+    return relative(workspaceRoot, path).split(sep).join("/");
+  } catch {
+    return normalized;
+  }
+}
+
+function stripDiffNoise(diff: string): string {
+  return diff
+    .split(/\r?\n/u)
+    .filter((line) => !/^=+$/u.test(line.trim()) && !line.startsWith("Index:"))
+    .join("\n");
 }
 
 function splitLines(text: string): string[] {

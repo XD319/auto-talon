@@ -25,6 +25,17 @@ describe("file-change-summary", () => {
     expect(formatFileEditSummary("Wrote", "src/app.ts", diffSummary)).toBe("Wrote src/app.ts (+12 -3)");
   });
 
+  it("formats file edit summary with workspace-relative paths", () => {
+    expect(
+      formatFileEditSummary(
+        "Wrote",
+        "D:\\workspace\\talon-test\\js\\animation.js",
+        diffSummary,
+        "D:\\workspace\\talon-test"
+      )
+    ).toBe("Wrote js/animation.js (+12 -3)");
+  });
+
   it("builds standard file change output", () => {
     expect(buildFileChangeOutput("src/app.ts", diffSummary, { size: 42 })).toEqual({
       addedLineCount: 12,

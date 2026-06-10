@@ -1,7 +1,14 @@
 import { formatDiffLineBadge as formatPlainDiffLineBadge } from "../../presentation/file-change-summary.js";
+import {
+  type DiffDisplayMode,
+  resolveCommandDiffMaxLines,
+  resolveScrollbackPreviewMaxLines
+} from "../../presentation/diff-display.js";
 import { selectDiffPreviewLines } from "../../presentation/diff-preview.js";
 import { gray, green, red } from "../ansi.js";
 import { theme } from "../theme.js";
+
+export type { DiffDisplayMode } from "../../presentation/diff-display.js";
 
 export const DEFAULT_DIFF_PANEL_MAX_LINES = 40;
 export const DEFAULT_SCROLLBACK_DIFF_MAX_LINES = 15;
@@ -9,6 +16,9 @@ export const DEFAULT_SCROLLBACK_DIFF_MAX_LINES = 15;
 export type DiffLineKind = "added" | "context" | "header" | "removed";
 
 export function classifyDiffLine(line: string): DiffLineKind {
+  if (/^=+$/u.test(line.trim()) || line.startsWith("Index:")) {
+    return "header";
+  }
   if (line.startsWith("+++ ") || line.startsWith("--- ") || line.startsWith("@@")) {
     return "header";
   }
@@ -76,11 +86,15 @@ export function diffLineProps(line: string): { color?: string } {
 
 export function formatScrollbackDiffPreview(
   unifiedDiff: string,
-  options: { maxLines?: number; prefix?: string } = {}
+  options: { diffDisplay?: DiffDisplayMode; maxLines?: number; prefix?: string } = {}
 ): string {
-  const maxLines = options.maxLines ?? DEFAULT_SCROLLBACK_DIFF_MAX_LINES;
+  const maxLines =
+    options.maxLines ??
+    (options.diffDisplay === undefined
+      ? DEFAULT_SCROLLBACK_DIFF_MAX_LINES
+      : resolveScrollbackPreviewMaxLines(options.diffDisplay));
   const prefix = options.prefix ?? "┊   ";
-  if (unifiedDiff.length === 0) {
+  if (unifiedDiff.length === 0 || maxLines <= 0) {
     return "";
   }
 
@@ -90,4 +104,24 @@ export function formatScrollbackDiffPreview(
     lines.push(`${prefix}${gray(`... ${hiddenLineCount} more lines (use /diff)`)}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+export function formatCommandDiffPreview(
+  unifiedDiff: string,
+  options: { diffDisplay?: DiffDisplayMode; path?: string } = {}
+): string {
+  if (unifiedDiff.length === 0) {
+    return "(no unified diff recorded)";
+  }
+  const maxLines = resolveCommandDiffMaxLines(options.diffDisplay ?? "collapsed");
+  const { hiddenLineCount, visibleLines } = summarizeDiffLines(unifiedDiff, maxLines);
+  const colored = visibleLines.map((line) => colorizeDiffLine(line)).join("\n");
+  if (hiddenLineCount <= 0) {
+    return colored;
+  }
+  const gitHint =
+    options.path !== undefined && options.path.length > 0
+      ? `run git diff ${options.path}`
+      : "run git diff";
+  return `${colored}\n${gray(`... ${hiddenLineCount} more lines (${gitHint})`)}`;
 }

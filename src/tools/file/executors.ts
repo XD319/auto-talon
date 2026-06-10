@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 
 import { AppError } from "../../core/app-error.js";
-import { buildFileDiff } from "../../presentation/file-diff.js";
+import { buildFileDiff, normalizeDiffDisplayPath } from "../../presentation/file-diff.js";
 import {
   aggregateFileDiffSummaries,
   buildFileChangeOutput,
@@ -167,7 +167,7 @@ export async function executeWriteFile(
   const fileExisted = await exists(targetPath);
 
   if (dryRun) {
-    return fileWriteDryRunResult(targetPath, "write_file", originalContent, content);
+    return fileWriteDryRunResult(targetPath, "write_file", originalContent, content, context.workspaceRoot);
   }
 
   const checkpoint = fileExisted
@@ -177,7 +177,9 @@ export async function executeWriteFile(
   await fs.mkdir(dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, content, "utf8");
 
-  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, content, targetPath);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, content, targetPath, {
+    workspaceRoot: context.workspaceRoot
+  });
   return {
     artifacts: [
       checkpoint,
@@ -198,7 +200,7 @@ export async function executeWriteFile(
       size: Buffer.byteLength(content, "utf8")
     }),
     success: true,
-    summary: formatFileEditSummary("Wrote", targetPath, diffSummary)
+    summary: formatFileEditSummary("Wrote", targetPath, diffSummary, context.workspaceRoot)
   };
 }
 
@@ -258,7 +260,7 @@ export async function executeUpdateFile(
   );
 
   if (dryRun) {
-    return fileWriteDryRunResult(targetPath, "update_file", originalContent, updatedContent);
+    return fileWriteDryRunResult(targetPath, "update_file", originalContent, updatedContent, context.workspaceRoot);
   }
 
   const checkpoint = await createRollbackArtifactFromContent(
@@ -270,7 +272,9 @@ export async function executeUpdateFile(
 
   await fs.writeFile(targetPath, updatedContent, "utf8");
 
-  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, updatedContent, targetPath);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, updatedContent, targetPath, {
+    workspaceRoot: context.workspaceRoot
+  });
   return {
     artifacts: [
       checkpoint,
@@ -289,7 +293,7 @@ export async function executeUpdateFile(
     ],
     output: buildFileChangeOutput(targetPath, diffSummary, { updated: true }),
     success: true,
-    summary: formatFileEditSummary("Updated", targetPath, diffSummary)
+    summary: formatFileEditSummary("Updated", targetPath, diffSummary, context.workspaceRoot)
   };
 }
 
@@ -372,7 +376,7 @@ export async function executeApplyPatch(
   }
 
   if (dryRun) {
-    return fileWriteDryRunResult(targetPath, "apply_patch", originalContent, workingContent);
+    return fileWriteDryRunResult(targetPath, "apply_patch", originalContent, workingContent, context.workspaceRoot);
   }
 
   const checkpoint = await createRollbackArtifactFromContent(
@@ -384,7 +388,9 @@ export async function executeApplyPatch(
 
   await fs.writeFile(targetPath, workingContent, "utf8");
 
-  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, workingContent, targetPath);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, workingContent, targetPath, {
+    workspaceRoot: context.workspaceRoot
+  });
   return {
     artifacts: [
       checkpoint,
@@ -403,7 +409,12 @@ export async function executeApplyPatch(
     ],
     output: buildFileChangeOutput(targetPath, diffSummary, { appliedPatchCount }),
     success: true,
-    summary: formatFileEditSummary(`Applied ${appliedPatchCount} patches to`, targetPath, diffSummary)
+    summary: formatFileEditSummary(
+      `Applied ${appliedPatchCount} patches to`,
+      targetPath,
+      diffSummary,
+      context.workspaceRoot
+    )
   };
 }
 
@@ -416,7 +427,7 @@ export async function executeDeleteFile(
   const originalContent = await fs.readFile(targetPath, "utf8");
 
   if (dryRun) {
-    return fileWriteDryRunResult(targetPath, "delete_file", originalContent, "");
+    return fileWriteDryRunResult(targetPath, "delete_file", originalContent, "", context.workspaceRoot);
   }
 
   const checkpoint = await createRollbackArtifactFromContent(
@@ -427,7 +438,9 @@ export async function executeDeleteFile(
   );
 
   await fs.unlink(targetPath);
-  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, "", targetPath);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, "", targetPath, {
+    workspaceRoot: context.workspaceRoot
+  });
   return {
     artifacts: [
       checkpoint,
@@ -446,7 +459,7 @@ export async function executeDeleteFile(
     ],
     output: buildFileChangeOutput(targetPath, diffSummary, { deleted: true }),
     success: true,
-    summary: formatFileEditSummary("Deleted", targetPath, diffSummary)
+    summary: formatFileEditSummary("Deleted", targetPath, diffSummary, context.workspaceRoot)
   };
 }
 
@@ -468,7 +481,9 @@ export async function executeRenameFile(
   }
 
   if (dryRun) {
-    const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, originalContent, fromPath);
+    const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, originalContent, fromPath, {
+      workspaceRoot: context.workspaceRoot
+    });
     return {
       artifacts: [
         {
@@ -488,7 +503,7 @@ export async function executeRenameFile(
       ],
       output: buildFileChangeOutput(fromPath, diffSummary, { dryRun: true, toPath }),
       success: true,
-      summary: `${formatFileEditSummary("Dry run: would rename", fromPath, diffSummary)} to ${toPath}`
+      summary: `${formatFileEditSummary("Dry run: would rename", fromPath, diffSummary, context.workspaceRoot)} to ${normalizeDiffDisplayPath(toPath, context.workspaceRoot)}`
     };
   }
 
@@ -501,7 +516,9 @@ export async function executeRenameFile(
 
   await fs.mkdir(dirname(toPath), { recursive: true });
   await fs.rename(fromPath, toPath);
-  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, originalContent, fromPath);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, originalContent, fromPath, {
+    workspaceRoot: context.workspaceRoot
+  });
   return {
     artifacts: [
       checkpoint,
@@ -521,7 +538,7 @@ export async function executeRenameFile(
     ],
     output: buildFileChangeOutput(fromPath, diffSummary, { renamed: true, toPath }),
     success: true,
-    summary: `${formatFileEditSummary("Renamed", fromPath, diffSummary)} to ${toPath}`
+    summary: `${formatFileEditSummary("Renamed", fromPath, diffSummary, context.workspaceRoot)} to ${normalizeDiffDisplayPath(toPath, context.workspaceRoot)}`
   };
 }
 
@@ -557,7 +574,9 @@ export async function executeApplyUnifiedDiff(
       );
       await fs.writeFile(targetPath, updatedContent, "utf8");
     }
-    const fileDiff = buildFileDiff(originalContent, updatedContent, targetPath);
+    const fileDiff = buildFileDiff(originalContent, updatedContent, targetPath, {
+      workspaceRoot: context.workspaceRoot
+    });
     fileArtifacts.push({
       artifactType: "file",
       content: {
@@ -840,9 +859,12 @@ function fileWriteDryRunResult(
   targetPath: string,
   operation: FileWriteOperation,
   originalContent: string,
-  updatedContent: string
+  updatedContent: string,
+  workspaceRoot: string
 ): ToolExecutionResult {
-  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, updatedContent, targetPath);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, updatedContent, targetPath, {
+    workspaceRoot
+  });
   return {
     artifacts: [
       {
@@ -861,7 +883,7 @@ function fileWriteDryRunResult(
     ],
     output: buildFileChangeOutput(targetPath, diffSummary, { dryRun: true }),
     success: true,
-    summary: formatFileEditSummary(`Dry run: would ${operation}`, targetPath, diffSummary)
+    summary: formatFileEditSummary(`Dry run: would ${operation}`, targetPath, diffSummary, workspaceRoot)
   };
 }
 

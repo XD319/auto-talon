@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { buildFileDiff } from "../src/presentation/file-diff.js";
+import { buildFileDiff, resolveFileChangeDisplayPath } from "../src/presentation/file-diff.js";
+
+describe("resolveFileChangeDisplayPath", () => {
+  it("prefers the relative path from a unified diff preview header", () => {
+    expect(
+      resolveFileChangeDisplayPath("D:\\talon-test\\js\\animation.js", {
+        unifiedDiffPreview: "--- a/js/animation.js\t\n+++ b/js/animation.js\t"
+      })
+    ).toBe("js/animation.js");
+  });
+
+  it("falls back to workspace-relative normalization", () => {
+    expect(
+      resolveFileChangeDisplayPath("D:\\proj\\test\\game.test.js", {
+        workspaceRoot: "D:\\proj"
+      })
+    ).toBe("test/game.test.js");
+  });
+});
 
 describe("buildFileDiff", () => {
   it("reports full addition for new files", () => {
@@ -41,6 +59,24 @@ describe("buildFileDiff", () => {
     });
     expect(result.unifiedDiff).toContain("-beta");
     expect(result.unifiedDiff).toContain("+gamma");
+  });
+
+  it("uses workspace-relative paths in diff headers", () => {
+    const result = buildFileDiff("before\n", "after\n", "D:\\proj\\test\\game.test.js", {
+      workspaceRoot: "D:\\proj"
+    });
+
+    expect(result.unifiedDiff).toContain("--- a/test/game.test.js");
+    expect(result.unifiedDiff).toContain("+++ b/test/game.test.js");
+    expect(result.unifiedDiff).not.toContain("D:\\\\proj");
+  });
+
+  it("strips separator noise from unified diff output", () => {
+    const before = "alpha\n";
+    const after = "alpha\nbeta\n";
+    const result = buildFileDiff(before, after, "src/app.ts");
+
+    expect(result.unifiedDiff).not.toMatch(/^=+$/m);
   });
 
   it("places middle-of-file changes in the patch hunk", () => {

@@ -2,6 +2,7 @@
 import { delimiter, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import type { DiffDisplayMode } from "../presentation/diff-display.js";
 import { ApprovalService } from "../approvals/approval-service.js";
 import { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
 import { ClarifyService } from "../approvals/clarify-service.js";
@@ -175,6 +176,9 @@ export interface AppConfig {
   runtimeConfigSource: "defaults" | "env" | "file";
   sandbox: SandboxProfile;
   tokenBudget: TokenBudget;
+  tui: {
+    diffDisplay: DiffDisplayMode;
+  };
   webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
   workspaceRoot: string;
@@ -216,6 +220,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     runtimeConfigSource: runtimeConfig.configSource,
     sandbox,
     tokenBudget: runtimeConfig.tokenBudget,
+    tui: runtimeConfig.tui,
     webSearch: runtimeConfig.webSearch,
     workflow: runtimeConfig.workflow,
     workspaceRoot

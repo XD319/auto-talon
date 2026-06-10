@@ -1,3 +1,5 @@
+import type { DiffDisplayMode } from "../../presentation/diff-display.js";
+import { resolveFileChangeDisplayPath } from "../../presentation/file-diff.js";
 import type { FileChangeTracePayload, RuntimeOutputEvent, TraceEvent } from "../../types/index.js";
 import { sanitizeTerminalText } from "../text-sanitize.js";
 import type { ChatMessage } from "./chat-messages.js";
@@ -107,7 +109,8 @@ export function formatScrollbackOutputEvent(
 
 export function updateScrollbackToolState(
   state: Map<string, ScrollbackToolState>,
-  event: TraceEvent
+  event: TraceEvent,
+  options: { diffDisplay?: DiffDisplayMode } = {}
 ): string | null {
   if (
     event.eventType !== "tool_call_requested" &&
@@ -143,7 +146,7 @@ export function updateScrollbackToolState(
   }
 
   const action = toolAction(event.payload.toolName);
-  const target = toolTarget(current.input, event);
+  const fallbackTarget = toolTarget(current.input, event);
   const icon = event.eventType === "tool_call_failed" ? "❌" : toolIcon(action);
   const status =
     event.eventType === "tool_call_failed"
@@ -154,15 +157,21 @@ export function updateScrollbackToolState(
   if (event.eventType === "tool_call_finished") {
     const fileChange = readFileChange(event.payload.fileChange);
     if (fileChange !== null) {
+      const target = resolveFileChangeDisplayPath(fileChange.path, {
+        unifiedDiffPreview: fileChange.unifiedDiffPreview
+      });
       const summaryLine = `┊ ${icon} ${action} ${target} ${formatDiffLineBadge(fileChange.addedLineCount, fileChange.removedLineCount, fileChange.changedLineCount)}${status}\n`;
-      const diffPreview = formatScrollbackDiffPreview(fileChange.unifiedDiffPreview);
+      const diffPreview = formatScrollbackDiffPreview(
+        fileChange.unifiedDiffPreview,
+        options.diffDisplay === undefined ? {} : { diffDisplay: options.diffDisplay }
+      );
       return diffPreview.length > 0 ? `${summaryLine}${diffPreview}` : summaryLine;
     }
   }
 
   const startedAt = current.startedAt ?? current.requestedAt;
   const elapsed = formatElapsed(startedAt, event.timestamp);
-  return `┊ ${icon} ${action} ${target}${elapsed.length > 0 ? ` ${elapsed}` : ""}${status}\n`;
+  return `┊ ${icon} ${action} ${fallbackTarget}${elapsed.length > 0 ? ` ${elapsed}` : ""}${status}\n`;
 }
 
 export function wrapScrollbackChunk(
