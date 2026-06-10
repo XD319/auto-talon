@@ -4,7 +4,14 @@ import { extractFileChangeFromArtifacts } from "../src/presentation/file-change-
 
 describe("file-change-trace", () => {
   it("extracts fileChange payload from file artifacts", () => {
-    const unifiedDiff = Array.from({ length: 20 }, (_, index) => `line-${index + 1}`).join("\n");
+    const unifiedDiff = [
+      "--- a/src/app.ts",
+      "+++ b/src/app.ts",
+      "@@ -1,3 +1,3 @@",
+      ...Array.from({ length: 20 }, (_, index) => ` line-${index + 1}`),
+      "-old-line",
+      "+new-line"
+    ].join("\n");
     const fileChange = extractFileChangeFromArtifacts([
       {
         artifactType: "file_rollback",
@@ -31,7 +38,14 @@ describe("file-change-trace", () => {
       changedLineCount: 8,
       path: "src/app.ts",
       removedLineCount: 3,
-      unifiedDiffPreview: Array.from({ length: 15 }, (_, index) => `line-${index + 1}`).join("\n")
+      unifiedDiffPreview: [
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1,3 +1,3 @@",
+        "-old-line",
+        "+new-line",
+        ...Array.from({ length: 10 }, (_, index) => ` line-${index + 1}`)
+      ].join("\n")
     });
   });
 

@@ -1,3 +1,5 @@
+import { formatDiffLineBadge as formatPlainDiffLineBadge } from "../../presentation/file-change-summary.js";
+import { selectDiffPreviewLines } from "../../presentation/diff-preview.js";
 import { gray, green, red } from "../ansi.js";
 import { theme } from "../theme.js";
 
@@ -23,15 +25,27 @@ export function summarizeDiffLines(
   unifiedDiff: string,
   maxLines: number = DEFAULT_DIFF_PANEL_MAX_LINES
 ): { hiddenLineCount: number; visibleLines: string[] } {
-  const diffLines = unifiedDiff.split(/\r?\n/u);
+  const { hiddenLineCount, lines } = selectDiffPreviewLines(unifiedDiff, maxLines);
   return {
-    hiddenLineCount: Math.max(0, diffLines.length - maxLines),
-    visibleLines: diffLines.slice(0, maxLines)
+    hiddenLineCount,
+    visibleLines: lines
   };
 }
 
-export function formatDiffLineBadge(addedLineCount: number, removedLineCount: number): string {
-  return `${green(`+${addedLineCount}`)} ${red(`-${removedLineCount}`)}`;
+export function formatDiffLineBadge(
+  addedLineCount: number,
+  removedLineCount: number,
+  changedLineCount = 0
+): string {
+  const badge = formatPlainDiffLineBadge({ addedLineCount, changedLineCount, removedLineCount });
+  if (badge.startsWith("~")) {
+    return badge;
+  }
+  const match = /^\+(\d+) -(\d+)$/u.exec(badge);
+  if (match === null) {
+    return badge;
+  }
+  return `${green(`+${match[1]}`)} ${red(`-${match[2]}`)}`;
 }
 
 export function colorizeDiffLine(line: string): string {

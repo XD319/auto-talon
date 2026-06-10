@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 
 import { AppError } from "../../core/app-error.js";
+import { buildFileDiff } from "../../presentation/file-diff.js";
 import {
   aggregateFileDiffSummaries,
   buildFileChangeOutput,
@@ -162,16 +163,21 @@ export async function executeWriteFile(
     }
   }
 
+  const originalContent = await readFileUtf8OrEmpty(targetPath);
+  const fileExisted = await exists(targetPath);
+
   if (dryRun) {
-    return fileWriteDryRunResult(targetPath, "write_file", "", content);
+    return fileWriteDryRunResult(targetPath, "write_file", originalContent, content);
   }
 
-  const checkpoint = await createRollbackArtifact(targetPath, "write_file", context.workspaceRoot);
+  const checkpoint = fileExisted
+    ? await createRollbackArtifactFromContent(targetPath, "write_file", originalContent, context.workspaceRoot)
+    : await createRollbackArtifact(targetPath, "write_file", context.workspaceRoot);
 
   await fs.mkdir(dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, content, "utf8");
 
-  const diffSummary = summarizeFileChange("", content);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, content, targetPath);
   return {
     artifacts: [
       checkpoint,
@@ -179,9 +185,9 @@ export async function executeWriteFile(
         artifactType: "file",
         content: {
           afterText: clipText(content),
-          beforeText: null,
+          beforeText: fileExisted ? clipText(originalContent) : null,
           diffSummary,
-          unifiedDiff: createUnifiedDiff("", content, targetPath),
+          unifiedDiff,
           operation: "write_file",
           path: targetPath
         },
@@ -264,7 +270,7 @@ export async function executeUpdateFile(
 
   await fs.writeFile(targetPath, updatedContent, "utf8");
 
-  const diffSummary = summarizeFileChange(originalContent, updatedContent);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, updatedContent, targetPath);
   return {
     artifacts: [
       checkpoint,
@@ -274,7 +280,7 @@ export async function executeUpdateFile(
           afterText: clipText(updatedContent),
           beforeText: clipText(originalContent),
           diffSummary,
-          unifiedDiff: createUnifiedDiff(originalContent, updatedContent, targetPath),
+          unifiedDiff,
           operation: "update_file",
           path: targetPath
         },
@@ -378,7 +384,7 @@ export async function executeApplyPatch(
 
   await fs.writeFile(targetPath, workingContent, "utf8");
 
-  const diffSummary = summarizeFileChange(originalContent, workingContent);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, workingContent, targetPath);
   return {
     artifacts: [
       checkpoint,
@@ -388,7 +394,7 @@ export async function executeApplyPatch(
           afterText: clipText(workingContent),
           beforeText: clipText(originalContent),
           diffSummary,
-          unifiedDiff: createUnifiedDiff(originalContent, workingContent, targetPath),
+          unifiedDiff,
           operation: "apply_patch",
           path: targetPath
         },
@@ -421,7 +427,7 @@ export async function executeDeleteFile(
   );
 
   await fs.unlink(targetPath);
-  const diffSummary = summarizeFileChange(originalContent, "");
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, "", targetPath);
   return {
     artifacts: [
       checkpoint,
@@ -433,7 +439,7 @@ export async function executeDeleteFile(
           diffSummary,
           operation: "delete_file",
           path: targetPath,
-          unifiedDiff: createUnifiedDiff(originalContent, "", targetPath)
+          unifiedDiff
         },
         uri: targetPath
       }
@@ -462,7 +468,7 @@ export async function executeRenameFile(
   }
 
   if (dryRun) {
-    const diffSummary = summarizeFileChange(originalContent, originalContent);
+    const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, originalContent, fromPath);
     return {
       artifacts: [
         {
@@ -475,7 +481,7 @@ export async function executeRenameFile(
             operation: "rename_file",
             path: fromPath,
             toPath,
-            unifiedDiff: ""
+            unifiedDiff
           },
           uri: fromPath
         }
@@ -495,7 +501,7 @@ export async function executeRenameFile(
 
   await fs.mkdir(dirname(toPath), { recursive: true });
   await fs.rename(fromPath, toPath);
-  const diffSummary = summarizeFileChange(originalContent, originalContent);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, originalContent, fromPath);
   return {
     artifacts: [
       checkpoint,
@@ -508,7 +514,7 @@ export async function executeRenameFile(
           operation: "rename_file",
           path: fromPath,
           toPath,
-          unifiedDiff: ""
+          unifiedDiff
         },
         uri: toPath
       }
@@ -551,16 +557,17 @@ export async function executeApplyUnifiedDiff(
       );
       await fs.writeFile(targetPath, updatedContent, "utf8");
     }
+    const fileDiff = buildFileDiff(originalContent, updatedContent, targetPath);
     fileArtifacts.push({
       artifactType: "file",
       content: {
         afterText: clipText(updatedContent),
         beforeText: clipText(originalContent),
-        diffSummary: summarizeFileChange(originalContent, updatedContent),
+        diffSummary: fileDiff.diffSummary,
         dryRun,
         operation: "apply_unified_diff",
         path: targetPath,
-        unifiedDiff: createUnifiedDiff(originalContent, updatedContent, targetPath)
+        unifiedDiff: fileDiff.unifiedDiff
       },
       uri: targetPath
     });
@@ -835,7 +842,7 @@ function fileWriteDryRunResult(
   originalContent: string,
   updatedContent: string
 ): ToolExecutionResult {
-  const diffSummary = summarizeFileChange(originalContent, updatedContent);
+  const { diffSummary, unifiedDiff } = buildFileDiff(originalContent, updatedContent, targetPath);
   return {
     artifacts: [
       {
@@ -847,7 +854,7 @@ function fileWriteDryRunResult(
           dryRun: true,
           operation,
           path: targetPath,
-          unifiedDiff: createUnifiedDiff(originalContent, updatedContent, targetPath)
+          unifiedDiff
         },
         uri: targetPath
       }
@@ -877,6 +884,14 @@ async function exists(path: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function readFileUtf8OrEmpty(path: string): Promise<string> {
+  try {
+    return await fs.readFile(path, "utf8");
+  } catch {
+    return "";
   }
 }
 
@@ -1006,59 +1021,6 @@ function patchTargetHintDetails(hint: PatchTargetHint): Record<string, unknown> 
   };
 }
 
-function summarizeFileChange(beforeText: string, afterText: string): {
-  addedLineCount: number;
-  afterLineCount: number;
-  beforeLineCount: number;
-  changedLineCount: number;
-  removedLineCount: number;
-} {
-  const beforeLines = beforeText.split(/\r?\n/);
-  const afterLines = afterText.split(/\r?\n/);
-  const maxLineCount = Math.max(beforeLines.length, afterLines.length);
-  let changedLineCount = 0;
-
-  for (let index = 0; index < maxLineCount; index += 1) {
-    if ((beforeLines[index] ?? "") !== (afterLines[index] ?? "")) {
-      changedLineCount += 1;
-    }
-  }
-
-  return {
-    addedLineCount: Math.max(afterLines.length - beforeLines.length, 0),
-    afterLineCount: afterLines.length,
-    beforeLineCount: beforeLines.length,
-    changedLineCount,
-    removedLineCount: Math.max(beforeLines.length - afterLines.length, 0)
-  };
-}
-
 function clipText(value: string, maxLength = 4_000): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength)}\n...[truncated]`;
-}
-
-function createUnifiedDiff(beforeText: string, afterText: string, path: string): string {
-  const beforeLines = beforeText.split(/\r?\n/u);
-  const afterLines = afterText.split(/\r?\n/u);
-  const maxLineCount = Math.max(beforeLines.length, afterLines.length);
-  const lines = [`--- a/${path}`, `+++ b/${path}`, "@@ -1 +1 @@"];
-
-  for (let index = 0; index < maxLineCount; index += 1) {
-    const beforeLine = beforeLines[index];
-    const afterLine = afterLines[index];
-    if (beforeLine === afterLine) {
-      if (beforeLine !== undefined) {
-        lines.push(` ${beforeLine}`);
-      }
-      continue;
-    }
-    if (beforeLine !== undefined) {
-      lines.push(`-${beforeLine}`);
-    }
-    if (afterLine !== undefined) {
-      lines.push(`+${afterLine}`);
-    }
-  }
-
-  return clipText(lines.join("\n"), 12_000);
 }

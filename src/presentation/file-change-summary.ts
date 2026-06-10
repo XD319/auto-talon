@@ -7,9 +7,15 @@ export interface FileDiffSummary {
 }
 
 export function formatDiffLineBadge(
-  diffSummary: Pick<FileDiffSummary, "addedLineCount" | "removedLineCount">
+  diffSummary: Pick<FileDiffSummary, "addedLineCount" | "changedLineCount" | "removedLineCount">
 ): string {
-  return `+${diffSummary.addedLineCount} -${diffSummary.removedLineCount}`;
+  if (diffSummary.addedLineCount > 0 || diffSummary.removedLineCount > 0) {
+    return `+${diffSummary.addedLineCount} -${diffSummary.removedLineCount}`;
+  }
+  if (diffSummary.changedLineCount > 0) {
+    return `~${diffSummary.changedLineCount}`;
+  }
+  return "+0 -0";
 }
 
 export function formatFileEditSummary(action: string, path: string, diffSummary: FileDiffSummary): string {

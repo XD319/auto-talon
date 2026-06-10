@@ -16,7 +16,9 @@ describe("file-change-summary", () => {
 
   it("formats diff line badge", () => {
     expect(formatDiffLineBadge(diffSummary)).toBe("+12 -3");
-    expect(formatDiffLineBadge({ addedLineCount: 0, removedLineCount: 5 })).toBe("+0 -5");
+    expect(formatDiffLineBadge({ addedLineCount: 0, removedLineCount: 5, changedLineCount: 5 })).toBe("+0 -5");
+    expect(formatDiffLineBadge({ addedLineCount: 0, removedLineCount: 0, changedLineCount: 4 })).toBe("~4");
+    expect(formatDiffLineBadge({ addedLineCount: 0, removedLineCount: 0, changedLineCount: 0 })).toBe("+0 -0");
   });
 
   it("formats file edit summary with badge", () => {

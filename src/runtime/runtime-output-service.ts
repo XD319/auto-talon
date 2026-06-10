@@ -88,6 +88,7 @@ function projectTraceToOutput(event: TraceEvent): RuntimeOutputEventDraft | null
       return {
         eventType: "tool_status",
         payload: {
+          ...(event.payload.fileChange === undefined ? {} : { fileChange: event.payload.fileChange }),
           iteration: event.payload.iteration,
           status: "finished",
           summary: event.payload.summary,

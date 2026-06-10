@@ -1,4 +1,5 @@
 import type { JsonObject } from "./common.js";
+import type { FileChangeTracePayload } from "./trace.js";
 
 export type RuntimeOutputEventType =
   | "task_input"
@@ -56,6 +57,7 @@ export interface AssistantTurnCompletedOutputPayload extends JsonObject {
 }
 
 export interface ToolStatusOutputPayload extends JsonObject {
+  fileChange?: FileChangeTracePayload;
   iteration: number;
   status: "requested" | "started" | "finished" | "failed";
   summary: string;

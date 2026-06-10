@@ -20,6 +20,9 @@ importers:
       cron-parser:
         specifier: ^5.5.0
         version: 5.5.0
+      diff:
+        specifier: ^8.0.0
+        version: 8.0.0
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -796,6 +799,10 @@ packages:
   delayed-stream@1.0.0:
     resolution: {integrity: sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==}
     engines: {node: '>=0.4.0'}
+
+  diff@8.0.0:
+    resolution: {integrity: sha512-DJkPOAHudnz8swaqtm8cYmR9YfHLVDmoIH02+MqJiI/V9PxCf0WG+TBMduL7FZfnO53LhUXaPMo8Iw/uUJXLRA==}
+    engines: {node: '>=0.3.1'}
 
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
@@ -2301,6 +2308,8 @@ snapshots:
   deep-is@0.1.4: {}
 
   delayed-stream@1.0.0: {}
+
+  diff@8.0.0: {}
 
   dom-serializer@2.0.0:
     dependencies:

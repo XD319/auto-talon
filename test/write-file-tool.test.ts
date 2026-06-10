@@ -20,6 +20,37 @@ afterEach(async () => {
 });
 
 describe("WriteFileTool", () => {
+  it("computes diff against existing file content when overwriting", async () => {
+    const root = await createTempDir("auto-talon-write-file-overwrite-");
+    const filePath = join(root, "existing.txt");
+    await fs.writeFile(filePath, "line one\nline two\n", "utf8");
+    const tool = new WriteFileTool(createSandbox(root));
+
+    const prepared = tool.prepare(
+      {
+        content: "line one\nline three\n",
+        overwrite: true,
+        path: filePath
+      },
+      createContext(root)
+    );
+
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+    expect(result.success).toBe(true);
+    expect(result.output).toMatchObject({
+      addedLineCount: 1,
+      removedLineCount: 1
+    });
+
+    const fileArtifact = result.artifacts?.find((artifact) => artifact.artifactType === "file");
+    const content = fileArtifact?.content;
+    expect(typeof content).toBe("object");
+    if (typeof content === "object" && content !== null && !Array.isArray(content)) {
+      expect(String(content.unifiedDiff)).toContain("-line two");
+      expect(String(content.unifiedDiff)).toContain("+line three");
+    }
+  });
+
   it("does not create rollback snapshots when write_file fails with overwrite=false", async () => {
     const root = await createTempDir("auto-talon-write-file-");
     const filePath = join(root, "existing.txt");

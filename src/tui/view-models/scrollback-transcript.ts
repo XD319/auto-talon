@@ -154,7 +154,7 @@ export function updateScrollbackToolState(
   if (event.eventType === "tool_call_finished") {
     const fileChange = readFileChange(event.payload.fileChange);
     if (fileChange !== null) {
-      const summaryLine = `┊ ${icon} ${action} ${target} ${formatDiffLineBadge(fileChange.addedLineCount, fileChange.removedLineCount)}${status}\n`;
+      const summaryLine = `┊ ${icon} ${action} ${target} ${formatDiffLineBadge(fileChange.addedLineCount, fileChange.removedLineCount, fileChange.changedLineCount)}${status}\n`;
       const diffPreview = formatScrollbackDiffPreview(fileChange.unifiedDiffPreview);
       return diffPreview.length > 0 ? `${summaryLine}${diffPreview}` : summaryLine;
     }

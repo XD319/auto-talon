@@ -1,3 +1,4 @@
+import { selectDiffPreviewLines } from "./diff-preview.js";
 import type { ArtifactDraft, ArtifactRecord, FileChangeTracePayload } from "../types/index.js";
 
 const MAX_PREVIEW_LINES = 15;
@@ -39,8 +40,8 @@ function truncateUnifiedDiffPreview(unifiedDiff: string): string {
     return "";
   }
 
-  const lines = unifiedDiff.split(/\r?\n/u);
-  let preview = lines.slice(0, MAX_PREVIEW_LINES).join("\n");
+  const { lines } = selectDiffPreviewLines(unifiedDiff, MAX_PREVIEW_LINES);
+  let preview = lines.join("\n");
   if (preview.length > MAX_PREVIEW_BYTES) {
     preview = preview.slice(0, MAX_PREVIEW_BYTES);
   }
