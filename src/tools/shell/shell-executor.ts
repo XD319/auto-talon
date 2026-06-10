@@ -216,17 +216,27 @@ export class ShellExecutor implements ShellCommandExecutor {
       });
 
       child.once("close", (exitCode) => {
-        finish(() => {
-          resolve({
-            durationMs: Date.now() - startedAt,
-            exitCode: exitCode ?? -1,
-            stderr,
-            stderrTruncated,
-            stdout,
-            stdoutTruncated,
-            timedOut
+        const resolveResult = (): void => {
+          finish(() => {
+            resolve({
+              durationMs: Date.now() - startedAt,
+              exitCode: exitCode ?? -1,
+              stderr,
+              stderrTruncated,
+              stdout,
+              stdoutTruncated,
+              timedOut
+            });
           });
-        });
+        };
+
+        if (timedOut) {
+          // On Windows, stdout data events can be queued after close when the child is killed.
+          setImmediate(resolveResult);
+          return;
+        }
+
+        resolveResult();
       });
     });
   }

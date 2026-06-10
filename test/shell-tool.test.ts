@@ -64,11 +64,11 @@ describe("ShellExecutor", () => {
     });
 
     const result = await executor.execute({
-      command: "process.stdout.write('started\\n'); setTimeout(() => {}, 1000);",
+      command: "process.stdout.write('started\\n'); setTimeout(() => {}, 60_000);",
       cwd: process.cwd(),
       env: {},
       signal: new AbortController().signal,
-      timeoutMs: 250
+      timeoutMs: 2_000
     });
 
     expect(result.timedOut).toBe(true);
