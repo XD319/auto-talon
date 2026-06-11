@@ -2,7 +2,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import React from "react";
-import { Box, useApp, useStdout } from "ink";
+import { Box, useApp, useInput, useStdout } from "ink";
 
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
@@ -16,8 +16,12 @@ import {
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
 import { PromptZone } from "./components/prompt-zone.js";
+import { TodoPanel } from "./components/todo-panel.js";
 import { StatusBar, StatusLineRow } from "./components/status-bar.js";
+import { useSessionTodos } from "./hooks/use-session-todos.js";
 import { useStatusLine } from "./hooks/use-status-line.js";
+import type { TodoItem } from "../tools/todo-session-store.js";
+import { estimateTodoPanelRows, toTodoTracePayload } from "./view-models/todo-format.js";
 import { resolveStatusLineFields } from "../runtime/tui-status-line-config.js";
 import { formatGitBranchLabel, readGitBranchStatus } from "./workspace-git-status.js";
 import type { SessionIndexEntry } from "../types/index.js";
@@ -498,7 +502,7 @@ export function ChatTuiApp({
             "File edits: scrollback shows +added/-removed line counts with a folded diff preview; use /diff for more detail.",
             `Diff display: ${config.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
-            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history",
+            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | Ctrl+T tasks panel",
             "Saved sessions: use `talon tui --resume <id>` to restore UI state and messages from SQLite.",
             "Transcript is written to terminal scrollback; use your terminal scrollbar or mouse wheel to review history."
           ].join("\n")
@@ -1060,6 +1064,17 @@ export function ChatTuiApp({
         ? { kind: "approval" as const }
         : undefined;
 
+  useInput((_input, key) => {
+    if (key.ctrl && _input === "t") {
+      controller.toggleTodoPanel();
+    }
+  });
+
+  const sessionTodosView = useSessionTodos({
+    sessionTodos: controller.sessionTodos,
+    todoPanelOpen: controller.todoPanelOpen
+  });
+
   const textInput = useTextInput({
     ...(activePrompt !== undefined ? { activePrompt } : {}),
     busy: controller.busy,
@@ -1311,6 +1326,9 @@ export function ChatTuiApp({
               }
         }
       />
+      {sessionTodosView.todos.length > 0 ? (
+        <TodoPanel open={sessionTodosView.open} todos={sessionTodosView.todos} />
+      ) : null}
       <Box>
         {controller.pendingApproval === null && controller.pendingClarifyPrompt === null ? (
           <InputBox
@@ -1362,21 +1380,27 @@ interface ChatChromeRowsInput {
   inputLineCount: number;
   queuedPromptCount: number;
   slashHintCount: number;
+  sessionTodos: TodoItem[];
   statusHintLength: number;
   statusLineHidden: boolean;
   statusLineRows: number;
+  todoPanelOpen: boolean;
   valueLength: number;
 }
 
 export function estimateChatChromeRows(input: ChatChromeRowsInput): number {
   const bannerRows = 1;
   const statusRows = input.statusLineHidden ? 0 : input.statusLineRows;
+  const todoPanelRows = estimateTodoPanelRows(
+    toTodoTracePayload(input.sessionTodos).todos,
+    input.todoPanelOpen
+  );
   const promptRows = input.activeClarifyPrompt !== null
     ? estimateClarifyPromptRows(input.activeClarifyPrompt)
     : input.hasPendingApproval
       ? 8
       : estimateInputRows(input);
-  return bannerRows + promptRows + statusRows;
+  return bannerRows + promptRows + statusRows + todoPanelRows;
 }
 
 function estimateInputRows(input: ChatChromeRowsInput): number {

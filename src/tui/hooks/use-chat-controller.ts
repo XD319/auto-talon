@@ -3,6 +3,7 @@
 import React from "react";
 
 import { createDefaultRunOptions } from "../../runtime/index.js";
+import type { TodoItem } from "../../tools/todo-session-store.js";
 import type { TuiAppConfig, TuiRuntimeService } from "../runtime-api.js";
 import type {
   ApprovalAllowScope,
@@ -114,6 +115,9 @@ export interface ChatController {
     tasks: number;
   };
   tokenHud: TokenHud;
+  todoPanelOpen: boolean;
+  sessionTodos: TodoItem[];
+  toggleTodoPanel: () => void;
   uiStatus: UiStatus;
   usedMemoryCount: number;
 }
@@ -175,6 +179,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     taskLabel: null
   });
   const [usedMemoryCount, setUsedMemoryCount] = React.useState(0);
+  const [sessionTodos, setSessionTodos] = React.useState<TodoItem[]>([]);
+  const [todoPanelOpen, setTodoPanelOpen] = React.useState(true);
 
   const startedAtRef = React.useRef(Date.now());
   const activeAbortControllerRef = React.useRef<AbortController | null>(null);
@@ -322,10 +328,20 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             event.payload.fileChange
           );
         }
+        if (event.eventType === "tool_call_finished" && event.payload.toolName === "todo") {
+          const sessionId = activeSessionIdRef.current;
+          if (sessionId !== null) {
+            setSessionTodos(input.service.getSessionTodos(sessionId));
+          }
+        }
       });
     },
     [input, recordFileWrite, stopTraceSubscription]
   );
+
+  const toggleTodoPanel = React.useCallback(() => {
+    setTodoPanelOpen((current) => !current);
+  }, []);
 
   const addSystemMessage = React.useCallback((text: string) => {
     setMessages((current) => [
@@ -502,6 +518,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       setQueuedPrompts([]);
       resetTokenHudState();
       setUsedMemoryCount(0);
+      setSessionTodos(input.service.getSessionTodos(sessionId));
+      setTodoPanelOpen(true);
       setActiveSessionId(sessionId);
       stopTraceSubscription();
       resetAssistantProgressBuffers();
@@ -1470,6 +1488,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     switchActiveSession,
     summary,
     tokenHud,
+    todoPanelOpen,
+    sessionTodos,
+    toggleTodoPanel,
     uiStatus,
     usedMemoryCount
   };

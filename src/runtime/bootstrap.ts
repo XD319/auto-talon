@@ -809,6 +809,7 @@ export function createApplication(
     experiencePlane,
     skillDraftManager,
     skillRegistry,
+    todoSessionStore,
     toolOverrideStore,
     toolRegistry,
     inboxService,

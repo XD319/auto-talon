@@ -2,6 +2,8 @@ import type { ApprovalRecord, FileChangeTracePayload, ToolCallRecord, TraceEvent
 import { formatDiffLineBadge } from "../../presentation/file-change-summary.js";
 import { resolveFileChangeDisplayPath } from "../../presentation/file-diff.js";
 import { formatToolCallFailureForUser } from "../../presentation/tool-failure-formatters.js";
+import { readTodoSnapshot } from "../../presentation/todo-trace.js";
+import { formatTodoActivityText } from "./todo-format.js";
 
 export type ChatMessage =
   | {
@@ -179,6 +181,12 @@ function formatFinishedToolCall(event: Extract<TraceEvent, { eventType: "tool_ca
   if (fileChange !== null && isFileEditTool(toolName)) {
     return `Write ${resolveFileChangeDisplayPath(fileChange.path, { unifiedDiffPreview: fileChange.unifiedDiffPreview })} (${formatDiffLineBadge(fileChange)})`;
   }
+  if (toolName === "todo") {
+    const snapshot = readTodoSnapshot(event.payload.todoSnapshot);
+    if (snapshot !== null) {
+      return formatTodoActivityText(snapshot);
+    }
+  }
   const compact = collapseWhitespace(summary).slice(0, 120);
   return compact.length > 0 ? `${toolName} done: ${compact}` : `${toolName} done (${toolCallId.slice(0, 8)})`;
 }
@@ -237,7 +245,7 @@ export function activityDisplayKey(message: Extract<ChatMessage, { kind: "activi
 }
 
 function isHighValueFinishedTool(toolName: string): boolean {
-  return toolName.includes("write") || toolName === "patch" || toolName === "shell";
+  return toolName.includes("write") || toolName === "patch" || toolName === "shell" || toolName === "todo";
 }
 
 function isFileEditTool(toolName: string): boolean {

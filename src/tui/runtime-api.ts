@@ -24,6 +24,7 @@ export type TuiRuntimeService = Pick<
   | "createSession"
   | "explainMemoryRecall"
   | "forgetMemory"
+  | "getSessionTodos"
   | "listCommitments"
   | "listExperiences"
   | "listMemories"

@@ -1,5 +1,6 @@
 import type { DiffDisplayMode } from "../../presentation/diff-display.js";
 import { resolveFileChangeDisplayPath } from "../../presentation/file-diff.js";
+import { readTodoSnapshot } from "../../presentation/todo-trace.js";
 import type { FileChangeTracePayload, RuntimeOutputEvent, TraceEvent } from "../../types/index.js";
 import {
   formatAssistantScrollbackBody,
@@ -10,6 +11,7 @@ import {
 import { sanitizeTerminalText } from "../text-sanitize.js";
 import type { ChatMessage } from "./chat-messages.js";
 import { formatDiffLineBadge, formatScrollbackDiffPreview } from "./diff-format.js";
+import { formatTodoScrollbackCompact } from "./todo-format.js";
 import { buildTranscriptRows, type TranscriptViewerMode } from "./transcript-output.js";
 
 export interface ScrollbackTurnState {
@@ -165,6 +167,14 @@ export function updateScrollbackToolState(
   state.delete(toolCallId);
 
   if (event.eventType === "tool_call_finished") {
+    if (event.payload.toolName === "todo") {
+      const snapshot = readTodoSnapshot(event.payload.todoSnapshot);
+      if (snapshot !== null) {
+        const startedAt = current.startedAt ?? current.requestedAt;
+        return formatTodoScrollbackCompact(snapshot, formatElapsed(startedAt, event.timestamp));
+      }
+    }
+
     const fileChange = readFileChange(event.payload.fileChange);
     if (fileChange !== null) {
       const target = resolveFileChangeDisplayPath(fileChange.path, {
@@ -250,6 +260,9 @@ export function formatTranscriptForPrint(
 }
 
 function toolAction(toolName: string): string {
+  if (toolName === "todo") {
+    return "todo";
+  }
   if (toolName.includes("write") || toolName === "patch") {
     return "write";
   }
@@ -263,6 +276,9 @@ function toolAction(toolName: string): string {
 }
 
 function toolIcon(action: string): string {
+  if (action === "todo") {
+    return "☑";
+  }
   if (action === "write") {
     return "✍";
   }

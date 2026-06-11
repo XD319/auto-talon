@@ -68,6 +68,7 @@ import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
+import type { TodoItem, TodoSessionStore } from "../tools/todo-session-store.js";
 import type { ToolOverrideStore } from "../tools/tool-overrides.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ExecutionKernel } from "./execution-kernel.js";
@@ -270,6 +271,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   runtimeConfigSource: "defaults" | "env" | "file";
   skillDraftManager: SkillDraftManager;
   skillRegistry: SkillRegistry;
+  todoSessionStore: TodoSessionStore;
   toolOverrideStore: ToolOverrideStore;
   toolRegistry: ToolRegistry;
   shellBackend: ShellBackend;
@@ -372,6 +374,10 @@ export class AgentApplicationService {
 
   public loadSessionUiState(sessionId: string): SessionUiState | null {
     return this.dependencies.sessionUiStateService.load(sessionId);
+  }
+
+  public getSessionTodos(sessionId: string): TodoItem[] {
+    return this.dependencies.todoSessionStore.get(sessionId);
   }
 
   public saveSessionUiState(sessionId: string, input: SaveSessionUiStateInput): void {
