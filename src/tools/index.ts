@@ -16,6 +16,7 @@ export * from "./availability/index.js";
 export * from "./policy/index.js";
 export * from "./web-fetch-tool.js";
 export * from "./web-search-tool.js";
+export * from "./cronjob-tool.js";
 export * from "./delegate-task-tool.js";
 export * from "./todo-tool.js";
 export * from "./todo-session-store.js";

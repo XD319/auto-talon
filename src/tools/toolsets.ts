@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolSideEffectLevel } from "../types/index.js";
 
 export const TOOLSET_NAMES = [
+  "automation",
   "file",
   "shell",
   "web",
@@ -15,6 +16,7 @@ export type ToolsetName = (typeof TOOLSET_NAMES)[number];
 
 export const TOOLSET_TOOLS: Record<ToolsetName, readonly string[]> = {
   agent: ["delegate_task", "todo"],
+  automation: ["cronjob"],
   file: ["read_file", "write_file", "patch", "search_files", "glob"],
   interaction: ["clarify"],
   mcp: [],

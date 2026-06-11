@@ -61,7 +61,8 @@ import {
   WebFetchTool,
   WebSearchTool,
   SessionSearchTool,
-  TodoTool
+  TodoTool,
+  CronjobTool
 } from "../tools/index.js";
 import { TodoSessionStore } from "../tools/todo-session-store.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
@@ -452,6 +453,7 @@ export function createApplication(
   const terminalSessionManager = new TerminalSessionManager();
   const todoSessionStore = new TodoSessionStore();
   const delegateTaskTool = new DelegateTaskTool();
+  const cronjobTool = new CronjobTool();
   const toolRegistry = new ToolRegistry().registerAll([
     new AskUserTool(),
     new CodeSearchTool(sandboxService),
@@ -468,6 +470,7 @@ export function createApplication(
     new WebSearchTool(sandboxService, config.webSearch),
     new SessionSearchTool({ searchService: sessionMessageSearchService }),
     new TodoTool(todoSessionStore),
+    cronjobTool,
     ...mcpTools
   ]);
   const toolOrchestrator = new ToolOrchestrator({
@@ -727,6 +730,19 @@ export function createApplication(
     scheduleRepository: storage.schedules,
     scheduleRunRepository: storage.scheduleRuns,
     traceService
+  });
+  cronjobTool.bindPort({
+    archiveSchedule: (scheduleId) => schedulerService.archiveSchedule(scheduleId),
+    createSchedule: (input) =>
+      schedulerService.createSchedule({
+        ...input,
+        providerName: config.provider.name
+      }),
+    listSchedules: (query) => schedulerService.listSchedules(query),
+    pauseSchedule: (scheduleId) => schedulerService.pauseSchedule(scheduleId),
+    resumeSchedule: (scheduleId) => schedulerService.resumeSchedule(scheduleId),
+    runScheduleNow: (scheduleId) => schedulerService.runNow(scheduleId),
+    updateSchedule: (scheduleId, patch) => schedulerService.updateSchedule(scheduleId, patch)
   });
 
   service = new AgentApplicationService({
