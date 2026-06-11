@@ -103,6 +103,7 @@ function asControllerService(service: ControllerServiceStub): AgentApplicationSe
   return {
     ensureRuntimeSession: (sessionId, input) =>
       createStubSessionRecord(sessionId, input?.title ?? "Untitled session"),
+    getSessionTodos: () => [],
     loadSessionUiState: () => null,
     saveSessionUiState: () => {},
     ...service
@@ -469,6 +470,49 @@ describe("chat tui view-models", () => {
     expect(stripAnsi(output ?? "")).toContain("\u250a \u270d write src/app.ts +2 -1");
     expect(stripAnsi(output ?? "")).toContain("\u250a   -old");
     expect(stripAnsi(output ?? "")).toContain("\u250a   +new");
+  });
+
+  it("formats todo trace completion as a compact scrollback line", () => {
+    const state = new Map<string, ScrollbackToolState>();
+    const requested = createTraceEvent("tool_call_requested", {
+      input: {
+        merge: true,
+        todos: [{ content: "Refactor auth", id: "todo-1", status: "in_progress" }]
+      },
+      iteration: 1,
+      toolCallId: "call-todo",
+      toolName: "todo"
+    });
+    const started = {
+      ...createTraceEvent("tool_call_started", {
+        iteration: 1,
+        toolCallId: "call-todo",
+        toolName: "todo"
+      }),
+      timestamp: "2026-01-01T00:00:00.000Z"
+    };
+    const finished = {
+      ...createTraceEvent("tool_call_finished", {
+        iteration: 1,
+        outputPreview: "ignored",
+        summary: "Updated 1 todo item(s) for session abc",
+        todoSnapshot: {
+          doneCount: 0,
+          totalCount: 1,
+          todos: [{ content: "Refactor auth", id: "todo-1", status: "in_progress" }]
+        },
+        toolCallId: "call-todo",
+        toolName: "todo"
+      }),
+      timestamp: "2026-01-01T00:00:00.300Z"
+    };
+
+    updateScrollbackToolState(state, requested);
+    updateScrollbackToolState(state, started);
+    const output = updateScrollbackToolState(state, finished);
+    expect(stripAnsi(output ?? "")).toContain("todo updated");
+    expect(stripAnsi(output ?? "")).toContain("0/1 done");
+    expect(stripAnsi(output ?? "")).not.toContain("Updated 1 todo item(s)");
   });
 
   it("keeps elapsed time for non-file tool trace completion", () => {
