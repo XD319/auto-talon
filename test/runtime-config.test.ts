@@ -30,6 +30,9 @@ describe("runtime config", () => {
     expect(config.compact.messageThreshold).toBe(100);
     expect(config.compact.thresholdRatio).toBe(0.8);
     expect(config.contextRetention.toolOutputMaxTokens).toBe(2_500);
+    expect(config.tui.statusLine.style).toBe("standard");
+    expect(config.tui.statusLine.type).toBe("builtin");
+    expect(config.tui.statusLine.showCost).toBe(false);
 
     const sandbox = new SandboxService({
       allowedFetchHosts: config.allowedFetchHosts,

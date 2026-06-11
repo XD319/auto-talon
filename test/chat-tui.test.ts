@@ -2766,7 +2766,20 @@ function createControllerConfig(): AppConfig {
       usedOutput: 0
     },
     tui: {
-      diffDisplay: "collapsed"
+      diffDisplay: "collapsed",
+      statusLine: {
+        command: null,
+        padding: 0,
+        showBranch: true,
+        showCost: false,
+        showMode: true,
+        showModel: true,
+        showTokens: true,
+        style: "standard",
+        timeoutMs: 2000,
+        type: "builtin",
+        updateIntervalMs: 300
+      }
     },
     workflow: {
       failureGuidedRetry: {

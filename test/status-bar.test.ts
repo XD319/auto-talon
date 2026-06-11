@@ -25,4 +25,13 @@ describe("status bar helpers", () => {
     expect(buildContextMetric(50)).toEqual({ label: "ctx 50%", tone: "warn" });
     expect(buildContextMetric(80)).toEqual({ label: "ctx 80%", tone: "danger" });
   });
+
+  it("builds session segments without mixing hints", () => {
+    const segments = buildStatusSegments({
+      metrics: [{ label: "mock-model", tone: "muted" }],
+      primary: { label: "running", tone: "accent" }
+    });
+
+    expect(segments.map((segment) => segment.label)).toEqual(["running", "mock-model"]);
+  });
 });
