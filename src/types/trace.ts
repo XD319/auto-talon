@@ -335,6 +335,21 @@ export interface FileChangeTracePayload extends JsonObject {
   unifiedDiffPreview: string;
 }
 
+export type TodoTraceStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+export interface TodoTraceItem extends JsonObject {
+  content: string;
+  id: string;
+  status: TodoTraceStatus;
+  statusUpdatedAt?: string;
+}
+
+export interface TodoTracePayload extends JsonObject {
+  doneCount: number;
+  todos: TodoTraceItem[];
+  totalCount: number;
+}
+
 export interface ToolCallFinishedPayload extends JsonObject {
   fileChange?: FileChangeTracePayload;
   iteration: number;
@@ -342,6 +357,7 @@ export interface ToolCallFinishedPayload extends JsonObject {
   toolName: string;
   summary: string;
   outputPreview: string;
+  todoSnapshot?: TodoTracePayload;
 }
 
 export interface ToolCallFailedPayload extends JsonObject {

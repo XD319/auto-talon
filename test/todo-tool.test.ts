@@ -23,10 +23,35 @@ describe("TodoTool", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       const output = result.output as { todos: Array<{ id: string; status: string }> };
-      expect(output.todos).toEqual([
-        { content: "Inspect repo", id: "todo-1", status: "in_progress" }
-      ]);
+      expect(output.todos).toHaveLength(1);
+      expect(output.todos[0]).toMatchObject({
+        content: "Inspect repo",
+        id: "todo-1",
+        status: "in_progress"
+      });
+      expect(typeof output.todos[0]?.statusUpdatedAt).toBe("string");
     }
+  });
+
+  it("preserves insertion order when merging new todos", async () => {
+    const store = new TodoSessionStore();
+    const tool = new TodoTool(store);
+    const context = createContext("session-3");
+
+    await tool.execute(
+      tool.prepare({
+        todos: [{ content: "Second", id: "todo-2", status: "pending" }]
+      }).preparedInput,
+      context
+    );
+    await tool.execute(
+      tool.prepare({
+        todos: [{ content: "First", id: "todo-1", status: "pending" }]
+      }).preparedInput,
+      context
+    );
+
+    expect(store.get("session-3").map((todo) => todo.id)).toEqual(["todo-2", "todo-1"]);
   });
 
   it("replaces todos when merge is false", async () => {

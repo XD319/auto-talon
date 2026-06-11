@@ -7,6 +7,7 @@ import type { ClarifyService } from "../approvals/clarify-service.js";
 import { AppError, toAppError } from "../core/app-error.js";
 import { safePreview } from "../core/serialization.js";
 import { extractFileChangeFromArtifacts } from "../presentation/file-change-trace.js";
+import { extractTodoSnapshotFromOutput } from "../presentation/todo-trace.js";
 import type { ApprovalService } from "../approvals/approval-service.js";
 import type { AuditService } from "../audit/audit-service.js";
 import type { ContextPolicy } from "../policy/context-policy.js";
@@ -144,11 +145,14 @@ export class ToolOrchestrator {
         .listByTaskId(request.taskId)
         .filter((artifact) => artifact.toolCallId === toolCall.toolCallId);
       const fileChange = extractFileChangeFromArtifacts(replayedArtifacts);
+      const todoSnapshot =
+        tool.name === "todo" ? extractTodoSnapshotFromOutput(toolCall.output) : undefined;
       this.dependencies.traceService.record({
         actor: `tool.${tool.name}`,
         eventType: "tool_call_finished",
         payload: {
           ...(fileChange === undefined ? {} : { fileChange }),
+          ...(todoSnapshot === undefined ? {} : { todoSnapshot }),
           iteration: request.iteration,
           outputPreview: safePreview(toolCall.output),
           replayed: true,
@@ -450,11 +454,14 @@ export class ToolOrchestrator {
       });
 
       const fileChange = extractFileChangeFromArtifacts(result.artifacts ?? []);
+      const todoSnapshot =
+        tool.name === "todo" ? extractTodoSnapshotFromOutput(persistedOutput) : undefined;
       this.dependencies.traceService.record({
         actor: `tool.${tool.name}`,
         eventType: "tool_call_finished",
         payload: {
           ...(fileChange === undefined ? {} : { fileChange }),
+          ...(todoSnapshot === undefined ? {} : { todoSnapshot }),
           iteration: request.iteration,
           outputPreview: safePreview(persistedOutput),
           summary: result.summary,
