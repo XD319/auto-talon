@@ -2,7 +2,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import React from "react";
-import { Box, useApp } from "ink";
+import { Box, useApp, useStdout } from "ink";
 
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
@@ -16,8 +16,10 @@ import {
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
 import { PromptZone } from "./components/prompt-zone.js";
-import { buildContextMetric, normalizeStatusLabel, StatusBar } from "./components/status-bar.js";
-import { formatCompactTokenMetric } from "./token-pricing.js";
+import { StatusBar, StatusLineRow } from "./components/status-bar.js";
+import { useStatusLine } from "./hooks/use-status-line.js";
+import { resolveStatusLineFields } from "../runtime/tui-status-line-config.js";
+import { formatGitBranchLabel, readGitBranchStatus } from "./workspace-git-status.js";
 import type { SessionIndexEntry } from "../types/index.js";
 import { SessionBrowser } from "./components/session-browser.js";
 import { SessionRecap } from "./components/session-recap.js";
@@ -817,6 +819,13 @@ export function ChatTuiApp({
       }
 
       if (text === "/status") {
+        const statusLineConfig = config.tui.statusLine;
+        const statusLineFields = resolveStatusLineFields(statusLineConfig);
+        const statusCwd =
+          activeSessionId !== null
+            ? (service.showSession(activeSessionId).session?.cwd ?? cwd)
+            : cwd;
+        const gitStatus = readGitBranchStatus(statusCwd);
         const lines = [
           `session: ${sessionTitle}`,
           `session_id: ${activeSessionId}`,
@@ -835,6 +844,10 @@ export function ChatTuiApp({
           `ui_status: ${controller.uiStatus.primaryLabel}`,
           `run_state: ${controller.uiStatus.runState}`,
           `elapsed: ${controller.runDurationLabel}`,
+          `status_line.type: ${statusLineConfig.type}`,
+          `status_line.style: ${statusLineConfig.style}`,
+          `status_line.fields: model=${statusLineFields.showModel} mode=${statusLineFields.showMode} branch=${statusLineFields.showBranch} tokens=${statusLineFields.showTokens} cost=${statusLineFields.showCost}`,
+          `git_branch: ${gitStatus === null ? "(unavailable)" : formatGitBranchLabel(gitStatus)}`,
           "ui_scroll: native_terminal_scrollback",
           `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
@@ -1201,16 +1214,33 @@ export function ChatTuiApp({
     }
   }, [controller.pendingApproval?.approvalId, controller.pendingClarifyPrompt?.promptId]);
 
-  const hasBlockingPrompt = controller.pendingApproval !== null || controller.pendingClarifyPrompt !== null;
-  const statusDetails = hasBlockingPrompt
-    ? []
-    : [
-        ...(controller.uiStatus.runState === "running" ? [controller.runDurationLabel] : []),
-        ...(controller.uiStatus.runState !== "running" && controller.activeSessionId !== null
-          ? [`session ${controller.activeSessionId.slice(0, 8)}`]
-          : []),
-        `mode ${interactionMode}`
-      ];
+  const bannerCwd =
+    activeSessionId !== null
+      ? (service.showSession(activeSessionId).session?.cwd ?? cwd)
+      : cwd;
+  const { stdout } = useStdout();
+  const renderWidthChars = stdout.columns ?? process.stdout.columns ?? 120;
+  const statusLine = useStatusLine({
+    activeSessionId: controller.activeSessionId,
+    config: config.tui.statusLine,
+    cwd: bannerCwd,
+    inputLimit: config.tokenBudget.inputLimit,
+    interactionMode,
+    pendingApprovalToolName: controller.pendingApproval?.toolName ?? null,
+    pendingClarify: controller.pendingClarifyPrompt !== null,
+    primaryLabel: controller.uiStatus.primaryLabel,
+    primaryTone: controller.uiStatus.primaryTone,
+    provider: config.provider,
+    renderWidthChars,
+    reservedOutput: config.tokenBudget.reservedOutput,
+    runState: controller.uiStatus.runState,
+    tokenHud: controller.tokenHud
+  });
+  const showModelInStatusLine = resolveStatusLineFields(config.tui.statusLine).showModel;
+  const bannerDetails = [
+    ...(showModelInStatusLine ? [] : [config.provider.model ?? config.provider.name]),
+    shortenPath(bannerCwd, 20)
+  ];
   const statusHint =
     controller.pendingClarifyPrompt !== null
       ? "Arrows choose, Tab custom, Enter submit"
@@ -1223,31 +1253,11 @@ export function ChatTuiApp({
             : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
               ? "Up/Down + Enter resume"
               : "";
-  const tokenMetric = formatCompactTokenMetric(
-    controller.tokenHud.inputTokens,
-    config.tokenBudget.inputLimit,
-    config.tokenBudget.reservedOutput,
-    controller.tokenHud.estimatedCostUsd
-  );
-  const statusMetrics = [
-    buildContextMetric(controller.tokenHud.contextPercent, {
-      compactedCount: controller.tokenHud.compactedCount,
-      microPrunedCount: controller.tokenHud.microPrunedCount
-    }),
-    ...(tokenMetric !== null ? [{ label: tokenMetric, tone: "muted" as const }] : []),
-    ...(controller.usedMemoryCount > 0
-      ? [{ label: `mem ${controller.usedMemoryCount}`, tone: "accent" as const }]
-      : [])
-  ];
-  const bannerCwd =
-    activeSessionId !== null
-      ? (service.showSession(activeSessionId).session?.cwd ?? cwd)
-      : cwd;
 
   return (
     <Box flexDirection="column">
       <Banner
-        details={[config.provider.model ?? config.provider.name, shortenPath(bannerCwd, 20)]}
+        details={bannerDetails}
         productName="AUTOTALON"
         title={sessionTitle === "assistant" ? "Personal Assistant" : sessionTitle}
       />
@@ -1311,50 +1321,27 @@ export function ChatTuiApp({
             lines={textInput.lines}
             queuedPromptCount={controller.queuedPromptCount}
             slashHints={slashHints}
+            statusHint={statusHint}
             value={textInput.value}
           />
         ) : null}
       </Box>
-      <Box>
-        <StatusBar
-          details={statusDetails}
-          hints={[statusHint]}
-          metrics={statusMetrics}
-          primary={{
-            label: formatChatStatusLabel(controller.uiStatus.primaryLabel, {
-              pendingApprovalToolName: controller.pendingApproval?.toolName ?? null,
-              pendingClarifyPrompt: controller.pendingClarifyPrompt !== null,
-              runState: controller.uiStatus.runState
-            }),
-            tone: controller.uiStatus.primaryTone
-          }}
-        />
-      </Box>
+      {!statusLine.hidden ? (
+        <Box flexDirection="column">
+          {statusLine.activity !== null ? (
+            <StatusLineRow padding={statusLine.padding} segments={[statusLine.activity]} />
+          ) : null}
+          {statusLine.sessionSegments.length > 0 ? (
+            <StatusBar
+              padding={statusLine.padding}
+              primary={{ label: "", tone: "muted" }}
+              segments={statusLine.sessionSegments}
+            />
+          ) : null}
+        </Box>
+      ) : null}
     </Box>
   );
-}
-
-function formatChatStatusLabel(
-  label: string,
-  state: {
-    pendingApprovalToolName: string | null;
-    pendingClarifyPrompt: boolean;
-    runState: string;
-  }
-): string {
-  if (state.pendingApprovalToolName !== null) {
-    return `approval: ${state.pendingApprovalToolName}`;
-  }
-  if (state.pendingClarifyPrompt) {
-    return "clarify";
-  }
-  if (state.runState === "running") {
-    if (label !== "running task" && label.length > 0) {
-      return normalizeStatusLabel(label, 48);
-    }
-    return "running";
-  }
-  return normalizeStatusLabel(label, 72);
 }
 
 function shortenPath(value: string, maxLength: number): string {
@@ -1375,12 +1362,15 @@ interface ChatChromeRowsInput {
   inputLineCount: number;
   queuedPromptCount: number;
   slashHintCount: number;
+  statusHintLength: number;
+  statusLineHidden: boolean;
+  statusLineRows: number;
   valueLength: number;
 }
 
 export function estimateChatChromeRows(input: ChatChromeRowsInput): number {
   const bannerRows = 1;
-  const statusRows = 1;
+  const statusRows = input.statusLineHidden ? 0 : input.statusLineRows;
   const promptRows = input.activeClarifyPrompt !== null
     ? estimateClarifyPromptRows(input.activeClarifyPrompt)
     : input.hasPendingApproval
@@ -1398,7 +1388,8 @@ function estimateInputRows(input: ChatChromeRowsInput): number {
         : Math.max(1, input.inputLineCount);
   const queueRows = input.queuedPromptCount > 0 ? 1 : 0;
   const hintRows = Math.min(6, input.slashHintCount);
-  return baseRows + queueRows + hintRows;
+  const statusHintRows = input.statusHintLength > 0 ? 1 : 0;
+  return baseRows + queueRows + hintRows + statusHintRows;
 }
 
 function estimateClarifyPromptRows(

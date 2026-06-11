@@ -1,5 +1,4 @@
 ﻿import { writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 
 import { Command, InvalidArgumentError } from "commander";
 
@@ -44,6 +43,7 @@ import {
   RUNTIME_VERSION,
   type ResolveAppConfigOptions
 } from "../runtime/index.js";
+import { runGitReadOnly } from "../runtime/workspace/git-readonly.js";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing/index.js";
 import { startDashboardTui, startTui } from "../tui/index.js";
 import { startSessionApiServer } from "../session-api/server.js";
@@ -2473,24 +2473,6 @@ function formatWorkspaceChanges(cwd: string): string {
   ].join("\n");
 }
 
-function runGitReadOnly(cwd: string, args: string[]): { error: string | null; output: string } {
-  try {
-    return {
-      error: null,
-      output: execFileSync("git", args, {
-        cwd,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"]
-      })
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      error: message,
-      output: ""
-    };
-  }
-}
 
 function indent(value: string): string {
   return value

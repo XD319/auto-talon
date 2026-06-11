@@ -13,16 +13,42 @@ export interface StatusBarProps {
   details?: string[];
   hints?: string[];
   metrics?: StatusItem[];
+  padding?: number;
   primary: StatusItem;
+  segments?: StatusItem[];
 }
 
-function StatusBarBase({ details = [], hints = [], metrics = [], primary }: StatusBarProps): React.ReactElement {
+function StatusBarBase({
+  details = [],
+  hints = [],
+  metrics = [],
+  padding = 0,
+  primary,
+  segments
+}: StatusBarProps): React.ReactElement {
+  const renderedSegments = segments ?? buildStatusSegments({ details, hints, metrics, primary });
+  return <StatusLineRow padding={padding} segments={renderedSegments} />;
+}
+
+export const StatusBar = React.memo(StatusBarBase);
+
+export interface StatusLineRowProps {
+  padding?: number;
+  segments: StatusItem[];
+}
+
+function StatusLineRowBase({ padding = 0, segments }: StatusLineRowProps): React.ReactElement | null {
+  if (segments.length === 0) {
+    return null;
+  }
+
   const separator = "  |  ";
-  const segments = buildStatusSegments({ details, hints, metrics, primary });
+  const paddingText = padding > 0 ? " ".repeat(padding) : "";
 
   return (
     <Box>
       <Text color={theme.muted} wrap="truncate-end">
+        {paddingText.length > 0 ? <Text color={theme.muted}>{paddingText}</Text> : null}
         {segments.map((segment, index) => (
           <Text key={`${segment.label}:${index}`} color={statusToneToColor(segment.tone ?? "neutral")}>
             {index > 0 ? separator : ""}
@@ -34,7 +60,7 @@ function StatusBarBase({ details = [], hints = [], metrics = [], primary }: Stat
   );
 }
 
-export const StatusBar = React.memo(StatusBarBase);
+export const StatusLineRow = React.memo(StatusLineRowBase);
 
 export function buildStatusSegments({ details = [], hints = [], metrics = [], primary }: StatusBarProps): StatusItem[] {
   const renderedMetrics = metrics.filter((item) => item.label.length > 0);

@@ -12,6 +12,7 @@ export interface InputBoxProps {
   lines: string[];
   queuedPromptCount?: number;
   slashHints?: SlashSuggestion[];
+  statusHint?: string;
   value: string;
 }
 
@@ -23,6 +24,7 @@ function InputBoxBase({
   lines,
   queuedPromptCount = 0,
   slashHints = [],
+  statusHint = "",
   value
 }: InputBoxProps): React.ReactElement {
   const placeholder = getPlaceholderText(busy, hasPendingApproval);
@@ -60,6 +62,7 @@ function InputBoxBase({
           ))}
         </Box>
       ) : null}
+      {statusHint.length > 0 ? <Text color={theme.muted}>{statusHint}</Text> : null}
     </Box>
   );
 }
