@@ -22,7 +22,6 @@ export interface DashboardController {
   setSelectedPanel: React.Dispatch<React.SetStateAction<TuiPanelId>>;
   setSelectedTaskIndex: React.Dispatch<React.SetStateAction<number>>;
   snapshot: RuntimeDashboardViewModel;
-  statusLine: string;
   uiStatus: UiStatus;
 }
 
@@ -35,11 +34,7 @@ export function useDashboardController(input: {
   const [selectedTaskIndex, setSelectedTaskIndex] = React.useState(0);
   const [selectedApprovalIndex, setSelectedApprovalIndex] = React.useState(0);
   const [busy, setBusy] = React.useState(false);
-  const [statusLine, setStatusLine] = React.useState(
-    `Keys: 1-${PANEL_ORDER.length} panels, tab switch, arrows browse, 1-4 approval scope, a/d legacy, r refresh, q quit`
-  );
   const [uiStatus, setUiStatus] = React.useState<UiStatus>({
-    approvalLabel: null,
     primaryLabel: "dashboard ready",
     primaryTone: "muted",
     runState: "idle",
@@ -70,9 +65,7 @@ export function useDashboardController(input: {
           return dashboardSnapshotEquals(previousSnapshot, nextSnapshot) ? previousSnapshot : nextSnapshot;
         });
       } catch (error) {
-        setStatusLine(error instanceof Error ? `Refresh failed: ${error.message}` : "Refresh failed.");
         setUiStatus({
-          approvalLabel: null,
           primaryLabel: "refresh failed",
           primaryTone: "danger",
           runState: "failed",
@@ -101,12 +94,9 @@ export function useDashboardController(input: {
       setSelectedApprovalIndex((currentIndex) =>
         clampIndex(currentIndex, nextSnapshot.pendingApprovals.length)
       );
-      setStatusLine(`Refreshed at ${new Date().toLocaleTimeString("en-GB", { hour12: false })}`);
       setUiStatus(buildDashboardUiStatus(nextSnapshot, selectedPanel));
     } catch (error) {
-      setStatusLine(error instanceof Error ? `Refresh failed: ${error.message}` : "Refresh failed.");
       setUiStatus({
-        approvalLabel: null,
         primaryLabel: "refresh failed",
         primaryTone: "danger",
         runState: "failed",
@@ -143,13 +133,7 @@ export function useDashboardController(input: {
         Math.max(0, nextSnapshot.tasks.findIndex((task) => task.taskId === result.task.taskId))
       );
       setSelectedApprovalIndex(clampIndex(selectedApprovalIndex, nextSnapshot.pendingApprovals.length));
-      setStatusLine(
-        result.error === undefined
-          ? `${action === "allow" ? "Approved" : "Denied"} ${selectedApproval.toolName} for ${result.task.taskId.slice(0, 8)}`
-          : `Approved ${selectedApproval.toolName}, then task failed: ${result.error.code}`
-      );
       setUiStatus({
-        approvalLabel: selectedApproval.toolName,
         primaryLabel:
           result.error === undefined
             ? `${action === "allow" ? "approved" : "denied"} ${selectedApproval.toolName}`
@@ -159,11 +143,7 @@ export function useDashboardController(input: {
         taskLabel: result.task.taskId.slice(0, 8)
       });
     } catch (error) {
-      setStatusLine(
-        error instanceof Error ? `Approval action failed: ${error.message}` : "Approval action failed."
-      );
       setUiStatus({
-        approvalLabel: selectedApproval.toolName,
         primaryLabel: "approval action failed",
         primaryTone: "danger",
         runState: "failed",
@@ -186,7 +166,6 @@ export function useDashboardController(input: {
     setSelectedPanel,
     setSelectedTaskIndex,
     snapshot,
-    statusLine,
     uiStatus
   };
 }
@@ -212,7 +191,6 @@ export function previousPanel(current: TuiPanelId): TuiPanelId {
 function buildDashboardUiStatus(snapshot: RuntimeDashboardViewModel, selectedPanel: TuiPanelId): UiStatus {
   if (snapshot.pendingApprovals.length > 0) {
     return {
-      approvalLabel: snapshot.pendingApprovals[0]?.toolName ?? null,
       primaryLabel: `approval queue: ${snapshot.pendingApprovals.length}`,
       primaryTone: "warn",
       runState: "waiting_approval",
@@ -222,7 +200,6 @@ function buildDashboardUiStatus(snapshot: RuntimeDashboardViewModel, selectedPan
 
   if (snapshot.summary.failedTaskCount > 0) {
     return {
-      approvalLabel: null,
       primaryLabel: `review failures in ${selectedPanel}`,
       primaryTone: "danger",
       runState: "failed",
@@ -232,7 +209,6 @@ function buildDashboardUiStatus(snapshot: RuntimeDashboardViewModel, selectedPan
 
   if (snapshot.summary.runningTaskCount > 0) {
     return {
-      approvalLabel: null,
       primaryLabel: `watching ${snapshot.summary.runningTaskCount} running task(s)`,
       primaryTone: "accent",
       runState: "running",
@@ -241,7 +217,6 @@ function buildDashboardUiStatus(snapshot: RuntimeDashboardViewModel, selectedPan
   }
 
   return {
-    approvalLabel: null,
     primaryLabel: `panel ${selectedPanel}`,
     primaryTone: "muted",
     runState: "idle",
@@ -265,7 +240,6 @@ function updateUiStatus(
 
 function uiStatusEquals(left: UiStatus, right: UiStatus): boolean {
   return (
-    left.approvalLabel === right.approvalLabel &&
     left.primaryLabel === right.primaryLabel &&
     left.primaryTone === right.primaryTone &&
     left.runState === right.runState &&

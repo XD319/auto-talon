@@ -1,4 +1,5 @@
 import type { ProviderUsage } from "../types/index.js";
+import { contextWindowPercentFromPrompt } from "../runtime/context/token-counter.js";
 
 /** Rough placeholder pricing (USD per 1M tokens) for status estimates; override with env if needed. */
 export function estimateSessionCostUsd(
@@ -43,20 +44,35 @@ export function estimateSessionCostUsd(
 export function contextWindowPercent(
   usage: ProviderUsage,
   inputLimit: number,
-  outputLimit: number,
+  _outputLimit: number,
   reservedOutput = 0
 ): number {
-  const effectiveInput = Math.max(inputLimit - reservedOutput, 1);
-  const promptTokens = usage.inputTokens;
-  return Math.min(100, Math.round((promptTokens / effectiveInput) * 100));
+  return contextWindowPercentFromPrompt(usage.inputTokens, inputLimit, reservedOutput);
 }
 
-export function contextUsageColor(percent: number): "green" | "yellow" | "red" {
-  if (percent < 50) {
-    return "green";
+export function formatCompactTokenMetric(
+  inputTokens: number,
+  inputLimit: number,
+  reservedOutput: number,
+  estimatedCostUsd: number
+): string | null {
+  const parts: string[] = [];
+  const effectiveLimit = Math.max(inputLimit - reservedOutput, 1);
+  if (inputTokens > 0) {
+    parts.push(`${compactTokenCount(inputTokens)}/${compactTokenCount(effectiveLimit)}`);
   }
-  if (percent < 80) {
-    return "yellow";
+  if (estimatedCostUsd >= 0.0001) {
+    parts.push(`~$${estimatedCostUsd.toFixed(3)}`);
   }
-  return "red";
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+function compactTokenCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}m`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 1_000)}k`;
+  }
+  return String(value);
 }

@@ -68,7 +68,7 @@ export const InputBox = React.memo(InputBoxBase);
 
 function getPlaceholderText(busy: boolean, hasPendingApproval: boolean): string {
   if (hasPendingApproval) {
-    return "approval pending (a allow, d deny)";
+    return "1 once · 2 session · 3 always · 4 deny";
   }
   if (busy) {
     return "agent is running... keep typing to queue";

@@ -288,18 +288,25 @@ describe("chat tui view-models", () => {
       }), turn)
     ].join("");
 
-    expect(output).toBe("assistant\nHello world\n");
+    expect(stripAnsi(output)).toBe("● AutoTalon\nHello world\n");
   });
 
   it("prints final assistant completion once when no deltas were emitted", () => {
     const turn: ScrollbackTurnState = { headingWritten: false, printedText: "" };
 
-    expect(formatScrollbackOutputEvent(createOutputEvent("assistant_turn_completed", {
-      display: "final",
-      iteration: 1,
-      text: "Final answer.",
-      turnId: "turn-1"
-    }), turn)).toBe("assistant\nFinal answer.\n");
+    expect(
+      stripAnsi(
+        formatScrollbackOutputEvent(
+          createOutputEvent("assistant_turn_completed", {
+            display: "final",
+            iteration: 1,
+            text: "Final answer.",
+            turnId: "turn-1"
+          }),
+          turn
+        ) ?? ""
+      )
+    ).toBe("● AutoTalon\nFinal answer.\n");
   });
 
   it("does not print hidden assistant completion when no visible delta was emitted", () => {
@@ -315,27 +322,39 @@ describe("chat tui view-models", () => {
   });
 
   it("formats non-assistant messages as append-only scrollback lines", () => {
-    expect(formatScrollbackMessage({
-      id: "user-1",
-      kind: "user",
-      text: "run tests",
-      timestamp: "2026-01-01T00:00:00.000Z"
-    })).toBe("> run tests\n");
-    expect(formatScrollbackMessage({
-      id: "system-1",
-      kind: "system",
-      text: "conversation cleared",
-      timestamp: "2026-01-01T00:00:00.000Z"
-    })).toBe("\u250a conversation cleared\n");
+    expect(
+      stripAnsi(
+        formatScrollbackMessage({
+          id: "user-1",
+          kind: "user",
+          text: "run tests",
+          timestamp: "2026-01-01T00:00:00.000Z"
+        }) ?? ""
+      )
+    ).toBe("\n› run tests\n");
+    expect(
+      stripAnsi(
+        formatScrollbackMessage({
+          id: "system-1",
+          kind: "system",
+          text: "conversation cleared",
+          timestamp: "2026-01-01T00:00:00.000Z"
+        }) ?? ""
+      )
+    ).toBe("\u250a conversation cleared\n");
   });
 
   it("formats persisted agent messages for scrollback replay", () => {
-    expect(formatScrollbackMessage({
-      id: "agent-1",
-      kind: "agent",
-      text: "Done.",
-      timestamp: "2026-01-01T00:00:00.000Z"
-    })).toBe("assistant\nDone.\n");
+    expect(
+      stripAnsi(
+        formatScrollbackMessage({
+          id: "agent-1",
+          kind: "agent",
+          text: "Done.",
+          timestamp: "2026-01-01T00:00:00.000Z"
+        }) ?? ""
+      )
+    ).toBe("\n● AutoTalon\nDone.\n");
     expect(formatScrollbackMessage({
       id: "agent-stream",
       kind: "agent",
@@ -377,10 +396,11 @@ describe("chat tui view-models", () => {
       await delay(20);
       scrollback!.replayMessages(sessionMessages);
       await delay(20);
-      const output = chunks.join("");
-      expect(output).toContain("> Resume me");
-      expect(output).toContain("assistant\nWelcome back.");
-      expect(output.match(/assistant\nWelcome back\./gu)?.length).toBe(2);
+      const output = stripAnsi(chunks.join(""));
+      expect(output).toContain("› Resume me");
+      expect(output).toContain("● AutoTalon");
+      expect(output).toContain("Welcome back.");
+      expect(output.match(/● AutoTalon\nWelcome back\./gu)?.length).toBe(2);
     } finally {
       await unmountInkApp(app);
     }
@@ -1589,7 +1609,7 @@ describe("use-chat-controller helpers", () => {
         { kind: "agent", text: "Back again." }
       ]);
       expect(getController().sessionApprovalFingerprints).toEqual(["resume-fingerprint"]);
-      expect(getController().statusLine).toBe("session resumed");
+      expect(getController().uiStatus.primaryLabel).toBe("session resumed");
     } finally {
       await unmountInkApp(app);
     }
@@ -1818,7 +1838,7 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
-  it("starts token HUD at zero when only historical provider stats are available", async () => {
+  it("starts token HUD at zero for a fresh connection with trace-only stats", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
     const service: ControllerServiceStub = {
@@ -1924,6 +1944,112 @@ describe("use-chat-controller helpers", () => {
       expect(activeController.tokenHud.inputTokens).toBe(0);
       expect(activeController.tokenHud.outputTokens).toBe(0);
       expect(activeController.tokenHud.contextPercent).toBe(0);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("shows trace token HUD when resuming with session_total usage mode", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
+      },
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
+        return [];
+      },
+      listTasks() {
+        return [];
+      },
+      providerStats() {
+        return {
+          averageLatencyMs: 42,
+          failedRequests: 0,
+          lastErrorCategory: null,
+          lastRequestAt: "2026-01-01T00:00:00.000Z",
+          providerName: "mock",
+          retryCount: 0,
+          source: "trace" as const,
+          successfulRequests: 12,
+          tokenUsage: {
+            inputTokens: 50_000,
+            outputTokens: 25_000,
+            totalTokens: 75_000
+          },
+          totalRequests: 12
+        };
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask() {
+        return Promise.reject(new Error("runTask should not be called in this test."));
+      },
+      showTask() {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: null,
+          toolCalls: [],
+          trace: []
+        };
+      },
+      subscribeToTaskTrace() {
+        return () => {};
+      },
+      traceTask() {
+        return [];
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionId: "session-resume",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      await delay(20);
+      if (controller === null) {
+        throw new Error("Controller did not initialize.");
+      }
+      expect(controller.tokenHud.inputTokens).toBe(50_000);
+      expect(controller.tokenHud.outputTokens).toBe(25_000);
+      expect(controller.tokenHud.usageMode).toBe("session_total");
+      expect(controller.tokenHud.contextPercent).toBeGreaterThan(0);
     } finally {
       await unmountInkApp(app);
     }

@@ -6,10 +6,10 @@ export type UiRunState =
   | "interrupted"
   | "running"
   | "succeeded"
-  | "waiting_approval";
+  | "waiting_approval"
+  | "waiting_clarification";
 
 export interface UiStatus {
-  approvalLabel: string | null;
   primaryLabel: string;
   primaryTone: StatusTone;
   runState: UiRunState;

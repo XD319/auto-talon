@@ -21,6 +21,8 @@ describe("status bar helpers", () => {
 
   it("formats context as the compact token metric", () => {
     expect(buildContextMetric(42)).toEqual({ label: "ctx 42%", tone: "success" });
+    expect(buildContextMetric(49)).toEqual({ label: "ctx 49%", tone: "success" });
+    expect(buildContextMetric(50)).toEqual({ label: "ctx 50%", tone: "warn" });
     expect(buildContextMetric(80)).toEqual({ label: "ctx 80%", tone: "danger" });
   });
 });

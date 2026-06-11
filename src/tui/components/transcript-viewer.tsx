@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 
 import type { RuntimeOutputEvent } from "../../types/index.js";
 import { sanitizeTerminalText } from "../text-sanitize.js";
+import { transcriptRoleLabels } from "../message-style.js";
 import { theme } from "../theme.js";
 import { buildTranscriptRows, type TranscriptViewerMode } from "../view-models/transcript-output.js";
 
@@ -35,7 +36,13 @@ export function TranscriptViewer({
             color={row.kind === "assistant" ? theme.fg : row.kind === "input" ? theme.accent : theme.muted}
             wrap="wrap"
           >
-            #{row.sequence} {row.kind === "assistant" ? "assistant" : row.kind === "input" ? "user" : "activity"} {sanitizeTerminalText(row.text)}
+            #{row.sequence}{" "}
+            {row.kind === "assistant"
+              ? transcriptRoleLabels.assistant
+              : row.kind === "input"
+                ? transcriptRoleLabels.input
+                : transcriptRoleLabels.status}{" "}
+            {sanitizeTerminalText(row.text)}
           </Text>
         ))
       )}

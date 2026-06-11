@@ -16,7 +16,8 @@ import {
 import { Banner } from "./components/banner.js";
 import { InputBox } from "./components/input-box.js";
 import { PromptZone } from "./components/prompt-zone.js";
-import { buildContextMetric, StatusBar } from "./components/status-bar.js";
+import { buildContextMetric, normalizeStatusLabel, StatusBar } from "./components/status-bar.js";
+import { formatCompactTokenMetric } from "./token-pricing.js";
 import type { SessionIndexEntry } from "../types/index.js";
 import { SessionBrowser } from "./components/session-browser.js";
 import { SessionRecap } from "./components/session-recap.js";
@@ -496,7 +497,7 @@ export function ChatTuiApp({
             `Diff display: ${config.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history",
-            "Saved sessions: use `talon tui --resume <id>` to restore transcript files from .auto-talon/sessions.",
+            "Saved sessions: use `talon tui --resume <id>` to restore UI state and messages from SQLite.",
             "Transcript is written to terminal scrollback; use your terminal scrollbar or mouse wheel to review history."
           ].join("\n")
         );
@@ -789,10 +790,12 @@ export function ChatTuiApp({
 
       if (text === "/context") {
         const b = config.tokenBudget;
+        const effectiveInput = Math.max(b.inputLimit - b.reservedOutput, 1);
         controller.addSystemMessage(
           [
-            `Context vs configured budget: ${controller.tokenHud.contextPercent}% of ~${b.inputLimit + b.outputLimit} tokens (inputLimit=${b.inputLimit} outputLimit=${b.outputLimit}).`,
-            `Used (telemetry): input=${controller.tokenHud.inputTokens} output=${controller.tokenHud.outputTokens}`
+            `Context vs prompt window: ${controller.tokenHud.contextPercent}% of ~${effectiveInput} tokens (inputLimit=${b.inputLimit}, reservedOutput=${b.reservedOutput}; outputLimit=${b.outputLimit} reserved for generation).`,
+            `Used (telemetry): input=${controller.tokenHud.inputTokens} output=${controller.tokenHud.outputTokens}`,
+            `Usage mode: ${controller.tokenHud.usageMode} | stats: ${controller.tokenHud.statsSource}`
           ].join("\n")
         );
         return true;
@@ -829,13 +832,14 @@ export function ChatTuiApp({
           `active_task: ${controller.activeTaskId ?? "(none)"}`,
           `tasks: ${controller.summary.tasks} running: ${controller.summary.runningTasks} approvals: ${controller.summary.pendingApprovals}`,
           `queued_prompts: ${controller.queuedPromptCount}`,
-          `status_line: ${controller.statusLine}`,
           `ui_status: ${controller.uiStatus.primaryLabel}`,
+          `run_state: ${controller.uiStatus.runState}`,
           `elapsed: ${controller.runDurationLabel}`,
           "ui_scroll: native_terminal_scrollback",
           `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
           `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`,
+          `context_source: ${controller.tokenHud.statsSource} usage_mode: ${controller.tokenHud.usageMode}`,
           "",
           formatSessionDetailForTui(service, activeSessionId)
         ];
@@ -1219,22 +1223,31 @@ export function ChatTuiApp({
             : showTodaySummary && textInput.value.trim().length === 0 && homeEntries.length > 0
               ? "Up/Down + Enter resume"
               : "";
-  const statusMetrics = hasBlockingPrompt
-    ? []
-    : [
-        buildContextMetric(controller.tokenHud.contextPercent, {
-          compactedCount: controller.tokenHud.compactedCount,
-          microPrunedCount: controller.tokenHud.microPrunedCount
-        }),
-        ...(controller.usedMemoryCount > 0
-          ? [{ label: `mem ${controller.usedMemoryCount}`, tone: "accent" as const }]
-          : [])
-      ];
+  const tokenMetric = formatCompactTokenMetric(
+    controller.tokenHud.inputTokens,
+    config.tokenBudget.inputLimit,
+    config.tokenBudget.reservedOutput,
+    controller.tokenHud.estimatedCostUsd
+  );
+  const statusMetrics = [
+    buildContextMetric(controller.tokenHud.contextPercent, {
+      compactedCount: controller.tokenHud.compactedCount,
+      microPrunedCount: controller.tokenHud.microPrunedCount
+    }),
+    ...(tokenMetric !== null ? [{ label: tokenMetric, tone: "muted" as const }] : []),
+    ...(controller.usedMemoryCount > 0
+      ? [{ label: `mem ${controller.usedMemoryCount}`, tone: "accent" as const }]
+      : [])
+  ];
+  const bannerCwd =
+    activeSessionId !== null
+      ? (service.showSession(activeSessionId).session?.cwd ?? cwd)
+      : cwd;
 
   return (
     <Box flexDirection="column">
       <Banner
-        details={[config.provider.model ?? config.provider.name, shortenPath(cwd, 20)]}
+        details={[config.provider.model ?? config.provider.name, shortenPath(bannerCwd, 20)]}
         productName="AUTOTALON"
         title={sessionTitle === "assistant" ? "Personal Assistant" : sessionTitle}
       />
@@ -1336,9 +1349,12 @@ function formatChatStatusLabel(
     return "clarify";
   }
   if (state.runState === "running") {
+    if (label !== "running task" && label.length > 0) {
+      return normalizeStatusLabel(label, 48);
+    }
     return "running";
   }
-  return label;
+  return normalizeStatusLabel(label, 72);
 }
 
 function shortenPath(value: string, maxLength: number): string {

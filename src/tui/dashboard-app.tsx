@@ -169,6 +169,7 @@ export function AgentTuiApp({
   });
 
   const selectedTask = controller.snapshot.selectedTask;
+  const selectedTaskCwd = selectedTask?.metadata.find((item) => item.label === "CWD")?.value;
 
   return (
     <Box flexDirection="column" height={terminalSize.rows > 0 ? terminalSize.rows : undefined}>
@@ -260,7 +261,16 @@ export function AgentTuiApp({
       </Box>
       <Box marginTop={1}>
         <StatusBar
-          details={[`task ${controller.uiStatus.taskLabel ?? "none"}`]}
+          details={[
+            ...(selectedTaskCwd !== undefined ? [shortenPath(selectedTaskCwd, 24)] : []),
+            `task ${controller.uiStatus.taskLabel ?? "none"}`
+          ]}
+          metrics={[
+            { label: `running ${controller.snapshot.summary.runningTaskCount}`, tone: "accent" },
+            ...(controller.snapshot.pendingApprovals.length > 0
+              ? [{ label: `approvals ${controller.snapshot.pendingApprovals.length}`, tone: "warn" as const }]
+              : [])
+          ]}
           hints={[
             controller.selectedPanel === "approvals"
               ? "1-4 scope, arrows, Enter, a/d legacy, r refresh, q quit"
@@ -306,4 +316,8 @@ function taskRowTextProps(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function shortenPath(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `...${value.slice(-(maxLength - 3))}`;
 }

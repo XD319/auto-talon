@@ -19,10 +19,7 @@ import {
   formatCommandDiffPreview,
   formatDiffLineBadge as formatColoredDiffLineBadge
 } from "../view-models/diff-format.js";
-import {
-  contextWindowPercent,
-  estimateSessionCostUsd
-} from "../token-pricing.js";
+import { estimateSessionCostUsd } from "../token-pricing.js";
 import {
   toApprovalResultMessage,
   toApprovalMessage,
@@ -30,7 +27,8 @@ import {
   type ChatMessage
 } from "../view-models/chat-messages.js";
 import type { PersistedChatSession } from "../session-store.js";
-import type { UiStatus } from "../ui-status.js";
+import type { StatusTone, UiStatus } from "../ui-status.js";
+import { contextWindowPercentFromPrompt } from "../../runtime/context/token-counter.js";
 
 export interface UseChatControllerOptions {
   config: TuiAppConfig;
@@ -52,6 +50,8 @@ export interface TokenHud {
   inputTokens: number;
   microPrunedCount: number;
   outputTokens: number;
+  statsSource: "live" | "trace" | "none";
+  usageMode: "live_delta" | "session_total";
 }
 
 interface TokenUsageSnapshot {
@@ -96,7 +96,6 @@ export interface ChatController {
   resetVisibleChatPreserveActiveSession: (statusLabel?: string) => void;
   restoreSession: (session: PersistedChatSession) => void;
   runDurationLabel: string;
-  statusLine: string;
   submitPrompt: (text: string) => boolean;
   switchActiveSession: (sessionId: string) => void;
   sessionApprovalFingerprints: string[];
@@ -144,7 +143,6 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     input.initialMessages !== undefined && input.initialMessages.length > 0 ? input.initialMessages : [welcomeMessage]
   );
   const [busyCount, setBusyCount] = React.useState(0);
-  const [statusLine, setStatusLine] = React.useState("idle");
   const [summary, setSummary] = React.useState({
     pendingApprovals: 0,
     pendingClarifyPrompts: 0,
@@ -166,10 +164,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     estimatedCostUsd: 0,
     inputTokens: 0,
     microPrunedCount: 0,
-    outputTokens: 0
+    outputTokens: 0,
+    statsSource: "none",
+    usageMode: input.initialSessionId !== undefined ? "session_total" : "live_delta"
   });
   const [uiStatus, setUiStatus] = React.useState<UiStatus>({
-    approvalLabel: null,
     primaryLabel: "idle",
     primaryTone: "muted",
     runState: "idle",
@@ -194,9 +193,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const queuedPromptsRef = React.useRef<QueuedPromptEntry[]>([]);
   const seenApprovalMessageIdsRef = React.useRef<Set<string>>(collectApprovalMessageIds(messages));
   const tokenHudBaselineRef = React.useRef<{
+    mode: "live_delta" | "session_total";
     source: "live" | "trace" | null;
     usage: TokenUsageSnapshot | null;
   }>({
+    mode: input.initialSessionId !== undefined ? "session_total" : "live_delta",
     source: null,
     usage: null
   });
@@ -366,22 +367,22 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   );
 
   const resetTokenHudState = React.useCallback(() => {
-    tokenHudBaselineRef.current = { source: null, usage: null };
+    tokenHudBaselineRef.current = { mode: "live_delta", source: null, usage: null };
     setTokenHud({
       compactedCount: 0,
       contextPercent: 0,
       estimatedCostUsd: 0,
       inputTokens: 0,
       microPrunedCount: 0,
-      outputTokens: 0
+      outputTokens: 0,
+      statsSource: "none",
+      usageMode: "live_delta"
     });
   }, []);
 
   const clearConversation = React.useCallback(() => {
     setMessages([welcomeMessage]);
-    setStatusLine("conversation cleared");
     setUiStatus({
-      approvalLabel: null,
       primaryLabel: "conversation cleared",
       primaryTone: "muted",
       runState: "idle",
@@ -405,9 +406,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   const resetVisibleChat = React.useCallback(() => {
     setMessages([welcomeMessage]);
-    setStatusLine("conversation cleared");
     setUiStatus({
-      approvalLabel: null,
       primaryLabel: "conversation cleared",
       primaryTone: "muted",
       runState: "idle",
@@ -430,9 +429,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
   const resetVisibleChatPreserveActiveSession = React.useCallback((statusLabel = "session selected") => {
     setMessages([welcomeMessage]);
-    setStatusLine(statusLabel);
     setUiStatus({
-      approvalLabel: null,
       primaryLabel: statusLabel,
       primaryTone: "muted",
       runState: "idle",
@@ -484,9 +481,9 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             ? hydrateFailedTaskProgress(loaded.messages as ChatMessage[], input.service)
             : [welcomeMessage];
       setMessages(restoredMessages);
-      setStatusLine("session resumed");
+      tokenHudBaselineRef.current = { mode: "session_total", source: null, usage: null };
+      setTokenHud((current) => ({ ...current, usageMode: "session_total", statsSource: "none" }));
       setUiStatus({
-        approvalLabel: null,
         primaryLabel: "session resumed",
         primaryTone: "muted",
         runState: "idle",
@@ -593,30 +590,18 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         approvals.find((item) => item.taskId === activeTaskIdRef.current) ?? approvals[0] ?? null;
       setPendingApproval((current) => (approvalRefEquals(current, activeApproval) ? current : activeApproval));
       if (activeClarifyPrompt !== null) {
-        setStatusLine(`waiting clarification: ${activeClarifyPrompt.question}`);
         updateUiStatus(setUiStatus, {
-          approvalLabel: null,
           primaryLabel: "clarification required",
           primaryTone: "warn",
-          runState: "waiting_approval",
+          runState: "waiting_clarification",
           taskLabel: activeClarifyPrompt.taskId.slice(0, 8)
         });
       } else if (activeApproval !== null) {
-        setStatusLine(`waiting approval: ${activeApproval.toolName}`);
         updateUiStatus(setUiStatus, {
-          approvalLabel: activeApproval.toolName,
           primaryLabel: `approval required: ${activeApproval.toolName}`,
           primaryTone: "warn",
           runState: "waiting_approval",
           taskLabel: activeApproval.taskId.slice(0, 8)
-        });
-      } else if (tasks.length === 0 && !busy) {
-        updateUiStatus(setUiStatus, {
-          approvalLabel: null,
-          primaryLabel: "idle",
-          primaryTone: "muted",
-          runState: "idle",
-          taskLabel: null
         });
       }
       setMessages((current) =>
@@ -635,11 +620,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           source?: "live" | "trace";
           tokenUsage: { inputTokens: number; outputTokens: number; totalTokens?: number };
         };
-        const usage = usageSinceSessionStart(typedStats, tokenHudBaselineRef.current);
-        const pct = contextWindowPercent(
-          usage,
+        const usage = resolveTokenUsage(typedStats, tokenHudBaselineRef.current);
+        const pct = contextWindowPercentFromPrompt(
+          usage.inputTokens,
           input.config.tokenBudget.inputLimit,
-          input.config.tokenBudget.outputLimit,
           input.config.tokenBudget.reservedOutput
         );
         const cost = estimateSessionCostUsd(
@@ -653,13 +637,20 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             contextPercent: pct,
             estimatedCostUsd: cost,
             inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens
+            outputTokens: usage.outputTokens,
+            statsSource: typedStats.source ?? "live",
+            usageMode: tokenHudBaselineRef.current.mode
           };
           return tokenHudEquals(current, nextTokenHud) ? current : nextTokenHud;
         });
       }
-    } catch (error) {
-      setStatusLine(error instanceof Error ? `refresh failed: ${error.message}` : "refresh failed");
+    } catch {
+      updateUiStatus(setUiStatus, {
+        primaryLabel: "refresh failed",
+        primaryTone: "danger",
+        runState: "failed",
+        taskLabel: null
+      });
     }
   }, [busy, input.config.provider.model, input.config.tokenBudget.inputLimit, input.config.tokenBudget.outputLimit, input.service]);
 
@@ -670,6 +661,19 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       clearInterval(interval);
     };
   }, [busy, refresh]);
+
+  const [, setRunTick] = React.useState(0);
+  React.useEffect(() => {
+    if (uiStatus.runState !== "running") {
+      return;
+    }
+    const interval = setInterval(() => {
+      setRunTick((tick) => tick + 1);
+    }, 1_000);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [uiStatus.runState]);
 
   React.useEffect(() => {
     return () => {
@@ -816,10 +820,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       submitInFlightRef.current = true;
       beginBusy();
       startedAtRef.current = Date.now();
-      setStatusLine("running");
       const taskId = randomUUID();
       setUiStatus({
-        approvalLabel: null,
         primaryLabel: "running task",
         primaryTone: "accent",
         runState: "running",
@@ -919,11 +921,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               return;
             }
             if (event.eventType === "provider_status") {
-              setStatusLine(event.payload.message);
               setUiStatus((current) => ({
                 ...current,
                 primaryLabel: event.payload.message,
-                primaryTone: "warn"
+                primaryTone: providerStatusTone(event.payload.message)
               }));
             }
           };
@@ -971,9 +972,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
                 timestamp
               }
             ]);
-            setStatusLine(`failed: ${runError.code}`);
             setUiStatus({
-              approvalLabel: null,
               primaryLabel: `failed: ${runError.code}`,
               primaryTone: "danger",
               runState: "failed",
@@ -1003,9 +1002,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               ]);
             }
           }
-          setStatusLine(result.task.status);
           setUiStatus({
-            approvalLabel: null,
             primaryLabel: result.task.status === "succeeded" ? "completed successfully" : result.task.status,
             primaryTone: result.task.status === "succeeded" ? "success" : "neutral",
             runState: result.task.status === "succeeded" ? "succeeded" : "idle",
@@ -1025,9 +1022,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
           if (aborted) {
             addSystemMessage("Interrupted current task.");
-            setStatusLine("interrupted");
             setUiStatus({
-              approvalLabel: null,
               primaryLabel: "interrupted",
               primaryTone: "warn",
               runState: "interrupted",
@@ -1049,9 +1044,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               timestamp
             }
           ]);
-          setStatusLine("failed to run task");
           setUiStatus({
-            approvalLabel: null,
             primaryLabel: "failed to run task",
             primaryTone: "danger",
             runState: "failed",
@@ -1222,9 +1215,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               timestamp: new Date().toISOString()
             }
           ]);
-          setStatusLine(`failed after approval: ${resultError.code}`);
           setUiStatus({
-            approvalLabel: approval.toolName,
             primaryLabel: `failed after ${action === "allow" ? "approval" : "denial"}`,
             primaryTone: "danger",
             runState: "failed",
@@ -1244,9 +1235,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           ]);
         }
         if (result.task.status === "waiting_approval") {
-          setStatusLine("waiting_approval");
           setUiStatus({
-            approvalLabel: approval.toolName,
             primaryLabel: `approval required: ${approval.toolName}`,
             primaryTone: "warn",
             runState: "waiting_approval",
@@ -1254,9 +1243,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           });
           return;
         }
-        setStatusLine(`${action === "allow" ? "approved" : "denied"} ${approval.toolName}`);
         setUiStatus({
-          approvalLabel: approval.toolName,
           primaryLabel:
             action === "allow"
               ? `approved ${approval.toolName}${allowScope !== undefined ? ` (${allowScope})` : ""}`
@@ -1277,9 +1264,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             timestamp: new Date().toISOString()
           }
         ]);
-        setStatusLine("approval failed");
         setUiStatus({
-          approvalLabel: approval.toolName,
           primaryLabel: "approval failed",
           primaryTone: "danger",
           runState: "failed",
@@ -1339,9 +1324,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
               timestamp: new Date().toISOString()
             }
           ]);
-          setStatusLine(`failed after clarification: ${resultError.code}`);
           setUiStatus({
-            approvalLabel: null,
             primaryLabel: "failed after clarification",
             primaryTone: "danger",
             runState: "failed",
@@ -1361,9 +1344,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             }
           ]);
         }
-        setStatusLine("clarification answered");
         setUiStatus({
-          approvalLabel: null,
           primaryLabel: "clarification answered",
           primaryTone: "success",
           runState: result.task.status === "succeeded" ? "succeeded" : "idle",
@@ -1381,9 +1362,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             timestamp: new Date().toISOString()
           }
         ]);
-        setStatusLine("clarification failed");
         setUiStatus({
-          approvalLabel: null,
           primaryLabel: "clarification failed",
           primaryTone: "danger",
           runState: "failed",
@@ -1421,9 +1400,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       appendNewTraceEvents(result.task.taskId);
       activeTaskIdRef.current = result.task.taskId;
       setActiveTaskId(result.task.taskId);
-      setStatusLine("clarification cancelled");
       setUiStatus({
-        approvalLabel: null,
         primaryLabel: "clarification cancelled",
         primaryTone: "warn",
         runState: "idle",
@@ -1441,9 +1418,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           timestamp: new Date().toISOString()
         }
       ]);
-      setStatusLine("clarification cancel failed");
       setUiStatus({
-        approvalLabel: null,
         primaryLabel: "clarification cancel failed",
         primaryTone: "danger",
         runState: "failed",
@@ -1491,7 +1466,6 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     cancelPendingClarifyPrompt,
     resolvePendingApproval,
     runDurationLabel,
-    statusLine,
     submitPrompt,
     switchActiveSession,
     summary,
@@ -1640,7 +1614,9 @@ function tokenHudEquals(left: TokenHud, right: TokenHud): boolean {
     left.estimatedCostUsd === right.estimatedCostUsd &&
     left.inputTokens === right.inputTokens &&
     left.microPrunedCount === right.microPrunedCount &&
-    left.outputTokens === right.outputTokens
+    left.outputTokens === right.outputTokens &&
+    left.statsSource === right.statsSource &&
+    left.usageMode === right.usageMode
   );
 }
 
@@ -1669,17 +1645,23 @@ function taskSessionId(
   return service.showTask(taskId).task?.sessionId ?? null;
 }
 
-function usageSinceSessionStart(
+function resolveTokenUsage(
   stats: {
     source?: "live" | "trace";
     tokenUsage: TokenUsageSnapshot;
   },
-  baselineState: { source: "live" | "trace" | null; usage: TokenUsageSnapshot | null }
+  baselineState: {
+    mode: "live_delta" | "session_total";
+    source: "live" | "trace" | null;
+    usage: TokenUsageSnapshot | null;
+  }
 ): TokenUsageSnapshot {
+  if (baselineState.mode === "session_total") {
+    return { ...stats.tokenUsage };
+  }
+
   const source = stats.source ?? "live";
   if (source === "trace") {
-    baselineState.source = "trace";
-    baselineState.usage = null;
     return {
       inputTokens: 0,
       outputTokens: 0,
@@ -1713,6 +1695,14 @@ function usageSinceSessionStart(
   };
 }
 
+function providerStatusTone(message: string): StatusTone {
+  const lower = message.toLowerCase();
+  if (lower.startsWith("error") || lower.startsWith("warn") || lower.includes("failed")) {
+    return "warn";
+  }
+  return "accent";
+}
+
 function updateUiStatus(
   setUiStatus: React.Dispatch<React.SetStateAction<UiStatus>>,
   next: UiStatus
@@ -1722,7 +1712,6 @@ function updateUiStatus(
 
 function uiStatusEquals(left: UiStatus, right: UiStatus): boolean {
   return (
-    left.approvalLabel === right.approvalLabel &&
     left.primaryLabel === right.primaryLabel &&
     left.primaryTone === right.primaryTone &&
     left.runState === right.runState &&

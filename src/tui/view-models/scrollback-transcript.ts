@@ -1,6 +1,12 @@
 import type { DiffDisplayMode } from "../../presentation/diff-display.js";
 import { resolveFileChangeDisplayPath } from "../../presentation/file-diff.js";
 import type { FileChangeTracePayload, RuntimeOutputEvent, TraceEvent } from "../../types/index.js";
+import {
+  formatAssistantScrollbackBody,
+  formatAssistantScrollbackHeading,
+  formatSystemScrollbackLine,
+  formatUserScrollbackLine
+} from "../message-style.js";
 import { sanitizeTerminalText } from "../text-sanitize.js";
 import type { ChatMessage } from "./chat-messages.js";
 import { formatDiffLineBadge, formatScrollbackDiffPreview } from "./diff-format.js";
@@ -26,11 +32,11 @@ export interface ScrollbackWrapState {
 export function formatScrollbackMessage(message: ChatMessage): string | null {
   switch (message.kind) {
     case "user":
-      return `> ${sanitizeTerminalText(message.text)}\n`;
+      return formatUserScrollbackLine(message.text, { leadingBreak: true });
     case "system":
-      return `┊ ${sanitizeTerminalText(message.text)}\n`;
+      return formatSystemScrollbackLine(message.text);
     case "approval_result":
-      return `┊ ${sanitizeTerminalText(message.text)}\n`;
+      return formatSystemScrollbackLine(message.text);
     case "error":
       return `┊ ❌ ${sanitizeTerminalText(message.code)}: ${sanitizeTerminalText(message.message)}\n`;
     case "approval":
@@ -47,7 +53,7 @@ export function formatScrollbackMessage(message: ChatMessage): string | null {
       if (text.length === 0) {
         return null;
       }
-      return `assistant\n${sanitizeTerminalText(message.text)}\n`;
+      return `${formatAssistantScrollbackHeading({ leadingBreak: true })}${formatAssistantScrollbackBody(message.text)}`;
     }
   }
 }
@@ -61,7 +67,9 @@ export function formatScrollbackOutputEvent(
     if (delta.length === 0) {
       return null;
     }
-    const prefix = turnState.headingWritten ? "" : "assistant\n";
+    const prefix = turnState.headingWritten
+      ? ""
+      : formatAssistantScrollbackHeading({ leadingBreak: turnState.printedText.length > 0 });
     turnState.headingWritten = true;
     turnState.printedText += delta;
     return `${prefix}${delta}`;
@@ -80,7 +88,9 @@ export function formatScrollbackOutputEvent(
       : turnState.headingWritten
         ? ""
         : text;
-    const prefix = turnState.headingWritten ? "" : "assistant\n";
+    const prefix = turnState.headingWritten
+      ? ""
+      : formatAssistantScrollbackHeading({ leadingBreak: turnState.printedText.length > 0 });
     turnState.headingWritten = true;
     turnState.printedText = text;
     const body = `${prefix}${suffix}`;
