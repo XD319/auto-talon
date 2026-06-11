@@ -186,6 +186,9 @@ export interface AppConfig {
   webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
   workspaceRoot: string;
+  scheduler: {
+    pollIntervalMs: number;
+  };
 }
 
 export interface ResolveAppConfigOptions {
@@ -227,6 +230,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     tui: runtimeConfig.tui,
     webSearch: runtimeConfig.webSearch,
     workflow: runtimeConfig.workflow,
+    scheduler: runtimeConfig.scheduler,
     workspaceRoot
   };
 }
@@ -750,6 +754,7 @@ export function createApplication(
   });
   const schedulerService = new SchedulerService({
     jobRunner,
+    pollIntervalMs: config.scheduler.pollIntervalMs,
     scheduleRepository: storage.schedules,
     scheduleRunRepository: storage.scheduleRuns,
     traceService

@@ -57,6 +57,11 @@ const runtimeConfigFileSchema = z.object({
       maxResults: z.number().int().positive().max(50).optional()
     })
     .optional(),
+  scheduler: z
+    .object({
+      pollIntervalMs: z.number().int().positive().optional()
+    })
+    .optional(),
   compact: z
     .object({
       bufferTokens: z.number().int().nonnegative().optional(),
@@ -283,6 +288,9 @@ export interface RuntimeConfig {
   };
   webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
+  scheduler: {
+    pollIntervalMs: number;
+  };
 }
 
 const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource"> = {
@@ -290,6 +298,9 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
   approvalTtlMs: 300_000,
   defaultMaxIterations: 12,
   defaultTimeoutMs: 120_000,
+  scheduler: {
+    pollIntervalMs: 2_000
+  },
   webSearch: {
     apiKey: null,
     apiKeyEnv: "FIRECRAWL_API_KEY",
@@ -623,6 +634,12 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         fileConfig?.tui?.diffDisplay ??
         DEFAULT_RUNTIME_CONFIG.tui.diffDisplay,
       statusLine: resolveTuiStatusLineConfig(fileConfig?.tui?.statusLine, envConfig.tui?.statusLine)
+    },
+    scheduler: {
+      pollIntervalMs:
+        envConfig.scheduler?.pollIntervalMs ??
+        fileConfig?.scheduler?.pollIntervalMs ??
+        DEFAULT_RUNTIME_CONFIG.scheduler.pollIntervalMs
     },
     webSearch,
     workflow

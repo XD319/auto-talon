@@ -624,18 +624,61 @@ export async function main(argv = process.argv): Promise<void> {
       handle.close();
     }
   });
-  scheduleCommand.command("run").description("Run scheduler daemon").action(async () => {
-    const handle = createApplication(process.cwd(), {
-      scheduler: { autoStart: true }
-    });
-    console.log("Scheduler started. Press Ctrl+C to stop.");
-    await new Promise<void>((resolve) => {
-      process.on("SIGINT", () => {
-        handle.close();
-        resolve();
+  scheduleCommand
+    .command("run [schedule_id]")
+    .description("Run scheduler daemon, or trigger a schedule and optionally wait")
+    .option("--wait", "Wait until the triggered run reaches a terminal status")
+    .option("--timeout <ms>", "Wait timeout in milliseconds", parsePositiveIntegerOption("--timeout"), 300_000)
+    .option("--poll-interval <ms>", "Polling interval while waiting", parsePositiveIntegerOption("--poll-interval"), 500)
+    .action(async (
+      scheduleId: string | undefined,
+      commandOptions: { wait?: boolean; timeout: number; pollInterval: number }
+    ) => {
+      if (scheduleId === undefined) {
+        const handle = createApplication(process.cwd(), {
+          scheduler: { autoStart: true }
+        });
+        console.log("Scheduler started. Press Ctrl+C to stop.");
+        await new Promise<void>((resolve) => {
+          process.on("SIGINT", () => {
+            handle.close();
+            resolve();
+          });
+        });
+        return;
+      }
+
+      const handle = createApplication(process.cwd(), {
+        scheduler: { autoStart: true }
       });
+      try {
+        const run = handle.service.runScheduleNow(scheduleId);
+        console.log(formatScheduleRunList([run]));
+        if (commandOptions.wait !== true) {
+          return;
+        }
+        const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
+        const deadline = Date.now() + commandOptions.timeout;
+        while (Date.now() < deadline) {
+          await handle.service.tickScheduleOnce();
+          const latest =
+            handle.service.listScheduleRuns(scheduleId, { tail: 20 }).find((entry) => entry.runId === run.runId) ??
+            run;
+          if (terminalStatuses.has(latest.status)) {
+            console.log(formatScheduleRunList([latest]));
+            if (latest.status !== "completed") {
+              process.exitCode = 1;
+            }
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, commandOptions.pollInterval));
+        }
+        console.error(`Timed out waiting for schedule run ${run.runId}.`);
+        process.exitCode = 1;
+      } finally {
+        handle.close();
+      }
     });
-  });
 
   traceCommand
     .argument("[task_id]", "Task identifier")
