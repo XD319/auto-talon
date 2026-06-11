@@ -4,6 +4,8 @@ import { planRetry } from "./backoff.js";
 
 import type { RunTaskResult } from "../application-service.js";
 import type { TraceService } from "../../tracing/trace-service.js";
+import { readScheduleNoAgent } from "../scheduler/schedule-metadata.js";
+import type { NoAgentRunResult } from "../scheduler/no-agent-runner.js";
 import type {
   ScheduleRecord,
   ScheduleRepository,
@@ -23,6 +25,8 @@ export interface JobRunnerDependencies {
   scheduleRunRepository: ScheduleRunRepository;
   traceService: TraceService;
   execute: (request: ExecuteScheduledRunRequest) => Promise<ExecuteScheduledRunResult>;
+  executeNoAgent?: (request: ExecuteScheduledRunRequest) => Promise<NoAgentRunResult>;
+  onRunCompleted?: (schedule: ScheduleRecord, status: "completed" | "failed") => void;
 }
 
 export class JobRunner {
@@ -61,6 +65,10 @@ export class JobRunner {
       taskId: run.taskId ?? `schedule:${schedule.scheduleId}`
     });
     try {
+      const noAgent = readScheduleNoAgent(schedule);
+      if (noAgent !== null && this.dependencies.executeNoAgent !== undefined) {
+        return await this.executeNoAgentRun(schedule, run, noAgent);
+      }
       const result = await this.dependencies.execute({ run, schedule });
       const mappedStatus = this.mapTaskStatus(result.task.status);
       const next = this.dependencies.scheduleRunRepository.update(run.runId, {
@@ -73,6 +81,7 @@ export class JobRunner {
       });
 
       if (mappedStatus === "failed") {
+        this.dependencies.onRunCompleted?.(schedule, "failed");
         this.enqueueRetryIfNeeded(schedule, next);
         this.safeRecord({
           actor: "scheduler",
@@ -90,6 +99,7 @@ export class JobRunner {
           taskId: next.taskId ?? `schedule:${schedule.scheduleId}`
         });
       } else {
+        this.dependencies.onRunCompleted?.(schedule, "completed");
         this.safeRecord({
           actor: "scheduler",
           eventType: "schedule_run_finished",
@@ -132,6 +142,61 @@ export class JobRunner {
       });
       return failed;
     }
+  }
+
+  private async executeNoAgentRun(
+    schedule: ScheduleRecord,
+    run: ScheduleRunRecord,
+    noAgent: NonNullable<ReturnType<typeof readScheduleNoAgent>>
+  ): Promise<ScheduleRunRecord> {
+    const result = await this.dependencies.executeNoAgent!({ run, schedule });
+    const mappedStatus = result.success ? "completed" : "failed";
+    const next = this.dependencies.scheduleRunRepository.update(run.runId, {
+      errorMessage: result.errorMessage,
+      finishedAt: new Date().toISOString(),
+      metadata: {
+        ...run.metadata,
+        noAgentOutput: result.output
+      },
+      status: mappedStatus
+    });
+    if (mappedStatus === "failed") {
+      this.dependencies.onRunCompleted?.(schedule, "failed");
+      this.enqueueRetryIfNeeded(schedule, next);
+      this.safeRecord({
+        actor: "scheduler",
+        eventType: "schedule_run_failed",
+        payload: {
+          attemptNumber: next.attemptNumber,
+          errorCode: null,
+          errorMessage: next.errorMessage,
+          runId: next.runId,
+          scheduleId: next.scheduleId,
+          taskId: null
+        },
+        stage: "completion",
+        summary: `Schedule run ${run.runId} failed`,
+        taskId: `schedule:${schedule.scheduleId}`
+      });
+      return next;
+    }
+    this.dependencies.onRunCompleted?.(schedule, "completed");
+    this.safeRecord({
+      actor: "scheduler",
+      eventType: "schedule_run_finished",
+      payload: {
+        attemptNumber: next.attemptNumber,
+        runId: next.runId,
+        scheduleId: next.scheduleId,
+        status: mappedStatus,
+        taskId: null,
+        sessionId: null
+      },
+      stage: "completion",
+      summary: `Schedule run ${run.runId} ${mappedStatus}`,
+      taskId: `schedule:${schedule.scheduleId}`
+    });
+    return next;
   }
 
   private enqueueRetryIfNeeded(

@@ -85,7 +85,14 @@ import {
   SessionCommitmentProjector
 } from "./commitments/index.js";
 import { JobRunner } from "./jobs/index.js";
-import { resolveScheduleSessionId, SchedulerService } from "./scheduler/index.js";
+import {
+  buildScheduledTaskInput,
+  readScheduleNoAgent,
+  readScheduleToolsets,
+  resolveScheduleSessionId,
+  runNoAgentCommand,
+  SchedulerService
+} from "./scheduler/index.js";
 import { ResumePacketBuilder, SessionService, SessionStateProjector } from "./sessions/index.js";
 import {
   SessionBranchService,
@@ -586,6 +593,7 @@ export function createApplication(
   });
   const inboxCollector = new InboxCollector({
     findSchedule: (scheduleId) => storage.schedules.findById(scheduleId),
+    findScheduleRun: (runId) => storage.scheduleRuns.findById(runId),
     findTask: (taskId) => storage.tasks.findById(taskId),
     inboxService,
     listScheduleRunsByTask: (taskId) => storage.scheduleRuns.listByTaskId(taskId),
@@ -717,6 +725,7 @@ export function createApplication(
     stateProjector: sessionStateProjector
   });
   let service: AgentApplicationService | null = null;
+  let schedulerService: SchedulerService;
   const jobRunner = new JobRunner({
     scheduleRepository: storage.schedules,
     scheduleRunRepository: storage.scheduleRuns,
@@ -725,6 +734,7 @@ export function createApplication(
       if (service === null) {
         throw new Error("Application service has not been initialized.");
       }
+      const scheduleToolsets = readScheduleToolsets(schedule);
       const runResult = await service.runTask({
         agentProfileId: schedule.agentProfileId,
         cwd: schedule.cwd,
@@ -734,9 +744,10 @@ export function createApplication(
             disallowScheduleManagement: true,
             runId: run.runId,
             scheduleId: schedule.scheduleId
-          }
+          },
+          ...(scheduleToolsets.length > 0 ? { scheduleToolsets } : {})
         },
-        taskInput: schedule.input,
+        taskInput: buildScheduledTaskInput(schedule, skillRegistry),
         ...(resolveScheduleSessionId(schedule) !== null
           ? { sessionId: resolveScheduleSessionId(schedule)! }
           : {}),
@@ -750,9 +761,21 @@ export function createApplication(
         userId: schedule.ownerUserId
       });
       return runResult;
+    },
+    executeNoAgent: async ({ schedule }) => {
+      const noAgent = readScheduleNoAgent(schedule);
+      if (noAgent === null) {
+        throw new Error(`Schedule ${schedule.scheduleId} is missing noAgent metadata.`);
+      }
+      return runNoAgentCommand(noAgent, schedule.cwd);
+    },
+    onRunCompleted: (schedule, status) => {
+      if (status === "completed") {
+        schedulerService.handleRepeatAfterSuccess(schedule);
+      }
     }
   });
-  const schedulerService = new SchedulerService({
+  schedulerService = new SchedulerService({
     jobRunner,
     pollIntervalMs: config.scheduler.pollIntervalMs,
     scheduleRepository: storage.schedules,

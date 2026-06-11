@@ -26,6 +26,7 @@ describe("inbox collector", () => {
       });
       const collector = new InboxCollector({
         findSchedule: () => null,
+        findScheduleRun: () => null,
         findTask: (taskId) => storage.tasks.findById(taskId),
         inboxService,
         listScheduleRunsByTask: () => [],
@@ -238,7 +239,7 @@ describe("inbox collector", () => {
     }
   });
 
-  it("routes scheduled success and failures without duplicate generic inbox items", () => {
+  it("routes scheduled success and failures without duplicate generic inbox items", async () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
       const traceService = new TraceService(storage.traces);
@@ -388,6 +389,7 @@ describe("inbox collector", () => {
 
       const collector = new InboxCollector({
         findSchedule: (scheduleId) => storage.schedules.findById(scheduleId),
+        findScheduleRun: (runId) => storage.scheduleRuns.findById(runId),
         findTask: (taskId) => storage.tasks.findById(taskId),
         inboxService,
         listScheduleRunsByTask: (taskId) => storage.scheduleRuns.listByTaskId(taskId),
@@ -475,6 +477,7 @@ describe("inbox collector", () => {
         summary: "routine fail threaded",
         taskId: "task-fail-threaded"
       });
+      await new Promise((resolve) => setImmediate(resolve));
       collector.stop();
 
       const successItems = storage.inbox.list({ taskId: "task-success", userId: "u1" });

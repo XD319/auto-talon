@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { CreateScheduleInput, UpdateScheduleInput } from "../runtime/scheduler/index.js";
 import { parseExecutionModeInput, parseScheduleWhen } from "../runtime/scheduler/index.js";
+import { TOOLSET_NAMES } from "./toolsets.js";
 import { SCHEDULE_STATUSES } from "../types/index.js";
 import type {
   JsonObject,
@@ -25,10 +26,19 @@ const createActionSchema = z.object({
   every: z.string().optional(),
   executionMode: z.enum(["isolated", "continue", "session"]).optional(),
   name: z.string().min(1),
+  noAgent: z
+    .object({
+      command: z.string().min(1),
+      cwd: z.string().optional()
+    })
+    .optional(),
   prompt: z.string().min(1),
+  repeatRemaining: z.number().int().positive().optional(),
   runAt: z.string().optional(),
   sessionId: z.string().optional(),
+  skills: z.array(z.string().min(1)).optional(),
   timezone: z.string().optional(),
+  toolsets: z.array(z.enum(TOOLSET_NAMES)).optional(),
   when: z.string().optional()
 });
 
@@ -152,6 +162,21 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
             ...(timing.cron !== undefined ? { cron: timing.cron } : {}),
             ...(timing.every !== undefined ? { every: timing.every } : {}),
             ...(timing.runAt !== undefined ? { runAt: timing.runAt } : {}),
+            ...(preparedInput.noAgent !== undefined
+              ? {
+                  noAgent: {
+                    command: preparedInput.noAgent.command,
+                    ...(preparedInput.noAgent.cwd !== undefined
+                      ? { cwd: preparedInput.noAgent.cwd }
+                      : {})
+                  }
+                }
+              : {}),
+            ...(preparedInput.repeatRemaining !== undefined
+              ? { repeatRemaining: preparedInput.repeatRemaining }
+              : {}),
+            ...(preparedInput.skills !== undefined ? { skills: preparedInput.skills } : {}),
+            ...(preparedInput.toolsets !== undefined ? { toolsets: preparedInput.toolsets } : {}),
             ...(execution.sessionId !== undefined
               ? { sessionId: execution.sessionId }
               : preparedInput.sessionId !== undefined

@@ -1,6 +1,6 @@
 ﻿import { checkToolAvailability } from "../tools/availability/index.js";
 import { evaluateToolExposure } from "../tools/policy/index.js";
-import { isPlanSafeTool } from "../tools/toolsets.js";
+import { isPlanSafeTool, TOOLSET_TOOLS, type ToolsetName } from "../tools/toolsets.js";
 import type { ToolOverrideStore } from "../tools/tool-overrides.js";
 import type { ToolOrchestrator } from "../tools/tool-orchestrator.js";
 import type { TraceService } from "../tracing/trace-service.js";
@@ -23,6 +23,14 @@ export interface ToolExposurePlannerInput {
   interactionMode?: TuiInteractionMode;
 }
 
+function readScheduleToolsetsFromMetadata(metadata: ToolExecutionContext["taskMetadata"]): string[] {
+  const toolsets = metadata?.scheduleToolsets;
+  if (!Array.isArray(toolsets)) {
+    return [];
+  }
+  return toolsets.filter((toolset): toolset is string => typeof toolset === "string");
+}
+
 export class ToolExposurePlanner {
   public constructor(private readonly dependencies: ToolExposurePlannerDependencies) {}
 
@@ -31,8 +39,15 @@ export class ToolExposurePlanner {
     const registeredTools = this.dependencies.toolOrchestrator
       .listToolsWithMetadata()
       .filter((tool) => !disabledToolNames.has(tool.name));
-    const tools =
+    const scheduleToolsets = readScheduleToolsetsFromMetadata(input.context.taskMetadata);
+    let tools =
       input.interactionMode === "plan" ? registeredTools.filter(isPlanSafeTool) : registeredTools;
+    if (scheduleToolsets.length > 0) {
+      const allowed = new Set(
+        scheduleToolsets.flatMap((toolset) => TOOLSET_TOOLS[toolset as ToolsetName] ?? [])
+      );
+      tools = tools.filter((tool) => allowed.has(tool.name));
+    }
     const availability = await checkToolAvailability(tools, input.context);
     const budgetDowngradeActive =
       this.dependencies.budgetService?.isDowngradeActive("task", input.taskId) === true ||

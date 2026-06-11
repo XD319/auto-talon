@@ -18,6 +18,7 @@ import type { NextActionService } from "../commitments/index.js";
 
 export interface InboxCollectorDependencies {
   findSchedule: (scheduleId: string) => ScheduleRecord | null;
+  findScheduleRun: (runId: string) => ScheduleRunRecord | null;
   findTask: (taskId: string) => TaskRecord | null;
   inboxService: InboxService;
   listScheduleRunsByTask: (taskId: string) => ScheduleRunRecord[];
@@ -259,7 +260,11 @@ export class InboxCollector {
     return "local-user";
   }
 
-  private resolveScheduleOwner(scheduleId: string, fallbackTaskId: string): string {
+  private resolveScheduleOwner(scheduleId: string, fallbackTaskId: string | null): string {
+    if (fallbackTaskId === null) {
+      const schedule = this.dependencies.findSchedule(scheduleId);
+      return schedule?.ownerUserId ?? "local-user";
+    }
     const schedule = this.dependencies.findSchedule(scheduleId);
     if (schedule !== null) {
       return schedule.ownerUserId;
@@ -281,27 +286,23 @@ export class InboxCollector {
     );
   }
 
-  private findScheduleRunByRunId(taskId: string | null, runId: string): ScheduleRunRecord | null {
-    if (taskId === null) {
-      return null;
-    }
-    return this.dependencies.listScheduleRunsByTask(taskId).find((item) => item.runId === runId) ?? null;
-  }
-
   private async handleScheduleRunCompleted(event: TraceEvent & { eventType: "schedule_run_finished" }): Promise<void> {
     const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
+    const scheduleRun = this.dependencies.findScheduleRun(event.payload.runId);
     const scheduleLabel = schedule?.name ?? event.payload.runId;
-    const task = event.payload.taskId === null ? null : this.dependencies.findTask(event.payload.taskId);
+    const taskId = event.payload.taskId;
+    const task = taskId === null ? null : this.dependencies.findTask(taskId);
+    const noAgentOutput = readNoAgentOutput(scheduleRun);
     await this.deliverScheduleWebhook(schedule, {
       category: "task_completed",
       errorCode: null,
       errorMessage: null,
-      output: task?.finalOutput ?? null,
+      output: task?.finalOutput ?? noAgentOutput,
       runId: event.payload.runId,
       scheduleId: event.payload.scheduleId,
       scheduleName: scheduleLabel,
       status: event.payload.status,
-      taskId: event.payload.taskId ?? event.taskId
+      taskId
     });
     if (!shouldDeliverToInbox(schedule)) {
       return;
@@ -314,16 +315,16 @@ export class InboxCollector {
       severity: "info",
       sourceTraceId: event.eventId,
       summary: `Routine completed: ${scheduleLabel}.`,
-      taskId: event.payload.taskId ?? event.taskId,
+      taskId,
       sessionId: event.payload.sessionId,
       title: `Routine completed: ${scheduleLabel}`,
-      userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
+      userId: this.resolveScheduleOwner(event.payload.scheduleId, taskId)
     });
   }
 
   private async handleScheduleRunFailed(event: TraceEvent & { eventType: "schedule_run_failed" }): Promise<void> {
     const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
-    const scheduleRun = this.findScheduleRunByRunId(event.payload.taskId, event.payload.runId);
+    const scheduleRun = this.dependencies.findScheduleRun(event.payload.runId);
     const scheduleName = schedule?.name ?? event.payload.runId;
     const failureReason =
       [event.payload.errorCode, event.payload.errorMessage].filter(Boolean).join(": ") || "Scheduled routine failed";
@@ -337,7 +338,7 @@ export class InboxCollector {
       scheduleId: event.payload.scheduleId,
       scheduleName,
       status: "failed",
-      taskId: event.payload.taskId ?? event.taskId
+      taskId: event.payload.taskId
     });
     if (schedule?.sessionId !== null && schedule?.sessionId !== undefined && !hasExternalScheduleOrigin(metadata)) {
       this.createFailedRoutineFollowUp(schedule, event.payload.runId, event.payload.taskId, failureReason);
@@ -354,10 +355,10 @@ export class InboxCollector {
       severity: "warning",
       sourceTraceId: event.eventId,
       summary: failureReason,
-      taskId: event.payload.taskId ?? event.taskId,
+      taskId: event.payload.taskId,
       sessionId: schedule?.sessionId ?? null,
       title: `Routine failed: ${scheduleName}`,
-      userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
+      userId: this.resolveScheduleOwner(event.payload.scheduleId, event.payload.taskId)
     });
   }
 
@@ -427,4 +428,12 @@ function readJsonObject(value: unknown): JsonObject | null {
     return null;
   }
   return value as JsonObject;
+}
+
+function readNoAgentOutput(scheduleRun: ScheduleRunRecord | null): string | null {
+  if (scheduleRun === null) {
+    return null;
+  }
+  const output = scheduleRun.metadata.noAgentOutput;
+  return typeof output === "string" ? output : null;
 }

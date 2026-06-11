@@ -5,6 +5,12 @@ import {
   withExecutionModeMetadata,
   type ScheduleExecutionMode
 } from "./execution-mode.js";
+import {
+  readRepeatRemaining,
+  withScheduleMetadata,
+  type ScheduleNoAgentConfig
+} from "./schedule-metadata.js";
+import type { ToolsetName } from "../../tools/toolsets.js";
 import { computeNextFireAt, parseEveryExpression } from "./next-fire.js";
 
 import type { JobRunner } from "../jobs/job-runner.js";
@@ -41,6 +47,10 @@ export interface CreateScheduleInput {
   metadata?: JsonObject;
   deliveryTargets?: ScheduleDeliveryTarget[];
   executionMode?: ScheduleExecutionMode;
+  noAgent?: ScheduleNoAgentConfig | null;
+  repeatRemaining?: number | null;
+  skills?: string[];
+  toolsets?: ToolsetName[];
 }
 
 export interface UpdateScheduleInput {
@@ -127,6 +137,25 @@ export class SchedulerService {
 
   public async tickOnce(now = new Date()): Promise<void> {
     await this.tick(now);
+  }
+
+  public handleRepeatAfterSuccess(schedule: ScheduleRecord): ScheduleRecord {
+    const remaining = readRepeatRemaining(schedule);
+    if (remaining === null) {
+      return schedule;
+    }
+    const nextRemaining = remaining - 1;
+    if (nextRemaining <= 0) {
+      return this.dependencies.scheduleRepository.update(schedule.scheduleId, {
+        nextFireAt: null,
+        status: "completed",
+        metadata: withScheduleMetadata(schedule.metadata, { repeatRemaining: 0 })
+      });
+    }
+    return this.dependencies.scheduleRepository.update(schedule.scheduleId, {
+      metadata: withScheduleMetadata(schedule.metadata, { repeatRemaining: nextRemaining }),
+      nextFireAt: new Date().toISOString()
+    });
   }
 
   public createSchedule(input: CreateScheduleInput): ScheduleRecord {
@@ -375,9 +404,17 @@ export class SchedulerService {
       input: input.input,
       intervalMs,
       maxAttempts: input.maxAttempts ?? 3,
-      metadata: withExecutionModeMetadata(
-        withDeliveryMetadata(input.metadata ?? {}, input.deliveryTargets ?? ["inbox"]),
-        { executionMode }
+      metadata: withScheduleMetadata(
+        withExecutionModeMetadata(
+          withDeliveryMetadata(input.metadata ?? {}, input.deliveryTargets ?? ["inbox"]),
+          { executionMode }
+        ),
+        {
+          ...(input.noAgent !== undefined ? { noAgent: input.noAgent } : {}),
+          ...(input.repeatRemaining !== undefined ? { repeatRemaining: input.repeatRemaining } : {}),
+          ...(input.skills !== undefined ? { skills: input.skills } : {}),
+          ...(input.toolsets !== undefined ? { toolsets: input.toolsets } : {})
+        }
       ),
       name: input.name,
       nextFireAt,
