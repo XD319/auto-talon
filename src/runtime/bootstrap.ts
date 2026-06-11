@@ -85,7 +85,7 @@ import {
   SessionCommitmentProjector
 } from "./commitments/index.js";
 import { JobRunner } from "./jobs/index.js";
-import { SchedulerService } from "./scheduler/index.js";
+import { resolveScheduleSessionId, SchedulerService } from "./scheduler/index.js";
 import { ResumePacketBuilder, SessionService, SessionStateProjector } from "./sessions/index.js";
 import {
   SessionBranchService,
@@ -733,7 +733,9 @@ export function createApplication(
           }
         },
         taskInput: schedule.input,
-        ...(schedule.sessionId !== null ? { sessionId: schedule.sessionId } : {}),
+        ...(resolveScheduleSessionId(schedule) !== null
+          ? { sessionId: resolveScheduleSessionId(schedule)! }
+          : {}),
         timeoutMs: config.defaultTimeoutMs,
         tokenBudget: {
           ...config.tokenBudget,
@@ -760,6 +762,7 @@ export function createApplication(
         providerName: config.provider.name
       }),
     listSchedules: (query) => schedulerService.listSchedules(query),
+    resolveContinuationSessionId: (taskId) => storage.tasks.findById(taskId)?.sessionId ?? null,
     pauseSchedule: (scheduleId) => schedulerService.pauseSchedule(scheduleId),
     resumeSchedule: (scheduleId) => schedulerService.resumeSchedule(scheduleId),
     runScheduleNow: (scheduleId) => schedulerService.runNow(scheduleId),

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { CreateScheduleInput, UpdateScheduleInput } from "../runtime/scheduler/index.js";
+import { parseExecutionModeInput, parseScheduleWhen } from "../runtime/scheduler/index.js";
 import { SCHEDULE_STATUSES } from "../types/index.js";
 import type {
   JsonObject,
@@ -22,11 +23,13 @@ const createActionSchema = z.object({
   agentProfileId: agentProfileSchema.optional(),
   cron: z.string().optional(),
   every: z.string().optional(),
+  executionMode: z.enum(["isolated", "continue", "session"]).optional(),
   name: z.string().min(1),
   prompt: z.string().min(1),
   runAt: z.string().optional(),
   sessionId: z.string().optional(),
-  timezone: z.string().optional()
+  timezone: z.string().optional(),
+  when: z.string().optional()
 });
 
 const listActionSchema = z.object({
@@ -68,6 +71,7 @@ export interface CronjobSchedulePort {
   createSchedule(input: Omit<CreateScheduleInput, "providerName">): ScheduleRecord;
   listSchedules(query?: ScheduleListQuery): ScheduleRecord[];
   pauseSchedule(scheduleId: string): ScheduleRecord;
+  resolveContinuationSessionId?(taskId: string): string | null;
   resumeSchedule(scheduleId: string): ScheduleRecord;
   runScheduleNow(scheduleId: string): ScheduleRunRecord;
   updateSchedule(scheduleId: string, input: UpdateScheduleInput): ScheduleRecord;
@@ -132,16 +136,31 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
     try {
       switch (preparedInput.action) {
         case "create": {
+          const timing = resolveCreateTiming(preparedInput);
+          const execution = parseExecutionModeInput(
+            preparedInput.executionMode === "session" && preparedInput.sessionId !== undefined
+              ? `session:${preparedInput.sessionId}`
+              : preparedInput.executionMode
+          );
           const schedule = this.port.createSchedule({
             agentProfileId: preparedInput.agentProfileId ?? context.agentProfileId,
             cwd: context.cwd,
+            executionMode: execution.executionMode,
             input: preparedInput.prompt,
             name: preparedInput.name,
             ownerUserId: context.userId,
-            ...(preparedInput.cron !== undefined ? { cron: preparedInput.cron } : {}),
-            ...(preparedInput.every !== undefined ? { every: preparedInput.every } : {}),
-            ...(preparedInput.runAt !== undefined ? { runAt: preparedInput.runAt } : {}),
-            ...(preparedInput.sessionId !== undefined ? { sessionId: preparedInput.sessionId } : {}),
+            ...(timing.cron !== undefined ? { cron: timing.cron } : {}),
+            ...(timing.every !== undefined ? { every: timing.every } : {}),
+            ...(timing.runAt !== undefined ? { runAt: timing.runAt } : {}),
+            ...(execution.sessionId !== undefined
+              ? { sessionId: execution.sessionId }
+              : preparedInput.sessionId !== undefined
+                ? { sessionId: preparedInput.sessionId }
+                : execution.executionMode === "continue"
+                  ? {
+                      sessionId: this.port.resolveContinuationSessionId?.(context.taskId) ?? null
+                    }
+                  : {}),
             ...(preparedInput.timezone !== undefined ? { timezone: preparedInput.timezone } : {})
           });
           return successResult(`Created schedule ${schedule.scheduleId}`, serializeSchedule(schedule));
@@ -240,6 +259,27 @@ function serializeRun(run: ScheduleRunRecord): JsonObject {
     scheduledAt: run.scheduledAt,
     status: run.status,
     trigger: run.trigger
+  };
+}
+
+function resolveCreateTiming(input: {
+  cron?: string | undefined;
+  every?: string | undefined;
+  runAt?: string | undefined;
+  when?: string | undefined;
+}): Pick<CreateScheduleInput, "cron" | "every" | "runAt"> {
+  if (input.when !== undefined) {
+    const parsed = parseScheduleWhen(input.when);
+    return {
+      ...(parsed.cron !== undefined ? { cron: parsed.cron } : {}),
+      ...(parsed.every !== undefined ? { every: parsed.every } : {}),
+      ...(parsed.runAt !== undefined ? { runAt: parsed.runAt } : {})
+    };
+  }
+  return {
+    ...(input.cron !== undefined ? { cron: input.cron } : {}),
+    ...(input.every !== undefined ? { every: input.every } : {}),
+    ...(input.runAt !== undefined ? { runAt: input.runAt } : {})
   };
 }
 

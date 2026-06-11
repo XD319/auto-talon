@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 
+import {
+  resolveCreateScheduleSessionId,
+  withExecutionModeMetadata,
+  type ScheduleExecutionMode
+} from "./execution-mode.js";
 import { computeNextFireAt, parseEveryExpression } from "./next-fire.js";
 
 import type { JobRunner } from "../jobs/job-runner.js";
@@ -35,6 +40,7 @@ export interface CreateScheduleInput {
   backoffMaxMs?: number;
   metadata?: JsonObject;
   deliveryTargets?: ScheduleDeliveryTarget[];
+  executionMode?: ScheduleExecutionMode;
 }
 
 export interface UpdateScheduleInput {
@@ -51,6 +57,7 @@ export interface UpdateScheduleInput {
   runAt?: string | null;
   sessionId?: string | null;
   timezone?: string | null;
+  executionMode?: ScheduleExecutionMode;
 }
 
 export interface SchedulerServiceDependencies {
@@ -353,6 +360,12 @@ export class SchedulerService {
             },
             new Date()
           )?.toISOString() ?? null;
+    const executionMode = input.executionMode ?? "isolated";
+    const sessionId = resolveCreateScheduleSessionId({
+      continuationSessionId: input.sessionId ?? null,
+      executionMode,
+      sessionId: input.sessionId ?? null
+    });
     return {
       agentProfileId: input.agentProfileId,
       backoffBaseMs: input.backoffBaseMs ?? 5_000,
@@ -362,14 +375,17 @@ export class SchedulerService {
       input: input.input,
       intervalMs,
       maxAttempts: input.maxAttempts ?? 3,
-      metadata: withDeliveryMetadata(input.metadata ?? {}, input.deliveryTargets ?? ["inbox"]),
+      metadata: withExecutionModeMetadata(
+        withDeliveryMetadata(input.metadata ?? {}, input.deliveryTargets ?? ["inbox"]),
+        { executionMode }
+      ),
       name: input.name,
       nextFireAt,
       ownerUserId: input.ownerUserId,
       providerName: input.providerName,
       runAt,
       scheduleId: randomUUID(),
-      sessionId: input.sessionId ?? null,
+      sessionId,
       timezone: input.timezone ?? null
     };
   }

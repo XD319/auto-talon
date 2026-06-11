@@ -57,6 +57,37 @@ describe("schedule e2e", () => {
     }
   });
 
+  it("keeps isolated schedules on fresh sessions", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "talon-schedule-isolated-e2e-"));
+    const handle = createApplication(workspace, {
+      config: { databasePath: join(workspace, "runtime.db") },
+      provider: new ScheduledProvider(),
+      scheduler: { autoStart: false }
+    });
+    try {
+      const schedule = handle.service.createSchedule({
+        agentProfileId: "executor",
+        cwd: workspace,
+        every: "1m",
+        executionMode: "isolated",
+        input: "run isolated action",
+        name: "isolated schedule",
+        ownerUserId: "local-user",
+        providerName: handle.config.provider.name,
+        sessionId: "stale-session"
+      });
+      handle.service.runScheduleNow(schedule.scheduleId);
+      await handle.service.tickScheduleOnce();
+      const completed = handle.service
+        .listScheduleRuns(schedule.scheduleId, { tail: 5 })
+        .find((run) => run.status === "completed");
+      expect(completed?.sessionId).not.toBe("stale-session");
+    } finally {
+      handle.close();
+      rmSync(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("runs queued scheduled work from gateway applications", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "talon-gateway-schedule-e2e-"));
     const gateway = createGatewayApplication(workspace, {

@@ -4,7 +4,9 @@ import type { AuditService } from "../audit/audit-service.js";
 import { buildApprovalPromptContext } from "../approvals/approval-prompt-view-model.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { AgentApplicationService } from "../runtime/application-service.js";
+import { parseExecutionModeInput } from "../runtime/scheduler/execution-mode.js";
 import { resolveDefaultDeliveryTargets } from "../runtime/scheduler/schedule-delivery.js";
+import type { ScheduleExecutionMode } from "../runtime/scheduler/execution-mode.js";
 import type {
   AdapterDescriptor,
   AdapterCapabilityName,
@@ -336,6 +338,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       sessionId?: string | null;
       timezone?: string | null;
       deliveryTargets?: Array<"inbox" | "origin" | "silent" | "webhook">;
+      executionMode?: ScheduleExecutionMode | `session:${string}`;
     }
   ): ScheduleRecord {
     const identityBinding = this.dependencies.identityMapper.bind(adapter.adapterId, request.requester);
@@ -370,10 +373,19 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       }
     };
 
+    const parsedExecutionMode =
+      request.executionMode === undefined
+        ? { executionMode: sessionId !== null ? ("continue" as const) : ("isolated" as const) }
+        : parseExecutionModeInput(
+            typeof request.executionMode === "string" && request.executionMode.startsWith("session:")
+              ? request.executionMode
+              : request.executionMode
+          );
     const schedule = this.dependencies.applicationService.createSchedule({
       agentProfileId: request.agentProfileId ?? runOptions.agentProfileId,
       cwd,
       deliveryTargets: request.deliveryTargets ?? resolveDefaultDeliveryTargets(metadata),
+      executionMode: parsedExecutionMode.executionMode,
       input: request.input,
       metadata,
       name: request.name,
@@ -382,7 +394,11 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       ...(request.cron !== undefined ? { cron: request.cron } : {}),
       ...(request.every !== undefined ? { every: request.every } : {}),
       ...(request.runAt !== undefined ? { runAt: request.runAt } : {}),
-      ...(sessionId !== null ? { sessionId } : {}),
+      ...(parsedExecutionMode.sessionId !== undefined
+        ? { sessionId: parsedExecutionMode.sessionId }
+        : sessionId !== null
+          ? { sessionId }
+          : {}),
       ...(request.timezone !== undefined ? { timezone: request.timezone } : {})
     });
 

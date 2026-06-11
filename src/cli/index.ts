@@ -38,6 +38,8 @@ import {
   buildRepoMap,
   createApplication,
   createDefaultRunOptions,
+  parseExecutionModeInput,
+  parseScheduleWhen,
   initializeWorkspaceFiles,
   resolveAppConfig,
   RUNTIME_VERSION,
@@ -427,6 +429,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--cron <expression>", "Cron expression")
     .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
     .option("--session <session_id>", "Continue an existing session")
+    .option("--execution-mode <mode>", "isolated, continue, or session:<id>")
     .option("--profile <profile>", "Agent profile id", "executor")
     .option("--cwd <cwd>", "Working directory", process.cwd())
     .option("--max-attempts <num>", "Max retry attempts", parsePositiveIntegerOption("--max-attempts"), 3)
@@ -439,6 +442,16 @@ export async function main(argv = process.argv): Promise<void> {
         const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
         const name = commandOptions.name ?? "scheduled-run";
         const profile = (commandOptions.profile ?? "executor") as "executor" | "planner" | "reviewer";
+        const parsedExecutionMode =
+          commandOptions.executionMode === undefined
+            ? null
+            : parseExecutionModeInput(
+                commandOptions.executionMode.startsWith("session:")
+                  ? commandOptions.executionMode
+                  : commandOptions.session !== undefined && commandOptions.executionMode === "continue"
+                    ? "continue"
+                    : commandOptions.executionMode
+              );
         const schedule = handle.service.createSchedule({
           agentProfileId: profile,
           backoffBaseMs: commandOptions.backoffBase,
@@ -451,8 +464,13 @@ export async function main(argv = process.argv): Promise<void> {
           providerName: handle.config.provider.name,
           ...(commandOptions.cron !== undefined ? { cron: commandOptions.cron } : {}),
           ...(commandOptions.every !== undefined ? { every: commandOptions.every } : {}),
-          ...(commandOptions.at !== undefined ? { runAt: commandOptions.at } : {}),
-          ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {}),
+          ...(commandOptions.at !== undefined ? { runAt: resolveCliScheduleAt(commandOptions.at) } : {}),
+          ...(parsedExecutionMode !== null ? { executionMode: parsedExecutionMode.executionMode } : {}),
+          ...(parsedExecutionMode?.sessionId !== undefined
+            ? { sessionId: parsedExecutionMode.sessionId }
+            : commandOptions.session !== undefined
+              ? { sessionId: commandOptions.session }
+              : {}),
           ...(commandOptions.timezone !== undefined ? { timezone: commandOptions.timezone } : {})
         });
         console.log(formatScheduleDetail(schedule));
@@ -2272,11 +2290,20 @@ interface ScheduleCreateOptions {
   cron?: string;
   cwd?: string;
   every?: string;
+  executionMode?: string;
   maxAttempts: number;
   name?: string;
   profile?: string;
   session?: string;
   timezone?: string;
+}
+
+function resolveCliScheduleAt(value: string): string {
+  const parsed = parseScheduleWhen(value);
+  if (parsed.runAt === undefined) {
+    throw new Error(`--at must resolve to a one-shot time, got: ${value}`);
+  }
+  return parsed.runAt;
 }
 
 interface ScheduleEditOptions {
