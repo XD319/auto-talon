@@ -5,6 +5,12 @@ import { z } from "zod";
 
 import type { DiffDisplayMode } from "../presentation/diff-display.js";
 import { DEFAULT_DIFF_DISPLAY_MODE } from "../presentation/diff-display.js";
+import {
+  DEFAULT_TUI_STATUS_LINE_CONFIG,
+  resolveTuiStatusLineConfig,
+  statusLineConfigSchema,
+  type TuiStatusLineConfig
+} from "./tui-status-line-config.js";
 import type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import type { BudgetLimits, BudgetPricingEntry, ProviderTier, RoutingMode, TokenBudget } from "../types/index.js";
@@ -172,10 +178,13 @@ const runtimeConfigFileSchema = z.object({
     .optional(),
   tui: z
     .object({
-      diffDisplay: diffDisplaySchema.optional()
+      diffDisplay: diffDisplaySchema.optional(),
+      statusLine: statusLineConfigSchema.optional()
     })
     .optional()
 });
+
+export type { TuiStatusLineConfig } from "./tui-status-line-config.js";
 
 export interface WorkflowRuntimeConfig {
   failureGuidedRetry: {
@@ -270,6 +279,7 @@ export interface RuntimeConfig {
   tokenBudget: TokenBudget;
   tui: {
     diffDisplay: DiffDisplayMode;
+    statusLine: TuiStatusLineConfig;
   };
   webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
@@ -342,7 +352,8 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     pricing: {}
   },
   tui: {
-    diffDisplay: DEFAULT_DIFF_DISPLAY_MODE
+    diffDisplay: DEFAULT_DIFF_DISPLAY_MODE,
+    statusLine: DEFAULT_TUI_STATUS_LINE_CONFIG
   },
   workflow: {
     failureGuidedRetry: {
@@ -610,7 +621,8 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       diffDisplay:
         envConfig.tui?.diffDisplay ??
         fileConfig?.tui?.diffDisplay ??
-        DEFAULT_RUNTIME_CONFIG.tui.diffDisplay
+        DEFAULT_RUNTIME_CONFIG.tui.diffDisplay,
+      statusLine: resolveTuiStatusLineConfig(fileConfig?.tui?.statusLine, envConfig.tui?.statusLine)
     },
     webSearch,
     workflow

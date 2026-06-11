@@ -97,6 +97,7 @@ import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/i
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import {
   resolveRuntimeConfig,
+  type TuiStatusLineConfig,
   type WebSearchRuntimeConfig,
   type WorkflowCustomShell,
   type WorkflowRuntimeConfig
@@ -178,6 +179,7 @@ export interface AppConfig {
   tokenBudget: TokenBudget;
   tui: {
     diffDisplay: DiffDisplayMode;
+    statusLine: TuiStatusLineConfig;
   };
   webSearch: WebSearchRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
