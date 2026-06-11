@@ -22,6 +22,7 @@ const agentProfileSchema = z.enum(["executor", "planner", "reviewer"]);
 const createActionSchema = z.object({
   action: z.literal("create"),
   agentProfileId: agentProfileSchema.optional(),
+  allowDelegate: z.boolean().optional(),
   cron: z.string().optional(),
   every: z.string().optional(),
   executionMode: z.enum(["isolated", "continue", "session"]).optional(),
@@ -162,6 +163,9 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
             ...(timing.cron !== undefined ? { cron: timing.cron } : {}),
             ...(timing.every !== undefined ? { every: timing.every } : {}),
             ...(timing.runAt !== undefined ? { runAt: timing.runAt } : {}),
+            ...(preparedInput.allowDelegate !== undefined
+              ? { allowDelegate: preparedInput.allowDelegate }
+              : {}),
             ...(preparedInput.noAgent !== undefined
               ? {
                   noAgent: {

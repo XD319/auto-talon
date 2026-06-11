@@ -88,7 +88,9 @@ import { JobRunner } from "./jobs/index.js";
 import {
   buildScheduledTaskInput,
   readScheduleNoAgent,
+  readScheduleSkills,
   readScheduleToolsets,
+  scanCronSkillPrompt,
   resolveScheduleSessionId,
   runNoAgentCommand,
   SchedulerService
@@ -735,6 +737,13 @@ export function createApplication(
         throw new Error("Application service has not been initialized.");
       }
       const scheduleToolsets = readScheduleToolsets(schedule);
+      const taskInput = buildScheduledTaskInput(schedule, skillRegistry);
+      if (readScheduleSkills(schedule).length > 0) {
+        const guard = scanCronSkillPrompt(taskInput);
+        if (!guard.safe) {
+          throw new Error(guard.reason ?? "Scheduled skill prompt failed security scan.");
+        }
+      }
       const runResult = await service.runTask({
         agentProfileId: schedule.agentProfileId,
         cwd: schedule.cwd,
@@ -745,9 +754,10 @@ export function createApplication(
             runId: run.runId,
             scheduleId: schedule.scheduleId
           },
+          ...(schedule.metadata.allowDelegate === true ? { allowDelegate: true } : {}),
           ...(scheduleToolsets.length > 0 ? { scheduleToolsets } : {})
         },
-        taskInput: buildScheduledTaskInput(schedule, skillRegistry),
+        taskInput,
         ...(resolveScheduleSessionId(schedule) !== null
           ? { sessionId: resolveScheduleSessionId(schedule)! }
           : {}),

@@ -145,9 +145,11 @@ Scheduled info-flow examples:
 - Hourly service status check: `talon schedule create "Search public status pages for our dependencies and summarize incidents." --name "Status patrol" --every 1h`
 - Weekly review: `talon schedule create "Review this week's inbox and completed tasks; produce a concise retrospective." --name "Weekly review" --cron "0 17 * * 5" --timezone Asia/Shanghai`
 
-v0.1.0 schedule boundaries:
-- Supported: one-shot `runAt`, interval `every`, cron, inbox delivery, and Feishu origin delivery.
-- Not supported yet: skill-backed cron, `repeat=N`, silent suppression, per-job toolsets, browser automation, voice/TTS, image generation, sub-agent orchestration, multi-platform origin delivery, and `execute_code`.
+v0.2 schedule boundaries:
+- Supported: one-shot `runAt` (including relative `30m` / `2h`), interval `every`, cron, natural-language `when`, execution modes (`isolated` / `continue` / `session:<id>`), agent `cronjob` tool, skill binding, per-job toolsets, `no_agent` script runs, `repeat=N`, delivery targets (`inbox` / `origin` / `silent` / `webhook`), `schedule run --wait`, and configurable `scheduler.pollIntervalMs`.
+- Scheduled runs deny nested schedule management via `cronjob` unless explicitly designed otherwise; `delegate_task` is disabled unless `metadata.allowDelegate: true` on the schedule.
+- Skill-backed schedules run a lightweight prompt-injection scan before execution.
+- Not supported yet: Heartbeat ambient subsystem, browser automation, voice/TTS, image generation, multi-platform origin delivery beyond Feishu, and `execute_code`.
 
 Trace stream also includes commitment lifecycle events:
 - `commitment_created|updated|blocked|unblocked|completed|cancelled`

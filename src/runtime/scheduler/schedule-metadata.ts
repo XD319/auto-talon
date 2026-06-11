@@ -56,6 +56,7 @@ export function readRepeatRemaining(schedule: ScheduleRecord): number | null {
 export function withScheduleMetadata(
   metadata: JsonObject,
   input: {
+    allowDelegate?: boolean;
     noAgent?: ScheduleNoAgentConfig | null;
     repeatRemaining?: number | null;
     skills?: string[];
@@ -63,6 +64,9 @@ export function withScheduleMetadata(
   }
 ): JsonObject {
   const next = { ...metadata };
+  if (input.allowDelegate !== undefined) {
+    next.allowDelegate = input.allowDelegate;
+  }
   if (input.skills !== undefined) {
     next.skills = input.skills;
   }

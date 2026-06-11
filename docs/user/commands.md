@@ -75,3 +75,10 @@ TUI slash commands (chat mode):
 - `/memory add <profile|project> <text>`
 - `/memory forget <memory-id-prefix>`
 - `/memory why [memory-id-prefix]`
+
+Schedule notes (v0.2):
+
+- `talon schedule create` accepts `--at 30m`, `--every 2h`, `--execution-mode isolated|continue|session:<id>`, and delivery targets.
+- `talon schedule run <schedule-id> --wait [--timeout MS] [--poll-interval MS]` blocks until the run reaches a terminal state.
+- Agent `cronjob` tool manages schedules in chat; scheduled runs cannot nest further schedule edits unless you opt in.
+- Skill-backed schedules are scanned for prompt-injection patterns before execution; set `metadata.allowDelegate: true` to allow `delegate_task` during a scheduled run.

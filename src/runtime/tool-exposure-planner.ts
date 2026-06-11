@@ -23,6 +23,19 @@ export interface ToolExposurePlannerInput {
   interactionMode?: TuiInteractionMode;
 }
 
+function isScheduledRunWithoutDelegate(metadata: ToolExecutionContext["taskMetadata"]): boolean {
+  const scheduleRunContext = metadata?.scheduleRunContext;
+  const hasScheduleRunContext =
+    scheduleRunContext !== null &&
+    scheduleRunContext !== undefined &&
+    typeof scheduleRunContext === "object" &&
+    !Array.isArray(scheduleRunContext);
+  if (!hasScheduleRunContext) {
+    return false;
+  }
+  return metadata?.allowDelegate !== true;
+}
+
 function readScheduleToolsetsFromMetadata(metadata: ToolExecutionContext["taskMetadata"]): string[] {
   const toolsets = metadata?.scheduleToolsets;
   if (!Array.isArray(toolsets)) {
@@ -47,6 +60,9 @@ export class ToolExposurePlanner {
         scheduleToolsets.flatMap((toolset) => TOOLSET_TOOLS[toolset as ToolsetName] ?? [])
       );
       tools = tools.filter((tool) => allowed.has(tool.name));
+    }
+    if (isScheduledRunWithoutDelegate(input.context.taskMetadata)) {
+      tools = tools.filter((tool) => tool.name !== "delegate_task");
     }
     const availability = await checkToolAvailability(tools, input.context);
     const budgetDowngradeActive =

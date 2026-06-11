@@ -47,6 +47,7 @@ export interface CreateScheduleInput {
   metadata?: JsonObject;
   deliveryTargets?: ScheduleDeliveryTarget[];
   executionMode?: ScheduleExecutionMode;
+  allowDelegate?: boolean;
   noAgent?: ScheduleNoAgentConfig | null;
   repeatRemaining?: number | null;
   skills?: string[];
@@ -410,6 +411,7 @@ export class SchedulerService {
           { executionMode }
         ),
         {
+          ...(input.allowDelegate !== undefined ? { allowDelegate: input.allowDelegate } : {}),
           ...(input.noAgent !== undefined ? { noAgent: input.noAgent } : {}),
           ...(input.repeatRemaining !== undefined ? { repeatRemaining: input.repeatRemaining } : {}),
           ...(input.skills !== undefined ? { skills: input.skills } : {}),
