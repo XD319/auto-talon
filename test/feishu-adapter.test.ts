@@ -1349,7 +1349,7 @@ describe("feishu adapter", () => {
     });
   });
 
-  it("skips Feishu-origin schedule success delivery when output starts with [SILENT]", async () => {
+  it("skips Feishu-origin schedule success delivery when delivery target is silent", async () => {
     const create = vi.fn(() => Promise.resolve({ data: { message_id: "completion-message" } }));
     const patch = vi.fn(() => Promise.resolve({}));
     const runtimeApi = createRuntimeApi({
@@ -1385,6 +1385,9 @@ describe("feishu adapter", () => {
       item: createInboxItem({
         category: "task_completed",
         metadata: {
+          delivery: {
+            targets: ["origin", "silent"]
+          },
           origin: {
             adapter: "feishu-im",
             chatId: "chat"
@@ -1400,7 +1403,7 @@ describe("feishu adapter", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("does not suppress Feishu-origin schedule failure delivery with [SILENT]", async () => {
+  it("does not suppress Feishu-origin schedule failure delivery when silent is set", async () => {
     const create = vi.fn(() => Promise.resolve({ data: { message_id: "failure-message" } }));
     const patch = vi.fn(() => Promise.resolve({}));
     const runtimeApi = createRuntimeApi({

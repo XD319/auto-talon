@@ -889,7 +889,9 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
       event.item.category === "task_completed"
         ? snapshot?.task.output ?? event.item.summary
         : snapshot?.task.errorMessage ?? event.item.summary;
-    if (event.item.category === "task_completed" && detail.trim().startsWith("[SILENT]")) {
+    const delivery = readJsonObject(event.item.metadata?.delivery);
+    const deliveryTargets = Array.isArray(delivery?.targets) ? delivery.targets : [];
+    if (event.item.category === "task_completed" && deliveryTargets.includes("silent")) {
       return;
     }
     const title = event.item.category === "task_completed" ? "Routine completed" : "Routine failed";

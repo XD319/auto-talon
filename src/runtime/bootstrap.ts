@@ -75,6 +75,7 @@ import { ExecutionKernel } from "./execution-kernel.js";
 import { RuntimeOutputService } from "./runtime-output-service.js";
 import { RecallBudgetPolicy, RecallPlanner } from "./retrieval/index.js";
 import { DeliveryService } from "./delivery/index.js";
+import { WebhookDeliveryService } from "./delivery/webhook-delivery.js";
 import { InboxCollector, InboxService } from "./inbox/index.js";
 import {
   AssistantSessionProjectionService,
@@ -544,6 +545,25 @@ export function createApplication(
     recallPlanner
   });
   const deliveryService = new DeliveryService();
+  const webhookDeliveryService = new WebhookDeliveryService({
+    onFailure: ({ errorMessage, runId, scheduleId, webhookUrl }) => {
+      auditService.record({
+        action: "tool_failure",
+        actor: "delivery.webhook",
+        approvalId: null,
+        outcome: "failed",
+        payload: {
+          errorMessage,
+          runId,
+          scheduleId,
+          webhookUrl
+        },
+        summary: `Schedule webhook failed for ${scheduleId}`,
+        taskId: `schedule:${scheduleId}`,
+        toolCallId: null
+      });
+    }
+  });
   const deliveryProducer = deliveryService.createProducer();
   const inboxService = new InboxService({
     deliveryProducer,
@@ -566,7 +586,8 @@ export function createApplication(
     inboxService,
     listScheduleRunsByTask: (taskId) => storage.scheduleRuns.listByTaskId(taskId),
     nextActionService,
-    traceService
+    traceService,
+    webhookDelivery: webhookDeliveryService
   });
   inboxCollector.start();
   const sessionCommitmentProjector = new SessionCommitmentProjector({

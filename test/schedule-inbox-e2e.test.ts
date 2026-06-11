@@ -66,6 +66,76 @@ describe("schedule inbox e2e", () => {
     }
   });
 
+  it("skips inbox items when delivery target is silent", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "talon-schedule-silent-inbox-e2e-"));
+    const handle = createApplication(workspace, {
+      config: { databasePath: join(workspace, "runtime.db") },
+      provider: new ScheduledInboxProvider(),
+      scheduler: { autoStart: false }
+    });
+    try {
+      const schedule = handle.service.createSchedule({
+        agentProfileId: "executor",
+        cwd: workspace,
+        deliveryTargets: ["silent"],
+        every: "1m",
+        input: "run silent action",
+        name: "silent schedule",
+        ownerUserId: "local-user",
+        providerName: handle.config.provider.name
+      });
+      handle.service.runScheduleNow(schedule.scheduleId);
+      await handle.service.tickScheduleOnce();
+
+      const runs = handle.service.listScheduleRuns(schedule.scheduleId, { tail: 20 });
+      const completed = runs.find((run) => run.status === "completed");
+      expect(completed?.taskId).toBeTruthy();
+
+      const inboxItems = handle.service.listInbox({ userId: "local-user" });
+      expect(inboxItems.some((item) => item.scheduleRunId === completed?.runId)).toBe(false);
+    } finally {
+      handle.close();
+      rmSync(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("skips inbox items when delivery target is origin only", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "talon-schedule-origin-only-inbox-e2e-"));
+    const handle = createApplication(workspace, {
+      config: { databasePath: join(workspace, "runtime.db") },
+      provider: new ScheduledInboxProvider(),
+      scheduler: { autoStart: false }
+    });
+    try {
+      const schedule = handle.service.createSchedule({
+        agentProfileId: "executor",
+        cwd: workspace,
+        deliveryTargets: ["origin"],
+        every: "1m",
+        input: "run origin-only action",
+        metadata: {
+          origin: {
+            adapter: "feishu-im",
+            chatId: "chat-1"
+          }
+        },
+        name: "origin-only schedule",
+        ownerUserId: "local-user",
+        providerName: handle.config.provider.name
+      });
+      handle.service.runScheduleNow(schedule.scheduleId);
+      await handle.service.tickScheduleOnce();
+
+      const runs = handle.service.listScheduleRuns(schedule.scheduleId, { tail: 20 });
+      const completed = runs.find((run) => run.status === "completed");
+      expect(completed?.taskId).toBeTruthy();
+      expect(handle.service.listInbox({ userId: "local-user" })).toHaveLength(0);
+    } finally {
+      handle.close();
+      rmSync(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("marks scheduled run task metadata to disallow recursive schedule creation", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "talon-schedule-metadata-e2e-"));
     const provider = new MetadataCapturingProvider();

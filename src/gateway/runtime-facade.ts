@@ -4,6 +4,7 @@ import type { AuditService } from "../audit/audit-service.js";
 import { buildApprovalPromptContext } from "../approvals/approval-prompt-view-model.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { AgentApplicationService } from "../runtime/application-service.js";
+import { resolveDefaultDeliveryTargets } from "../runtime/scheduler/schedule-delivery.js";
 import type {
   AdapterDescriptor,
   AdapterCapabilityName,
@@ -334,7 +335,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       runAt?: string | null;
       sessionId?: string | null;
       timezone?: string | null;
-      deliveryTargets?: Array<"inbox" | "origin">;
+      deliveryTargets?: Array<"inbox" | "origin" | "silent" | "webhook">;
     }
   ): ScheduleRecord {
     const identityBinding = this.dependencies.identityMapper.bind(adapter.adapterId, request.requester);
@@ -372,7 +373,7 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     const schedule = this.dependencies.applicationService.createSchedule({
       agentProfileId: request.agentProfileId ?? runOptions.agentProfileId,
       cwd,
-      deliveryTargets: request.deliveryTargets ?? ["inbox", "origin"],
+      deliveryTargets: request.deliveryTargets ?? resolveDefaultDeliveryTargets(metadata),
       input: request.input,
       metadata,
       name: request.name,

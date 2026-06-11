@@ -21,7 +21,7 @@ export const SCHEDULE_RUN_TRIGGERS = ["scheduled", "manual", "retry"] as const;
 
 export type ScheduleRunTrigger = (typeof SCHEDULE_RUN_TRIGGERS)[number];
 
-export const SCHEDULE_DELIVERY_TARGETS = ["inbox", "origin"] as const;
+export const SCHEDULE_DELIVERY_TARGETS = ["inbox", "origin", "silent", "webhook"] as const;
 
 export type ScheduleDeliveryTarget = (typeof SCHEDULE_DELIVERY_TARGETS)[number];
 

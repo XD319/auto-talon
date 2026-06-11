@@ -1,4 +1,10 @@
 import type { InboxService } from "./inbox-service.js";
+import type { WebhookDeliveryService } from "../delivery/webhook-delivery.js";
+import {
+  shouldDeliverToInbox,
+  shouldDeliverToOrigin,
+  shouldDeliverViaWebhook
+} from "../scheduler/schedule-delivery.js";
 import type {
   NextActionRecord,
   ScheduleRecord,
@@ -17,6 +23,7 @@ export interface InboxCollectorDependencies {
   listScheduleRunsByTask: (taskId: string) => ScheduleRunRecord[];
   nextActionService: NextActionService;
   traceService: TraceService;
+  webhookDelivery?: WebhookDeliveryService;
 }
 
 export class InboxCollector {
@@ -41,7 +48,7 @@ export class InboxCollector {
   private handleTrace(event: TraceEvent): void {
     switch (event.eventType) {
       case "task_success":
-        if (this.findRelatedScheduleRun(event.taskId) !== null) {
+        if (this.isScheduledTaskRun(event.taskId) || this.findRelatedScheduleRun(event.taskId) !== null) {
           return;
         }
         this.dependencies.inboxService.append({
@@ -57,7 +64,7 @@ export class InboxCollector {
         });
         return;
       case "task_failure":
-        if (this.findRelatedScheduleRun(event.taskId) !== null) {
+        if (this.isScheduledTaskRun(event.taskId) || this.findRelatedScheduleRun(event.taskId) !== null) {
           return;
         }
         this.dependencies.inboxService.append({
@@ -185,49 +192,11 @@ export class InboxCollector {
         if (event.payload.status !== "completed") {
           return;
         }
-        {
-          const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
-          const scheduleLabel = schedule?.name ?? event.payload.runId;
-          this.dependencies.inboxService.append({
-            category: "task_completed",
-            dedupKey: `schedule_run_finished:${event.payload.runId}`,
-            metadata: buildScheduleInboxMetadata(schedule),
-            scheduleRunId: event.payload.runId,
-            severity: "info",
-            sourceTraceId: event.eventId,
-            summary: `Routine completed: ${scheduleLabel}.`,
-            taskId: event.payload.taskId ?? event.taskId,
-            sessionId: event.payload.sessionId,
-            title: `Routine completed: ${scheduleLabel}`,
-            userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
-          });
-        }
+        void this.handleScheduleRunCompleted(event);
         return;
-      case "schedule_run_failed": {
-        const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
-        const scheduleRun = this.findScheduleRunByRunId(event.payload.taskId, event.payload.runId);
-        const scheduleName = schedule?.name ?? event.payload.runId;
-        const failureReason = [event.payload.errorCode, event.payload.errorMessage].filter(Boolean).join(": ") || "Scheduled routine failed";
-        const metadata = buildScheduleInboxMetadata(schedule);
-        if (schedule?.sessionId !== null && schedule?.sessionId !== undefined && !hasExternalScheduleOrigin(metadata)) {
-          this.createFailedRoutineFollowUp(schedule, event.payload.runId, event.payload.taskId, failureReason);
-          return;
-        }
-        this.dependencies.inboxService.append({
-          category: "task_failed",
-          dedupKey: `schedule_run_failed:${event.payload.runId}`,
-          metadata,
-          scheduleRunId: scheduleRun?.runId ?? event.payload.runId,
-          severity: "warning",
-          sourceTraceId: event.eventId,
-          summary: failureReason,
-          taskId: event.payload.taskId ?? event.taskId,
-          sessionId: schedule?.sessionId ?? null,
-          title: `Routine failed: ${scheduleName}`,
-          userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
-        });
+      case "schedule_run_failed":
+        void this.handleScheduleRunFailed(event);
         return;
-      }
       case "commitment_blocked":
         this.dependencies.inboxService.append({
           category: "task_blocked",
@@ -302,11 +271,104 @@ export class InboxCollector {
     return this.dependencies.listScheduleRunsByTask(taskId)[0] ?? null;
   }
 
+  private isScheduledTaskRun(taskId: string): boolean {
+    const task = this.dependencies.findTask(taskId);
+    const scheduleRunContext = task?.metadata.scheduleRunContext;
+    return (
+      scheduleRunContext !== null &&
+      typeof scheduleRunContext === "object" &&
+      !Array.isArray(scheduleRunContext)
+    );
+  }
+
   private findScheduleRunByRunId(taskId: string | null, runId: string): ScheduleRunRecord | null {
     if (taskId === null) {
       return null;
     }
     return this.dependencies.listScheduleRunsByTask(taskId).find((item) => item.runId === runId) ?? null;
+  }
+
+  private async handleScheduleRunCompleted(event: TraceEvent & { eventType: "schedule_run_finished" }): Promise<void> {
+    const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
+    const scheduleLabel = schedule?.name ?? event.payload.runId;
+    const task = event.payload.taskId === null ? null : this.dependencies.findTask(event.payload.taskId);
+    await this.deliverScheduleWebhook(schedule, {
+      category: "task_completed",
+      errorCode: null,
+      errorMessage: null,
+      output: task?.finalOutput ?? null,
+      runId: event.payload.runId,
+      scheduleId: event.payload.scheduleId,
+      scheduleName: scheduleLabel,
+      status: event.payload.status,
+      taskId: event.payload.taskId ?? event.taskId
+    });
+    if (!shouldDeliverToInbox(schedule)) {
+      return;
+    }
+    this.dependencies.inboxService.append({
+      category: "task_completed",
+      dedupKey: `schedule_run_finished:${event.payload.runId}`,
+      metadata: buildScheduleInboxMetadata(schedule),
+      scheduleRunId: event.payload.runId,
+      severity: "info",
+      sourceTraceId: event.eventId,
+      summary: `Routine completed: ${scheduleLabel}.`,
+      taskId: event.payload.taskId ?? event.taskId,
+      sessionId: event.payload.sessionId,
+      title: `Routine completed: ${scheduleLabel}`,
+      userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
+    });
+  }
+
+  private async handleScheduleRunFailed(event: TraceEvent & { eventType: "schedule_run_failed" }): Promise<void> {
+    const schedule = this.dependencies.findSchedule(event.payload.scheduleId);
+    const scheduleRun = this.findScheduleRunByRunId(event.payload.taskId, event.payload.runId);
+    const scheduleName = schedule?.name ?? event.payload.runId;
+    const failureReason =
+      [event.payload.errorCode, event.payload.errorMessage].filter(Boolean).join(": ") || "Scheduled routine failed";
+    const metadata = buildScheduleInboxMetadata(schedule);
+    await this.deliverScheduleWebhook(schedule, {
+      category: "task_failed",
+      errorCode: event.payload.errorCode,
+      errorMessage: event.payload.errorMessage,
+      output: null,
+      runId: event.payload.runId,
+      scheduleId: event.payload.scheduleId,
+      scheduleName,
+      status: "failed",
+      taskId: event.payload.taskId ?? event.taskId
+    });
+    if (schedule?.sessionId !== null && schedule?.sessionId !== undefined && !hasExternalScheduleOrigin(metadata)) {
+      this.createFailedRoutineFollowUp(schedule, event.payload.runId, event.payload.taskId, failureReason);
+      return;
+    }
+    if (!shouldDeliverToInbox(schedule)) {
+      return;
+    }
+    this.dependencies.inboxService.append({
+      category: "task_failed",
+      dedupKey: `schedule_run_failed:${event.payload.runId}`,
+      metadata,
+      scheduleRunId: scheduleRun?.runId ?? event.payload.runId,
+      severity: "warning",
+      sourceTraceId: event.eventId,
+      summary: failureReason,
+      taskId: event.payload.taskId ?? event.taskId,
+      sessionId: schedule?.sessionId ?? null,
+      title: `Routine failed: ${scheduleName}`,
+      userId: this.resolveScheduleOwner(event.payload.scheduleId, event.taskId)
+    });
+  }
+
+  private async deliverScheduleWebhook(
+    schedule: ScheduleRecord | null,
+    payload: Parameters<WebhookDeliveryService["deliverScheduleOutcome"]>[1]
+  ): Promise<void> {
+    if (schedule === null || this.dependencies.webhookDelivery === undefined || !shouldDeliverViaWebhook(schedule)) {
+      return;
+    }
+    await this.dependencies.webhookDelivery.deliverScheduleOutcome(schedule, payload);
   }
 
   private createFailedRoutineFollowUp(
@@ -338,6 +400,10 @@ function buildScheduleInboxMetadata(schedule: ScheduleRecord | null): JsonObject
   const metadata: JsonObject = {
     scheduleId: schedule.scheduleId
   };
+  const delivery = readJsonObject(schedule.metadata.delivery);
+  if (delivery !== null) {
+    metadata.delivery = delivery;
+  }
   const origin = readJsonObject(schedule.metadata.origin);
   if (origin !== null && shouldDeliverToOrigin(schedule)) {
     metadata.origin = origin;
@@ -354,15 +420,6 @@ function buildApprovalInboxMetadata(schedule: ScheduleRecord | null, approvalId:
 
 function hasExternalScheduleOrigin(metadata: JsonObject): boolean {
   return readJsonObject(metadata.origin) !== null;
-}
-
-function shouldDeliverToOrigin(schedule: ScheduleRecord): boolean {
-  const delivery = readJsonObject(schedule.metadata.delivery);
-  const targets = delivery?.targets;
-  if (!Array.isArray(targets)) {
-    return readJsonObject(schedule.metadata.origin) !== null;
-  }
-  return targets.includes("origin");
 }
 
 function readJsonObject(value: unknown): JsonObject | null {
