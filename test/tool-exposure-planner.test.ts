@@ -211,4 +211,35 @@ describe("tool exposure planner", () => {
 
     expect(plan.tools.map((tool) => tool.name)).toEqual(["read_file"]);
   });
+
+  it("applies active skill allowed and disallowed tool constraints", async () => {
+    const tools = [
+      makeTool("read_file", "low"),
+      makeTool("web_extract", "medium"),
+      makeTool("shell", "high")
+    ];
+    const planner = createPlanner(tools);
+    const plan = await planner.plan({
+      context: {
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        iteration: 1,
+        signal: new AbortController().signal,
+        taskId: "task-skill-tools",
+        taskMetadata: {
+          activeSkillToolConstraints: {
+            allowedTools: ["read_file", "web_extract"],
+            disallowedTools: ["web_extract"]
+          }
+        },
+        userId: "u1",
+        workspaceRoot: process.cwd()
+      },
+      iteration: 1,
+      taskId: "task-skill-tools",
+      sessionId: null
+    });
+
+    expect(plan.tools.map((tool) => tool.name)).toEqual(["read_file"]);
+  });
 });

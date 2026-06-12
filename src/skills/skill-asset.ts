@@ -60,11 +60,52 @@ export function parseSkillMarkdown(markdown: string): {
 
   const rawFrontmatter = markdown.slice(3 + newline.length, closingIndex);
   const body = markdown.slice(closingIndex + closingMarker.length);
-  const frontmatter = skillFrontmatterSchema.parse(parseStrictFrontmatter(rawFrontmatter));
+  const frontmatter = skillFrontmatterSchema.parse(
+    normalizeSkillFrontmatter(parseStrictFrontmatter(rawFrontmatter))
+  );
 
   return {
     body,
     frontmatter
+  };
+}
+
+function normalizeSkillFrontmatter(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const source = value as Record<string, unknown>;
+  const metadata =
+    typeof source.metadata === "object" && source.metadata !== null && !Array.isArray(source.metadata)
+      ? { ...(source.metadata as Record<string, unknown>) }
+      : {};
+  for (const key of ["disable-model-invocation", "allowed-tools", "disallowed-tools", "context", "agent"]) {
+    if (source[key] !== undefined) {
+      metadata[key] = source[key];
+    }
+  }
+  return {
+    category: typeof source.category === "string" ? source.category : "general",
+    description: source.description,
+    disabled: typeof source.disabled === "boolean" ? source.disabled : false,
+    metadata,
+    name: source.name,
+    namespace: typeof source.namespace === "string" ? source.namespace : "default",
+    platforms: Array.isArray(source.platforms) ? source.platforms : ["any"],
+    prerequisites:
+      typeof source.prerequisites === "object" &&
+      source.prerequisites !== null &&
+      !Array.isArray(source.prerequisites)
+        ? source.prerequisites
+        : {
+            commands: [],
+            credentials: [],
+            env: [],
+            notes: []
+          },
+    relatedSkills: Array.isArray(source.relatedSkills) ? source.relatedSkills : [],
+    tags: Array.isArray(source.tags) ? source.tags : [],
+    version: typeof source.version === "string" ? source.version : "0.1.0"
   };
 }
 

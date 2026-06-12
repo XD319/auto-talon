@@ -80,9 +80,27 @@ describe("skill asset model", () => {
   });
 
   it("rejects incomplete frontmatter", () => {
-    const markdown = `---\n${JSON.stringify({ ...validFrontmatter, version: undefined })}\n---\nBody`;
+    const markdown = `---\n${JSON.stringify({ ...validFrontmatter, name: undefined })}\n---\nBody`;
 
     expect(() => parseSkillMarkdown(markdown)).toThrow();
+  });
+
+  it("defaults optional Agent Skills fields", () => {
+    const markdown = [
+      "---",
+      "name: release-notes",
+      "description: Draft release notes.",
+      "---",
+      "Body"
+    ].join("\n");
+
+    expect(parseSkillMarkdown(markdown).frontmatter).toMatchObject({
+      category: "general",
+      disabled: false,
+      name: "release-notes",
+      namespace: "default",
+      version: "0.1.0"
+    });
   });
 
   it("rejects unknown platforms", () => {

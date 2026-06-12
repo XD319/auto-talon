@@ -55,6 +55,27 @@ function readScheduleToolsetsFromMetadata(metadata: ToolExecutionContext["taskMe
   };
 }
 
+function readActiveSkillToolConstraints(metadata: ToolExecutionContext["taskMetadata"]): {
+  allowed: Set<string> | null;
+  disallowed: Set<string>;
+} {
+  const raw = metadata?.activeSkillToolConstraints;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { allowed: null, disallowed: new Set() };
+  }
+  const record = raw as Record<string, unknown>;
+  const allowedTools = Array.isArray(record.allowedTools)
+    ? record.allowedTools.filter((tool): tool is string => typeof tool === "string")
+    : null;
+  const disallowedTools = Array.isArray(record.disallowedTools)
+    ? record.disallowedTools.filter((tool): tool is string => typeof tool === "string")
+    : [];
+  return {
+    allowed: allowedTools === null ? null : new Set(allowedTools),
+    disallowed: new Set(disallowedTools)
+  };
+}
+
 export class ToolExposurePlanner {
   public constructor(private readonly dependencies: ToolExposurePlannerDependencies) {}
 
@@ -73,6 +94,13 @@ export class ToolExposurePlanner {
         const allowedToolsets = new Set(scheduleToolsetFilter.toolsets);
         tools = tools.filter((tool) => allowedToolsets.has(resolveToolsetForTool(tool.name)));
       }
+    }
+    const activeSkillToolConstraints = readActiveSkillToolConstraints(input.context.taskMetadata);
+    if (activeSkillToolConstraints.allowed !== null) {
+      tools = tools.filter((tool) => activeSkillToolConstraints.allowed?.has(tool.name) === true);
+    }
+    if (activeSkillToolConstraints.disallowed.size > 0) {
+      tools = tools.filter((tool) => !activeSkillToolConstraints.disallowed.has(tool.name));
     }
     if (isScheduledRunWithoutDelegate(input.context.taskMetadata)) {
       tools = tools.filter((tool) => tool.name !== "delegate_task");

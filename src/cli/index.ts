@@ -1,6 +1,8 @@
 ﻿import { writeFileSync } from "node:fs";
 
 import { Command, InvalidArgumentError } from "commander";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 import {
   createGatewayApplication,
@@ -2108,6 +2110,33 @@ export async function main(argv = process.argv): Promise<void> {
       await startDashboardTui(commandOptions.cwd, resolveSandboxCliOptions(commandOptions));
     });
 
+  const pluginCommand = program.command("plugin").description("Manage local plugin bundles");
+
+  pluginCommand.command("list").action(() => {
+    const plugins = listLocalPlugins(process.cwd());
+    if (plugins.length === 0) {
+      console.log("No local plugins installed.");
+      return;
+    }
+    for (const plugin of plugins) {
+      console.log(`${plugin.name}: ${plugin.path}`);
+    }
+  });
+
+  pluginCommand
+    .command("add")
+    .argument("<path>", "Local plugin directory")
+    .option("--name <name>", "Installed plugin directory name")
+    .action((pluginPath: string, commandOptions: { name?: string }) => {
+      const result = addLocalPlugin(process.cwd(), pluginPath, commandOptions.name);
+      console.log(`Installed plugin ${result.name} at ${result.path}`);
+    });
+
+  pluginCommand.command("remove").argument("<name>", "Installed plugin name").action((name: string) => {
+    const removed = removeLocalPlugin(process.cwd(), name);
+    console.log(`Removed plugin ${removed.name}`);
+  });
+
   const mcpCommand = program.command("mcp").description("Inspect configured MCP client servers");
 
   mcpCommand
@@ -2657,6 +2686,58 @@ function parseAttachmentKinds(value: string | undefined): SkillAttachmentKind[] 
     }
     return kind;
   });
+}
+
+function listLocalPlugins(cwd: string): Array<{ name: string; path: string }> {
+  const root = localPluginsRoot(cwd);
+  if (!existsSync(root)) {
+    return [];
+  }
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({
+      name: entry.name,
+      path: join(root, entry.name)
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function addLocalPlugin(cwd: string, pluginPath: string, name: string | undefined): { name: string; path: string } {
+  const source = resolve(pluginPath);
+  if (!existsSync(join(source, ".codex-plugin", "plugin.json"))) {
+    throw new Error(`Plugin ${source} must contain .codex-plugin/plugin.json.`);
+  }
+  const pluginName = name ?? basename(source);
+  if (!/^[a-z0-9][a-z0-9_-]*$/u.test(pluginName)) {
+    throw new Error(`Invalid plugin name: ${pluginName}`);
+  }
+  const root = localPluginsRoot(cwd);
+  mkdirSync(root, { recursive: true });
+  const target = join(root, pluginName);
+  if (existsSync(target)) {
+    throw new Error(`Plugin already installed: ${pluginName}`);
+  }
+  cpSync(source, target, { recursive: true });
+  return {
+    name: pluginName,
+    path: target
+  };
+}
+
+function removeLocalPlugin(cwd: string, name: string): { name: string } {
+  if (!/^[a-z0-9][a-z0-9_-]*$/u.test(name)) {
+    throw new Error(`Invalid plugin name: ${name}`);
+  }
+  const target = join(localPluginsRoot(cwd), name);
+  if (!existsSync(target)) {
+    throw new Error(`Plugin not installed: ${name}`);
+  }
+  rmSync(target, { recursive: true, force: true });
+  return { name };
+}
+
+function localPluginsRoot(cwd: string): string {
+  return join(resolve(cwd), ".auto-talon", "plugins");
 }
 
 function resolveScopeKey(

@@ -49,12 +49,16 @@ export class SkillRegistry {
   private readonly localSkillsRoot: string;
   private readonly platform: NodeJS.Platform;
   private readonly projectSkillsRoot: string;
+  private readonly repoSkillRoots: string[];
+  private readonly pluginSkillRoots: string[];
   private readonly remoteSources: RemoteSkillSource[];
   private readonly workspaceRoot: string;
 
   public constructor(options: SkillRegistryOptions) {
     this.workspaceRoot = resolve(options.workspaceRoot);
     this.projectSkillsRoot = join(this.workspaceRoot, ".auto-talon", "skills");
+    this.repoSkillRoots = collectAgentsSkillRoots(this.workspaceRoot);
+    this.pluginSkillRoots = collectPluginSkillRoots(this.workspaceRoot);
     this.localSkillsRoot = resolve(
       options.localSkillsRoot ?? process.env.AGENT_SKILLS_HOME ?? join(homedir(), ".auto-talon", "skills")
     );
@@ -118,11 +122,39 @@ export class SkillRegistry {
     const issues: SkillRegistryIssue[] = [];
     const overrides = this.readOverrides();
     const local = this.scanRoot(this.localSkillsRoot, "local", issues);
+    const repo = this.repoSkillRoots.flatMap((root) => this.scanRoot(root, "project", issues));
+    const plugins = this.pluginSkillRoots.flatMap((root) => this.scanRoot(root, "project", issues));
     const project = this.scanRoot(this.projectSkillsRoot, "project", issues);
     const selected = new Map<string, RegistryCandidate>();
 
     for (const candidate of local) {
       selected.set(logicalSkillKey(candidate.asset.metadata), candidate);
+    }
+    for (const candidate of repo) {
+      const key = logicalSkillKey(candidate.asset.metadata);
+      const existing = selected.get(key);
+      if (existing !== undefined) {
+        issues.push({
+          code: "duplicate_shadowed",
+          detail: `Repo skill ${candidate.asset.metadata.id} shadows ${existing.asset.metadata.id}.`,
+          path: existing.asset.rootPath,
+          skillId: existing.asset.metadata.id
+        });
+      }
+      selected.set(key, candidate);
+    }
+    for (const candidate of plugins) {
+      const key = logicalSkillKey(candidate.asset.metadata);
+      const existing = selected.get(key);
+      if (existing !== undefined) {
+        issues.push({
+          code: "duplicate_shadowed",
+          detail: `Plugin skill ${candidate.asset.metadata.id} shadows ${existing.asset.metadata.id}.`,
+          path: existing.asset.rootPath,
+          skillId: existing.asset.metadata.id
+        });
+      }
+      selected.set(key, candidate);
     }
     for (const candidate of project) {
       const key = logicalSkillKey(candidate.asset.metadata);
@@ -177,8 +209,7 @@ export class SkillRegistry {
       return [];
     }
 
-    return listDirectories(root).flatMap((namespaceRoot) =>
-      listDirectories(namespaceRoot).flatMap((skillRoot) => {
+    return listSkillDirectories(root).flatMap((skillRoot) => {
         try {
           assertWithinRoot(skillRoot, root);
           const skillPath = join(skillRoot, "SKILL.md");
@@ -215,8 +246,7 @@ export class SkillRegistry {
           });
           return [];
         }
-      })
-    );
+      });
   }
 
   private discoverAttachments(skillRoot: string, issues: SkillRegistryIssue[]): SkillAttachmentManifest {
@@ -325,6 +355,15 @@ function listDirectories(root: string): string[] {
     .map((entry) => join(root, entry.name));
 }
 
+function listSkillDirectories(root: string): string[] {
+  return listDirectories(root).flatMap((directory) => {
+    if (existsSync(join(directory, "SKILL.md"))) {
+      return [directory];
+    }
+    return listDirectories(directory).filter((child) => existsSync(join(child, "SKILL.md")));
+  });
+}
+
 function listFilesRecursive(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const path = join(root, entry.name);
@@ -361,4 +400,31 @@ function toSkillPlatform(platform: NodeJS.Platform): SkillPlatform {
     return "darwin";
   }
   return "linux";
+}
+
+function collectAgentsSkillRoots(workspaceRoot: string): string[] {
+  const roots: string[] = [];
+  let candidate = resolve(workspaceRoot);
+  while (true) {
+    const skillRoot = join(candidate, ".agents", "skills");
+    if (existsSync(skillRoot)) {
+      roots.push(skillRoot);
+    }
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      break;
+    }
+    candidate = parent;
+  }
+  return roots.reverse();
+}
+
+function collectPluginSkillRoots(workspaceRoot: string): string[] {
+  const pluginsRoot = join(workspaceRoot, ".auto-talon", "plugins");
+  if (!existsSync(pluginsRoot)) {
+    return [];
+  }
+  return listDirectories(pluginsRoot)
+    .map((pluginRoot) => join(pluginRoot, "skills"))
+    .filter((skillsRoot) => existsSync(skillsRoot));
 }

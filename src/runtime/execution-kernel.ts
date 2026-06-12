@@ -100,6 +100,7 @@ import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { SessionMessageProjector } from "./sessions/session-message-projector.js";
+import type { SkillContextService } from "../skills/index.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -132,6 +133,7 @@ export interface ExecutionKernelDependencies {
   providerRouter?: ProviderRouter;
   routingMode?: "cheap_first" | "balanced" | "quality_first";
   toolExposurePlanner?: ToolExposurePlanner;
+  skillContextService?: SkillContextService;
   workspaceRoot: string;
 }
 
@@ -231,8 +233,10 @@ export class ExecutionKernel {
 
   public async run(options: RuntimeRunOptions): Promise<RuntimeRunResult> {
     const taskId = options.taskId ?? randomUUID();
+    const explicitSkillMetadata = this.buildExplicitSkillMetadata(options.taskInput);
     const taskMetadata = {
       ...(options.metadata ?? {}),
+      ...explicitSkillMetadata,
       ...(options.interactionMode !== undefined ? { interactionMode: options.interactionMode } : {})
     };
     let task = this.dependencies.taskRepository.create({
@@ -2173,6 +2177,58 @@ export class ExecutionKernel {
   private emitOutput(draft: Parameters<RuntimeOutputService["record"]>[0]): RuntimeOutputEvent {
     return this.dependencies.outputService.record(draft);
   }
+
+  private buildExplicitSkillMetadata(input: string): Record<string, unknown> {
+    const activations = this.dependencies.skillContextService?.resolveExplicitSkillActivations(input) ?? [];
+    if (activations.length === 0) {
+      return {};
+    }
+    const allowedTools = intersectNonEmpty(activations.map((activation) => activation.allowedTools));
+    const disallowedTools = uniqueStringsFromArrays(
+      activations.map((activation) => activation.disallowedTools)
+    );
+    const forkedSkills = activations
+      .filter((activation) => activation.context === "fork" && activation.agent !== null)
+      .map((activation) => ({
+        agent: activation.agent,
+        skillId: activation.skillId
+      }));
+    return {
+      activeSkills: activations.map((activation) => ({
+        arguments: activation.arguments,
+        skillId: activation.skillId
+      })),
+      ...(allowedTools.length > 0 || disallowedTools.length > 0
+        ? {
+            activeSkillToolConstraints: {
+              ...(allowedTools.length > 0 ? { allowedTools } : {}),
+              ...(disallowedTools.length > 0 ? { disallowedTools } : {})
+            }
+          }
+        : {}),
+      ...(forkedSkills.length > 0 ? { activeForkedSkills: forkedSkills } : {})
+    };
+  }
+}
+
+function intersectNonEmpty(groups: string[][]): string[] {
+  const nonEmpty = groups.filter((group) => group.length > 0);
+  if (nonEmpty.length === 0) {
+    return [];
+  }
+  const [first, ...rest] = nonEmpty;
+  if (first === undefined) {
+    return [];
+  }
+  return uniqueStrings(first).filter((tool) => rest.every((group) => group.includes(tool)));
+}
+
+function uniqueStringsFromArrays(groups: string[][]): string[] {
+  return uniqueStrings(groups.flat());
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function toolResultOutputForModel(result: ToolExecutionResult): unknown {
