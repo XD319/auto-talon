@@ -83,6 +83,7 @@ export const TRACE_EVENT_TYPES = [
   "schedule_run_finished",
   "schedule_run_failed",
   "schedule_run_retry_scheduled",
+  "skill_context_loaded",
   "memory_snapshot_created",
   "experience_captured",
   "experience_reviewed",
@@ -645,6 +646,17 @@ export interface ScheduleRunRetryScheduledPayload extends JsonObject {
   delayMs: number;
 }
 
+export interface SkillContextLoadedPayload extends JsonObject {
+  runId: string;
+  scheduleId: string;
+  loadedSkills: Array<{
+    skillId: string;
+    version: string;
+    hash: string;
+  }>;
+  missingSkillIds: string[];
+}
+
 export interface MemorySnapshotCreatedPayload extends JsonObject {
   snapshotId: string;
   scope: MemoryScope;
@@ -967,6 +979,7 @@ export type TraceEvent =
   | TraceEventBase<"schedule_run_finished", ScheduleRunFinishedPayload>
   | TraceEventBase<"schedule_run_failed", ScheduleRunFailedPayload>
   | TraceEventBase<"schedule_run_retry_scheduled", ScheduleRunRetryScheduledPayload>
+  | TraceEventBase<"skill_context_loaded", SkillContextLoadedPayload>
   | TraceEventBase<"memory_snapshot_created", MemorySnapshotCreatedPayload>
   | TraceEventBase<"experience_captured", ExperienceCapturedPayload>
   | TraceEventBase<"experience_reviewed", ExperienceReviewedPayload>

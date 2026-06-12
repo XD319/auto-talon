@@ -94,6 +94,7 @@ import {
   scanCronSkillPrompt,
   resolveScheduleSessionId,
   runNoAgentCommand,
+  verifyScheduledSkills,
   SchedulerService
 } from "./scheduler/index.js";
 import { ResumePacketBuilder, SessionService, SessionStateProjector } from "./sessions/index.js";
@@ -456,6 +457,7 @@ export function createApplication(
     messageRepository: storage.sessionMessages
   });
   const mcpTools = mcpClientManager.discover();
+  let toolRegistryRef: ToolRegistry | null = null;
   const skillVersionRegistry = new SkillVersionRegistry(config.workspaceRoot);
   const skillDraftManager = new SkillDraftManager({
     auditService,
@@ -486,8 +488,14 @@ export function createApplication(
     new SessionSearchTool({ searchService: sessionMessageSearchService }),
     new TodoTool(todoSessionStore),
     cronjobTool,
+    ...mcpClientManager.createCatalogTools((tool) => {
+      if (toolRegistryRef !== null && !toolRegistryRef.has(tool.name)) {
+        toolRegistryRef.register(tool);
+      }
+    }),
     ...mcpTools
   ]);
+  toolRegistryRef = toolRegistry;
   const toolOrchestrator = new ToolOrchestrator({
     approvalService,
     approvalRuleStore,
@@ -682,6 +690,7 @@ export function createApplication(
     sessionTaskRepository: storage.sessionTasks,
     sessionTranscriptRepository: storage.sessionTranscripts,
     sessionMessageProjector,
+    skillContextService,
     toolExposurePlanner,
     toolOrchestrator,
     traceService,
@@ -737,6 +746,32 @@ export function createApplication(
         throw new Error("Application service has not been initialized.");
       }
       const scheduleToolsets = readScheduleToolsets(schedule);
+      const skillVerification = verifyScheduledSkills(schedule, skillRegistry);
+      storage.scheduleRuns.update(run.runId, {
+        metadata: {
+          ...run.metadata,
+          deliveryVerification: {
+            targets: readDeliveryVerificationTargets(schedule.metadata)
+          },
+          skillVerification
+        }
+      });
+      traceService.record({
+        actor: "scheduler",
+        eventType: "skill_context_loaded",
+        payload: {
+          loadedSkills: skillVerification.loadedSkills,
+          missingSkillIds: skillVerification.missingSkillIds,
+          runId: run.runId,
+          scheduleId: schedule.scheduleId
+        },
+        stage: "memory",
+        summary: `Loaded ${skillVerification.loadedSkills.length} scheduled skill(s)`,
+        taskId: `schedule:${schedule.scheduleId}`
+      });
+      if (skillVerification.missingSkillIds.length > 0) {
+        throw new Error(`Scheduled run missing required skill(s): ${skillVerification.missingSkillIds.join(", ")}`);
+      }
       const taskInput = buildScheduledTaskInput(schedule, skillRegistry);
       const guard = scanCronSkillPrompt(taskInput);
       if (!guard.safe) {
@@ -985,6 +1020,20 @@ function assertScheduleToolsetsAvailable(
   if (unavailable.length > 0) {
     throw new Error(`Scheduled run requested unavailable toolset(s): ${unavailable.join(", ")}`);
   }
+}
+
+function readDeliveryVerificationTargets(metadata: Record<string, unknown>): string[] {
+  if (Array.isArray(metadata.deliveryTargets)) {
+    return metadata.deliveryTargets.filter((target): target is string => typeof target === "string");
+  }
+  const delivery = metadata.delivery;
+  if (typeof delivery === "object" && delivery !== null && !Array.isArray(delivery)) {
+    const targets = (delivery as Record<string, unknown>).targets;
+    if (Array.isArray(targets)) {
+      return targets.filter((target): target is string => typeof target === "string");
+    }
+  }
+  return ["inbox"];
 }
 
 function resolveSandboxProfile(
