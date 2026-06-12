@@ -6,7 +6,7 @@ export const TOOLSET_TOOLS: Record<ToolsetName, readonly string[]> = {
   automation: ["cronjob"],
   file: ["read_file", "write_file", "patch", "search_files", "glob"],
   interaction: ["clarify"],
-  mcp: [],
+  mcp: ["mcp_tool_search", "mcp_resource", "mcp_prompt"],
   session: ["session_search"],
   shell: ["shell", "process"],
   skills: ["skills_list", "skill_view"],

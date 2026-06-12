@@ -79,6 +79,7 @@ export class ToolOrchestrator {
   }
 
   public listTools(toolNames?: string[]): ProviderToolDescriptor[] {
+    this.refreshFromRegistry();
     return [...this.tools.values()]
       .filter((tool) => toolNames === undefined || toolNames.includes(tool.name))
       .map((tool) => ({
@@ -92,6 +93,7 @@ export class ToolOrchestrator {
   }
 
   public listToolsWithMetadata(): ToolDefinition[] {
+    this.refreshFromRegistry();
     return [...this.tools.values()];
   }
 
@@ -112,7 +114,19 @@ export class ToolOrchestrator {
   }
 
   private resolveTool(toolName: string): ToolDefinition | undefined {
+    const liveTool = this.dependencies.toolRegistry.get(toolName);
+    if (liveTool !== undefined && !this.tools.has(toolName)) {
+      this.tools.set(toolName, liveTool);
+    }
     return this.tools.get(toolName);
+  }
+
+  private refreshFromRegistry(): void {
+    for (const tool of this.dependencies.toolRegistry.list()) {
+      if (!this.tools.has(tool.name)) {
+        this.tools.set(tool.name, tool);
+      }
+    }
   }
 
   public async execute(

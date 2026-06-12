@@ -26,6 +26,21 @@ defaults keep auth and everyday provider selection reusable across workspaces.
 `AGENT_PROVIDER*` environment variables take precedence over both layers.
 Set `AGENT_USER_CONFIG_DIR` to move the user config directory.
 
+MCP client config supports one local and one remote transport path:
+
+- `type: "stdio"` with `command`, `args`, optional `env`, and optional `cwd`.
+- `type: "streamable_http"` with `url`, optional `headers`,
+  `envHeaders`, and `bearerTokenEnvVar`.
+
+Common MCP server fields are `enabled`, `required`, `alwaysLoad`,
+`enabledTools`, `disabledTools`, `startupTimeoutMs`, `toolTimeoutMs`,
+`riskLevel`, and `privacyLevel`. `alwaysLoad: false` keeps tools in the MCP
+catalog until `mcp_tool_search` materializes a matching tool.
+
+`mcp-server.config.json` uses `exposeTools` as an explicit string array. Legacy
+`true` is treated as the default read-oriented allowlist; `false` exposes no
+runtime tools.
+
 Manage the common case through the CLI:
 
 ```bash

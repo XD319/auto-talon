@@ -34,6 +34,7 @@ export class McpServer {
         jsonrpc: "2.0",
         result: {
           capabilities: {
+            prompts: this.config.exposeSkills,
             resources: this.config.exposeSkills,
             tools: true
           },
@@ -103,6 +104,30 @@ export class McpServer {
         result: {
           contents: [resource]
         }
+      };
+    }
+
+    if (request.method === "prompts/list") {
+      return {
+        id: request.id,
+        jsonrpc: "2.0",
+        result: {
+          prompts: this.config.exposeSkills ? this.skillBridge.listPrompts() : []
+        }
+      };
+    }
+
+    if (request.method === "prompts/get") {
+      const name = typeof request.params?.name === "string" ? request.params.name : "";
+      const args = isJsonObject(request.params?.arguments) ? request.params.arguments : {};
+      const prompt = this.config.exposeSkills ? this.skillBridge.getPrompt(name, args) : null;
+      if (prompt === null) {
+        return this.error(request.id, -32004, `Prompt not found: ${name}`);
+      }
+      return {
+        id: request.id,
+        jsonrpc: "2.0",
+        result: prompt
       };
     }
 

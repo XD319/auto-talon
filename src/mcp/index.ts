@@ -1,4 +1,6 @@
 export * from "./client/mcp-client-manager.js";
+export * from "./client/mcp-catalog-tools.js";
+export * from "./client/mcp-http-transport.js";
 export * from "./client/mcp-stdio-transport.js";
 export * from "./client/mcp-tool-adapter.js";
 export * from "./server/mcp-server.js";
