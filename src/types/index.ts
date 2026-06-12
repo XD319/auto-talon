@@ -26,6 +26,7 @@ export * from "./skill.js";
 export * from "./storage.js";
 export * from "./task.js";
 export * from "./tool.js";
+export * from "./toolset.js";
 export * from "./session.js";
 export * from "./session-message.js";
 export * from "./session-summary.js";

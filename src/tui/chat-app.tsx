@@ -128,7 +128,7 @@ export function ChatTuiApp({
     ...(initialSessionApprovalFingerprints !== undefined
       ? { initialSessionApprovalFingerprints }
       : {}),
-    ...(initialRuntimeSessionId !== undefined ? { initialSessionId: initialRuntimeSessionId } : { initialSessionId: resolvedSessionId }),
+    ...(initialRuntimeSessionId !== undefined ? { initialSessionId: initialRuntimeSessionId } : {}),
     interactionMode,
     onOutputEvent: (event) => scrollbackRef.current?.onOutputEvent(event),
     onTraceEvent: (event) => scrollbackRef.current?.onTraceEvent(event),

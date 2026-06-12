@@ -36,7 +36,9 @@ describe("WriteFileTool", () => {
     );
 
     const result = await tool.execute(prepared.preparedInput, createContext(root));
-    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error(result.errorMessage);
+    }
     expect(result.output).toMatchObject({
       addedLineCount: 1,
       removedLineCount: 1
@@ -46,8 +48,9 @@ describe("WriteFileTool", () => {
     const content = fileArtifact?.content;
     expect(typeof content).toBe("object");
     if (typeof content === "object" && content !== null && !Array.isArray(content)) {
-      expect(String(content.unifiedDiff)).toContain("-line two");
-      expect(String(content.unifiedDiff)).toContain("+line three");
+      const record = content as Record<string, unknown>;
+      expect(String(record.unifiedDiff)).toContain("-line two");
+      expect(String(record.unifiedDiff)).toContain("+line three");
     }
   });
 

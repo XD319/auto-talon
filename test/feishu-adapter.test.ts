@@ -1058,7 +1058,8 @@ describe("feishu adapter", () => {
     await handlers["im.message.receive_v1"]?.(messagePayload("/schedule preview cron 0 17 * * 5", "message-preview"));
     await handlers["im.message.receive_v1"]?.(messagePayload("/schedule show schedule-cr", "message-show"));
 
-    expect(runtimeApi.submitTask).not.toHaveBeenCalled();
+    const submitTask = runtimeApi["submitTask"] as ReturnType<typeof vi.fn>;
+    expect(submitTask).not.toHaveBeenCalled();
     expect(createSchedule).toHaveBeenCalledWith(expect.objectContaining({ adapterId: "feishu-im" }), expect.objectContaining({
       cron: "0 17 * * 5",
       input: "weekly review"

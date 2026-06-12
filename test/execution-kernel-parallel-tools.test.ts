@@ -79,6 +79,24 @@ const writeTool = (name: string): ToolDefinition =>
     sideEffectLevel: "workspace_mutation"
   }) as unknown as ToolDefinition;
 
+const runtimeMutationTool = (name: string): ToolDefinition =>
+  ({
+    capability: "filesystem.read",
+    description: name,
+    execute: () => Promise.resolve({ output: { ok: true }, success: true, summary: name }),
+    inputSchema: { safeParse: (value: unknown) => ({ data: value, success: true }) },
+    name,
+    prepare: () =>
+      Promise.resolve({
+        governance: { pathScope: "workspace", summary: name },
+        preparedInput: {},
+        sandbox: { kind: "prompt", pathScope: "workspace", target: "interactive_user" }
+      }),
+    privacyLevel: "internal",
+    riskLevel: "low",
+    sideEffectLevel: "runtime_mutation"
+  }) as unknown as ToolDefinition;
+
 const clarifyTool = (): ToolDefinition =>
   ({
     capability: "interaction.ask_user",
@@ -108,6 +126,7 @@ describe("tool parallel policy", () => {
   it("classifies read-only tools as parallel-safe and mutations as serial-only", () => {
     expect(isParallelSafeTool(readTool("read_file"))).toBe(true);
     expect(isParallelSafeTool(writeTool("write_file"))).toBe(false);
+    expect(isParallelSafeTool(runtimeMutationTool("todo"))).toBe(false);
     expect(isParallelSafeTool(clarifyTool())).toBe(false);
   });
 
@@ -193,7 +212,7 @@ describe("execution kernel parallel read tools", () => {
       })
     });
 
-    const originalExecute = ToolOrchestrator.prototype.execute;
+    const originalExecute = Reflect.get(ToolOrchestrator.prototype, "execute");
     let activeExecutions = 0;
     let maxConcurrentExecutions = 0;
     const executeSpy = vi
@@ -205,7 +224,7 @@ describe("execution kernel parallel read tools", () => {
           await new Promise((resolve) => setTimeout(resolve, 40));
           activeExecutions -= 1;
         }
-        return originalExecute.call(this, request, context);
+        return Reflect.apply(originalExecute, this, [request, context]);
       });
 
     try {

@@ -48,7 +48,7 @@ export class DelegateTaskTool
   public readonly riskLevel = "medium" as const;
   public readonly privacyLevel = "internal" as const;
   public readonly costLevel = "expensive" as const;
-  public readonly sideEffectLevel = "none" as const;
+  public readonly sideEffectLevel = "runtime_mutation" as const;
   public readonly toolKind = "control_command" as const;
   public readonly inputSchema = delegateTaskSchema;
 

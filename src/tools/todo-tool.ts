@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type {
+  JsonObject,
   ToolDefinition,
   ToolExecutionContext,
   ToolExecutionResult,
@@ -9,8 +10,8 @@ import type {
 
 import {
   resolveTodoSessionKey,
-  TodoSessionStore,
   type TodoItem,
+  type TodoSessionStore,
   type TodoStatus
 } from "./todo-session-store.js";
 
@@ -40,7 +41,7 @@ export class TodoTool implements ToolDefinition<typeof todoSchema, PreparedTodoI
   public readonly riskLevel = "low" as const;
   public readonly privacyLevel = "internal" as const;
   public readonly costLevel = "free" as const;
-  public readonly sideEffectLevel = "none" as const;
+  public readonly sideEffectLevel = "runtime_mutation" as const;
   public readonly toolKind = "control_command" as const;
   public readonly inputSchema = todoSchema;
 
@@ -68,14 +69,18 @@ export class TodoTool implements ToolDefinition<typeof todoSchema, PreparedTodoI
   ): Promise<ToolExecutionResult> {
     const sessionKey = resolveTodoSessionKey(context);
     const todos = this.store.update(sessionKey, preparedInput.todos, preparedInput.merge);
+    const output: JsonObject = {
+      merge: preparedInput.merge,
+      sessionKey,
+      todos: todos.map((todo) => ({
+        content: todo.content,
+        id: todo.id,
+        status: todo.status,
+        ...(todo.statusUpdatedAt !== undefined ? { statusUpdatedAt: todo.statusUpdatedAt } : {})
+      }))
+    };
     return Promise.resolve({
-      output: JSON.parse(
-        JSON.stringify({
-          merge: preparedInput.merge,
-          sessionKey,
-          todos
-        })
-      ),
+      output,
       success: true,
       summary: `Updated ${todos.length} todo item(s) for session ${sessionKey}`
     });

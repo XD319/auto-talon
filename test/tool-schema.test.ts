@@ -64,7 +64,7 @@ describe("getToolInputSchemaDescriptor", () => {
   it("derives shell tool descriptor from Zod schema", () => {
     const tool = new ShellTool(
       {
-        execute: async () => ({
+        execute: () => Promise.resolve({
           output: {},
           success: true,
           summary: "ok"
@@ -95,7 +95,7 @@ describe("getToolInputSchemaDescriptor", () => {
 
   it("derives file tool descriptors without stack overflow", () => {
     const sandbox = new SandboxService({ workspaceRoot: process.cwd() });
-    const cases: Array<[string, { inputSchema: import("zod").ZodTypeAny }]> = [
+    const cases: Array<[string, { inputSchema: z.ZodTypeAny }]> = [
       ["read_file", new ReadFileTool(sandbox)],
       ["write_file", new WriteFileTool(sandbox)],
       ["patch", new PatchTool(sandbox)],

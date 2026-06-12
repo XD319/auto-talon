@@ -62,13 +62,17 @@ export class TerminalSessionManager {
       session.stderrBuffer = appendWithLimit(session.stderrBuffer, chunk.toString("utf8"), this.maxBufferedChars);
     });
     child.once("close", (exitCode) => {
-      session.exitCode = exitCode ?? -1;
-      session.running = false;
+      setTimeout(() => {
+        session.exitCode = exitCode ?? -1;
+        session.running = false;
+      }, 25);
     });
     child.once("error", (error) => {
-      session.stderrBuffer = appendWithLimit(session.stderrBuffer, error.message, this.maxBufferedChars);
-      session.exitCode = -1;
-      session.running = false;
+      setTimeout(() => {
+        session.stderrBuffer = appendWithLimit(session.stderrBuffer, error.message, this.maxBufferedChars);
+        session.exitCode = -1;
+        session.running = false;
+      }, 25);
     });
 
     this.sessions.set(sessionId, session);

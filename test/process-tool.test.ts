@@ -1,5 +1,4 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -96,10 +95,42 @@ describe("process tool", () => {
       cleanupWorkspace(workspace);
     }
   });
+
+  it("surfaces stderr when a process exits before it is ready", async () => {
+    const workspace = createWorkspace();
+    writeFileSync(
+      join(workspace, "terminal-fail.cjs"),
+      "console.error('startup failed'); process.exit(23);\n",
+      "utf8"
+    );
+    const manager = new TerminalSessionManager();
+    const sandbox = new SandboxService({ allowedShellCommands: ["node"], workspaceRoot: workspace });
+    const context = createContext(workspace);
+    const processTool = new ProcessTool(manager, sandbox);
+
+    try {
+      const started = await processTool.execute(
+        processTool.prepare({ action: "start", command: "node terminal-fail.cjs" }, context).preparedInput
+      );
+      expect(started.success).toBe(true);
+      if (!started.success) {
+        throw new Error("process start failed");
+      }
+      const sessionId = (started.output as { sessionId: string }).sessionId;
+      const read = await readUntilStopped(processTool, sessionId);
+
+      expect(read.summary).toContain("process exited with code");
+      expect(read.combinedOutput).toContain("startup failed");
+    } finally {
+      cleanupWorkspace(workspace);
+    }
+  });
 });
 
 function createWorkspace(): string {
-  return mkdtempSync(join(tmpdir(), "auto-talon-process-"));
+  const root = join(process.cwd(), ".tmp-tests");
+  mkdirSync(root, { recursive: true });
+  return mkdtempSync(join(root, "auto-talon-process-"));
 }
 
 function cleanupWorkspace(workspace: string): void {
@@ -136,4 +167,25 @@ async function readUntil(
     await delay(100);
   }
   throw new Error(`Timed out waiting for ${needle}`);
+}
+
+async function readUntilStopped(
+  processTool: ProcessTool,
+  sessionId: string,
+  attempts = 20
+): Promise<Awaited<ReturnType<ProcessTool["execute"]>> & { combinedOutput: string }> {
+  let combinedOutput = "";
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const result = await processTool.execute({ action: "read", sessionId });
+    if (!result.success) {
+      throw new Error("process read failed");
+    }
+    combinedOutput += JSON.stringify(result.output);
+    const output = result.output as { running?: boolean };
+    if (output.running === false) {
+      return { ...result, combinedOutput };
+    }
+    await delay(100);
+  }
+  throw new Error("Timed out waiting for process to stop");
 }

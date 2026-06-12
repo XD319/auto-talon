@@ -1,6 +1,7 @@
 ﻿import { checkToolAvailability } from "../tools/availability/index.js";
 import { evaluateToolExposure } from "../tools/policy/index.js";
-import { isPlanSafeTool, resolveToolsetForTool, TOOLSET_NAMES, type ToolsetName } from "../tools/toolsets.js";
+import { isPlanSafeTool, resolveToolsetForTool } from "../tools/toolsets.js";
+import { TOOLSET_NAMES, type ToolsetName } from "../types/index.js";
 import type { ToolOverrideStore } from "../tools/tool-overrides.js";
 import type { ToolOrchestrator } from "../tools/tool-orchestrator.js";
 import type { TraceService } from "../tracing/trace-service.js";

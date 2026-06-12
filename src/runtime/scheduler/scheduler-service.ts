@@ -3,16 +3,14 @@ import { randomUUID } from "node:crypto";
 import {
   readScheduleExecutionMode,
   resolveCreateScheduleSessionId,
-  withExecutionModeMetadata,
-  type ScheduleExecutionMode
-} from "./execution-mode.js";
+  withExecutionModeMetadata
+} from "../../schedule/execution-mode.js";
 import {
   readRepeatRemaining,
-  withScheduleMetadata,
-  type ScheduleNoAgentConfig
-} from "./schedule-metadata.js";
-import type { ToolsetName } from "../../tools/toolsets.js";
-import { computeNextFireAt, parseEveryExpression } from "./next-fire.js";
+  withScheduleMetadata
+} from "../../schedule/schedule-metadata.js";
+import type { CreateScheduleInput, UpdateScheduleInput } from "../../schedule/index.js";
+import { computeNextFireAt, parseEveryExpression } from "../../schedule/next-fire.js";
 
 import type { JobRunner } from "../jobs/job-runner.js";
 import type { TraceService } from "../../tracing/trace-service.js";
@@ -30,52 +28,7 @@ import type {
   ScheduleStatusSummary
 } from "../../types/index.js";
 
-export interface CreateScheduleInput {
-  name: string;
-  ownerUserId: string;
-  cwd: string;
-  agentProfileId: ScheduleRecord["agentProfileId"];
-  providerName: string;
-  input: string;
-  sessionId?: string | null;
-  runAt?: string | null;
-  every?: string | null;
-  cron?: string | null;
-  timezone?: string | null;
-  maxAttempts?: number;
-  backoffBaseMs?: number;
-  backoffMaxMs?: number;
-  metadata?: JsonObject;
-  deliveryTargets?: ScheduleDeliveryTarget[];
-  executionMode?: ScheduleExecutionMode;
-  allowDelegate?: boolean;
-  noAgent?: ScheduleNoAgentConfig | null;
-  repeatRemaining?: number | null;
-  skills?: string[];
-  toolsets?: ToolsetName[];
-}
-
-export interface UpdateScheduleInput {
-  agentProfileId?: ScheduleRecord["agentProfileId"];
-  allowDelegate?: boolean;
-  backoffBaseMs?: number;
-  backoffMaxMs?: number;
-  cron?: string | null;
-  deliveryTargets?: ScheduleDeliveryTarget[];
-  every?: string | null;
-  executionMode?: ScheduleExecutionMode;
-  input?: string;
-  maxAttempts?: number;
-  metadata?: JsonObject;
-  name?: string;
-  noAgent?: ScheduleNoAgentConfig | null;
-  repeatRemaining?: number | null;
-  runAt?: string | null;
-  sessionId?: string | null;
-  skills?: string[];
-  timezone?: string | null;
-  toolsets?: ToolsetName[];
-}
+export type { CreateScheduleInput, UpdateScheduleInput } from "../../schedule/index.js";
 
 export interface SchedulerServiceDependencies {
   scheduleRepository: ScheduleRepository;

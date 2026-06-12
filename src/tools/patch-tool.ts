@@ -233,9 +233,11 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
         patches:
           parsedInput.patches?.map((patch) => {
             const normalized = normalizePatchAliases(patch) as Record<string, unknown>;
+            const find = normalized.find;
+            const replace = normalized.replace;
             const preparedPatch: PreparedPatchEntry = {
-              find: String(normalized.find ?? ""),
-              replace: String(normalized.replace ?? ""),
+              find: typeof find === "string" ? find : "",
+              replace: typeof replace === "string" ? replace : "",
               replaceAll: patch.replaceAll
             };
             if (patch.afterContext !== undefined) {

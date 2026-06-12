@@ -155,7 +155,7 @@ export class ProcessTool implements ToolDefinition<typeof processSchema, Prepare
         return Promise.resolve({
           output: { ...output },
           success: true,
-          summary: `Read process session ${input.sessionId}.`
+          summary: summarizeReadOutput(input.sessionId, output)
         });
       }
       case "write": {
@@ -189,4 +189,27 @@ function summarizeAction(action: ProcessInput["action"], sessionId: string): str
     default:
       return `Process session ${sessionId}`;
   }
+}
+
+function summarizeReadOutput(
+  sessionId: string,
+  output: { exitCode: number | null; running: boolean; stderr: string }
+): string {
+  if (output.running) {
+    return `Read process session ${sessionId}.`;
+  }
+  const stderrSummary = summarizeStderr(output.stderr);
+  return `Read process session ${sessionId}; process exited with code ${output.exitCode ?? "unknown"}${
+    stderrSummary.length > 0 ? `; stderr: ${stderrSummary}` : ""
+  }.`;
+}
+
+function summarizeStderr(stderr: string): string {
+  const trimmed = stderr.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+  const lines = trimmed.split(/\r?\n/u).slice(-3);
+  const joined = lines.join(" | ").replace(/\s+/gu, " ").trim();
+  return joined.length > 240 ? `${joined.slice(0, 240)}...` : joined;
 }

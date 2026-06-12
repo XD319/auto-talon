@@ -1,18 +1,5 @@
 import type { ToolDefinition, ToolSideEffectLevel } from "../types/index.js";
-
-export const TOOLSET_NAMES = [
-  "automation",
-  "file",
-  "shell",
-  "web",
-  "interaction",
-  "skills",
-  "session",
-  "agent",
-  "mcp"
-] as const;
-
-export type ToolsetName = (typeof TOOLSET_NAMES)[number];
+import { TOOLSET_NAMES, type ToolsetName } from "../types/index.js";
 
 export const TOOLSET_TOOLS: Record<ToolsetName, readonly string[]> = {
   agent: ["delegate_task", "todo"],

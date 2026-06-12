@@ -54,10 +54,7 @@ export class ReadFileTool implements ToolDefinition<typeof readFileSchema, Prepa
     };
   }
 
-  public async execute(
-    input: PreparedReadFileInput,
-    _context: ToolExecutionContext
-  ): Promise<ToolExecutionResult> {
+  public async execute(input: PreparedReadFileInput): Promise<ToolExecutionResult> {
     return executeReadFile(input.plan, input.offset, input.limit);
   }
 }

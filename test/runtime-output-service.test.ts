@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { RuntimeOutputService } from "../src/runtime/runtime-output-service.js";
-import type { RuntimeOutputRepository, TaskRecord, TraceEvent } from "../src/types/index.js";
+import type { RuntimeOutputRepository, TraceEvent } from "../src/types/index.js";
 
 describe("RuntimeOutputService", () => {
   it("projects fileChange onto tool_status finished events", () => {

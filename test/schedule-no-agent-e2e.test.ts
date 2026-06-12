@@ -34,7 +34,8 @@ describe("schedule no_agent e2e", () => {
         .find((run) => run.status === "completed");
       expect(completed).toBeTruthy();
       expect(completed?.taskId).toBeNull();
-      expect(String(completed?.metadata.noAgentOutput ?? "")).toContain("no-agent-ok");
+      const noAgentOutput = completed?.metadata.noAgentOutput;
+      expect(typeof noAgentOutput === "string" ? noAgentOutput : JSON.stringify(noAgentOutput)).toContain("no-agent-ok");
     } finally {
       handle.close();
       rmSync(workspace, { force: true, recursive: true });

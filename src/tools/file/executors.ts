@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 
 import { AppError } from "../../core/app-error.js";
 import { buildFileDiff, normalizeDiffDisplayPath } from "../../presentation/file-diff.js";

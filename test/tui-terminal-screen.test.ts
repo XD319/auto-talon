@@ -68,6 +68,19 @@ describe("chat tui terminal screen", () => {
     expect(closeApplication).toHaveBeenCalledTimes(1);
   });
 
+  it("does not activate a generated runtime session for a fresh chat start", async () => {
+    render.mockClear();
+    waitUntilExit.mockClear();
+    unmount.mockClear();
+    closeApplication.mockClear();
+
+    await startTui({ cwd: "D:\\workspace" });
+
+    const appElement = render.mock.calls[0]?.[0] as { props?: Record<string, unknown> } | undefined;
+    expect(appElement?.props?.initialSessionId).toBeUndefined();
+    expect(appElement?.props?.initialRuntimeSessionId).toBeUndefined();
+  });
+
   it("keeps the dashboard in alternate screen mode", async () => {
     render.mockClear();
     waitUntilExit.mockClear();

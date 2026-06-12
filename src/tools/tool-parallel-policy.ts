@@ -4,6 +4,7 @@ export function isMutationTool(tool: ToolDefinition): boolean {
   return (
     tool.capability === "interaction.ask_user" ||
     tool.capability === "filesystem.write" ||
+    tool.sideEffectLevel === "runtime_mutation" ||
     tool.sideEffectLevel === "workspace_mutation" ||
     tool.sideEffectLevel === "external_mutation"
   );

@@ -64,7 +64,7 @@ export function useDashboardController(input: {
           updateUiStatus(setUiStatus, buildDashboardUiStatus(nextSnapshot, selectedPanel));
           return dashboardSnapshotEquals(previousSnapshot, nextSnapshot) ? previousSnapshot : nextSnapshot;
         });
-      } catch (error) {
+      } catch {
         setUiStatus({
           primaryLabel: "refresh failed",
           primaryTone: "danger",
@@ -95,7 +95,7 @@ export function useDashboardController(input: {
         clampIndex(currentIndex, nextSnapshot.pendingApprovals.length)
       );
       setUiStatus(buildDashboardUiStatus(nextSnapshot, selectedPanel));
-    } catch (error) {
+    } catch {
       setUiStatus({
         primaryLabel: "refresh failed",
         primaryTone: "danger",
@@ -142,7 +142,7 @@ export function useDashboardController(input: {
         runState: result.error === undefined ? "succeeded" : "failed",
         taskLabel: result.task.taskId.slice(0, 8)
       });
-    } catch (error) {
+    } catch {
       setUiStatus({
         primaryLabel: "approval action failed",
         primaryTone: "danger",

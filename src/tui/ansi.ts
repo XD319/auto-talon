@@ -30,5 +30,6 @@ export function reset(): string {
 }
 
 export function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex -- ANSI escape stripping intentionally matches ESC.
   return text.replace(/\u001b\[[0-9;]*m/gu, "");
 }

@@ -67,7 +67,7 @@ export class JobRunner {
     try {
       const noAgent = readScheduleNoAgent(schedule);
       if (noAgent !== null && this.dependencies.executeNoAgent !== undefined) {
-        return await this.executeNoAgentRun(schedule, run, noAgent);
+        return await this.executeNoAgentRun(schedule, run);
       }
       const result = await this.dependencies.execute({ run, schedule });
       const mappedStatus = this.mapTaskStatus(result.task.status);
@@ -146,8 +146,7 @@ export class JobRunner {
 
   private async executeNoAgentRun(
     schedule: ScheduleRecord,
-    run: ScheduleRunRecord,
-    noAgent: NonNullable<ReturnType<typeof readScheduleNoAgent>>
+    run: ScheduleRunRecord
   ): Promise<ScheduleRunRecord> {
     const result = await this.dependencies.executeNoAgent!({ run, schedule });
     const mappedStatus = result.success ? "completed" : "failed";

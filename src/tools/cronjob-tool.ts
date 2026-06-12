@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import type { CreateScheduleInput, UpdateScheduleInput } from "../runtime/scheduler/index.js";
 import {
   parseExecutionModeInput,
   previewScheduleTiming,
@@ -10,17 +9,18 @@ import {
   readScheduleSkills,
   readScheduleToolsets,
   resolveScheduleTiming,
-  timingToCreateFields
-} from "../runtime/scheduler/index.js";
-import { readScheduleDeliveryTargets } from "../runtime/scheduler/schedule-delivery.js";
-import { TOOLSET_NAMES } from "./toolsets.js";
+  timingToCreateFields,
+  type CreateScheduleInput,
+  type UpdateScheduleInput
+} from "../schedule/index.js";
+import { readScheduleDeliveryTargets } from "../schedule/schedule-delivery.js";
+import { TOOLSET_NAMES } from "../types/index.js";
 import { SCHEDULE_STATUSES } from "../types/index.js";
 import type {
   JsonObject,
   ScheduleListQuery,
   ScheduleRecord,
   ScheduleRunRecord,
-  ScheduleStatus,
   ToolAvailabilityResult,
   ToolDefinition,
   ToolExecutionContext,
@@ -120,7 +120,7 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
   public readonly riskLevel = "low" as const;
   public readonly privacyLevel = "internal" as const;
   public readonly costLevel = "free" as const;
-  public readonly sideEffectLevel = "none" as const;
+  public readonly sideEffectLevel = "runtime_mutation" as const;
   public readonly toolKind = "control_command" as const;
   public readonly inputSchema = cronjobSchema;
 
@@ -156,10 +156,17 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
     };
   }
 
-  public async execute(
+  public execute(
     preparedInput: PreparedCronjobInput,
     context: ToolExecutionContext
   ): Promise<ToolExecutionResult> {
+    return Promise.resolve(this.executeSync(preparedInput, context));
+  }
+
+  private executeSync(
+    preparedInput: PreparedCronjobInput,
+    context: ToolExecutionContext
+  ): ToolExecutionResult {
     if (this.port === null) {
       return {
         errorCode: "tool_unavailable",
@@ -220,7 +227,7 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
         }
         case "list": {
           const query =
-            preparedInput.status === undefined ? undefined : { status: preparedInput.status as ScheduleStatus };
+            preparedInput.status === undefined ? undefined : { status: preparedInput.status };
           const schedules = this.port.listSchedules(query);
           return successResult(`Listed ${schedules.length} schedule(s)`, {
             schedules: schedules.map(serializeSchedule)

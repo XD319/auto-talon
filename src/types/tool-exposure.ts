@@ -6,6 +6,7 @@ export type ToolSideEffectLevel =
   | "none"
   | "read_only"
   | "external_read_only"
+  | "runtime_mutation"
   | "workspace_mutation"
   | "external_mutation";
 export type ToolKind = "runtime_primitive" | "external_tool" | "control_command";

@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 
 import type { ToolDefinition } from "../types/index.js";
 
-import { resolveToolsetForTool, type ToolsetName } from "./toolsets.js";
+import type { ToolsetName } from "../types/index.js";
+import { resolveToolsetForTool } from "./toolsets.js";
 
 interface ToolOverrideFile {
   disabledToolNames: string[];

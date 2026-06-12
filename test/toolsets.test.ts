@@ -48,6 +48,7 @@ describe("toolsets", () => {
 
   it("treats read-only side effects as plan-safe", () => {
     expect(isPlanSafeTool(createTool("read_file", "read_only"))).toBe(true);
+    expect(isPlanSafeTool(createTool("todo", "runtime_mutation"))).toBe(false);
     expect(isPlanSafeTool(createTool("shell", "external_mutation"))).toBe(false);
   });
 });

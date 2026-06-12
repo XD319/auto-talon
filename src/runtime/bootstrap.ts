@@ -67,7 +67,8 @@ import {
 import { TodoSessionStore } from "../tools/todo-session-store.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
-import { resolveToolsetForTool, type ToolsetName } from "../tools/toolsets.js";
+import { resolveToolsetForTool } from "../tools/toolsets.js";
+import type { ToolsetName } from "../types/index.js";
 
 import { AgentApplicationService } from "./application-service.js";
 import { ContextCompactor, SessionSearchService, SessionSummaryService } from "./context/index.js";
@@ -727,7 +728,6 @@ export function createApplication(
     stateProjector: sessionStateProjector
   });
   let service: AgentApplicationService | null = null;
-  let schedulerService: SchedulerService;
   const jobRunner = new JobRunner({
     scheduleRepository: storage.schedules,
     scheduleRunRepository: storage.scheduleRuns,
@@ -784,7 +784,7 @@ export function createApplication(
       }
     }
   });
-  schedulerService = new SchedulerService({
+  const schedulerService = new SchedulerService({
     jobRunner,
     pollIntervalMs: config.scheduler.pollIntervalMs,
     scheduleRepository: storage.schedules,

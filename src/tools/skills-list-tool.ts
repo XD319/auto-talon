@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { SkillRegistry } from "../skills/index.js";
 import type {
+  JsonObject,
   ToolDefinition,
   ToolExecutionContext,
   ToolExecutionResult,
@@ -47,13 +48,33 @@ export class SkillsListTool implements ToolDefinition<typeof skillsListSchema, R
 
   public execute(): Promise<ToolExecutionResult> {
     const result = this.registry.listSkills();
+    const output: JsonObject = {
+      issues: result.issues.map((issue) => ({
+        code: issue.code,
+        detail: issue.detail,
+        path: issue.path,
+        skillId: issue.skillId
+      })),
+      skills: result.skills.map((skill) => ({
+        attachmentCounts: skill.attachmentCounts,
+        category: skill.category,
+        description: skill.description,
+        disabled: skill.disabled,
+        id: skill.id,
+        metadata: skill.metadata,
+        name: skill.name,
+        namespace: skill.namespace,
+        platforms: skill.platforms,
+        prerequisites: skill.prerequisites,
+        relatedSkills: skill.relatedSkills,
+        source: skill.source,
+        sourceExperienceIds: skill.sourceExperienceIds,
+        tags: skill.tags,
+        version: skill.version
+      }))
+    };
     return Promise.resolve({
-      output: JSON.parse(
-        JSON.stringify({
-          issues: result.issues,
-          skills: result.skills
-        })
-      ),
+      output,
       success: true,
       summary: `Listed ${result.skills.length} skill(s).`
     });

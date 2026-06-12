@@ -2090,10 +2090,11 @@ describe("use-chat-controller helpers", () => {
       if (controller === null) {
         throw new Error("Controller did not initialize.");
       }
-      expect(controller.tokenHud.inputTokens).toBe(50_000);
-      expect(controller.tokenHud.outputTokens).toBe(25_000);
-      expect(controller.tokenHud.usageMode).toBe("session_total");
-      expect(controller.tokenHud.contextPercent).toBeGreaterThan(0);
+      const tokenHud: ChatController["tokenHud"] = (controller as ChatController).tokenHud;
+      expect(tokenHud.inputTokens).toBe(50_000);
+      expect(tokenHud.outputTokens).toBe(25_000);
+      expect(tokenHud.usageMode).toBe("session_total");
+      expect(tokenHud.contextPercent).toBeGreaterThan(0);
     } finally {
       await unmountInkApp(app);
     }

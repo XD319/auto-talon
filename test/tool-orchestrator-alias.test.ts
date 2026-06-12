@@ -14,7 +14,7 @@ import type {
 } from "../src/types/index.js";
 
 describe("ToolOrchestrator canonical tool names", () => {
-  it("does not resolve legacy alias names", async () => {
+  it("does not resolve legacy alias names", () => {
     const records = new Map<string, ToolCallRecord>();
     const shellTool = createShellLikeTool();
     const orchestrator = createOrchestrator(shellTool, records);

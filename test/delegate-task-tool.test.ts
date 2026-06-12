@@ -17,7 +17,7 @@ describe("DelegateTaskTool", () => {
 
   it("delegates to the bound executor and returns child task output", async () => {
     const tool = new DelegateTaskTool();
-    const executor = vi.fn(async () => ({
+    const executor = vi.fn(() => Promise.resolve({
       output: "Child finished",
       status: "succeeded",
       taskId: "child-task-1"

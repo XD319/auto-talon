@@ -190,7 +190,9 @@ describe("tool exposure planner", () => {
     const readTool = makeTool("read_file", "low");
     const shellTool = makeTool("shell", "high");
     shellTool.sideEffectLevel = "external_mutation";
-    const planner = createPlanner([readTool, shellTool]);
+    const todoTool = makeTool("todo", "low");
+    todoTool.sideEffectLevel = "runtime_mutation";
+    const planner = createPlanner([readTool, shellTool, todoTool]);
     const plan = await planner.plan({
       context: {
         agentProfileId: "planner",
