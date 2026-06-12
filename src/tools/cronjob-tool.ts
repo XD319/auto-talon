@@ -1,7 +1,18 @@
 import { z } from "zod";
 
 import type { CreateScheduleInput, UpdateScheduleInput } from "../runtime/scheduler/index.js";
-import { parseExecutionModeInput, parseScheduleWhen } from "../runtime/scheduler/index.js";
+import {
+  parseExecutionModeInput,
+  previewScheduleTiming,
+  readRepeatRemaining,
+  readScheduleExecutionMode,
+  readScheduleNoAgent,
+  readScheduleSkills,
+  readScheduleToolsets,
+  resolveScheduleTiming,
+  timingToCreateFields
+} from "../runtime/scheduler/index.js";
+import { readScheduleDeliveryTargets } from "../runtime/scheduler/schedule-delivery.js";
 import { TOOLSET_NAMES } from "./toolsets.js";
 import { SCHEDULE_STATUSES } from "../types/index.js";
 import type {
@@ -51,14 +62,27 @@ const listActionSchema = z.object({
 const updateActionSchema = z.object({
   action: z.literal("update"),
   agentProfileId: agentProfileSchema.optional(),
+  allowDelegate: z.boolean().optional(),
   cron: z.string().nullable().optional(),
+  deliveryTargets: z.array(z.enum(["inbox", "origin", "silent", "webhook"])).optional(),
   every: z.string().nullable().optional(),
+  executionMode: z.enum(["isolated", "continue", "session"]).optional(),
   name: z.string().min(1).optional(),
+  noAgent: z
+    .object({
+      command: z.string().min(1),
+      cwd: z.string().optional()
+    })
+    .nullable()
+    .optional(),
   prompt: z.string().min(1).optional(),
+  repeatRemaining: z.number().int().positive().nullable().optional(),
   runAt: z.string().nullable().optional(),
   scheduleId: z.string().min(1),
   sessionId: z.string().nullable().optional(),
-  timezone: z.string().nullable().optional()
+  skills: z.array(z.string().min(1)).optional(),
+  timezone: z.string().nullable().optional(),
+  toolsets: z.array(z.enum(TOOLSET_NAMES)).optional()
 });
 
 const scheduleIdActionSchema = z.object({
@@ -203,17 +227,54 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
           });
         }
         case "update": {
+          const execution =
+            preparedInput.executionMode === undefined
+              ? null
+              : parseExecutionModeInput(
+                  preparedInput.executionMode === "session" && preparedInput.sessionId !== undefined
+                    ? `session:${preparedInput.sessionId}`
+                    : preparedInput.executionMode
+                );
           const patch: UpdateScheduleInput = {
             ...(preparedInput.agentProfileId !== undefined
               ? { agentProfileId: preparedInput.agentProfileId }
               : {}),
+            ...(preparedInput.allowDelegate !== undefined
+              ? { allowDelegate: preparedInput.allowDelegate }
+              : {}),
             ...(preparedInput.cron !== undefined ? { cron: preparedInput.cron } : {}),
+            ...(preparedInput.deliveryTargets !== undefined
+              ? { deliveryTargets: preparedInput.deliveryTargets }
+              : {}),
             ...(preparedInput.every !== undefined ? { every: preparedInput.every } : {}),
+            ...(execution !== null ? { executionMode: execution.executionMode } : {}),
             ...(preparedInput.name !== undefined ? { name: preparedInput.name } : {}),
+            ...(preparedInput.noAgent !== undefined
+              ? {
+                  noAgent:
+                    preparedInput.noAgent === null
+                      ? null
+                      : {
+                          command: preparedInput.noAgent.command,
+                          ...(preparedInput.noAgent.cwd !== undefined
+                            ? { cwd: preparedInput.noAgent.cwd }
+                            : {})
+                        }
+                }
+              : {}),
             ...(preparedInput.prompt !== undefined ? { input: preparedInput.prompt } : {}),
+            ...(preparedInput.repeatRemaining !== undefined
+              ? { repeatRemaining: preparedInput.repeatRemaining }
+              : {}),
             ...(preparedInput.runAt !== undefined ? { runAt: preparedInput.runAt } : {}),
-            ...(preparedInput.sessionId !== undefined ? { sessionId: preparedInput.sessionId } : {}),
-            ...(preparedInput.timezone !== undefined ? { timezone: preparedInput.timezone } : {})
+            ...(execution?.sessionId !== undefined
+              ? { sessionId: execution.sessionId }
+              : preparedInput.sessionId !== undefined
+                ? { sessionId: preparedInput.sessionId }
+                : {}),
+            ...(preparedInput.skills !== undefined ? { skills: preparedInput.skills } : {}),
+            ...(preparedInput.timezone !== undefined ? { timezone: preparedInput.timezone } : {}),
+            ...(preparedInput.toolsets !== undefined ? { toolsets: preparedInput.toolsets } : {})
           };
           const schedule = this.port.updateSchedule(preparedInput.scheduleId, patch);
           return successResult(`Updated schedule ${schedule.scheduleId}`, serializeSchedule(schedule));
@@ -265,18 +326,61 @@ function isScheduleManagementBlocked(context: ToolExecutionContext): boolean {
 }
 
 function serializeSchedule(schedule: ScheduleRecord): JsonObject {
+  const noAgent = readScheduleNoAgent(schedule);
+  const timing = serializeScheduleTiming(schedule);
   return {
     agentProfileId: schedule.agentProfileId,
+    allowDelegate: schedule.metadata.allowDelegate === true,
     cron: schedule.cron,
+    deliveryTargets: readScheduleDeliveryTargets(schedule),
+    executionMode: readScheduleExecutionMode(schedule),
     input: schedule.input,
     intervalMs: schedule.intervalMs,
     name: schedule.name,
     nextFireAt: schedule.nextFireAt,
+    timing,
+    ...(noAgent !== null
+      ? { noAgent: { command: noAgent.command, ...(noAgent.cwd !== undefined ? { cwd: noAgent.cwd } : {}) } }
+      : {}),
+    repeatRemaining: readRepeatRemaining(schedule),
     runAt: schedule.runAt,
     scheduleId: schedule.scheduleId,
     sessionId: schedule.sessionId,
+    skills: readScheduleSkills(schedule),
     status: schedule.status,
-    timezone: schedule.timezone
+    timezone: schedule.timezone,
+    toolsets: readScheduleToolsets(schedule)
+  };
+}
+
+function serializeScheduleTiming(schedule: ScheduleRecord): JsonObject {
+  if (schedule.cron !== null) {
+    const preview = previewScheduleTiming({
+      cron: schedule.cron,
+      kind: "cron",
+      timezone: schedule.timezone
+    });
+    return {
+      kind: "cron",
+      nextFireAt: preview.nextFireAt,
+      nextFirePreview: preview.nextFirePreview,
+      timezone: schedule.timezone,
+      value: schedule.cron
+    };
+  }
+  if (schedule.intervalMs !== null) {
+    return {
+      intervalMs: schedule.intervalMs,
+      kind: "every",
+      nextFireAt: schedule.nextFireAt,
+      nextFirePreview: schedule.nextFireAt === null ? [] : [schedule.nextFireAt]
+    };
+  }
+  return {
+    kind: "runAt",
+    nextFireAt: schedule.runAt,
+    nextFirePreview: schedule.runAt === null ? [] : [schedule.runAt],
+    value: schedule.runAt
   };
 }
 
@@ -297,19 +401,13 @@ function resolveCreateTiming(input: {
   runAt?: string | undefined;
   when?: string | undefined;
 }): Pick<CreateScheduleInput, "cron" | "every" | "runAt"> {
-  if (input.when !== undefined) {
-    const parsed = parseScheduleWhen(input.when);
-    return {
-      ...(parsed.cron !== undefined ? { cron: parsed.cron } : {}),
-      ...(parsed.every !== undefined ? { every: parsed.every } : {}),
-      ...(parsed.runAt !== undefined ? { runAt: parsed.runAt } : {})
-    };
-  }
-  return {
-    ...(input.cron !== undefined ? { cron: input.cron } : {}),
-    ...(input.every !== undefined ? { every: input.every } : {}),
-    ...(input.runAt !== undefined ? { runAt: input.runAt } : {})
-  };
+  const timing = resolveScheduleTiming({
+    at: input.runAt,
+    cron: input.cron,
+    every: input.every,
+    when: input.when
+  });
+  return timingToCreateFields(timing);
 }
 
 function successResult(summary: string, output: JsonObject): ToolExecutionResult {

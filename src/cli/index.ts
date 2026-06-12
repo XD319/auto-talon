@@ -38,10 +38,13 @@ import {
   buildRepoMap,
   createApplication,
   createDefaultRunOptions,
+  formatScheduleTimingPreview,
   parseExecutionModeInput,
-  parseScheduleWhen,
+  previewScheduleTiming,
+  resolveScheduleTiming,
   initializeWorkspaceFiles,
   resolveAppConfig,
+  timingToCreateFields,
   RUNTIME_VERSION,
   type ResolveAppConfigOptions
 } from "../runtime/index.js";
@@ -439,6 +442,14 @@ export async function main(argv = process.argv): Promise<void> {
       const cwd = commandOptions.cwd ?? process.cwd();
       const handle = createApplication(cwd);
       try {
+        if (
+          commandOptions.session !== undefined &&
+          commandOptions.executionMode === undefined
+        ) {
+          throw new Error(
+            "--session requires --execution-mode continue or session:<id>; isolated schedules ignore session binding."
+          );
+        }
         const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
         const name = commandOptions.name ?? "scheduled-run";
         const profile = (commandOptions.profile ?? "executor") as "executor" | "planner" | "reviewer";
@@ -452,6 +463,12 @@ export async function main(argv = process.argv): Promise<void> {
                     ? "continue"
                     : commandOptions.executionMode
               );
+        const timing = resolveScheduleTiming({
+          at: commandOptions.at,
+          cron: commandOptions.cron,
+          every: commandOptions.every,
+          timezone: commandOptions.timezone
+        });
         const schedule = handle.service.createSchedule({
           agentProfileId: profile,
           backoffBaseMs: commandOptions.backoffBase,
@@ -462,9 +479,7 @@ export async function main(argv = process.argv): Promise<void> {
           name,
           ownerUserId,
           providerName: handle.config.provider.name,
-          ...(commandOptions.cron !== undefined ? { cron: commandOptions.cron } : {}),
-          ...(commandOptions.every !== undefined ? { every: commandOptions.every } : {}),
-          ...(commandOptions.at !== undefined ? { runAt: resolveCliScheduleAt(commandOptions.at) } : {}),
+          ...timingToCreateFields(timing),
           ...(parsedExecutionMode !== null ? { executionMode: parsedExecutionMode.executionMode } : {}),
           ...(parsedExecutionMode?.sessionId !== undefined
             ? { sessionId: parsedExecutionMode.sessionId }
@@ -477,6 +492,15 @@ export async function main(argv = process.argv): Promise<void> {
       } finally {
         handle.close();
       }
+    });
+  scheduleCommand
+    .command("preview")
+    .argument("<when>", "Schedule expression: 30m, every 2h, cron, or ISO timestamp")
+    .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
+    .option("--count <count>", "Number of future fire times", parsePositiveIntegerOption("--count"), 5)
+    .action((when: string, commandOptions: { count: number; timezone?: string }) => {
+      const timing = resolveScheduleTiming({ timezone: commandOptions.timezone, when });
+      console.log(formatScheduleTimingPreview(previewScheduleTiming(timing, commandOptions.count)));
     });
   scheduleCommand
     .command("list")
@@ -521,6 +545,20 @@ export async function main(argv = process.argv): Promise<void> {
     .action((scheduleId: string, commandOptions: ScheduleEditOptions) => {
       const handle = createApplication(process.cwd());
       try {
+        const timingTouched =
+          commandOptions.at !== undefined ||
+          commandOptions.every !== undefined ||
+          commandOptions.cron !== undefined;
+        const timingFields = timingTouched
+          ? timingToCreateFields(
+              resolveScheduleTiming({
+                at: commandOptions.at,
+                cron: commandOptions.cron,
+                every: commandOptions.every,
+                timezone: commandOptions.timezone
+              })
+            )
+          : {};
         const updated = handle.service.updateSchedule(scheduleId, {
           ...(commandOptions.backoffBase !== undefined
             ? { backoffBaseMs: commandOptions.backoffBase }
@@ -528,9 +566,7 @@ export async function main(argv = process.argv): Promise<void> {
           ...(commandOptions.backoffMax !== undefined
             ? { backoffMaxMs: commandOptions.backoffMax }
             : {}),
-          ...(commandOptions.cron !== undefined ? { cron: commandOptions.cron } : {}),
-          ...(commandOptions.every !== undefined ? { every: commandOptions.every } : {}),
-          ...(commandOptions.at !== undefined ? { runAt: commandOptions.at } : {}),
+          ...timingFields,
           ...(commandOptions.input !== undefined ? { input: commandOptions.input } : {}),
           ...(commandOptions.maxAttempts !== undefined
             ? { maxAttempts: commandOptions.maxAttempts }
@@ -2339,14 +2375,6 @@ interface ScheduleCreateOptions {
   profile?: string;
   session?: string;
   timezone?: string;
-}
-
-function resolveCliScheduleAt(value: string): string {
-  const parsed = parseScheduleWhen(value);
-  if (parsed.runAt === undefined) {
-    throw new Error(`--at must resolve to a one-shot time, got: ${value}`);
-  }
-  return parsed.runAt;
 }
 
 interface ScheduleEditOptions {

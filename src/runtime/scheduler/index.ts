@@ -7,4 +7,5 @@ export * from "./parse-schedule-when.js";
 export * from "./schedule-delivery.js";
 export * from "./schedule-metadata.js";
 export * from "./schedule-skill-context.js";
+export * from "./schedule-timing.js";
 export * from "./scheduler-service.js";

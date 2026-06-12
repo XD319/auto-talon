@@ -25,6 +25,7 @@ describe("cli schedule commands", () => {
       await main(["node", "talon", "schedule", "pause", scheduleId!]);
       await main(["node", "talon", "schedule", "resume", scheduleId!]);
       await main(["node", "talon", "schedule", "edit", scheduleId!, "--name", "cli edited", "--input", "edited prompt", "--every", "10m"]);
+      await main(["node", "talon", "schedule", "preview", "every 15m", "--count", "2"]);
       await main(["node", "talon", "schedule", "run-now", scheduleId!]);
       await main(["node", "talon", "schedule", "runs", scheduleId!, "--tail", "5"]);
       await main(["node", "talon", "schedule", "status"]);
@@ -33,6 +34,7 @@ describe("cli schedule commands", () => {
       await main(["node", "talon", "schedule", "list", "--status", "archived"]);
       const allOutput = logSpy.mock.calls.map((entry) => String(entry[0] ?? "")).join("\n");
       expect(allOutput).toContain("cli edited");
+      expect(allOutput).toContain("Timing: every");
       expect(allOutput).toContain("Schedules:");
       expect(allOutput).toContain("archived");
     } finally {

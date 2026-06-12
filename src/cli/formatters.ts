@@ -1,4 +1,13 @@
-﻿import type {
+﻿import {
+  readRepeatRemaining,
+  readScheduleExecutionMode,
+  readScheduleNoAgent,
+  readScheduleSkills,
+  readScheduleToolsets,
+  previewScheduleTiming
+} from "../runtime/scheduler/index.js";
+import { readScheduleDeliveryTargets } from "../runtime/scheduler/schedule-delivery.js";
+import type {
   AgentDoctorReport,
   ContextTraceDebugReport,
   TaskTimelineEntry,
@@ -217,10 +226,17 @@ export function formatScheduleList(schedules: ScheduleRecord[]): string {
 }
 
 export function formatScheduleDetail(schedule: ScheduleRecord): string {
+  const noAgent = readScheduleNoAgent(schedule);
+  const skills = readScheduleSkills(schedule);
+  const toolsets = readScheduleToolsets(schedule);
+  const repeatRemaining = readRepeatRemaining(schedule);
+  const timingPreview = previewScheduleRecord(schedule);
   return [
     `Schedule ID: ${schedule.scheduleId}`,
     `Name: ${schedule.name}`,
     `Status: ${schedule.status}`,
+    `Timing: ${timingPreview.kind}`,
+    `Execution Mode: ${readScheduleExecutionMode(schedule)}`,
     `Session ID: ${schedule.sessionId ?? "-"}`,
     `Owner: ${schedule.ownerUserId}`,
     `Profile: ${schedule.agentProfileId}`,
@@ -232,11 +248,39 @@ export function formatScheduleDetail(schedule: ScheduleRecord): string {
     `Cron: ${schedule.cron ?? "-"}`,
     `Timezone: ${schedule.timezone ?? "-"}`,
     `Next Fire: ${schedule.nextFireAt ?? "-"}`,
+    `Next Preview: ${timingPreview.nextFirePreview.length > 0 ? timingPreview.nextFirePreview.join(", ") : "-"}`,
     `Last Fire: ${schedule.lastFireAt ?? "-"}`,
     `Max Attempts: ${schedule.maxAttempts}`,
     `Backoff Base (ms): ${schedule.backoffBaseMs}`,
-    `Backoff Max (ms): ${schedule.backoffMaxMs}`
+    `Backoff Max (ms): ${schedule.backoffMaxMs}`,
+    `Delivery Targets: ${readScheduleDeliveryTargets(schedule).join(", ")}`,
+    `Allow Delegate: ${schedule.metadata.allowDelegate === true ? "yes" : "no"}`,
+    `Skills: ${skills.length > 0 ? skills.join(", ") : "-"}`,
+    `Toolsets: ${toolsets.length > 0 ? toolsets.join(", ") : "-"}`,
+    `Repeat Remaining: ${repeatRemaining ?? "-"}`,
+    `No Agent: ${noAgent !== null ? noAgent.command : "-"}`
   ].join("\n");
+}
+
+function previewScheduleRecord(schedule: ScheduleRecord): { kind: string; nextFirePreview: string[] } {
+  if (schedule.cron !== null) {
+    const preview = previewScheduleTiming({
+      cron: schedule.cron,
+      kind: "cron",
+      timezone: schedule.timezone
+    });
+    return { kind: preview.kind, nextFirePreview: preview.nextFirePreview };
+  }
+  if (schedule.intervalMs !== null) {
+    return {
+      kind: "every",
+      nextFirePreview: schedule.nextFireAt === null ? [] : [schedule.nextFireAt]
+    };
+  }
+  return {
+    kind: "runAt",
+    nextFirePreview: schedule.runAt === null ? [] : [schedule.runAt]
+  };
 }
 
 export function formatScheduleRunList(runs: ScheduleRunRecord[]): string {
