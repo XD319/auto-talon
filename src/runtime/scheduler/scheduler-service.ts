@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  readScheduleExecutionMode,
   resolveCreateScheduleSessionId,
   withExecutionModeMetadata,
   type ScheduleExecutionMode
@@ -56,19 +57,24 @@ export interface CreateScheduleInput {
 
 export interface UpdateScheduleInput {
   agentProfileId?: ScheduleRecord["agentProfileId"];
+  allowDelegate?: boolean;
   backoffBaseMs?: number;
   backoffMaxMs?: number;
   cron?: string | null;
   deliveryTargets?: ScheduleDeliveryTarget[];
   every?: string | null;
+  executionMode?: ScheduleExecutionMode;
   input?: string;
   maxAttempts?: number;
   metadata?: JsonObject;
   name?: string;
+  noAgent?: ScheduleNoAgentConfig | null;
+  repeatRemaining?: number | null;
   runAt?: string | null;
   sessionId?: string | null;
+  skills?: string[];
   timezone?: string | null;
-  executionMode?: ScheduleExecutionMode;
+  toolsets?: ToolsetName[];
 }
 
 export interface SchedulerServiceDependencies {
@@ -141,21 +147,28 @@ export class SchedulerService {
   }
 
   public handleRepeatAfterSuccess(schedule: ScheduleRecord): ScheduleRecord {
-    const remaining = readRepeatRemaining(schedule);
-    if (remaining === null) {
+    const latest = this.dependencies.scheduleRepository.findById(schedule.scheduleId);
+    if (latest === null) {
       return schedule;
+    }
+    const remaining = readRepeatRemaining(latest);
+    if (remaining === null) {
+      return latest;
     }
     const nextRemaining = remaining - 1;
     if (nextRemaining <= 0) {
-      return this.dependencies.scheduleRepository.update(schedule.scheduleId, {
+      return this.dependencies.scheduleRepository.update(latest.scheduleId, {
         nextFireAt: null,
         status: "completed",
-        metadata: withScheduleMetadata(schedule.metadata, { repeatRemaining: 0 })
+        metadata: withScheduleMetadata(latest.metadata, { repeatRemaining: null })
       });
     }
-    return this.dependencies.scheduleRepository.update(schedule.scheduleId, {
-      metadata: withScheduleMetadata(schedule.metadata, { repeatRemaining: nextRemaining }),
-      nextFireAt: new Date().toISOString()
+    const isOneShot = latest.runAt !== null && latest.intervalMs === null && latest.cron === null;
+    return this.dependencies.scheduleRepository.update(latest.scheduleId, {
+      metadata: withScheduleMetadata(latest.metadata, { repeatRemaining: nextRemaining }),
+      ...(isOneShot
+        ? { nextFireAt: new Date().toISOString(), status: "active" as const }
+        : {})
     });
   }
 
@@ -269,7 +282,10 @@ export class SchedulerService {
 
   public pauseSchedule(scheduleId: string): ScheduleRecord {
     const existing = this.dependencies.scheduleRepository.findById(scheduleId);
-    if (existing?.status === "archived") {
+    if (existing === null) {
+      throw new Error(`Schedule ${scheduleId} was not found.`);
+    }
+    if (existing.status === "archived") {
       throw new Error(`Schedule ${scheduleId} is archived and cannot be paused.`);
     }
     const schedule = this.dependencies.scheduleRepository.update(scheduleId, { status: "paused" });
@@ -346,10 +362,15 @@ export class SchedulerService {
       trigger: "scheduled"
     });
     const nextFire = computeNextFireAt(schedule, now);
+    const repeatRemaining = readRepeatRemaining(schedule);
+    const hasRepeatsLeft = repeatRemaining !== null && repeatRemaining > 0;
+    const nextFireAt = nextFire?.toISOString() ?? null;
+    const status =
+      nextFire !== null ? schedule.status : hasRepeatsLeft ? ("active" as const) : ("completed" as const);
     this.dependencies.scheduleRepository.update(schedule.scheduleId, {
       lastFireAt: now.toISOString(),
-      nextFireAt: nextFire?.toISOString() ?? null,
-      status: nextFire === null ? "completed" : schedule.status
+      nextFireAt,
+      status
     });
     this.recordRunEnqueued(run);
     return run;
@@ -444,7 +465,6 @@ export class SchedulerService {
       ...(input.input !== undefined ? { input: input.input } : {}),
       ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
       ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       ...(input.timezone !== undefined ? { timezone: input.timezone } : {})
     };
 
@@ -455,12 +475,35 @@ export class SchedulerService {
             ...existing.metadata,
             ...input.metadata
           };
-    const nextMetadata =
-      input.metadata !== undefined || input.deliveryTargets !== undefined
-        ? withDeliveryMetadata(metadataBase, input.deliveryTargets)
-        : undefined;
-    if (nextMetadata !== undefined) {
-      patch.metadata = nextMetadata;
+    const hasMetadataPatch =
+      input.metadata !== undefined ||
+      input.deliveryTargets !== undefined ||
+      input.allowDelegate !== undefined ||
+      input.noAgent !== undefined ||
+      input.repeatRemaining !== undefined ||
+      input.skills !== undefined ||
+      input.toolsets !== undefined ||
+      input.executionMode !== undefined;
+    if (hasMetadataPatch) {
+      const withDelivery = withDeliveryMetadata(metadataBase, input.deliveryTargets);
+      const withExecution = withExecutionModeMetadata(withDelivery, {
+        ...(input.executionMode !== undefined ? { executionMode: input.executionMode } : {})
+      });
+      patch.metadata = withScheduleMetadata(withExecution, {
+        ...(input.allowDelegate !== undefined ? { allowDelegate: input.allowDelegate } : {}),
+        ...(input.noAgent !== undefined ? { noAgent: input.noAgent } : {}),
+        ...(input.repeatRemaining !== undefined ? { repeatRemaining: input.repeatRemaining } : {}),
+        ...(input.skills !== undefined ? { skills: input.skills } : {}),
+        ...(input.toolsets !== undefined ? { toolsets: input.toolsets } : {})
+      });
+    }
+    if (input.executionMode !== undefined || input.sessionId !== undefined) {
+      const executionMode = input.executionMode ?? readScheduleExecutionMode(existing);
+      patch.sessionId = resolveCreateScheduleSessionId({
+        continuationSessionId: input.sessionId ?? existing.sessionId,
+        executionMode,
+        sessionId: input.sessionId ?? existing.sessionId
+      });
     }
 
     const timingTouched = hasOwn(input, "runAt") || hasOwn(input, "every") || hasOwn(input, "cron");

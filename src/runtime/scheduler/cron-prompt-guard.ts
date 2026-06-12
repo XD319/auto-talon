@@ -23,7 +23,7 @@ export function scanCronSkillPrompt(prompt: string): CronPromptGuardResult {
     if (rule.pattern.test(normalized)) {
       return {
         matchedPattern: rule.id,
-        reason: `Scheduled skill prompt matched injection pattern: ${rule.id}`,
+        reason: `Scheduled prompt matched injection pattern: ${rule.id}`,
         safe: false
       };
     }

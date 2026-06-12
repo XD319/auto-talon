@@ -67,6 +67,7 @@ import {
 import { TodoSessionStore } from "../tools/todo-session-store.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
+import { resolveToolsetForTool, type ToolsetName } from "../tools/toolsets.js";
 
 import { AgentApplicationService } from "./application-service.js";
 import { ContextCompactor, SessionSearchService, SessionSummaryService } from "./context/index.js";
@@ -88,7 +89,6 @@ import { JobRunner } from "./jobs/index.js";
 import {
   buildScheduledTaskInput,
   readScheduleNoAgent,
-  readScheduleSkills,
   readScheduleToolsets,
   scanCronSkillPrompt,
   resolveScheduleSessionId,
@@ -738,12 +738,11 @@ export function createApplication(
       }
       const scheduleToolsets = readScheduleToolsets(schedule);
       const taskInput = buildScheduledTaskInput(schedule, skillRegistry);
-      if (readScheduleSkills(schedule).length > 0) {
-        const guard = scanCronSkillPrompt(taskInput);
-        if (!guard.safe) {
-          throw new Error(guard.reason ?? "Scheduled skill prompt failed security scan.");
-        }
+      const guard = scanCronSkillPrompt(taskInput);
+      if (!guard.safe) {
+        throw new Error(guard.reason ?? "Scheduled prompt failed security scan.");
       }
+      assertScheduleToolsetsAvailable(scheduleToolsets, toolOrchestrator);
       const runResult = await service.runTask({
         agentProfileId: schedule.agentProfileId,
         cwd: schedule.cwd,
@@ -968,6 +967,24 @@ function readDatabaseSchemaVersion(databasePath: string): number | null {
 interface SandboxConfigFile {
   defaultProfile?: string;
   profiles?: Record<string, Partial<SandboxProfile>>;
+}
+
+function assertScheduleToolsetsAvailable(
+  scheduleToolsets: readonly ToolsetName[],
+  toolOrchestrator: ToolOrchestrator
+): void {
+  if (scheduleToolsets.length === 0) {
+    return;
+  }
+  const registeredToolsets = new Set(
+    toolOrchestrator
+      .listToolsWithMetadata()
+      .map((tool) => resolveToolsetForTool(tool.name))
+  );
+  const unavailable = scheduleToolsets.filter((toolset) => !registeredToolsets.has(toolset));
+  if (unavailable.length > 0) {
+    throw new Error(`Scheduled run requested unavailable toolset(s): ${unavailable.join(", ")}`);
+  }
 }
 
 function resolveSandboxProfile(

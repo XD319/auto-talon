@@ -23,6 +23,15 @@ describe("execution mode", () => {
     expect(resolveScheduleSessionId(schedule)).toBeNull();
   });
 
+  it("drops sessionId on create when execution mode is isolated", () => {
+    expect(
+      resolveCreateScheduleSessionId({
+        executionMode: "isolated",
+        sessionId: "session-1"
+      })
+    ).toBeNull();
+  });
+
   it("keeps continue mode session ids", () => {
     const schedule = createSchedule({
       metadata: { executionMode: "continue" },

@@ -136,6 +136,56 @@ describe("tool exposure planner", () => {
     expect(plan.tools.map((tool) => tool.name)).toEqual(["read_file"]);
   });
 
+  it("filters tools by schedule toolsets including mcp tools", async () => {
+    const readTool = makeTool("read_file", "low");
+    const mcpTool = makeTool("mcp__server__search", "low");
+    const shellTool = makeTool("shell", "high");
+    const planner = createPlanner([readTool, mcpTool, shellTool]);
+    const plan = await planner.plan({
+      context: {
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        iteration: 1,
+        signal: new AbortController().signal,
+        taskId: "task-mcp",
+        taskMetadata: {
+          scheduleToolsets: ["mcp"]
+        },
+        userId: "u1",
+        workspaceRoot: process.cwd()
+      },
+      iteration: 1,
+      taskId: "task-mcp",
+      sessionId: null
+    });
+
+    expect(plan.tools.map((tool) => tool.name)).toEqual(["mcp__server__search"]);
+  });
+
+  it("ignores invalid schedule toolset names", async () => {
+    const tools = [makeTool("read_file", "low"), makeTool("shell", "high")];
+    const planner = createPlanner(tools);
+    const plan = await planner.plan({
+      context: {
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        iteration: 1,
+        signal: new AbortController().signal,
+        taskId: "task-invalid-toolset",
+        taskMetadata: {
+          scheduleToolsets: ["not-a-real-toolset"]
+        },
+        userId: "u1",
+        workspaceRoot: process.cwd()
+      },
+      iteration: 1,
+      taskId: "task-invalid-toolset",
+      sessionId: null
+    });
+
+    expect(plan.tools).toHaveLength(0);
+  });
+
   it("limits plan mode to read-only tools", async () => {
     const readTool = makeTool("read_file", "low");
     const shellTool = makeTool("shell", "high");

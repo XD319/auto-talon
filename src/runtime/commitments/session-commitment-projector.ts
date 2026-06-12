@@ -29,9 +29,11 @@ export class SessionCommitmentProjector {
     const latestSessionSummary = this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
     const currentObjective = pickCurrentObjective(commitments);
     const nextAction = pickNextAction(nextActions);
+    const blockedNextAction = nextActions.find((item) => item.status === "blocked" && item.blockedReason !== null);
     return {
       activeNextActions: nextActions,
       blockedReason:
+        blockedNextAction?.blockedReason ??
         nextAction?.blockedReason ??
         currentObjective?.blockedReason ??
         latestSessionSummary?.openLoops[0] ??

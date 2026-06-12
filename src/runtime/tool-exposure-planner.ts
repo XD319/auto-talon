@@ -1,6 +1,6 @@
 ﻿import { checkToolAvailability } from "../tools/availability/index.js";
 import { evaluateToolExposure } from "../tools/policy/index.js";
-import { isPlanSafeTool, TOOLSET_TOOLS, type ToolsetName } from "../tools/toolsets.js";
+import { isPlanSafeTool, resolveToolsetForTool, TOOLSET_NAMES, type ToolsetName } from "../tools/toolsets.js";
 import type { ToolOverrideStore } from "../tools/tool-overrides.js";
 import type { ToolOrchestrator } from "../tools/tool-orchestrator.js";
 import type { TraceService } from "../tracing/trace-service.js";
@@ -36,12 +36,22 @@ function isScheduledRunWithoutDelegate(metadata: ToolExecutionContext["taskMetad
   return metadata?.allowDelegate !== true;
 }
 
-function readScheduleToolsetsFromMetadata(metadata: ToolExecutionContext["taskMetadata"]): string[] {
+function readScheduleToolsetsFromMetadata(metadata: ToolExecutionContext["taskMetadata"]): {
+  requested: boolean;
+  toolsets: ToolsetName[];
+} {
   const toolsets = metadata?.scheduleToolsets;
   if (!Array.isArray(toolsets)) {
-    return [];
+    return { requested: false, toolsets: [] };
   }
-  return toolsets.filter((toolset): toolset is string => typeof toolset === "string");
+  const stringToolsets = toolsets.filter((toolset): toolset is string => typeof toolset === "string");
+  const validated = stringToolsets.filter((toolset): toolset is ToolsetName =>
+    TOOLSET_NAMES.includes(toolset as ToolsetName)
+  );
+  return {
+    requested: stringToolsets.length > 0,
+    toolsets: validated
+  };
 }
 
 export class ToolExposurePlanner {
@@ -52,14 +62,16 @@ export class ToolExposurePlanner {
     const registeredTools = this.dependencies.toolOrchestrator
       .listToolsWithMetadata()
       .filter((tool) => !disabledToolNames.has(tool.name));
-    const scheduleToolsets = readScheduleToolsetsFromMetadata(input.context.taskMetadata);
+    const scheduleToolsetFilter = readScheduleToolsetsFromMetadata(input.context.taskMetadata);
     let tools =
       input.interactionMode === "plan" ? registeredTools.filter(isPlanSafeTool) : registeredTools;
-    if (scheduleToolsets.length > 0) {
-      const allowed = new Set(
-        scheduleToolsets.flatMap((toolset) => TOOLSET_TOOLS[toolset as ToolsetName] ?? [])
-      );
-      tools = tools.filter((tool) => allowed.has(tool.name));
+    if (scheduleToolsetFilter.requested) {
+      if (scheduleToolsetFilter.toolsets.length === 0) {
+        tools = [];
+      } else {
+        const allowedToolsets = new Set(scheduleToolsetFilter.toolsets);
+        tools = tools.filter((tool) => allowedToolsets.has(resolveToolsetForTool(tool.name)));
+      }
     }
     if (isScheduledRunWithoutDelegate(input.context.taskMetadata)) {
       tools = tools.filter((tool) => tool.name !== "delegate_task");

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { readRepeatRemaining } from "../src/runtime/scheduler/schedule-metadata.js";
 import { SchedulerService } from "../src/runtime/scheduler/scheduler-service.js";
+import type { JsonObject, ScheduleRecord } from "../src/types/index.js";
+
+function readRepeatRemainingFromMetadata(metadata: JsonObject): number | null {
+  return readRepeatRemaining({ metadata } as Pick<ScheduleRecord, "metadata"> as ScheduleRecord);
+}
 import { StorageManager } from "../src/storage/database.js";
 import { TraceService } from "../src/tracing/trace-service.js";
 
@@ -93,6 +99,111 @@ describe("scheduler service", () => {
       expect(archived.status).toBe("archived");
       expect(storage.schedules.findDue({ now: "2030-01-01T00:00:00.000Z" })).toHaveLength(0);
       expect(scheduler.listScheduleRuns(schedule.scheduleId, { tail: 10 })).toHaveLength(1);
+    } finally {
+      scheduler.stop();
+      storage.close();
+    }
+  });
+
+  it("preserves cadence for recurring schedules with repeatRemaining", async () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    const traceService = new TraceService(storage.traces);
+    const scheduler = new SchedulerService({
+      jobRunner: {
+        drain: () => Promise.resolve([])
+      },
+      scheduleRepository: storage.schedules,
+      scheduleRunRepository: storage.scheduleRuns,
+      traceService
+    });
+
+    try {
+      const schedule = scheduler.createSchedule({
+        agentProfileId: "executor",
+        cwd: "/tmp/ws",
+        every: "1h",
+        input: "repeat hourly",
+        name: "hourly-repeat",
+        ownerUserId: "u1",
+        providerName: "mock",
+        repeatRemaining: 2
+      });
+      const fireAt = new Date(schedule.nextFireAt!);
+      await scheduler.tickOnce(fireAt);
+      const afterEnqueue = scheduler.showSchedule(schedule.scheduleId);
+      const expectedNextFireAt = new Date(fireAt.getTime() + 60 * 60 * 1000).toISOString();
+      expect(afterEnqueue?.nextFireAt).toBe(expectedNextFireAt);
+
+      const afterSuccess = scheduler.handleRepeatAfterSuccess(afterEnqueue!);
+      expect(readRepeatRemainingFromMetadata(afterSuccess.metadata)).toBe(1);
+      expect(afterSuccess.nextFireAt).toBe(expectedNextFireAt);
+      expect(afterSuccess.status).toBe("active");
+    } finally {
+      scheduler.stop();
+      storage.close();
+    }
+  });
+
+  it("keeps one-shot schedules active until repeatRemaining reaches zero", async () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    const traceService = new TraceService(storage.traces);
+    const scheduler = new SchedulerService({
+      jobRunner: {
+        drain: () => Promise.resolve([])
+      },
+      scheduleRepository: storage.schedules,
+      scheduleRunRepository: storage.scheduleRuns,
+      traceService
+    });
+
+    try {
+      const schedule = scheduler.createSchedule({
+        agentProfileId: "executor",
+        cwd: "/tmp/ws",
+        input: "one-shot repeat",
+        name: "one-shot-repeat",
+        ownerUserId: "u1",
+        providerName: "mock",
+        repeatRemaining: 2,
+        runAt: "2026-06-01T10:00:00.000Z"
+      });
+      await scheduler.tickOnce(new Date("2026-06-01T10:00:01.000Z"));
+      const afterFirstEnqueue = scheduler.showSchedule(schedule.scheduleId);
+      expect(afterFirstEnqueue?.status).toBe("active");
+
+      const afterFirstSuccess = scheduler.handleRepeatAfterSuccess(afterFirstEnqueue!);
+      expect(readRepeatRemainingFromMetadata(afterFirstSuccess.metadata)).toBe(1);
+      expect(afterFirstSuccess.nextFireAt).not.toBeNull();
+      expect(afterFirstSuccess.status).toBe("active");
+
+      await scheduler.tickOnce(new Date(afterFirstSuccess.nextFireAt!));
+      const afterSecondEnqueue = scheduler.showSchedule(schedule.scheduleId);
+      expect(afterSecondEnqueue?.status).toBe("active");
+
+      const afterSecondSuccess = scheduler.handleRepeatAfterSuccess(afterSecondEnqueue!);
+      expect(readRepeatRemainingFromMetadata(afterSecondSuccess.metadata)).toBeNull();
+      expect(afterSecondSuccess.status).toBe("completed");
+      expect(afterSecondSuccess.nextFireAt).toBeNull();
+    } finally {
+      scheduler.stop();
+      storage.close();
+    }
+  });
+
+  it("throws when pausing a missing schedule", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    const traceService = new TraceService(storage.traces);
+    const scheduler = new SchedulerService({
+      jobRunner: {
+        drain: () => Promise.resolve([])
+      },
+      scheduleRepository: storage.schedules,
+      scheduleRunRepository: storage.scheduleRuns,
+      traceService
+    });
+
+    try {
+      expect(() => scheduler.pauseSchedule("missing-schedule")).toThrow("was not found");
     } finally {
       scheduler.stop();
       storage.close();

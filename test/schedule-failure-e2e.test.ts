@@ -21,7 +21,7 @@ describe("schedule failure e2e", () => {
     const handle = createApplication(workspace, {
       config: { databasePath: join(workspace, "runtime.db") },
       provider: new FailingScheduledProvider(),
-      scheduler: { autoStart: true }
+      scheduler: { autoStart: false }
     });
     try {
       const session = handle.service.createSession({
@@ -35,6 +35,7 @@ describe("schedule failure e2e", () => {
         agentProfileId: "executor",
         cwd: workspace,
         every: "1m",
+        executionMode: "continue",
         input: "run failing routine",
         name: "Threaded routine",
         ownerUserId: "local-user",
@@ -42,8 +43,7 @@ describe("schedule failure e2e", () => {
         sessionId: session.sessionId
       });
       handle.service.runScheduleNow(schedule.scheduleId);
-
-      await new Promise((resolve) => setTimeout(resolve, 2500));
+      await handle.service.tickScheduleOnce();
       const runs = handle.service.listScheduleRuns(schedule.scheduleId, { tail: 20 });
       expect(runs.some((run) => run.status === "failed")).toBe(true);
 
