@@ -1012,6 +1012,62 @@ describe("feishu adapter", () => {
     });
   });
 
+  it("creates and inspects native cron schedules from Feishu commands", async () => {
+    const create = vi.fn(() => Promise.resolve({ data: { message_id: "schedule-reply" } }));
+    const patch = vi.fn(() => Promise.resolve({}));
+    const createSchedule = vi.fn(() =>
+      createScheduleRecord({
+        cron: "0 17 * * 5",
+        input: "weekly review",
+        nextFireAt: "2026-05-01T09:00:00.000Z",
+        ownerUserId: "feishu-im:open"
+      })
+    );
+    const runtimeApi = createRuntimeApi({
+      createSchedule,
+      listSchedules: vi.fn(() => [
+        createScheduleRecord({
+          cron: "0 17 * * 5",
+          input: "weekly review",
+          name: "weekly review",
+          nextFireAt: "2026-05-01T09:00:00.000Z",
+          scheduleId: "schedule-cron1234"
+        })
+      ]),
+      submitTask: vi.fn()
+    });
+    let handlers: Record<string, (data: unknown) => Promise<void> | void> = {};
+    const adapter = new FeishuAdapter(
+      { appId: "app", appSecret: "secret", domain: "feishu" },
+      {
+        createClients: () => Promise.resolve({
+          client: { im: { message: { create, patch } } },
+          createEventDispatcher: () => ({
+            register: (registeredHandlers) => {
+              handlers = registeredHandlers;
+              return { handlers: registeredHandlers };
+            }
+          }),
+          wsClient: { start: vi.fn() }
+        })
+      }
+    );
+    await adapter.start({ runtimeApi });
+
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule create cron 0 17 * * 5 | weekly review"));
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule preview cron 0 17 * * 5", "message-preview"));
+    await handlers["im.message.receive_v1"]?.(messagePayload("/schedule show schedule-cr", "message-show"));
+
+    expect(runtimeApi.submitTask).not.toHaveBeenCalled();
+    expect(createSchedule).toHaveBeenCalledWith(expect.objectContaining({ adapterId: "feishu-im" }), expect.objectContaining({
+      cron: "0 17 * * 5",
+      input: "weekly review"
+    }));
+    expect(createPayloads(create)[0]?.data.content).toContain("Scheduled");
+    expect(createPayloads(create)[1]?.data.content).toContain("Timing: cron");
+    expect(createPayloads(create)[2]?.data.content).toContain("cron=0 17 * * 5");
+  });
+
   it("archives schedules from /schedule remove", async () => {
     const create = vi.fn(() => Promise.resolve({ data: { message_id: "schedule-reply" } }));
     const patch = vi.fn(() => Promise.resolve({}));

@@ -20,6 +20,11 @@ import {
   type ParsedNaturalLanguageSchedule
 } from "../../runtime/scheduler/natural-language-schedule.js";
 import {
+  formatScheduleTimingPreview,
+  previewScheduleTiming,
+  resolveScheduleTiming
+} from "../../runtime/scheduler/schedule-timing.js";
+import {
   renderApprovalCard,
   renderApprovalFailedCard,
   renderApprovalProcessingCard,
@@ -525,6 +530,12 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
         case "edit":
           await this.handleScheduleEditCommand(event, command.rest);
           return;
+        case "show":
+          await this.handleScheduleShowCommand(event, command.args);
+          return;
+        case "preview":
+          await this.handleSchedulePreviewCommand(event, command.rest);
+          return;
         case "status":
           await this.sendTextToChat(
             event.chatId,
@@ -584,7 +595,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
       messageId: event.messageId,
       openId: event.openId,
       prompt,
-      schedule: parseNaturalLanguageScheduleWhen(whenText),
+      schedule: parseFeishuScheduleWhen(whenText),
       whenText
     });
     await this.sendTextToChat(
@@ -613,6 +624,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
           "Usage:",
           "/schedule edit <id> <when> | <prompt>",
           "/schedule edit <id> when <when>",
+          "/schedule edit <id> cron <expr>",
           "/schedule edit <id> prompt <prompt>",
           "/schedule edit <id> name <name>"
         ].join("\n"),
@@ -631,6 +643,50 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
       event.chatId,
       `Schedule updated: ${updated.scheduleId.slice(0, 8)} | ${updated.name} [${updated.status}] | next=${updated.nextFireAt ?? "none"}\n${updated.input}`,
       createScheduleCommandUuid(event.messageId, "edit")
+    );
+  }
+
+  private async handleScheduleShowCommand(
+    event: {
+      chatId: string;
+      messageId: string | null;
+      openId: string | null;
+    },
+    args: string[]
+  ): Promise<void> {
+    const prefix = args[0] ?? "";
+    if (prefix.length === 0) {
+      await this.sendTextToChat(event.chatId, "Usage: /schedule show <schedule-id-prefix>", createScheduleCommandUuid(event.messageId, "show-usage"));
+      return;
+    }
+    const resolved = this.resolveScheduleByPrefix(event, prefix);
+    if (resolved.kind !== "one") {
+      await this.sendTextToChat(event.chatId, resolved.message, createScheduleCommandUuid(event.messageId, "show-resolve"));
+      return;
+    }
+    await this.sendTextToChat(
+      event.chatId,
+      formatScheduleDetailForFeishu(resolved.item),
+      createScheduleCommandUuid(event.messageId, "show")
+    );
+  }
+
+  private async handleSchedulePreviewCommand(
+    event: {
+      chatId: string;
+      messageId: string | null;
+    },
+    payload: string
+  ): Promise<void> {
+    if (payload.trim().length === 0) {
+      await this.sendTextToChat(event.chatId, "Usage: /schedule preview <when-or-cron>", createScheduleCommandUuid(event.messageId, "preview-usage"));
+      return;
+    }
+    const timing = parseFeishuScheduleTiming(payload.trim());
+    await this.sendTextToChat(
+      event.chatId,
+      formatScheduleTimingPreview(previewScheduleTiming(timing)),
+      createScheduleCommandUuid(event.messageId, "preview")
     );
   }
 
@@ -748,11 +804,7 @@ export class FeishuAdapter implements InboundMessageAdapter, OutboundResponseAda
         externalUserId: draft.openId,
         externalUserLabel: null
       },
-      ...(draft.schedule.cron !== undefined
-        ? { cron: draft.schedule.cron, timezone: resolveLocalTimezone() }
-        : {}),
-      ...(draft.schedule.every !== undefined ? { every: draft.schedule.every } : {}),
-      ...(draft.schedule.runAt !== undefined ? { runAt: draft.schedule.runAt } : {})
+      ...scheduleFieldsFromParsed(draft.schedule)
     });
   }
 
@@ -1191,10 +1243,14 @@ function formatScheduleCommandUsage(): string {
     "Usage:",
     "/schedule list [active|paused|completed|archived|all]",
     "/schedule create <when> | <prompt>",
+    "/schedule create cron <expr> | <prompt>",
     "/schedule edit <schedule-id-prefix> <when> | <prompt>",
     "/schedule edit <schedule-id-prefix> when <when>",
+    "/schedule edit <schedule-id-prefix> cron <expr>",
     "/schedule edit <schedule-id-prefix> prompt <prompt>",
     "/schedule edit <schedule-id-prefix> name <name>",
+    "/schedule show <schedule-id-prefix>",
+    "/schedule preview <when-or-cron>",
     "/schedule status",
     "/schedule pause <schedule-id-prefix>",
     "/schedule resume <schedule-id-prefix>",
@@ -1255,6 +1311,9 @@ function parseScheduleEditPayload(payload: string): {
   if (directive === "when") {
     return { patch: schedulePatchFromWhenText(value), prefix };
   }
+  if (directive === "cron") {
+    return { patch: schedulePatchFromWhenText(`cron ${value}`), prefix };
+  }
   if (directive === "prompt") {
     return { patch: { input: value, name: deriveScheduleName(value) }, prefix };
   }
@@ -1270,12 +1329,65 @@ function schedulePatchFromWhenText(whenText: string): {
   runAt?: string | null;
   timezone?: string | null;
 } {
-  const schedule = parseNaturalLanguageScheduleWhen(whenText);
+  const schedule = parseFeishuScheduleWhen(whenText);
+  return scheduleFieldsFromParsed(schedule);
+}
+
+function parseFeishuScheduleWhen(whenText: string): ParsedNaturalLanguageSchedule {
+  const trimmed = whenText.trim();
+  if (/^cron\s+/iu.test(trimmed)) {
+    const timing = resolveScheduleTiming({
+      cron: trimmed.replace(/^cron\s+/iu, ""),
+      timezone: resolveLocalTimezone()
+    });
+    return {
+      ...(timing.kind === "cron" ? { cron: timing.cron } : {})
+    };
+  }
+  return parseNaturalLanguageScheduleWhen(trimmed);
+}
+
+function parseFeishuScheduleTiming(value: string) {
+  const trimmed = value.trim();
+  if (/^cron\s+/iu.test(trimmed)) {
+    return resolveScheduleTiming({
+      cron: trimmed.replace(/^cron\s+/iu, ""),
+      timezone: resolveLocalTimezone()
+    });
+  }
+  const parsed = parseNaturalLanguageScheduleWhen(trimmed);
+  return resolveScheduleTiming({
+    at: parsed.runAt,
+    cron: parsed.cron,
+    every: parsed.every,
+    timezone: resolveLocalTimezone()
+  });
+}
+
+function scheduleFieldsFromParsed(schedule: ParsedNaturalLanguageSchedule): {
+  cron?: string | null;
+  every?: string | null;
+  runAt?: string | null;
+  timezone?: string | null;
+} {
   return {
     ...(schedule.cron !== undefined ? { cron: schedule.cron, timezone: resolveLocalTimezone() } : {}),
     ...(schedule.every !== undefined ? { every: schedule.every } : {}),
     ...(schedule.runAt !== undefined ? { runAt: schedule.runAt } : {})
   };
+}
+
+function formatScheduleDetailForFeishu(schedule: ScheduleRecord): string {
+  const kind = schedule.cron !== null ? "cron" : schedule.intervalMs !== null ? "every" : "runAt";
+  return [
+    `Schedule: ${schedule.scheduleId.slice(0, 8)} | ${schedule.name}`,
+    `status=${schedule.status} timing=${kind}`,
+    `next=${schedule.nextFireAt ?? "none"} last=${schedule.lastFireAt ?? "none"}`,
+    `cron=${schedule.cron ?? "-"} timezone=${schedule.timezone ?? "-"}`,
+    `intervalMs=${schedule.intervalMs ?? "-"} runAt=${schedule.runAt ?? "-"}`,
+    `profile=${schedule.agentProfileId} session=${schedule.sessionId ?? "-"}`,
+    `input=${schedule.input}`
+  ].join("\n");
 }
 
 function formatScheduleListForFeishu(schedules: ScheduleRecord[], filter: string): string {
