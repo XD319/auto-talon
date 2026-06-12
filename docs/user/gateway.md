@@ -52,3 +52,18 @@ Inspect adapters:
 ```bash
 talon gateway list-adapters
 ```
+
+Feishu schedule commands:
+
+```text
+/schedule create 1分钟后 | say hello
+/schedule create cron 0 17 * * 5 | weekly review
+/schedule preview cron 0 17 * * 5
+/schedule show <schedule-id-prefix>
+/schedule edit <schedule-id-prefix> cron 0 9 * * *
+/schedule runs <schedule-id-prefix>
+```
+
+Schedule timing validation is explicit. Invalid cron expressions, ambiguous
+timing fields, or unavailable declared toolsets fail with a visible error
+instead of falling back to another model, channel, or execution path.

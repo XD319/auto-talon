@@ -78,7 +78,9 @@ TUI slash commands (chat mode):
 
 Schedule notes (v0.2):
 
-- `talon schedule create` accepts `--at 30m`, `--every 2h`, `--execution-mode isolated|continue|session:<id>`, and delivery targets.
+- `talon schedule create` accepts `--at 30m`, `--every 2h`, and `--execution-mode isolated|continue|session:<id>`. `--session` requires an execution mode; isolated schedules always run in a fresh session. Advanced fields (`deliveryTargets`, `skills`, `toolsets`, `noAgent`, `repeatRemaining`) are available via the agent `cronjob` tool or gateway API.
+- `talon schedule preview <expr> [--timezone TZ] [--count N]` validates one timing expression and prints upcoming fire times without creating a schedule.
 - `talon schedule run <schedule-id> --wait [--timeout MS] [--poll-interval MS]` blocks until the run reaches a terminal state.
 - Agent `cronjob` tool manages schedules in chat; scheduled runs cannot nest further schedule edits unless you opt in.
-- Skill-backed schedules are scanned for prompt-injection patterns before execution; set `metadata.allowDelegate: true` to allow `delegate_task` during a scheduled run.
+- Scheduled agent runs are scanned for prompt-injection patterns before execution; set `metadata.allowDelegate: true` to allow `delegate_task` during a scheduled run.
+- Feishu `/schedule create cron <expr> | <prompt>` and `/schedule edit <id> cron <expr>` expose native cron in chat; unsupported timing or missing toolsets fail explicitly instead of falling back to another execution path.

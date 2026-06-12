@@ -146,9 +146,10 @@ Scheduled info-flow examples:
 - Weekly review: `talon schedule create "Review this week's inbox and completed tasks; produce a concise retrospective." --name "Weekly review" --cron "0 17 * * 5" --timezone Asia/Shanghai`
 
 v0.2 schedule boundaries:
-- Supported: one-shot `runAt` (including relative `30m` / `2h`), interval `every`, cron, natural-language `when`, execution modes (`isolated` / `continue` / `session:<id>`), agent `cronjob` tool, skill binding, per-job toolsets, `no_agent` script runs, `repeat=N`, delivery targets (`inbox` / `origin` / `silent` / `webhook`), `schedule run --wait`, and configurable `scheduler.pollIntervalMs`.
+- Supported: one-shot `runAt` (including relative `30m` / `2h`), interval `every`, cron, natural-language `when`, timing preview, execution modes (`isolated` / `continue` / `session:<id>`), agent `cronjob` tool, skill binding, per-job toolsets, `noAgent` script runs, `repeatRemaining`, delivery targets (`inbox` / `origin` / `silent` / `webhook`), `schedule run --wait`, and configurable `scheduler.pollIntervalMs`. CLI `schedule create` covers timing and execution mode; advanced metadata is exposed through `cronjob` and gateway APIs.
 - Scheduled runs deny nested schedule management via `cronjob` unless explicitly designed otherwise; `delegate_task` is disabled unless `metadata.allowDelegate: true` on the schedule.
-- Skill-backed schedules run a lightweight prompt-injection scan before execution.
+- Scheduled agent runs run a lightweight prompt-injection scan before execution.
+- Runtime behavior is fail-explicit: invalid timing, missing declared toolsets, and delivery/execution errors are recorded on the run instead of using hidden fallback channels or alternate execution paths.
 - Not supported yet: Heartbeat ambient subsystem, browser automation, voice/TTS, image generation, multi-platform origin delivery beyond Feishu, and `execute_code`.
 
 Trace stream also includes commitment lifecycle events:
