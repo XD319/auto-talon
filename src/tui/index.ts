@@ -2,6 +2,7 @@
 import { render } from "ink";
 
 import { createApplication, createApplicationAsync } from "../runtime/index.js";
+import { resolveDefaultReviewerId, resolveDefaultUserId } from "../runtime/runtime-identity.js";
 
 import { ChatTuiApp } from "./chat-app.js";
 import { AgentTuiApp } from "./dashboard-app.js";
@@ -25,7 +26,7 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
   try {
     await handle.service.migrateLegacyTranscripts();
 
-    const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
+    const ownerUserId = resolveDefaultUserId();
     const requestedRuntimeSession = options.resumeSessionId !== undefined || options.continueLatest === true;
     let initialSessionId = requestedRuntimeSession ? options.resumeSessionId : undefined;
     if (options.continueLatest === true) {
@@ -122,7 +123,7 @@ export async function startDashboardTui(
     const app = render(
       React.createElement(AgentTuiApp, {
         queryService: new RuntimeDashboardQueryService(handle.service),
-        reviewerId: process.env.USERNAME ?? process.env.USER ?? "local-reviewer"
+        reviewerId: resolveDefaultReviewerId()
       }),
       {
         alternateScreen: true,
