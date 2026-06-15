@@ -1999,12 +1999,12 @@ describe("Provider integration", () => {
       public readonly model = "api-model";
       public readonly name = "api-provider";
 
-      public async fetchContextWindow(): Promise<number | null> {
-        return 200_000;
+      public fetchContextWindow(): Promise<number | null> {
+        return Promise.resolve(200_000);
       }
 
-      public async generate(): Promise<ProviderResponse> {
-        return {
+      public generate(): Promise<ProviderResponse> {
+        return Promise.resolve({
           kind: "final",
           message: "ok",
           metadata: {
@@ -2016,7 +2016,7 @@ describe("Provider integration", () => {
             inputTokens: 1,
             outputTokens: 1
           }
-        };
+        });
       }
     }
 

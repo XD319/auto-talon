@@ -1,12 +1,15 @@
 import type { Provider } from "../types/index.js";
 import type { ResolvedProviderConfig } from "./config.js";
-import type { RuntimeConfig } from "../runtime/runtime-config.js";
 
 import { CONTEXT_WINDOW_FETCH_TIMEOUT_MS } from "./context-window-query.js";
 
+export interface ContextWindowEnrichmentInput {
+  tokenBudgetInputLimitExplicit: boolean;
+}
+
 export function shouldFetchContextWindowFromApi(
   provider: ResolvedProviderConfig,
-  runtimeConfig: Pick<RuntimeConfig, "tokenBudgetInputLimitExplicit">
+  runtimeConfig: ContextWindowEnrichmentInput
 ): boolean {
   if (runtimeConfig.tokenBudgetInputLimitExplicit) {
     return false;
@@ -23,7 +26,7 @@ export function shouldFetchContextWindowFromApi(
 export async function enrichProviderContextFromApi(
   provider: Provider,
   providerConfig: ResolvedProviderConfig,
-  runtimeConfig: Pick<RuntimeConfig, "tokenBudgetInputLimitExplicit">
+  runtimeConfig: ContextWindowEnrichmentInput
 ): Promise<ResolvedProviderConfig> {
   if (!shouldFetchContextWindowFromApi(providerConfig, runtimeConfig)) {
     return providerConfig;

@@ -1,7 +1,7 @@
 ﻿import React from "react";
 import { render } from "ink";
 
-import { createApplication, createApplicationAsync } from "../runtime/index.js";
+import { createApplicationAsync } from "../runtime/index.js";
 import { resolveDefaultReviewerId, resolveDefaultUserId } from "../runtime/runtime-identity.js";
 
 import { ChatTuiApp } from "./chat-app.js";

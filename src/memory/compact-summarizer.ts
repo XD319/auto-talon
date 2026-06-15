@@ -1,5 +1,5 @@
 import { AppError } from "../core/app-error.js";
-import type { SessionCompactInput } from "../types/index.js";
+import type { SessionCompactInput, TokenBudget } from "../types/index.js";
 import type { Provider } from "../types/index.js";
 import { estimateMessagesTokens } from "../runtime/context/token-counter.js";
 
@@ -269,13 +269,7 @@ function buildSummaryTask(
   status: "running";
   taskId: string;
   sessionId: string | null;
-  tokenBudget: {
-    inputLimit: number;
-    outputLimit: number;
-    reservedOutput: number;
-    usedInput: number;
-    usedOutput: number;
-  };
+  tokenBudget: TokenBudget;
   updatedAt: string;
 } {
   return {

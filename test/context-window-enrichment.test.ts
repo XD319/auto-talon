@@ -39,12 +39,12 @@ class StubContextProvider implements Provider {
 
   public constructor(private readonly tokens: number | null) {}
 
-  public async fetchContextWindow(): Promise<number | null> {
-    return this.tokens;
+  public fetchContextWindow(): Promise<number | null> {
+    return Promise.resolve(this.tokens);
   }
 
-  public async generate(): Promise<never> {
-    throw new Error("not implemented");
+  public generate(): Promise<never> {
+    return Promise.reject(new Error("not implemented"));
   }
 }
 

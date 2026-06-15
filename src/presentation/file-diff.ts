@@ -1,5 +1,5 @@
 import { createTwoFilesPatch, structuredPatch } from "diff";
-import { isAbsolute, relative, sep } from "node:path";
+import { relative, sep } from "node:path";
 
 import type { JsonObject } from "../types/common.js";
 import type { FileDiffSummary } from "./file-change-summary.js";
@@ -93,14 +93,22 @@ export function normalizeDiffDisplayPath(path: string, workspaceRoot?: string): 
   if (workspaceRoot === undefined || workspaceRoot.length === 0) {
     return normalized;
   }
-  if (!isAbsolute(path)) {
+  const normalizedRoot = workspaceRoot.replace(/\\/gu, "/").replace(/\/$/u, "");
+  if (!isCrossPlatformAbsolute(normalized)) {
     return normalized;
+  }
+  if (normalized.startsWith(`${normalizedRoot}/`)) {
+    return normalized.slice(normalizedRoot.length + 1);
   }
   try {
     return relative(workspaceRoot, path).split(sep).join("/");
   } catch {
     return normalized;
   }
+}
+
+function isCrossPlatformAbsolute(normalizedPath: string): boolean {
+  return normalizedPath.startsWith("/") || /^[A-Za-z]:\//u.test(normalizedPath);
 }
 
 function stripDiffNoise(diff: string): string {

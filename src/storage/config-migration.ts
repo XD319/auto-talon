@@ -49,7 +49,7 @@ const OLD_DEFAULT_INPUT_LIMIT = 64_000;
 function stripDefaultInputLimit(config: Record<string, unknown>): Record<string, unknown> {
   const tokenBudget = config.tokenBudget as Record<string, unknown> | undefined;
   if (tokenBudget?.inputLimit === OLD_DEFAULT_INPUT_LIMIT) {
-    const { inputLimit: _, ...rest } = tokenBudget;
+    const rest = Object.fromEntries(Object.entries(tokenBudget).filter(([k]) => k !== "inputLimit"));
     return { ...config, tokenBudget: rest };
   }
   return config;
