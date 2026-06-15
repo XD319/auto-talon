@@ -17,9 +17,13 @@
 ## Provider
 
 - `mock` + `scripted-smoke`: supported and covered in CI smoke/eval.
-- `glm` + `openai-compatible` transport: supported; validate with `talon provider test`.
-- `xfyun-coding` + `openai-compatible` transport: supported; validate with `talon provider test`.
-- `anthropic-compatible` custom providers: supported via `customProviders`.
+- OpenAI-compatible providers are supported through `openai`, `openai-compatible`,
+  `openrouter`, `ollama`, `glm`, `moonshot`, `qwen`, `xai`, `gemini`, and
+  `xfyun-coding`; validate real credentials with `talon provider test`.
+- Anthropic-compatible providers are supported through `anthropic` and
+  `minimax`; validate real credentials with `talon provider test`.
+- Custom provider behavior is limited to the configured compatible transport
+  contract exposed by the provider catalog.
 
 ## Gateway
 
@@ -29,7 +33,7 @@
 
 ## Memory / Storage
 
-- Runtime schema baseline: `PRAGMA user_version = 11`.
+- Runtime schema baseline: `PRAGMA user_version = 19`.
 - Schema upgrades from legacy unversioned DB: supported via migration pipeline.
 - Config files without `version`: auto-migrated to `version: 1`.
 - Scope rename compatibility:

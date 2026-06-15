@@ -160,7 +160,7 @@ Scheduled info-flow examples:
 - Hourly service status check: `talon schedule create "Search public status pages for our dependencies and summarize incidents." --name "Status patrol" --every 1h`
 - Weekly review: `talon schedule create "Review this week's inbox and completed tasks; produce a concise retrospective." --name "Weekly review" --cron "0 17 * * 5" --timezone Asia/Shanghai`
 
-v0.2 schedule boundaries:
+Schedule boundaries in v0.1.0:
 - Supported: one-shot `runAt` (including relative `30m` / `2h`), interval `every`, cron, natural-language `when`, timing preview, execution modes (`isolated` / `continue` / `session:<id>`), agent `cronjob` tool, skill binding, per-job toolsets, `noAgent` script runs, `repeatRemaining`, delivery targets (`inbox` / `origin` / `silent` / `webhook`), `schedule run --wait`, and configurable `scheduler.pollIntervalMs`. CLI `schedule create` covers timing and execution mode; advanced metadata is exposed through `cronjob` and gateway APIs.
 - Scheduled runs deny nested schedule management via `cronjob` unless explicitly designed otherwise; `delegate_task` is disabled unless `metadata.allowDelegate: true` on the schedule.
 - Scheduled agent runs run a lightweight prompt-injection scan before execution.

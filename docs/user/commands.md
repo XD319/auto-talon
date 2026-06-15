@@ -76,7 +76,7 @@ TUI slash commands (chat mode):
 - `/memory forget <memory-id-prefix>`
 - `/memory why [memory-id-prefix]`
 
-Schedule notes (v0.2):
+Schedule notes:
 
 - `talon schedule create` accepts `--at 30m`, `--every 2h`, and `--execution-mode isolated|continue|session:<id>`. `--session` requires an execution mode; isolated schedules always run in a fresh session. Advanced fields (`deliveryTargets`, `skills`, `toolsets`, `noAgent`, `repeatRemaining`) are available via the agent `cronjob` tool or gateway API.
 - `talon schedule preview <expr> [--timezone TZ] [--count N]` validates one timing expression and prints upcoming fire times without creating a schedule.
