@@ -43,6 +43,8 @@ import {
   formatScheduleTimingPreview,
   parseExecutionModeInput,
   previewScheduleTiming,
+  resolveDefaultReviewerId,
+  resolveDefaultUserId,
   resolveScheduleTiming,
   initializeWorkspaceFiles,
   resolveAppConfig,
@@ -213,15 +215,22 @@ export async function main(argv = process.argv): Promise<void> {
                   cwd: commandOptions.cwd,
                   onOutputEvent: createCliOutputListener(commandOptions.jsonEvents === true)
                 })
-              : await handle.service.continueLatest(task, {
-                  cwd: commandOptions.cwd,
-                  onOutputEvent: createCliOutputListener(commandOptions.jsonEvents === true)
-                });
+              : (() => {
+                  throw new Error(
+                    "Continue requires --last to resume the latest session or --session <sessionId> to target a session."
+                  );
+                })();
         console.log(`Task ID: ${result.task.taskId}`);
         console.log(`Session ID: ${result.task.sessionId ?? "-"}`);
         console.log(`Status: ${result.task.status}`);
         if (result.output !== null) {
           console.log(result.output);
+        }
+        if (result.error !== undefined) {
+          console.error(`Error: ${formatRunError(result.error)}`);
+          process.exitCode = 1;
+        } else if (result.task.status === "failed" || result.task.status === "cancelled") {
+          process.exitCode = 1;
         }
       } finally {
         handle.close();
@@ -341,7 +350,7 @@ export async function main(argv = process.argv): Promise<void> {
     .action((commandOptions: { adapter: string; externalSession?: string; session: string }) => {
       const handle = createApplication(process.cwd());
       try {
-        const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
+        const ownerUserId = resolveDefaultUserId();
         const externalSessionId =
           commandOptions.externalSession ?? `${commandOptions.adapter}:handoff:${commandOptions.session.slice(0, 8)}`;
         const result = handle.service.handoffSession({
@@ -379,7 +388,13 @@ export async function main(argv = process.argv): Promise<void> {
           service: handle.service
         });
         console.log(`Session API listening at ${started.url}`);
-        await new Promise<void>(() => {});
+        await new Promise<void>((resolve) => {
+          const shutdown = (): void => {
+            resolve();
+          };
+          process.once("SIGINT", shutdown);
+          process.once("SIGTERM", shutdown);
+        });
       } finally {
         handle.close();
       }
@@ -452,7 +467,7 @@ export async function main(argv = process.argv): Promise<void> {
             "--session requires --execution-mode continue or session:<id>; isolated schedules ignore session binding."
           );
         }
-        const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
+        const ownerUserId = resolveDefaultUserId();
         const name = commandOptions.name ?? "scheduled-run";
         const profile = (commandOptions.profile ?? "executor") as "executor" | "planner" | "reviewer";
         const parsedExecutionMode =
@@ -801,7 +816,7 @@ export async function main(argv = process.argv): Promise<void> {
   inboxCommand.command("done").argument("<inbox_id>").action((inboxId: string) => {
     const handle = createApplication(process.cwd());
     try {
-      const reviewer = process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+      const reviewer = resolveDefaultReviewerId();
       console.log(formatInboxDetail(handle.service.markInboxDone(inboxId, reviewer)));
     } finally {
       handle.close();
@@ -855,7 +870,7 @@ export async function main(argv = process.argv): Promise<void> {
     .action((commandOptions: { session: string; title: string; summary?: string }) => {
       const handle = createApplication(process.cwd());
       try {
-        const ownerUserId = process.env.USERNAME ?? process.env.USER ?? "local-user";
+        const ownerUserId = resolveDefaultUserId();
         const created = handle.service.createCommitment({
           ownerUserId,
           source: "manual",
@@ -1005,8 +1020,7 @@ export async function main(argv = process.argv): Promise<void> {
     .action(async (approvalId: string, commandOptions: { reviewer?: string; scope?: string }) => {
       const handle = createApplication(process.cwd());
       try {
-        const reviewerId =
-          commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+        const reviewerId = commandOptions.reviewer ?? resolveDefaultReviewerId();
         const scope = parseApprovalAllowScope(commandOptions.scope);
         const result = await handle.service.resolveApproval(
           approvalId,
@@ -1019,6 +1033,7 @@ export async function main(argv = process.argv): Promise<void> {
         console.log(`Status: ${result.task.status}`);
         if (result.error !== undefined) {
           console.log(`Error: ${result.error.code} ${result.error.message}`);
+          process.exitCode = 1;
         }
         if (result.output !== null) {
           console.log(result.output);
@@ -1036,7 +1051,7 @@ export async function main(argv = process.argv): Promise<void> {
       const handle = createApplication(process.cwd());
       try {
         const reviewerId =
-          commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+          commandOptions.reviewer ?? resolveDefaultReviewerId();
         const result = await handle.service.resolveApproval(approvalId, "deny", reviewerId);
         console.log(`Approval: ${result.approval.approvalId} ${result.approval.status}`);
         console.log(`Task ID: ${result.task.taskId}`);
@@ -1669,8 +1684,8 @@ export async function main(argv = process.argv): Promise<void> {
             throw new Error("Memory add only supports profile and project scopes.");
           }
           const reviewer =
-            commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
-          const userId = commandOptions.user ?? process.env.USERNAME ?? process.env.USER ?? "local-user";
+            commandOptions.reviewer ?? resolveDefaultReviewerId();
+          const userId = commandOptions.user ?? resolveDefaultUserId();
           const memory = handle.service.addMemory({
             content: text,
             cwd: commandOptions.cwd,
@@ -1695,7 +1710,7 @@ export async function main(argv = process.argv): Promise<void> {
       const handle = createApplication(process.cwd());
       try {
         const reviewer =
-          commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+          commandOptions.reviewer ?? resolveDefaultReviewerId();
         console.log(formatMemoryList([handle.service.forgetMemory(memoryId, reviewer, commandOptions.note)]));
       } finally {
         handle.close();
@@ -1856,7 +1871,7 @@ export async function main(argv = process.argv): Promise<void> {
             user: commandOptions.user
           });
           const reviewer =
-            commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+            commandOptions.reviewer ?? resolveDefaultReviewerId();
           const snapshot = handle.service.createMemorySnapshot(
             resolvedScope,
             scopeKey,
@@ -1885,7 +1900,7 @@ export async function main(argv = process.argv): Promise<void> {
         const handle = createApplication(process.cwd());
         try {
           const reviewer =
-            commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+            commandOptions.reviewer ?? resolveDefaultReviewerId();
           const reviewed = handle.service.reviewMemory(
             memoryId,
             status,
@@ -1930,7 +1945,7 @@ export async function main(argv = process.argv): Promise<void> {
       const handle = createApplication(process.cwd());
       try {
         const reviewer =
-          commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+          commandOptions.reviewer ?? resolveDefaultReviewerId();
         const accepted = handle.service.acceptMemorySuggestion(inboxId, reviewer);
         console.log(formatInboxDetail(accepted.inboxItem));
         if (accepted.memory !== null) {
@@ -2002,7 +2017,7 @@ export async function main(argv = process.argv): Promise<void> {
         const handle = createApplication(process.cwd());
         try {
           const reviewer =
-            commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+            commandOptions.reviewer ?? resolveDefaultReviewerId();
           const reviewed = handle.service.reviewExperience({
             experienceId,
             note: commandOptions.note,
@@ -2032,7 +2047,7 @@ export async function main(argv = process.argv): Promise<void> {
         const handle = createApplication(process.cwd());
         try {
           const reviewer =
-            commandOptions.reviewer ?? process.env.USERNAME ?? process.env.USER ?? "local-reviewer";
+            commandOptions.reviewer ?? resolveDefaultReviewerId();
           const result = handle.service.promoteExperience({
             experienceId,
             note: commandOptions.note,
@@ -2771,7 +2786,7 @@ function resolveScopeKey(
     return options.cwd;
   }
 
-  const userId = options.user ?? process.env.USERNAME ?? process.env.USER ?? "local-user";
+  const userId = options.user ?? resolveDefaultUserId();
   return `${userId}:${options.profile}`;
 }
 
