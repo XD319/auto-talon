@@ -1,20 +1,34 @@
 import type { ProviderUsage } from "../types/index.js";
 import { contextWindowPercentFromPrompt } from "../runtime/context/token-counter.js";
 
-/** Rough placeholder pricing (USD per 1M tokens) for status estimates; override with env if needed. */
+export interface TokenPricingEntry {
+  inputPerMillion: number;
+  outputPerMillion: number;
+}
+
+/** Rough placeholder pricing (USD per 1M tokens) for status estimates; override with env or runtime config. */
 export function estimateSessionCostUsd(
   providerName: string,
   modelName: string | undefined,
-  usage: ProviderUsage
+  usage: ProviderUsage,
+  pricing?: Record<string, TokenPricingEntry>
 ): number {
   const input = usage.inputTokens;
   const output = usage.outputTokens;
   const key = `${providerName}:${modelName ?? ""}`.toLowerCase();
 
+  const configured = resolveConfiguredPricing(pricing, providerName, modelName);
+  if (configured !== null) {
+    return (input * configured.inputPerMillion + output * configured.outputPerMillion) / 1_000_000;
+  }
+
   let inPerM = 3;
   let outPerM = 15;
 
-  if (key.includes("gpt-4o-mini")) {
+  if (providerName === "mock" || providerName === "ollama") {
+    inPerM = 0;
+    outPerM = 0;
+  } else if (key.includes("gpt-4o-mini")) {
     inPerM = 0.15;
     outPerM = 0.6;
   } else if (key.includes("gpt-4o")) {
@@ -29,6 +43,30 @@ export function estimateSessionCostUsd(
   } else if (key.includes("opus")) {
     inPerM = 15;
     outPerM = 75;
+  } else if (providerName === "gemini" || key.includes("gemini")) {
+    inPerM = 0.15;
+    outPerM = 0.6;
+  } else if (providerName === "glm" || key.includes("glm")) {
+    inPerM = 0.1;
+    outPerM = 0.1;
+  } else if (providerName === "moonshot" || key.includes("kimi")) {
+    inPerM = 0.15;
+    outPerM = 2.5;
+  } else if (providerName === "qwen" || key.includes("qwen")) {
+    inPerM = 0.4;
+    outPerM = 1.2;
+  } else if (providerName === "xai" || key.includes("grok")) {
+    inPerM = 2;
+    outPerM = 10;
+  } else if (providerName === "minimax" || key.includes("minimax")) {
+    inPerM = 0.3;
+    outPerM = 1.1;
+  } else if (providerName === "xfyun-coding" || key.includes("astron")) {
+    inPerM = 0.5;
+    outPerM = 1.5;
+  } else if (providerName === "openrouter") {
+    inPerM = 0.15;
+    outPerM = 0.6;
   }
 
   const custom = process.env.AGENT_TOKEN_PRICE_IN_PER_M;
@@ -39,6 +77,31 @@ export function estimateSessionCostUsd(
   }
 
   return (input * inPerM + output * outPerM) / 1_000_000;
+}
+
+function resolveConfiguredPricing(
+  pricing: Record<string, TokenPricingEntry> | undefined,
+  providerName: string,
+  modelName: string | undefined
+): TokenPricingEntry | null {
+  if (pricing === undefined) {
+    return null;
+  }
+
+  const candidates = [
+    modelName ?? "",
+    `${providerName}:${modelName ?? ""}`,
+    providerName
+  ].filter((candidate) => candidate.length > 0);
+
+  for (const candidate of candidates) {
+    const entry = pricing[candidate];
+    if (entry !== undefined) {
+      return entry;
+    }
+  }
+
+  return null;
 }
 
 export function contextWindowPercent(

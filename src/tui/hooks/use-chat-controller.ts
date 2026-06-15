@@ -647,7 +647,8 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         const cost = estimateSessionCostUsd(
           typedStats.providerName,
           input.config.provider.model ?? undefined,
-          usage
+          usage,
+          input.config.budget.pricing
         );
         setTokenHud((current) => {
           const nextTokenHud = {
