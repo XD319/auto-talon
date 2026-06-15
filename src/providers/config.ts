@@ -373,8 +373,12 @@ function loadProviderConfigFile(configPath: string): ProviderConfigFile {
     return {};
   }
 
-  const parsed = JSON.parse(content) as ProviderConfigFile;
-  return parsed;
+  try {
+    return JSON.parse(content) as ProviderConfigFile;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse provider config ${configPath}: ${message}`);
+  }
 }
 
 export function resolveUserProviderConfigPath(): string {
