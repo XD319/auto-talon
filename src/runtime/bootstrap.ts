@@ -120,8 +120,11 @@ import {
 import { ToolOverrideStore } from "../tools/tool-overrides.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles } from "./workspace-setup.js";
+import { resolveDefaultUserId } from "./runtime-identity.js";
 
 export const RUNTIME_VERSION = "0.1.0";
+
+const DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS = 128_000;
 
 function resolveEffectiveContextWindow(
   provider: ResolvedProviderConfig,
@@ -156,10 +159,23 @@ function resolveEffectiveContextWindow(
   }
 
   if (provider.contextWindowTokens === null) {
-    throw new Error(
-      `Provider ${provider.name} model ${provider.model ?? "-"} is missing contextWindowTokens. ` +
+    console.warn(
+      `Warning: provider ${provider.name} model ${provider.model ?? "-"} is missing contextWindowTokens. ` +
+        `Using fallback input limit ${DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS}. ` +
         "Set providers.<name>.contextWindowTokens or tokenBudget.inputLimit explicitly."
     );
+    const tokenBudget = assertTokenBudgetCoherent({
+      ...runtimeConfig.tokenBudget,
+      inputLimit: DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS
+    });
+    return {
+      provider: {
+        ...provider,
+        contextWindowSource: provider.contextWindowSource ?? "provider_manifest",
+        contextWindowTokens: DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS
+      },
+      tokenBudget
+    };
   }
 
   const tokenBudget = assertTokenBudgetCoherent({
@@ -1239,7 +1255,12 @@ function loadSandboxConfigFile(configPath: string): SandboxConfigFile {
     return {};
   }
 
-  return JSON.parse(content) as SandboxConfigFile;
+  try {
+    return JSON.parse(content) as SandboxConfigFile;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse sandbox config ${configPath}: ${message}`);
+  }
 }
 
 function splitRootList(value: string | undefined): string[] {
@@ -1278,6 +1299,6 @@ export function createDefaultRunOptions(
     taskInput,
     timeoutMs: config.defaultTimeoutMs,
     tokenBudget: config.tokenBudget,
-    userId: process.env.USERNAME ?? process.env.USER ?? "local-user"
+    userId: resolveDefaultUserId()
   };
 }

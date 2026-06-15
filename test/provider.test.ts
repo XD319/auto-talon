@@ -376,33 +376,39 @@ describe("Provider integration", () => {
     expect(resolved.transport).toBe("openai-compatible");
     expect(resolved.timeoutMs).toBe(18_000);
     expect(resolved.maxRetries).toBe(5);
-    expect(resolved.contextWindowTokens).toBeNull();
-    expect(resolved.contextWindowSource).toBeNull();
+    expect(resolved.contextWindowTokens).toBe(64_000);
+    expect(resolved.contextWindowSource).toBe("provider_model_manifest");
     expect(createProvider(resolved).capabilities?.streaming).toBe(true);
   });
 
-  it("fails application startup for configured providers without context window or explicit input limit", async () => {
+  it("uses fallback context window when provider context window is unavailable", async () => {
     const workspaceRoot = await createTempWorkspace();
     await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
     await fs.writeFile(
       join(workspaceRoot, ".auto-talon", "provider.config.json"),
       JSON.stringify({
-        currentProvider: "xfyun-coding",
+        currentProvider: "openai-compatible",
         providers: {
-          "xfyun-coding": {
-            apiKey: "xfyun-test-key"
+          "openai-compatible": {
+            apiKey: "compat-test-key",
+            baseUrl: "https://compat.example.test/v1",
+            model: "custom-model-without-manifest"
           }
         }
       }),
       "utf8"
     );
-    expect(() =>
-      createApplication(workspaceRoot, {
-        config: {
-          databasePath: join(workspaceRoot, "runtime.db")
-        }
-      })
-    ).toThrow(/contextWindowTokens/);
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      }
+    });
+    try {
+      expect(handle.config.tokenBudget.inputLimit).toBe(128_000);
+      expect(handle.config.provider.contextWindowTokens).toBe(128_000);
+    } finally {
+      handle.close();
+    }
   });
 
   it("lets explicit tokenBudget.inputLimit override missing provider context window", async () => {
