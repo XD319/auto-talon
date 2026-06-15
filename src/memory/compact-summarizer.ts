@@ -59,6 +59,7 @@ export class ProviderSubagentSummarizer implements CompactSummarizer {
         inputLimit: this.options.maxInputTokens,
         outputLimit: 2_000,
         reservedOutput: 200,
+        usedCostUsd: 0,
         usedInput: 0,
         usedOutput: 0
       }
@@ -299,6 +300,7 @@ function buildSummaryTask(
       inputLimit: maxInputTokens,
       outputLimit: 2_000,
       reservedOutput: 200,
+      usedCostUsd: 0,
       usedInput: 0,
       usedOutput: 0
     },
