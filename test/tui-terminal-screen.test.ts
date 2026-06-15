@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { closeApplication, createApplication, render, unmount, waitUntilExit } = vi.hoisted(() => {
+const { closeApplication, createApplication, createApplicationAsync, render, unmount, waitUntilExit } = vi.hoisted(() => {
   const closeApplication = vi.fn();
   const waitUntilExit = vi.fn(() => Promise.resolve());
   const unmount = vi.fn();
@@ -19,7 +19,8 @@ const { closeApplication, createApplication, render, unmount, waitUntilExit } = 
       migrateLegacyTranscripts: vi.fn(() => Promise.resolve({ migratedFiles: 0, skippedFiles: 0 }))
     }
   }));
-  return { closeApplication, createApplication, render, unmount, waitUntilExit };
+  const createApplicationAsync = vi.fn(() => Promise.resolve(createApplication()));
+  return { closeApplication, createApplication, createApplicationAsync, render, unmount, waitUntilExit };
 });
 
 vi.mock("ink", () => ({
@@ -27,7 +28,8 @@ vi.mock("ink", () => ({
 }));
 
 vi.mock("../src/runtime/index.js", () => ({
-  createApplication
+  createApplication,
+  createApplicationAsync
 }));
 
 vi.mock("../src/tui/chat-app.js", () => ({
