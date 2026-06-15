@@ -47,8 +47,8 @@ describe("status line model", () => {
     expect(resolveStatusLineFields(config).showMode).toBe(false);
   });
 
-  it("formats interaction modes like Claude", () => {
-    expect(formatInteractionMode("agent")).toBe("default");
+  it("formats interaction modes for the status line", () => {
+    expect(formatInteractionMode("agent")).toBe("agent");
     expect(formatInteractionMode("plan")).toBe("plan");
     expect(formatInteractionMode("acceptEdits")).toBe("accept-edits");
   });

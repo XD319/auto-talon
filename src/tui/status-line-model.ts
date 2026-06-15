@@ -102,12 +102,16 @@ export function buildActivityStatusItem(input: ActivityStatusInput): StatusItem 
 
 export function formatInteractionMode(mode: TuiInteractionMode): string {
   switch (mode) {
+    case "agent":
+      return "agent";
     case "acceptEdits":
       return "accept-edits";
     case "plan":
       return "plan";
-    default:
-      return "default";
+    default: {
+      const unexpected: never = mode;
+      return unexpected;
+    }
   }
 }
 
