@@ -19,6 +19,7 @@ export class ManagedProvider implements Provider {
 
   public readonly capabilities: Provider["capabilities"];
   public readonly describe: Provider["describe"];
+  public readonly fetchContextWindow: Provider["fetchContextWindow"];
   public readonly model: string | undefined;
   public readonly name: string;
   public readonly streamGenerate: Provider["streamGenerate"];
@@ -30,6 +31,9 @@ export class ManagedProvider implements Provider {
   ) {
     this.capabilities = inner.capabilities;
     this.describe = inner.describe?.bind(inner);
+    this.fetchContextWindow = inner.fetchContextWindow?.bind(inner) as
+      | ((signal?: AbortSignal) => Promise<number | null>)
+      | undefined;
     this.model = inner.model;
     this.name = inner.name;
     this.telemetry = new ProviderTelemetry(inner.name);

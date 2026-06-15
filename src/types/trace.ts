@@ -59,6 +59,7 @@ export const TRACE_EVENT_TYPES = [
   "review_resolved",
   "pre_compress",
   "compact_evaluated",
+  "tail_budget_exceeded",
   "micro_compact_pruned",
   "compact_summarizer_failed",
   "session_end",
@@ -478,6 +479,13 @@ export interface CompactEvaluatedPayload extends JsonObject {
   toolCallCount: number | null;
   toolCallThreshold: number | null;
   triggered: boolean;
+}
+
+export interface TailBudgetExceededPayload extends JsonObject {
+  protectLastN: number;
+  tailMessageCount: number;
+  tailTokenBudget: number;
+  usedTokens: number;
 }
 
 export interface MicroCompactPrunedPayload extends JsonObject {
@@ -955,6 +963,7 @@ export type TraceEvent =
   | TraceEventBase<"review_resolved", ReviewResolvedPayload>
   | TraceEventBase<"pre_compress", PreCompressPayload>
   | TraceEventBase<"compact_evaluated", CompactEvaluatedPayload>
+  | TraceEventBase<"tail_budget_exceeded", TailBudgetExceededPayload>
   | TraceEventBase<"micro_compact_pruned", MicroCompactPrunedPayload>
   | TraceEventBase<"compact_summarizer_failed", CompactSummarizerFailedPayload>
   | TraceEventBase<"session_end", SessionEndPayload>

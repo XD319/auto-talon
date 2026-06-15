@@ -141,9 +141,9 @@ export function formatTokensStatusField(
   compaction?: { compactedCount?: number; microPrunedCount?: number }
 ): string {
   const parts: string[] = [`${contextPercent}%`];
-  const effectiveLimit = Math.max(inputLimit - reservedOutput, 1);
+  const usableWindow = Math.max(inputLimit - reservedOutput, 1);
   if (inputTokens > 0) {
-    parts.push(`${compactTokenCount(inputTokens)}/${compactTokenCount(effectiveLimit)}`);
+    parts.push(`${compactTokenCount(inputTokens)}/${compactTokenCount(usableWindow)}`);
   }
 
   const compactionParts: string[] = [];

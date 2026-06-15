@@ -796,10 +796,12 @@ export function ChatTuiApp({
 
       if (text === "/context") {
         const b = config.tokenBudget;
-        const effectiveInput = Math.max(b.inputLimit - b.reservedOutput, 1);
+        const usableInputWindow = Math.max(b.inputLimit - b.reservedOutput, 1);
         controller.addSystemMessage(
           [
-            `Context vs prompt window: ${controller.tokenHud.contextPercent}% of ~${effectiveInput} tokens (inputLimit=${b.inputLimit}, reservedOutput=${b.reservedOutput}; outputLimit=${b.outputLimit} reserved for generation).`,
+            `Context window: ${b.inputLimit} tokens (${config.provider.contextWindowSource ?? "unknown"}).`,
+            `Usable input window: ${usableInputWindow} tokens (reservedOutput=${b.reservedOutput}; outputLimit=${b.outputLimit}).`,
+            `Prompt usage: ${controller.tokenHud.contextPercent}% of context window.`,
             `Used (telemetry): input=${controller.tokenHud.inputTokens} output=${controller.tokenHud.outputTokens}`,
             `Usage mode: ${controller.tokenHud.usageMode} | stats: ${controller.tokenHud.statsSource}`
           ].join("\n")

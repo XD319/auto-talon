@@ -23,6 +23,10 @@ const tokenBudgetConfigSchema = z.object({
   reservedOutput: z.number().int().nonnegative().optional()
 });
 
+const contextConfigSchema = z.object({
+  engine: z.enum(["hermes_compressor"]).optional()
+});
+
 const workflowTestCommandSchema = z.union([
   z.string().min(1),
   z.object({
@@ -64,10 +68,14 @@ const runtimeConfigFileSchema = z.object({
     .optional(),
   compact: z
     .object({
-      bufferTokens: z.number().int().nonnegative().optional(),
+      bufferTokens: z.number().int().nonnegative().optional(), // deprecated: kept for backward compatibility, no runtime effect
+      hygieneThresholdRatio: z.number().positive().max(1).optional(),
       iterationThreshold: z.number().int().positive().optional(),
       messageThreshold: z.number().int().positive().optional(),
+      protectFirstN: z.number().int().nonnegative().optional(),
+      protectLastN: z.number().int().positive().optional(),
       summarizer: z.enum(["deterministic", "provider_subagent"]).optional(),
+      targetRatio: z.number().positive().max(1).optional(),
       tailMinMessages: z.number().int().positive().optional(),
       tailTokenBudget: z.number().int().positive().optional(),
       thresholdRatio: z.number().positive().max(1).optional(),
@@ -75,6 +83,7 @@ const runtimeConfigFileSchema = z.object({
       toolCallThreshold: z.number().int().positive().optional()
     })
     .optional(),
+  context: contextConfigSchema.optional(),
   contextRetention: z
     .object({
       maxBytesPerFile: z.number().int().positive().optional(),
@@ -240,14 +249,21 @@ export interface RuntimeConfig {
   defaultTimeoutMs: number;
   compact: {
     bufferTokens: number;
+    hygieneThresholdRatio: number;
     iterationThreshold: number;
     messageThreshold: number;
+    protectFirstN: number;
+    protectLastN: number;
     summarizer: "deterministic" | "provider_subagent";
+    targetRatio: number;
     tailMinMessages: number;
-    tailTokenBudget: number;
+    tailTokenBudget: number | null;
     thresholdRatio: number;
     tokenThreshold: number | null;
     toolCallThreshold: number;
+  };
+  context: {
+    engine: "hermes_compressor";
   };
   contextRetention: ContextRetentionConfig;
   recall: {
@@ -282,6 +298,7 @@ export interface RuntimeConfig {
     pricing: Record<string, BudgetPricingEntry>;
   };
   tokenBudget: TokenBudget;
+  tokenBudgetInputLimitExplicit: boolean;
   tui: {
     diffDisplay: DiffDisplayMode;
     statusLine: TuiStatusLineConfig;
@@ -309,15 +326,22 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     maxResults: 5
   },
   compact: {
-    bufferTokens: 8_000,
+    bufferTokens: 0,
+    hygieneThresholdRatio: 0.85,
     iterationThreshold: 24,
     messageThreshold: 100,
+    protectFirstN: 3,
+    protectLastN: 20,
     summarizer: "provider_subagent",
+    targetRatio: 0.2,
     tailMinMessages: 10,
-    tailTokenBudget: 20_000,
-    thresholdRatio: 0.8,
+    tailTokenBudget: null,
+    thresholdRatio: 0.5,
     tokenThreshold: null,
     toolCallThreshold: 40
+  },
+  context: {
+    engine: "hermes_compressor"
   },
   contextRetention: {
     maxBytesPerFile: 24_000,
@@ -348,6 +372,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     usedOutput: 0,
     usedCostUsd: 0
   },
+  tokenBudgetInputLimitExplicit: false,
   routing: {
     mode: "balanced",
     providers: {},
@@ -410,6 +435,8 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     usedOutput: 0,
     usedCostUsd: 0
   };
+  const tokenBudgetInputLimitExplicit =
+    envConfig.tokenBudget?.inputLimit !== undefined || fileConfig?.tokenBudget?.inputLimit !== undefined;
   const workflow: WorkflowRuntimeConfig = {
     failureGuidedRetry: {
       enabled:
@@ -489,6 +516,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         envConfig.compact?.bufferTokens ??
         fileConfig?.compact?.bufferTokens ??
         DEFAULT_RUNTIME_CONFIG.compact.bufferTokens,
+      hygieneThresholdRatio:
+        envConfig.compact?.hygieneThresholdRatio ??
+        fileConfig?.compact?.hygieneThresholdRatio ??
+        DEFAULT_RUNTIME_CONFIG.compact.hygieneThresholdRatio,
       iterationThreshold:
         envConfig.compact?.iterationThreshold ??
         fileConfig?.compact?.iterationThreshold ??
@@ -497,10 +528,22 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         envConfig.compact?.messageThreshold ??
         fileConfig?.compact?.messageThreshold ??
         DEFAULT_RUNTIME_CONFIG.compact.messageThreshold,
+      protectFirstN:
+        envConfig.compact?.protectFirstN ??
+        fileConfig?.compact?.protectFirstN ??
+        DEFAULT_RUNTIME_CONFIG.compact.protectFirstN,
+      protectLastN:
+        envConfig.compact?.protectLastN ??
+        fileConfig?.compact?.protectLastN ??
+        DEFAULT_RUNTIME_CONFIG.compact.protectLastN,
       summarizer:
         envConfig.compact?.summarizer ??
         fileConfig?.compact?.summarizer ??
         DEFAULT_RUNTIME_CONFIG.compact.summarizer,
+      targetRatio:
+        envConfig.compact?.targetRatio ??
+        fileConfig?.compact?.targetRatio ??
+        DEFAULT_RUNTIME_CONFIG.compact.targetRatio,
       tailMinMessages:
         envConfig.compact?.tailMinMessages ??
         fileConfig?.compact?.tailMinMessages ??
@@ -521,6 +564,12 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         envConfig.compact?.toolCallThreshold ??
         fileConfig?.compact?.toolCallThreshold ??
         DEFAULT_RUNTIME_CONFIG.compact.toolCallThreshold
+    },
+    context: {
+      engine:
+        envConfig.context?.engine ??
+        fileConfig?.context?.engine ??
+        DEFAULT_RUNTIME_CONFIG.context.engine
     },
     recall: {
       budgetRatio:
@@ -628,6 +677,7 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         DEFAULT_RUNTIME_CONFIG.contextRetention.toolOutputMaxTokens
     },
     tokenBudget,
+    tokenBudgetInputLimitExplicit,
     tui: {
       diffDisplay:
         envConfig.tui?.diffDisplay ??
@@ -647,6 +697,9 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
 
   if (merged.tokenBudget.reservedOutput >= merged.tokenBudget.outputLimit) {
     throw new Error("runtime tokenBudget.reservedOutput must be lower than outputLimit.");
+  }
+  if (merged.tokenBudget.reservedOutput >= merged.tokenBudget.inputLimit) {
+    throw new Error("runtime tokenBudget.reservedOutput must be lower than inputLimit.");
   }
   const normalizedCustomShell = normalizeWorkflowCustomShell(merged.workflow.customShell);
   if (merged.workflow.shellBackend === "custom" && normalizedCustomShell === null) {

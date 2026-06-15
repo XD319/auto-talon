@@ -38,6 +38,8 @@ describe("status line command", () => {
       git_dirty: false
     });
     expect(payload.context_window.used_percentage).toBe(12);
+    expect(payload.context_window.context_window_size).toBe(128_000);
+    expect(payload.context_window.usable_input_window).toBe(127_000);
     expect(payload.cost.total_cost_usd).toBe(0.01);
   });
 

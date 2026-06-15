@@ -1324,6 +1324,7 @@ export async function main(argv = process.argv): Promise<void> {
     .argument("<provider>", "Provider name; provider:model also sets the model")
     .option("--api-key <key>", "API key to store in provider config")
     .option("--base-url <url>", "Provider base URL")
+    .option("--context-window-tokens <number>", "Provider/model context window in tokens", parsePositiveIntegerOption("--context-window-tokens"))
     .option("--model <model>", "Model name")
     .option("--timeout-ms <number>", "Request timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
     .option("--stream-idle-timeout-ms <number>", "Streaming idle timeout in milliseconds", parsePositiveIntegerOption("--stream-idle-timeout-ms"))
@@ -1333,6 +1334,9 @@ export async function main(argv = process.argv): Promise<void> {
       const result = setupProviderConfig(provider, {
         ...(commandOptions.apiKey !== undefined ? { apiKey: commandOptions.apiKey } : {}),
         ...(commandOptions.baseUrl !== undefined ? { baseUrl: commandOptions.baseUrl } : {}),
+        ...(commandOptions.contextWindowTokens !== undefined
+          ? { contextWindowTokens: commandOptions.contextWindowTokens }
+          : {}),
         ...(commandOptions.maxRetries !== undefined ? { maxRetries: commandOptions.maxRetries } : {}),
         ...(commandOptions.model !== undefined ? { model: commandOptions.model } : {}),
         ...(commandOptions.streamIdleTimeoutMs !== undefined
@@ -2456,6 +2460,7 @@ interface SmokeCommandOptions {
 interface ProviderSetupCommandOptions {
   apiKey?: string;
   baseUrl?: string;
+  contextWindowTokens?: number;
   maxRetries?: number;
   model?: string;
   streamIdleTimeoutMs?: number;

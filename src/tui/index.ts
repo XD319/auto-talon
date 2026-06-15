@@ -1,7 +1,7 @@
 ﻿import React from "react";
 import { render } from "ink";
 
-import { createApplication } from "../runtime/index.js";
+import { createApplication, createApplicationAsync } from "../runtime/index.js";
 
 import { ChatTuiApp } from "./chat-app.js";
 import { AgentTuiApp } from "./dashboard-app.js";
@@ -18,7 +18,7 @@ export interface StartTuiOptions {
 
 export async function startTui(options: StartTuiOptions = {}): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
-  const handle = createApplication(cwd, {
+  const handle = await createApplicationAsync(cwd, {
     scheduler: { autoStart: true },
     ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {})
   });
@@ -114,7 +114,7 @@ export async function startDashboardTui(
   cwd = process.cwd(),
   sandbox?: TuiResolveAppConfigOptions
 ): Promise<void> {
-  const handle = createApplication(cwd, {
+  const handle = await createApplicationAsync(cwd, {
     scheduler: { autoStart: true },
     ...(sandbox !== undefined ? { sandbox } : {})
   });

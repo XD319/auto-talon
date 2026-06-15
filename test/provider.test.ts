@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createApplication, createDefaultRunOptions } from "../src/runtime/index.js";
+import { createApplication, createApplicationAsync, createDefaultRunOptions } from "../src/runtime/index.js";
 import {
   AnthropicCompatibleProvider,
   createProvider,
@@ -273,6 +273,37 @@ describe("Provider integration", () => {
     expect(resolved.timeoutMs).toBe(12_000);
     expect(resolved.maxRetries).toBe(4);
     expect(resolved.configSource).toBe("file");
+    expect(resolved.contextWindowTokens).toBe(128_000);
+    expect(resolved.contextWindowSource).toBe("provider_model_manifest");
+  });
+
+  it("resolves model-specific context window for OpenAI o1", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify(
+        {
+          currentProvider: "openai",
+          providers: {
+            openai: {
+              apiKey: "openai-test-key",
+              model: "o1"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const resolved = resolveProviderConfig(workspaceRoot);
+
+    expect(resolved.name).toBe("openai");
+    expect(resolved.model).toBe("o1");
+    expect(resolved.contextWindowTokens).toBe(200_000);
+    expect(resolved.contextWindowSource).toBe("provider_model_manifest");
   });
 
   it("loads OpenAI-compatible provider configuration from file aliases", async () => {
@@ -287,6 +318,7 @@ describe("Provider integration", () => {
             "openai-compatible": {
               apiKey: "compat-test-key",
               baseUrl: "https://compat.example.test/v1",
+              contextWindowTokens: 200_000,
               maxRetries: 3,
               model: "kimi-k2",
               timeoutMs: 15_000
@@ -307,6 +339,8 @@ describe("Provider integration", () => {
     expect(resolved.model).toBe("kimi-k2");
     expect(resolved.timeoutMs).toBe(15_000);
     expect(resolved.maxRetries).toBe(3);
+    expect(resolved.contextWindowTokens).toBe(200_000);
+    expect(resolved.contextWindowSource).toBe("provider_config");
   });
 
   it("loads iFLYTEK Coding Plan provider configuration from file", async () => {
@@ -342,7 +376,106 @@ describe("Provider integration", () => {
     expect(resolved.transport).toBe("openai-compatible");
     expect(resolved.timeoutMs).toBe(18_000);
     expect(resolved.maxRetries).toBe(5);
+    expect(resolved.contextWindowTokens).toBeNull();
+    expect(resolved.contextWindowSource).toBeNull();
     expect(createProvider(resolved).capabilities?.streaming).toBe(true);
+  });
+
+  it("fails application startup for configured providers without context window or explicit input limit", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "xfyun-coding",
+        providers: {
+          "xfyun-coding": {
+            apiKey: "xfyun-test-key"
+          }
+        }
+      }),
+      "utf8"
+    );
+    expect(() =>
+      createApplication(workspaceRoot, {
+        config: {
+          databasePath: join(workspaceRoot, "runtime.db")
+        }
+      })
+    ).toThrow(/contextWindowTokens/);
+  });
+
+  it("lets explicit tokenBudget.inputLimit override missing provider context window", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "xfyun-coding",
+        providers: {
+          "xfyun-coding": {
+            apiKey: "xfyun-test-key"
+          }
+        }
+      }),
+      "utf8"
+    );
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        tokenBudget: {
+          inputLimit: 96_000
+        }
+      }),
+      "utf8"
+    );
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      }
+    });
+    try {
+      expect(handle.config.tokenBudget.inputLimit).toBe(96_000);
+      expect(handle.config.provider.contextWindowTokens).toBe(96_000);
+      expect(handle.config.provider.contextWindowSource).toBe("explicit_token_budget");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("lets createApplication config tokenBudget.inputLimit override missing provider context window", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "xfyun-coding",
+        providers: {
+          "xfyun-coding": {
+            apiKey: "xfyun-test-key"
+          }
+        }
+      }),
+      "utf8"
+    );
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db"),
+        tokenBudget: {
+          inputLimit: 88_000,
+          outputLimit: 4_000,
+          reservedOutput: 500,
+          usedInput: 0,
+          usedOutput: 0
+        }
+      }
+    });
+    try {
+      expect(handle.config.tokenBudget.inputLimit).toBe(88_000);
+      expect(handle.config.provider.contextWindowSource).toBe("explicit_token_budget");
+    } finally {
+      handle.close();
+    }
   });
 
   it("loads custom OpenAI-compatible providers from config without code changes", async () => {
@@ -1730,6 +1863,198 @@ describe("Provider integration", () => {
           resolve();
         });
       });
+    }
+  });
+
+  it("fetchContextWindow reads context_length from /models", async () => {
+    const server = createServer((request, response) => {
+      if (request.url?.endsWith("/models")) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            data: [{ id: "astron-code-latest", context_length: 96_000 }]
+          })
+        );
+        return;
+      }
+
+      response.writeHead(404).end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      server.close();
+      throw new Error("Expected a TCP server address.");
+    }
+
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        maxRetries: 0,
+        model: "astron-code-latest",
+        name: "xfyun-coding",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "iFLYTEK Coding Plan",
+        defaultModel: "astron-code-latest"
+      }
+    );
+
+    try {
+      const tokens = await provider.fetchContextWindow?.();
+      expect(tokens).toBe(96_000);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error !== undefined && error !== null) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  });
+
+  it("fetchContextWindow falls back to Ollama /api/show", async () => {
+    const server = createServer((request, response) => {
+      if (request.url?.endsWith("/models")) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ data: [{ id: "llama3.2" }] }));
+        return;
+      }
+
+      if (request.url === "/api/show" && request.method === "POST") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            model_info: {
+              "llama.context_length": 131_072
+            }
+          })
+        );
+        return;
+      }
+
+      response.writeHead(404).end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      server.close();
+      throw new Error("Expected a TCP server address.");
+    }
+
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "ollama",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        maxRetries: 0,
+        model: "llama3.2",
+        name: "ollama",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "Ollama",
+        defaultModel: "llama3.2"
+      }
+    );
+
+    try {
+      const tokens = await provider.fetchContextWindow?.();
+      expect(tokens).toBe(131_072);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error !== undefined && error !== null) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  });
+
+  it("createApplicationAsync applies provider API context window", async () => {
+    class ApiContextProvider implements Provider {
+      public readonly model = "api-model";
+      public readonly name = "api-provider";
+
+      public async fetchContextWindow(): Promise<number | null> {
+        return 200_000;
+      }
+
+      public async generate(): Promise<ProviderResponse> {
+        return {
+          kind: "final",
+          message: "ok",
+          metadata: {
+            modelName: this.model,
+            providerName: this.name,
+            retryCount: 0
+          },
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1
+          }
+        };
+      }
+    }
+
+    const workspaceRoot = await createTempWorkspace();
+    const handle = await createApplicationAsync(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db"),
+        provider: {
+          apiKey: "test-key",
+          baseUrl: "https://example.test/v1",
+          builtinProviderName: "mock",
+          configPath: join(workspaceRoot, ".auto-talon", "provider.config.json"),
+          configSource: "env",
+          configured: true,
+          contextWindowSource: "provider_manifest",
+          contextWindowTokens: 64_000,
+          displayName: "Mock Provider",
+          family: "mock",
+          maxRetries: 0,
+          model: "api-model",
+          name: "mock",
+          streamIdleTimeoutMs: 5_000,
+          streamIdleTimeoutConfigured: false,
+          timeoutConfigured: false,
+          timeoutMs: 5_000,
+          transport: "mock"
+        },
+        tokenBudget: {
+          outputLimit: 8_000,
+          reservedOutput: 1_000,
+          usedInput: 0,
+          usedOutput: 0,
+          usedCostUsd: 0
+        }
+      },
+      provider: new ApiContextProvider()
+    });
+
+    try {
+      expect(handle.config.provider.contextWindowSource).toBe("provider_api");
+      expect(handle.config.provider.contextWindowTokens).toBe(200_000);
+      expect(handle.config.tokenBudget.inputLimit).toBe(200_000);
+    } finally {
+      handle.close();
     }
   });
 

@@ -24,8 +24,18 @@ const DEFAULT_RUNTIME_CONFIG: JsonObject = {
     apiUrl: "https://api.firecrawl.dev/v1/search",
     maxResults: 5
   },
+  context: {
+    engine: "hermes_compressor"
+  },
+  compact: {
+    thresholdRatio: 0.5,
+    targetRatio: 0.2,
+    protectFirstN: 3,
+    protectLastN: 20,
+    hygieneThresholdRatio: 0.85,
+    summarizer: "provider_subagent"
+  },
   tokenBudget: {
-    inputLimit: 64000,
     outputLimit: 8000,
     reservedOutput: 1000
   },

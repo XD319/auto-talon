@@ -255,6 +255,67 @@ describe("session compact resume e2e", () => {
     }
   });
 
+  it("writes resume hygiene summary without deleting session messages", async () => {
+    const workspace = createSessionWorkspace("talon-session-hygiene-");
+    const handle = createApplication(workspace, {
+      config: {
+        compact: {
+          hygieneThresholdRatio: 0.85,
+          summarizer: "deterministic"
+        },
+        databasePath: join(workspace, "runtime.db"),
+        tokenBudget: {
+          inputLimit: 1_000,
+          outputLimit: 400,
+          reservedOutput: 50,
+          usedInput: 0,
+          usedOutput: 0
+        }
+      },
+      provider: new ImmediateFinalProvider()
+    });
+    try {
+      const session = handle.service.createSession({
+        agentProfileId: "executor",
+        cwd: workspace,
+        ownerUserId: "test-user",
+        title: "Large resume session"
+      });
+      const largeText = "important context ".repeat(400);
+      handle.infrastructure.storage.sessionMessages.append({
+        kind: "user",
+        messageId: "hygiene-user-1",
+        payload: { text: largeText },
+        sessionId: session.sessionId
+      });
+      handle.infrastructure.storage.sessionMessages.append({
+        kind: "agent",
+        messageId: "hygiene-agent-1",
+        payload: { text: "captured state" },
+        sessionId: session.sessionId
+      });
+      const beforeCount = handle.infrastructure.storage.sessionMessages.countBySessionId(session.sessionId);
+
+      const run = await handle.service.continueSession(session.sessionId, "continue", { cwd: workspace });
+      const afterCount = handle.infrastructure.storage.sessionMessages.countBySessionId(session.sessionId);
+      const summaries = handle.service.listSessionSummaries(session.sessionId);
+      const lineage = handle.infrastructure.storage.sessionLineage.listBySessionId(session.sessionId);
+
+      expect(run.task.status).toBe("succeeded");
+      expect(afterCount).toBeGreaterThanOrEqual(beforeCount);
+      expect(summaries.some((summary) => summary.trigger === "resume")).toBe(true);
+      expect(lineage.some((event) => event.eventType === "compress" && event.payload.hygiene === true)).toBe(true);
+      expect(
+        handle.service.traceTaskContext(run.task.taskId).contextAssembly?.systemPromptFragments.some((fragment) =>
+          fragment.preview.includes("KnownSessionGoal")
+        )
+      ).toBe(true);
+    } finally {
+      handle.close();
+      rmSync(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("preserves compacted long coding context across clarification resume", async () => {
     const workspace = createSessionWorkspace("talon-long-coding-resume-");
     writeFileSync(join(workspace, "alpha.ts"), "export const alpha = true;\n", "utf8");
@@ -312,4 +373,3 @@ function createSessionWorkspace(prefix: string): string {
 function readFileSyncUtf8(path: string): string {
   return readFileSync(path, "utf8");
 }
-

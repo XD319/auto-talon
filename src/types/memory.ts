@@ -180,6 +180,10 @@ export interface SessionCompactInput {
     }>;
   }>;
   maxMessagesBeforeCompact: number;
+  contextWindowTokens?: number;
+  protectFirstN?: number;
+  protectLastN?: number;
+  targetTokenBudget?: number;
   tokenEstimate?: number;
   tokenThreshold?: number;
   toolCallCount?: number;

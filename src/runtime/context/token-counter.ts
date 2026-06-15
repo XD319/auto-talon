@@ -46,14 +46,15 @@ export function computeEffectiveWindow(inputLimit: number, reservedOutput: numbe
   return Math.max(0, inputLimit - reservedOutput);
 }
 
-export function computeCompactThreshold(
-  inputLimit: number,
-  reservedOutput: number,
-  thresholdRatio: number,
-  bufferTokens: number
+export function computeCompactThreshold(inputLimit: number, thresholdRatio: number): number {
+  return computeHermesCompactThreshold(inputLimit, thresholdRatio);
+}
+
+export function computeHermesCompactThreshold(
+  contextWindowTokens: number,
+  thresholdRatio: number
 ): number {
-  const effective = computeEffectiveWindow(inputLimit, reservedOutput);
-  return Math.max(0, Math.floor(effective * thresholdRatio) - bufferTokens);
+  return Math.max(0, Math.floor(contextWindowTokens * thresholdRatio));
 }
 
 export function computeHeadroom(
@@ -71,6 +72,6 @@ export function contextWindowPercentFromPrompt(
   inputLimit: number,
   reservedOutput: number
 ): number {
-  const effective = Math.max(computeEffectiveWindow(inputLimit, reservedOutput), 1);
-  return Math.min(100, Math.round((promptTokens / effective) * 100));
+  const usable = Math.max(inputLimit - reservedOutput, 1);
+  return Math.min(100, Math.round((promptTokens / usable) * 100));
 }

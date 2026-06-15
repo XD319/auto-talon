@@ -562,6 +562,7 @@ export function formatDoctorReport(report: AgentDoctorReport): string {
 export function formatProviderCatalog(
   currentProviderName: string,
   providers: Array<{
+    contextWindowTokens?: number | null;
     displayName: string;
     name: string;
     supportsStreaming: boolean;
@@ -571,7 +572,7 @@ export function formatProviderCatalog(
   return providers
     .map(
       (provider) =>
-        `${provider.name} | ${provider.displayName} | current=${provider.name === currentProviderName ? "yes" : "no"} | tools=${provider.supportsToolCalls ? "yes" : "no"} | streaming=${provider.supportsStreaming ? "attempt+fallback" : "complete-only"}`
+        `${provider.name} | ${provider.displayName} | current=${provider.name === currentProviderName ? "yes" : "no"} | context=${provider.contextWindowTokens ?? "unset"} | tools=${provider.supportsToolCalls ? "yes" : "no"} | streaming=${provider.supportsStreaming ? "attempt+fallback" : "complete-only"}`
     )
     .join("\n");
 }
@@ -581,6 +582,8 @@ export function formatCurrentProvider(config: {
   configPath: string;
   configSource: string;
   configured?: boolean;
+  contextWindowSource?: string | null;
+  contextWindowTokens?: number | null;
   maxRetries: number;
   model: string | null;
   name: string;
@@ -594,6 +597,8 @@ export function formatCurrentProvider(config: {
     `Provider: ${config.name}`,
     `Model: ${config.model ?? "-"}`,
     `Base URL: ${config.baseUrl ?? "-"}`,
+    `Context Window Tokens: ${config.contextWindowTokens ?? "-"}`,
+    `Context Window Source: ${config.contextWindowSource ?? "-"}`,
     `Config Source: ${config.configSource}`,
     `Config Path: ${config.configPath}`,
     `Request Timeout (ms): ${config.timeoutMs}`,

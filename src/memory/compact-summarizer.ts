@@ -1,6 +1,7 @@
 import { AppError } from "../core/app-error.js";
 import type { SessionCompactInput } from "../types/index.js";
 import type { Provider } from "../types/index.js";
+import { estimateMessagesTokens } from "../runtime/context/token-counter.js";
 
 export interface CompactSummarizerResult {
   summary: string;
@@ -22,7 +23,8 @@ export class DeterministicCompactSummarizer implements CompactSummarizer {
 
 export class ProviderSubagentSummarizer implements CompactSummarizer {
   public constructor(
-    private readonly helperProviderFactory?: ((context: { kind: "summarize" }) => Provider | null) | undefined
+    private readonly helperProviderFactory?: ((context: { kind: "summarize" }) => Provider | null) | undefined,
+    private readonly options: { maxInputTokens: number } = { maxInputTokens: 32_000 }
   ) {}
 
   public async summarize(input: SessionCompactInput): Promise<CompactSummarizerResult> {
@@ -34,17 +36,27 @@ export class ProviderSubagentSummarizer implements CompactSummarizer {
           "Provider subagent summarizer is configured but no summarize provider is available. Set compact.summarizer to deterministic or configure routing.helpers.summarize."
       });
     }
+    const messages = buildSummarizerPrompt(input);
+    const estimatedInputTokens = estimateMessagesTokens(messages);
+    if (estimatedInputTokens > this.options.maxInputTokens) {
+      throw new AppError({
+        code: "compact_summarizer_unavailable",
+        message:
+          `Provider subagent summarizer input (${estimatedInputTokens} tokens) exceeds helper context window ` +
+          `(${this.options.maxInputTokens} tokens). Configure a larger summarize helper or set compact.summarizer to deterministic explicitly.`
+      });
+    }
 
     const response = await helperProvider.generate({
       agentProfileId: "planner",
       availableTools: [],
       iteration: 1,
       memoryContext: [],
-      messages: buildSummarizerPrompt(input),
+      messages,
       signal: new AbortController().signal,
-      task: buildSummaryTask(input),
+      task: buildSummaryTask(input, this.options.maxInputTokens),
       tokenBudget: {
-        inputLimit: 32_000,
+        inputLimit: this.options.maxInputTokens,
         outputLimit: 2_000,
         reservedOutput: 200,
         usedInput: 0,
@@ -235,7 +247,10 @@ function buildSummarizerPrompt(input: SessionCompactInput): Array<{ content: str
   ];
 }
 
-function buildSummaryTask(input: SessionCompactInput): {
+function buildSummaryTask(
+  input: SessionCompactInput,
+  maxInputTokens: number
+): {
   agentProfileId: "planner";
   createdAt: string;
   currentIteration: number;
@@ -281,7 +296,7 @@ function buildSummaryTask(input: SessionCompactInput): {
     taskId: input.taskId,
     sessionId: null,
     tokenBudget: {
-      inputLimit: 32_000,
+      inputLimit: maxInputTokens,
       outputLimit: 2_000,
       reservedOutput: 200,
       usedInput: 0,

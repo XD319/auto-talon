@@ -7,6 +7,7 @@ import type {
 } from "../application-service.js";
 import type {
   CommitmentRecord,
+  ConversationMessage,
   InboxItem,
   NextActionRecord,
   RuntimeRunOptions,
@@ -14,11 +15,13 @@ import type {
   TaskRecord,
   SessionCommitmentState,
   SessionLineageRecord,
+  SessionMessageRecord,
   SessionRecord,
   SessionTaskRecord,
   SessionSummaryRecord,
   JsonObject
 } from "../../types/index.js";
+import { estimateMessagesTokens } from "../context/token-counter.js";
 
 export class SessionFacade {
   public constructor(
@@ -191,12 +194,13 @@ export class SessionFacade {
     input: string,
     overrides?: Partial<RuntimeRunOptions>
   ): Promise<RunTaskResult> {
-    this.ensureRuntimeSession(sessionId, {
+    const session = this.ensureRuntimeSession(sessionId, {
       ...(overrides?.agentProfileId !== undefined ? { agentProfileId: overrides.agentProfileId } : {}),
       ...(overrides?.cwd !== undefined ? { cwd: overrides.cwd } : {}),
       ...(overrides?.userId !== undefined ? { ownerUserId: overrides.userId } : {}),
       title: input.slice(0, 80)
     });
+    this.applyContinuationHygiene(session);
     const options = this.dependencies.resumePacketBuilder.buildResumePacket(sessionId, input, overrides);
     return this.runTask(options);
   }
@@ -219,5 +223,111 @@ export class SessionFacade {
     }
     return this.continueSession(latest.sessionId, resolvedInput, overrides);
   }
+
+  private applyContinuationHygiene(session: SessionRecord): void {
+    const records = this.dependencies.sessionMessageRepository.listBySessionId(session.sessionId);
+    const messages = records.map(toConversationMessage).filter((message): message is ConversationMessage => message !== null);
+    const tokenEstimate = estimateMessagesTokens(messages);
+    const threshold = Math.floor(
+      this.dependencies.tokenBudget.inputLimit * this.dependencies.compact.hygieneThresholdRatio
+    );
+    if (tokenEstimate <= threshold || messages.length === 0) {
+      return;
+    }
+
+    const latestRun = this.dependencies.listSessionTasks(session.sessionId).at(-1) ?? null;
+    const task = buildHygieneTask(session, latestRun?.taskId ?? `session-hygiene:${randomUUID()}`, this.dependencies.tokenBudget);
+    const summaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
+      availableTools: [],
+      compact: {
+        contextWindowTokens: this.dependencies.tokenBudget.inputLimit,
+        maxMessagesBeforeCompact: messages.length,
+        messages,
+        originalGoal: session.title,
+        reason: "context_budget",
+        sessionScopeKey: session.sessionId,
+        taskId: task.taskId,
+        tokenEstimate,
+        tokenThreshold: threshold
+      },
+      task,
+      trigger: "resume"
+    });
+    const summary = this.dependencies.sessionSummaryService.create({
+      ...summaryDraft,
+      metadata: {
+        ...(summaryDraft.metadata ?? {}),
+        compactReason: "context_budget",
+        hygieneThresholdRatio: this.dependencies.compact.hygieneThresholdRatio,
+        sourceMessageCount: records.length,
+        tokenEstimate,
+        tokenThreshold: threshold
+      },
+      runId: latestRun?.runId ?? null,
+      sessionId: session.sessionId,
+      trigger: "resume"
+    });
+    this.dependencies.sessionLineageRepository.append({
+      eventType: "compress",
+      lineageId: randomUUID(),
+      payload: {
+        hygiene: true,
+        reason: "context_budget",
+        sessionSummaryId: summary.sessionSummaryId,
+        sourceMessageCount: records.length,
+        tokenEstimate,
+        tokenThreshold: threshold
+      },
+      sourceRunId: latestRun?.runId ?? null,
+      targetRunId: latestRun?.runId ?? null,
+      sessionId: session.sessionId
+    });
+  }
 }
 
+function toConversationMessage(record: SessionMessageRecord): ConversationMessage | null {
+  const text = typeof record.payload.text === "string" ? record.payload.text.trim() : "";
+  if (text.length === 0) {
+    return null;
+  }
+  if (record.kind === "agent") {
+    return { content: text, role: "assistant" };
+  }
+  if (record.kind === "user") {
+    return { content: text, role: "user" };
+  }
+  return { content: text, role: "system" };
+}
+
+function buildHygieneTask(
+  session: SessionRecord,
+  taskId: string,
+  tokenBudget: AgentApplicationServiceDependencies["tokenBudget"]
+): TaskRecord {
+  const now = new Date().toISOString();
+  return {
+    agentProfileId: session.agentProfileId,
+    createdAt: now,
+    currentIteration: 0,
+    cwd: session.cwd,
+    errorCode: null,
+    errorMessage: null,
+    finalOutput: null,
+    finishedAt: null,
+    input: session.title,
+    maxIterations: 0,
+    metadata: {},
+    providerName: session.providerName,
+    requesterUserId: session.ownerUserId,
+    sessionId: session.sessionId,
+    startedAt: now,
+    status: "running",
+    taskId,
+    tokenBudget: {
+      ...tokenBudget,
+      usedInput: 0,
+      usedOutput: 0
+    },
+    updatedAt: now
+  };
+}

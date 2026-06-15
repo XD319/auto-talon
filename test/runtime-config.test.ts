@@ -28,7 +28,12 @@ describe("runtime config", () => {
     expect(config.tokenBudget.inputLimit).toBe(64_000);
     expect(config.tokenBudget.outputLimit).toBe(8_000);
     expect(config.compact.messageThreshold).toBe(100);
-    expect(config.compact.thresholdRatio).toBe(0.8);
+    expect(config.compact.thresholdRatio).toBe(0.5);
+    expect(config.compact.targetRatio).toBe(0.2);
+    expect(config.compact.protectFirstN).toBe(3);
+    expect(config.compact.protectLastN).toBe(20);
+    expect(config.compact.hygieneThresholdRatio).toBe(0.85);
+    expect(config.context.engine).toBe("hermes_compressor");
     expect(config.contextRetention.toolOutputMaxTokens).toBe(2_500);
     expect(config.tui.statusLine.style).toBe("standard");
     expect(config.tui.statusLine.type).toBe("builtin");
@@ -177,6 +182,23 @@ describe("runtime config", () => {
     );
 
     expect(() => resolveRuntimeConfig(workspaceRoot)).toThrow(/reservedOutput/);
+  });
+
+  it("fails fast when reservedOutput is not lower than inputLimit", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        tokenBudget: {
+          inputLimit: 4_000,
+          reservedOutput: 4_000
+        }
+      }),
+      "utf8"
+    );
+
+    expect(() => resolveRuntimeConfig(workspaceRoot)).toThrow(/inputLimit/);
   });
 
   it("falls back to default workflow test commands when normalized list is empty", async () => {

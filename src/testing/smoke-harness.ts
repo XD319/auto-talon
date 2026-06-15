@@ -175,13 +175,17 @@ export async function runSmokeTask(
   const createOptions = {
     config: {
       compact: {
-        bufferTokens: 8_000,
+        bufferTokens: 0,
+        hygieneThresholdRatio: 0.85,
         iterationThreshold: expectSessionCompact ? 999 : 24,
         messageThreshold: expectSessionCompact ? 8 : 100,
+        protectFirstN: 3,
+        protectLastN: 20,
         summarizer: "deterministic" as const,
+        targetRatio: 0.2,
         tailMinMessages: 10,
-        tailTokenBudget: 20_000,
-        thresholdRatio: 0.8,
+        tailTokenBudget: null,
+        thresholdRatio: 0.5,
         tokenThreshold: null,
         toolCallThreshold: expectSessionCompact ? 4 : 40
       },
@@ -591,6 +595,8 @@ function createSmokeProviderConfig(providerName: SupportedProviderName): Resolve
     builtinProviderName: providerName,
     configPath: "<smoke-harness>",
     configSource: "defaults",
+    contextWindowSource: manifest.contextWindowTokens === null ? null : "provider_manifest",
+    contextWindowTokens: manifest.contextWindowTokens,
     displayName: manifest.displayName,
     family: manifest.family,
     name: providerName,

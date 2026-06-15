@@ -28,7 +28,7 @@ const CONFIG_FILES: ConfigFileName[] = [
   "tool-overrides.json"
 ] as const;
 
-export const LATEST_CONFIG_VERSION = 2;
+export const LATEST_CONFIG_VERSION = 3;
 
 export class ConfigVersionError extends Error {
   public constructor(message: string) {
@@ -44,6 +44,17 @@ interface ConfigMigrationStep {
   toVersion: number;
 }
 
+const OLD_DEFAULT_INPUT_LIMIT = 64_000;
+
+function stripDefaultInputLimit(config: Record<string, unknown>): Record<string, unknown> {
+  const tokenBudget = config.tokenBudget as Record<string, unknown> | undefined;
+  if (tokenBudget?.inputLimit === OLD_DEFAULT_INPUT_LIMIT) {
+    const { inputLimit: _, ...rest } = tokenBudget;
+    return { ...config, tokenBudget: rest };
+  }
+  return config;
+}
+
 const MIGRATION_STEPS: ConfigMigrationStep[] = [
   {
     fileName: "provider.config.json",
@@ -53,6 +64,18 @@ const MIGRATION_STEPS: ConfigMigrationStep[] = [
       ...config,
       contractVersion: 1
     })
+  },
+  {
+    fileName: "runtime.config.json",
+    fromVersion: 1,
+    toVersion: 2,
+    migrate: stripDefaultInputLimit
+  },
+  {
+    fileName: "runtime.config.json",
+    fromVersion: 2,
+    toVersion: 3,
+    migrate: stripDefaultInputLimit
   }
 ];
 

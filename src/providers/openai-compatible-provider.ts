@@ -20,6 +20,13 @@ import {
   isRetriableCategory,
   toProviderError
 } from "./provider-runtime.js";
+import {
+  CONTEXT_WINDOW_FETCH_TIMEOUT_MS,
+  parseContextLengthFromModelEntry,
+  parseContextLengthFromOllamaModelInfo,
+  parseContextLengthFromOllamaParameters,
+  resolveOllamaShowUrl
+} from "./context-window-query.js";
 import { composeAbortSignal, ensureTrailingSlash } from "./provider-http.js";
 import {
   StreamingFallbackState,
@@ -113,6 +120,7 @@ export class OpenAiCompatibleProvider implements Provider {
     return {
       baseUrl: this.resolveBaseUrl(),
       capabilities: this.capabilities,
+      contextWindowTokens: this.config.contextWindowTokens ?? null,
       displayName: this.options.providerLabel ?? this.options.defaultDisplayName,
       model: this.model,
       name: this.name
@@ -466,6 +474,26 @@ export class OpenAiCompatibleProvider implements Provider {
     }
   }
 
+  public async fetchContextWindow(signal?: AbortSignal): Promise<number | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, CONTEXT_WINDOW_FETCH_TIMEOUT_MS);
+    const composedSignal = composeAbortSignal(signal, controller.signal);
+
+    try {
+      const fromModels = await this.queryContextWindowFromModels(composedSignal);
+      if (fromModels !== null) {
+        return fromModels;
+      }
+      return await this.queryContextWindowFromOllamaShow(composedSignal);
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   public async testConnection(signal?: AbortSignal): Promise<ProviderHealthCheck> {
     const apiKeyConfigured = this.config.apiKey !== null && this.config.apiKey.length > 0;
     const modelConfigured = this.model.length > 0;
@@ -529,6 +557,75 @@ export class OpenAiCompatibleProvider implements Provider {
 
   protected resolveBaseUrl(): string | null {
     return this.config.baseUrl ?? this.options.defaultBaseUrl;
+  }
+
+  private async queryContextWindowFromModels(signal?: AbortSignal): Promise<number | null> {
+    const response = await this.requestJson<{ data?: Array<Record<string, unknown>> }>(
+      "models",
+      undefined,
+      signal,
+      "GET"
+    );
+    const entry = response.data?.find((candidate) => candidate.id === this.model);
+    if (entry === undefined) {
+      return null;
+    }
+    return parseContextLengthFromModelEntry(entry);
+  }
+
+  private async queryContextWindowFromOllamaShow(signal?: AbortSignal): Promise<number | null> {
+    const baseUrl = this.resolveBaseUrl();
+    if (baseUrl === null || baseUrl.length === 0) {
+      return null;
+    }
+
+    const showUrl = resolveOllamaShowUrl(baseUrl);
+    if (showUrl === null) {
+      return null;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, CONTEXT_WINDOW_FETCH_TIMEOUT_MS);
+
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (this.config.apiKey !== null && this.config.apiKey.length > 0) {
+        headers.Authorization = `Bearer ${this.config.apiKey}`;
+      }
+
+      const response = await fetch(showUrl, {
+        body: JSON.stringify({ model: this.model }),
+        headers,
+        method: "POST",
+        signal: composeAbortSignal(signal, controller.signal)
+      });
+      if (!response.ok) {
+        return null;
+      }
+
+      const parsed = (await response.json()) as {
+        model_info?: Record<string, unknown>;
+        parameters?: string;
+      };
+      if (parsed.model_info !== undefined) {
+        const fromModelInfo = parseContextLengthFromOllamaModelInfo(parsed.model_info);
+        if (fromModelInfo !== null) {
+          return fromModelInfo;
+        }
+      }
+      if (typeof parsed.parameters === "string") {
+        return parseContextLengthFromOllamaParameters(parsed.parameters);
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private ensureConfigured(): void {

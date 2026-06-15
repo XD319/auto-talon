@@ -17,18 +17,21 @@ export class MockProvider implements Provider {
 
   public readonly model: string;
   public readonly name = "mock";
+  private readonly contextWindowTokens: number | null;
 
   public constructor(
     config?: Partial<ProviderConfig>,
     private readonly responder?: (input: ProviderRequest) => Promise<ProviderResponse> | ProviderResponse
   ) {
     this.model = config?.model ?? "mock-default";
+    this.contextWindowTokens = config?.contextWindowTokens ?? 64_000;
   }
 
   public describe(): ProviderDescriptor {
     return {
       baseUrl: null,
       capabilities: this.capabilities,
+      contextWindowTokens: this.contextWindowTokens,
       displayName: "Mock Provider",
       model: this.model,
       name: this.name
@@ -46,6 +49,10 @@ export class MockProvider implements Provider {
       ok: true,
       providerName: this.name
     });
+  }
+
+  public fetchContextWindow(): Promise<number | null> {
+    return Promise.resolve(this.contextWindowTokens);
   }
 
   public generate(input: ProviderRequest): Promise<ProviderResponse> {

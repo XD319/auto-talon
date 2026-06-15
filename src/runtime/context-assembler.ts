@@ -9,6 +9,7 @@ import type {
   TaskRecord,
   TokenBudget
 } from "../types/index.js";
+import { estimateMessagesTokens } from "./context/token-counter.js";
 
 export interface ContextAssemblerInput {
   activeContextFragments?: ContextDebugFragment[];
@@ -159,11 +160,10 @@ function buildContextDebugView(input: ContextAssemblerInput): ContextAssemblyDeb
 }
 
 function estimateInputTokens(messages: ConversationMessage[], memoryContext: ContextFragment[]): number {
-  const text = [
-    ...messages.map((message) => message.content),
-    ...memoryContext.map((fragment) => fragment.text)
-  ].join("\n");
-  return Math.ceil(text.length / 4);
+  return estimateMessagesTokens([
+    ...messages,
+    ...memoryContext.map((fragment) => ({ content: fragment.text }))
+  ]);
 }
 
 export function buildFilteredContextDebugFragments(

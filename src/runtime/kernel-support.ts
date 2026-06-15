@@ -11,6 +11,7 @@ import type {
   TaskRecord,
   ToolCapability
 } from "../types/index.js";
+import { estimateMessagesTokens } from "./context/token-counter.js";
 
 export const DEDUPLICATABLE_CAPABILITIES = new Set<ToolCapability>([
   "filesystem.read",
@@ -380,8 +381,7 @@ export function rebuildTurnProviderMessages(
 }
 
 export function estimateTokenCount(messages: ConversationMessage[]): number {
-  const joined = messages.map((message) => message.content).join("\n");
-  return Math.ceil((joined.length / 4) * 1.33);
+  return estimateMessagesTokens(messages);
 }
 
 export function toConversationRole(role: string): "assistant" | "system" | "tool" | "user" {

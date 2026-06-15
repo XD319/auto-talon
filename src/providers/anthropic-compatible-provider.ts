@@ -146,10 +146,15 @@ export class AnthropicCompatibleProvider implements Provider {
     return {
       baseUrl: this.resolveBaseUrl(),
       capabilities: this.capabilities,
+      contextWindowTokens: this.config.contextWindowTokens ?? null,
       displayName: this.options.providerLabel ?? this.options.defaultDisplayName,
       model: this.model,
       name: this.name
     };
+  }
+
+  public fetchContextWindow(): Promise<number | null> {
+    return Promise.resolve(null);
   }
 
   public async generate(input: ProviderRequest): Promise<ProviderResponse> {

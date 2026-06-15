@@ -68,6 +68,55 @@ describe("Config migration", () => {
     const summary = migrateConfigFiles(workspaceRoot);
     expect(summary.migratedFiles).toHaveLength(0);
   });
+
+  it("strips default inputLimit from v1 runtime.config.json", () => {
+    const workspaceRoot = createTempWorkspace();
+    const runtimePath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
+    writeJson(runtimePath, {
+      version: 1,
+      tokenBudget: { inputLimit: 64000, outputLimit: 8000, reservedOutput: 1000 }
+    });
+
+    const summary = migrateConfigFiles(workspaceRoot);
+    const migrated = readJson(runtimePath);
+
+    expect(summary.migratedFiles).toContain("runtime.config.json");
+    expect(migrated.version).toBe(LATEST_CONFIG_VERSION);
+    expect((migrated.tokenBudget as Record<string, unknown>).inputLimit).toBeUndefined();
+    expect((migrated.tokenBudget as Record<string, unknown>).outputLimit).toBe(8000);
+  });
+
+  it("strips default inputLimit from v2 runtime.config.json", () => {
+    const workspaceRoot = createTempWorkspace();
+    const runtimePath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
+    writeJson(runtimePath, {
+      version: 2,
+      tokenBudget: { inputLimit: 64000, outputLimit: 8000, reservedOutput: 1000 }
+    });
+
+    const summary = migrateConfigFiles(workspaceRoot);
+    const migrated = readJson(runtimePath);
+
+    expect(summary.migratedFiles).toContain("runtime.config.json");
+    expect(migrated.version).toBe(LATEST_CONFIG_VERSION);
+    expect((migrated.tokenBudget as Record<string, unknown>).inputLimit).toBeUndefined();
+  });
+
+  it("preserves non-default inputLimit during migration", () => {
+    const workspaceRoot = createTempWorkspace();
+    const runtimePath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
+    writeJson(runtimePath, {
+      version: 2,
+      tokenBudget: { inputLimit: 128000, outputLimit: 8000, reservedOutput: 1000 }
+    });
+
+    const summary = migrateConfigFiles(workspaceRoot);
+    const migrated = readJson(runtimePath);
+
+    expect(summary.migratedFiles).toContain("runtime.config.json");
+    expect(migrated.version).toBe(LATEST_CONFIG_VERSION);
+    expect((migrated.tokenBudget as Record<string, unknown>).inputLimit).toBe(128000);
+  });
 });
 
 function createTempWorkspace(): string {

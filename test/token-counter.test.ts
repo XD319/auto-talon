@@ -4,6 +4,7 @@ import {
   computeCompactThreshold,
   computeHeadroom,
   computePromptTokens,
+  contextWindowPercentFromPrompt,
   createHybridTokenCounterState,
   estimateMessageTokens,
   recordApiUsage
@@ -24,9 +25,13 @@ describe("token-counter", () => {
     expect(promptTokens).toBeGreaterThan(10_000);
   });
 
-  it("computes compact threshold from ratio and buffer", () => {
-    const threshold = computeCompactThreshold(64_000, 1_000, 0.8, 8_000);
-    expect(threshold).toBe(42_400);
-    expect(computeHeadroom(threshold, 64_000, 1_000, 8_000)).toBe(12_600);
+  it("computes compact threshold directly from context window ratio", () => {
+    const threshold = computeCompactThreshold(64_000, 0.5);
+    expect(threshold).toBe(32_000);
+    expect(computeHeadroom(threshold, 64_000, 1_000, 8_000)).toBe(23_000);
+  });
+
+  it("computes context percentage from the usable context window", () => {
+    expect(contextWindowPercentFromPrompt(31_500, 64_000, 1_000)).toBe(50);
   });
 });

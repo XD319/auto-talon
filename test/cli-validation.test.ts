@@ -83,7 +83,7 @@ describe("cli validation and read-only commands", () => {
       readFileSync(join(userConfigDir, "provider.config.json"), "utf8")
     ) as {
       currentProvider?: string;
-      providers?: Record<string, { apiKey?: string; model?: string; streamIdleTimeoutMs?: number }>;
+      providers?: Record<string, { apiKey?: string; contextWindowTokens?: number; model?: string; streamIdleTimeoutMs?: number }>;
     };
 
     expect(setup.status).toBe(0);
@@ -106,13 +106,13 @@ describe("cli validation and read-only commands", () => {
     expect(status.stdout).toContain("Stream Idle Timeout (ms): 345000");
     expect(status.stdout).toContain("Timeout Hint:");
 
-    const use = runCli(freshWorkspace, ["provider", "use", "ollama"], env);
+    const use = runCli(freshWorkspace, ["provider", "use", "mock"], env);
     const nextStatus = runCli(createTempDir("talon-provider-next-"), ["provider", "status"], env);
 
     expect(use.status).toBe(0);
-    expect(use.stdout).toContain("Selected user provider: ollama");
+    expect(use.stdout).toContain("Selected user provider: mock");
     expect(nextStatus.status).toBe(0);
-    expect(nextStatus.stdout).toContain("Provider: ollama");
+    expect(nextStatus.stdout).toContain("Provider: mock");
     expect(nextStatus.stdout).toContain("Config Source: user");
   });
 
@@ -136,6 +136,8 @@ describe("cli validation and read-only commands", () => {
         "sk-workspace-test",
         "--base-url",
         "https://provider.example.test/v1",
+        "--context-window-tokens",
+        "200000",
         "--model",
         "workspace-model"
       ],
@@ -151,6 +153,7 @@ describe("cli validation and read-only commands", () => {
     expect(status.stdout).toContain("Provider: openai-compatible");
     expect(status.stdout).toContain("Model: workspace-model");
     expect(status.stdout).toContain("Base URL: https://provider.example.test/v1");
+    expect(status.stdout).toContain("Context Window Tokens: 200000");
     expect(status.stdout).toContain("Config Source: user");
   });
 

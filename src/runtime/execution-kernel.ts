@@ -936,7 +936,7 @@ export class ExecutionKernel {
         state.tokenCounter = recordApiUsage(
           state.tokenCounter,
           providerResponse.usage.inputTokens,
-          messages.length
+          messages.length - 1
         );
 
         if (task.agentProfileId === "reviewer") {
@@ -1296,6 +1296,7 @@ export class ExecutionKernel {
         messages.push(...compacted.replacementMessages);
         syncPinnedRecentFilesMessage(messages, state.recentFileReadCache);
         state.compactedCount += 1;
+        state.tokenCounter = createHybridTokenCounterState();
         const refreshSessionId = task.sessionId ?? null;
         const refreshedContext = await this.planRecall({
           task,
@@ -1570,17 +1571,13 @@ export class ExecutionKernel {
   }): Parameters<CompactTriggerPolicy["shouldCompact"]>[0] {
     const tokenThreshold =
       this.dependencies.compact.tokenThreshold ??
-      computeCompactThreshold(
-        input.state.tokenBudget.inputLimit,
-        input.state.tokenBudget.reservedOutput,
-        this.dependencies.compact.thresholdRatio,
-        this.dependencies.compact.bufferTokens
-      );
+      computeCompactThreshold(input.state.tokenBudget.inputLimit, this.dependencies.compact.thresholdRatio);
     const previousSummary =
       input.task.sessionId === null || input.task.sessionId === undefined
         ? undefined
         : this.dependencies.sessionSummaryService.findLatestBySession(input.task.sessionId)?.summary;
     return {
+      contextWindowTokens: input.state.tokenBudget.inputLimit,
       iteration: input.iteration,
       iterationThreshold: this.dependencies.compact.iterationThreshold,
       maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
@@ -1598,7 +1595,10 @@ export class ExecutionKernel {
               input.state.recentFileReadCache.list()
             )
           }),
+      protectFirstN: this.dependencies.compact.protectFirstN,
+      protectLastN: this.dependencies.compact.protectLastN,
       sessionScopeKey: input.task.sessionId ?? input.task.taskId,
+      targetTokenBudget: Math.floor(input.state.tokenBudget.inputLimit * this.dependencies.compact.targetRatio),
       taskId: input.task.taskId,
       tokenEstimate: computePromptTokens(input.state.tokenCounter, input.messages),
       tokenThreshold,
@@ -1671,7 +1671,12 @@ export class ExecutionKernel {
     }
 
     const messagesToSummarize = input.messages as ConversationMessage[];
-    const summarizer = this.selectCompactSummarizer(input.taskId, input.sessionScopeKey);
+    const contextWindowTokens = input.contextWindowTokens ?? input.tokenThreshold ?? 0;
+    const summarizer = this.selectCompactSummarizer(
+      input.taskId,
+      input.sessionScopeKey,
+      contextWindowTokens
+    );
     let summarized;
     try {
       summarized = await summarizer.summarize({
@@ -1699,10 +1704,39 @@ export class ExecutionKernel {
       });
       throw error;
     }
-    const preserved = selectTailMessages(messagesToSummarize, {
+    const protectedHead = selectHeadMessages(
+      messagesToSummarize,
+      input.protectFirstN ?? this.dependencies.compact.protectFirstN
+    );
+    const preservedTail = selectTailMessages(messagesToSummarize, {
+      protectLastN: input.protectLastN ?? this.dependencies.compact.protectLastN,
       tailMinMessages: this.dependencies.compact.tailMinMessages,
-      tailTokenBudget: this.dependencies.compact.tailTokenBudget
-    }).map((message) => mapCompactConversationMessage(message));
+      tailTokenBudget:
+        this.dependencies.compact.tailTokenBudget ??
+        input.targetTokenBudget ??
+        Math.floor(contextWindowTokens * this.dependencies.compact.targetRatio)
+    });
+    if (preservedTail.budgetExceeded) {
+      this.dependencies.traceService.record({
+        actor: "runtime.context",
+        eventType: "tail_budget_exceeded",
+        payload: {
+          protectLastN: input.protectLastN ?? this.dependencies.compact.protectLastN,
+          tailMessageCount: preservedTail.messages.length,
+          tailTokenBudget:
+            this.dependencies.compact.tailTokenBudget ??
+            input.targetTokenBudget ??
+            Math.floor(contextWindowTokens * this.dependencies.compact.targetRatio),
+          usedTokens: preservedTail.usedTokens
+        },
+        stage: "memory",
+        summary: "Protected tail messages exceed tail token budget",
+        taskId: input.taskId
+      });
+    }
+    const preservedMessages = mergeProtectedMessages(protectedHead, preservedTail.messages);
+    const protectedHeadCount = Math.min(protectedHead.length, preservedMessages.length);
+    const preserved = preservedMessages.map((message) => mapCompactConversationMessage(message));
 
     return {
       reason:
@@ -1712,6 +1746,7 @@ export class ExecutionKernel {
           ? decision.reason
           : "message_count",
       replacementMessages: [
+        ...preserved.slice(0, protectedHeadCount),
         {
           content: [
             "Session handoff:",
@@ -1720,29 +1755,39 @@ export class ExecutionKernel {
           ].join("\n"),
           role: "system"
         },
-        ...preserved
+        ...preserved.slice(protectedHeadCount)
       ],
       summaryMemory: null,
       triggered: true
     };
   }
 
-  private selectCompactSummarizer(taskId: string, sessionId: string | null): CompactSummarizer {
+  private selectCompactSummarizer(
+    taskId: string,
+    sessionId: string | null,
+    mainContextWindowTokens: number
+  ): CompactSummarizer {
     if (this.dependencies.compact.summarizer !== "provider_subagent") {
       return new DeterministicCompactSummarizer();
     }
-    return new ProviderSubagentSummarizer((context) => {
-      if (context.kind !== "summarize") {
-        return null;
-      }
-      return (
-        this.dependencies.providerRouter?.selectProvider({
-          kind: "summarize",
-          taskId,
-          sessionId
-        }).provider ?? this.dependencies.provider
-      );
+    const helperSelection = this.dependencies.providerRouter?.selectProvider({
+      kind: "summarize",
+      taskId,
+      sessionId
     });
+    const helperProvider =
+      helperSelection?.provider ?? this.dependencies.provider;
+    const helperContextWindow =
+      helperProvider.describe?.().contextWindowTokens ?? Math.min(mainContextWindowTokens, 32_000);
+    return new ProviderSubagentSummarizer(
+      (context) => {
+        if (context.kind !== "summarize") {
+          return null;
+        }
+        return helperProvider;
+      },
+      { maxInputTokens: helperContextWindow }
+    );
   }
 
   private finalizeTaskFailure(
@@ -2306,6 +2351,51 @@ function mapCompactConversationMessage(message: {
     mapped.metadata = message.metadata;
   }
   return mapped;
+}
+
+function selectHeadMessages(messages: ConversationMessage[], protectFirstN: number): ConversationMessage[] {
+  if (protectFirstN <= 0) {
+    return [];
+  }
+  const selected: ConversationMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "system") {
+      continue;
+    }
+    selected.push(message);
+    if (selected.length >= protectFirstN) {
+      break;
+    }
+  }
+  return selected;
+}
+
+function mergeProtectedMessages(
+  head: ConversationMessage[],
+  tail: ConversationMessage[]
+): ConversationMessage[] {
+  const merged: ConversationMessage[] = [];
+  const seen = new Set<string>();
+  for (const message of [...head, ...tail]) {
+    const key = compactMessageIdentity(message);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(message);
+  }
+  return merged;
+}
+
+function compactMessageIdentity(message: ConversationMessage): string {
+  const toolCalls = message.toolCalls?.map((call) => call.toolCallId).join(",") ?? "";
+  return [
+    message.role,
+    message.toolCallId ?? "",
+    message.toolName ?? "",
+    toolCalls,
+    message.content
+  ].join("\u0000");
 }
 
 function buildToolExposurePlannerInput(input: {

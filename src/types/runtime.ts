@@ -130,6 +130,7 @@ export interface ProviderCapabilities {
 export interface ProviderDescriptor {
   baseUrl: string | null;
   capabilities: ProviderCapabilities;
+  contextWindowTokens?: number | null;
   displayName: string;
   model: string | null;
   name: string;
@@ -158,6 +159,7 @@ export interface ProviderHealthCheck {
 export interface ProviderConfig {
   apiKey: string | null;
   baseUrl: string | null;
+  contextWindowTokens?: number | null;
   maxRetries: number;
   model: string | null;
   name: string;
@@ -209,6 +211,7 @@ export interface Provider {
   model?: string | undefined;
   capabilities?: ProviderCapabilities | undefined;
   describe?: (() => ProviderDescriptor) | undefined;
+  fetchContextWindow?: ((signal?: AbortSignal) => Promise<number | null>) | undefined;
   generate(input: ProviderRequest): Promise<ProviderResponse>;
   getStats?: (() => ProviderStatsSnapshot) | undefined;
   streamGenerate?: ((input: ProviderRequest) => AsyncIterable<ProviderStreamEvent>) | undefined;

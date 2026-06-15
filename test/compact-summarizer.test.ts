@@ -86,4 +86,14 @@ describe("compact summarizer", () => {
       code: "compact_summarizer_unavailable"
     });
   });
+
+  it("throws when provider_subagent helper context is too small", async () => {
+    const summarizer = new ProviderSubagentSummarizer(
+      () => new FinalSummaryProvider(),
+      { maxInputTokens: 1 }
+    );
+    await expect(summarizer.summarize(compactInput)).rejects.toMatchObject({
+      code: "compact_summarizer_unavailable"
+    });
+  });
 });

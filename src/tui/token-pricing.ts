@@ -57,9 +57,9 @@ export function formatCompactTokenMetric(
   estimatedCostUsd: number
 ): string | null {
   const parts: string[] = [];
-  const effectiveLimit = Math.max(inputLimit - reservedOutput, 1);
+  const usableWindow = Math.max(inputLimit - reservedOutput, 1);
   if (inputTokens > 0) {
-    parts.push(`${compactTokenCount(inputTokens)}/${compactTokenCount(effectiveLimit)}`);
+    parts.push(`${compactTokenCount(inputTokens)}/${compactTokenCount(usableWindow)}`);
   }
   if (estimatedCostUsd >= 0.0001) {
     parts.push(`~$${estimatedCostUsd.toFixed(3)}`);

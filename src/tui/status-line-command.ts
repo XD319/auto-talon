@@ -15,6 +15,7 @@ export interface StatusLinePayload {
   context_window: {
     context_window_size: number;
     total_input_tokens: number;
+    usable_input_window: number;
     used_percentage: number;
   };
   cwd: string;
@@ -63,14 +64,15 @@ export function resetStatusLineCommandThrottle(): void {
 }
 
 export function buildStatusLinePayload(input: BuildStatusLinePayloadInput): StatusLinePayload {
-  const effectiveLimit = Math.max(input.inputLimit - input.reservedOutput, 1);
+  const usableInputWindow = Math.max(input.inputLimit - input.reservedOutput, 1);
   return {
     cost: {
       total_cost_usd: input.tokenHud.estimatedCostUsd
     },
     context_window: {
-      context_window_size: effectiveLimit,
+      context_window_size: input.inputLimit,
       total_input_tokens: input.tokenHud.inputTokens,
+      usable_input_window: usableInputWindow,
       used_percentage: input.tokenHud.contextPercent
     },
     cwd: input.cwd,

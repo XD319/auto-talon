@@ -27,6 +27,7 @@ import {
   type ProviderCatalogEntry,
   type ResolvedProviderConfig
 } from "../providers/index.js";
+import { enrichProviderContextFromApi } from "../providers/context-window-enrichment.js";
 import { SandboxService } from "../sandbox/sandbox-service.js";
 import { SkillContextService, SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import { SkillVersionRegistry } from "../skills/versioning/index.js";
@@ -110,6 +111,7 @@ import { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/i
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import {
   resolveRuntimeConfig,
+  type RuntimeConfig,
   type TuiStatusLineConfig,
   type WebSearchRuntimeConfig,
   type WorkflowCustomShell,
@@ -120,6 +122,66 @@ import { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import { initializeWorkspaceFiles } from "./workspace-setup.js";
 
 export const RUNTIME_VERSION = "0.1.0";
+
+function resolveEffectiveContextWindow(
+  provider: ResolvedProviderConfig,
+  runtimeConfig: Pick<RuntimeConfig, "tokenBudget" | "tokenBudgetInputLimitExplicit">
+): { provider: ResolvedProviderConfig; tokenBudget: TokenBudget } {
+  if (runtimeConfig.tokenBudgetInputLimitExplicit) {
+    if (
+      provider.contextWindowTokens !== null &&
+      runtimeConfig.tokenBudget.inputLimit > provider.contextWindowTokens
+    ) {
+      console.warn(
+        `Warning: tokenBudget.inputLimit (${runtimeConfig.tokenBudget.inputLimit}) exceeds ` +
+          `provider ${provider.name} context window (${provider.contextWindowTokens}).`
+      );
+    }
+    const tokenBudget = assertTokenBudgetCoherent(runtimeConfig.tokenBudget);
+    return {
+      provider: {
+        ...provider,
+        contextWindowSource: "explicit_token_budget",
+        contextWindowTokens: tokenBudget.inputLimit
+      },
+      tokenBudget
+    };
+  }
+
+  if (provider.configured === false) {
+    return {
+      provider,
+      tokenBudget: assertTokenBudgetCoherent(runtimeConfig.tokenBudget)
+    };
+  }
+
+  if (provider.contextWindowTokens === null) {
+    throw new Error(
+      `Provider ${provider.name} model ${provider.model ?? "-"} is missing contextWindowTokens. ` +
+        "Set providers.<name>.contextWindowTokens or tokenBudget.inputLimit explicitly."
+    );
+  }
+
+  const tokenBudget = assertTokenBudgetCoherent({
+    ...runtimeConfig.tokenBudget,
+    inputLimit: provider.contextWindowTokens
+  });
+
+  return {
+    provider,
+    tokenBudget
+  };
+}
+
+function assertTokenBudgetCoherent(tokenBudget: TokenBudget): TokenBudget {
+  if (tokenBudget.reservedOutput >= tokenBudget.inputLimit) {
+    throw new Error(
+      `tokenBudget.reservedOutput (${tokenBudget.reservedOutput}) must be less than ` +
+        `tokenBudget.inputLimit (${tokenBudget.inputLimit}).`
+    );
+  }
+  return tokenBudget;
+}
 
 function createCustomShellExecutor(customShell: WorkflowCustomShell | null): ShellExecutor {
   if (customShell === null) {
@@ -140,15 +202,20 @@ export interface AppConfig {
   defaultTimeoutMs: number;
   compact: {
     bufferTokens: number;
+    hygieneThresholdRatio: number;
     iterationThreshold: number;
     messageThreshold: number;
+    protectFirstN: number;
+    protectLastN: number;
     summarizer: "deterministic" | "provider_subagent";
+    targetRatio: number;
     tailMinMessages: number;
-    tailTokenBudget: number;
+    tailTokenBudget: number | null;
     thresholdRatio: number;
     tokenThreshold: number | null;
     toolCallThreshold: number;
   };
+  context: RuntimeConfig["context"];
   contextRetention: ContextRetentionConfig;
   recall: {
     enabled: boolean;
@@ -190,6 +257,7 @@ export interface AppConfig {
   runtimeConfigSource: "defaults" | "env" | "file";
   sandbox: SandboxProfile;
   tokenBudget: TokenBudget;
+  tokenBudgetInputLimitExplicit: boolean;
   tui: {
     diffDisplay: DiffDisplayMode;
     statusLine: TuiStatusLineConfig;
@@ -227,6 +295,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     defaultProfileId: "executor",
     defaultTimeoutMs: runtimeConfig.defaultTimeoutMs,
     compact: runtimeConfig.compact,
+    context: runtimeConfig.context,
     contextRetention: runtimeConfig.contextRetention,
     recall: runtimeConfig.recall,
     promotion: runtimeConfig.promotion,
@@ -238,6 +307,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     runtimeConfigSource: runtimeConfig.configSource,
     sandbox,
     tokenBudget: runtimeConfig.tokenBudget,
+    tokenBudgetInputLimitExplicit: runtimeConfig.tokenBudgetInputLimitExplicit,
     tui: runtimeConfig.tui,
     webSearch: runtimeConfig.webSearch,
     workflow: runtimeConfig.workflow,
@@ -306,12 +376,60 @@ export function createApplication(
 ): AppRuntimeHandle {
   const resolvedConfig = resolveAppConfig(cwd, options.sandbox);
   backupDatabaseIfMigrationNeeded(resolvedConfig.workspaceRoot, resolvedConfig.databasePath);
+  const mergedConfig = mergeCreateApplicationConfig(resolvedConfig, options);
+  const effectiveContext = resolveEffectiveContextWindow(mergedConfig.provider, mergedConfig);
+  const config = {
+    ...mergedConfig,
+    provider: effectiveContext.provider,
+    tokenBudget: effectiveContext.tokenBudget
+  };
+  const provider =
+    options.provider === undefined
+      ? createProvider(config.provider)
+      : new ManagedProvider(options.provider, config.provider);
+
+  return buildApplicationRuntime(config, provider, options);
+}
+
+export async function createApplicationAsync(
+  cwd = process.cwd(),
+  options: CreateApplicationOptions = {}
+): Promise<AppRuntimeHandle> {
+  const resolvedConfig = resolveAppConfig(cwd, options.sandbox);
+  backupDatabaseIfMigrationNeeded(resolvedConfig.workspaceRoot, resolvedConfig.databasePath);
+  const mergedConfig = mergeCreateApplicationConfig(resolvedConfig, options);
+  const probeProvider =
+    options.provider === undefined ? createProvider(mergedConfig.provider) : options.provider;
+  const enrichedProvider = await enrichProviderContextFromApi(
+    probeProvider,
+    mergedConfig.provider,
+    mergedConfig
+  );
+  const effectiveContext = resolveEffectiveContextWindow(enrichedProvider, mergedConfig);
+  const config = {
+    ...mergedConfig,
+    provider: effectiveContext.provider,
+    tokenBudget: effectiveContext.tokenBudget
+  };
+  const provider =
+    options.provider === undefined
+      ? probeProvider
+      : new ManagedProvider(options.provider, config.provider);
+
+  return buildApplicationRuntime(config, provider, options);
+}
+
+function mergeCreateApplicationConfig(
+  resolvedConfig: AppConfig,
+  options: CreateApplicationOptions
+): AppConfig {
   const configuredWorkspaceRoot = options.config?.workspaceRoot ?? resolvedConfig.workspaceRoot;
   const resolvedSandbox =
     configuredWorkspaceRoot === resolvedConfig.workspaceRoot
       ? resolvedConfig.sandbox
       : resolveSandboxProfile(configuredWorkspaceRoot, options.sandbox ?? {});
-  const config = {
+
+  return {
     ...resolvedConfig,
     ...options.config,
     budget: {
@@ -333,6 +451,10 @@ export function createApplication(
     compact: {
       ...resolvedConfig.compact,
       ...options.config?.compact
+    },
+    context: {
+      ...resolvedConfig.context,
+      ...options.config?.context
     },
     contextRetention: {
       ...resolvedConfig.contextRetention,
@@ -362,6 +484,10 @@ export function createApplication(
       ...resolvedConfig.tokenBudget,
       ...options.config?.tokenBudget
     },
+    tokenBudgetInputLimitExplicit:
+      options.config?.tokenBudget?.inputLimit !== undefined
+        ? true
+        : resolvedConfig.tokenBudgetInputLimitExplicit,
     webSearch: {
       ...resolvedConfig.webSearch,
       ...options.config?.webSearch
@@ -379,11 +505,13 @@ export function createApplication(
       }
     }
   };
-  const provider =
-    options.provider === undefined
-      ? createProvider(config.provider)
-      : new ManagedProvider(options.provider, config.provider);
+}
 
+function buildApplicationRuntime(
+  config: AppConfig,
+  provider: Provider,
+  options: CreateApplicationOptions
+): AppRuntimeHandle {
   const storage = new StorageManager({
     databasePath: config.databasePath
   });
@@ -842,6 +970,8 @@ export function createApplication(
   });
 
   service = new AgentApplicationService({
+    compact: config.compact,
+    contextCompactor,
     customShell: config.workflow.customShell,
     databasePath: config.databasePath,
     executionKernel,
@@ -906,7 +1036,10 @@ export function createApplication(
     runtimeVersion: config.runtimeVersion,
     schedulerService,
     resumePacketBuilder,
+    sessionSummaryService,
     sessionService,
+    sessionLineageRepository: storage.sessionLineage,
+    sessionMessageRepository: storage.sessionMessages,
     shellBackend: config.workflow.shellBackend,
     tokenBudget: {
       inputLimit: config.tokenBudget.inputLimit,

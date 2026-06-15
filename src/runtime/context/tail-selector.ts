@@ -4,18 +4,29 @@ import { estimateMessageTokens } from "./token-counter.js";
 
 export interface TailSelectionConfig {
   tailMinMessages: number;
-  tailTokenBudget: number;
+  tailTokenBudget: number | null;
+  protectLastN?: number;
+}
+
+export interface TailSelectionResult {
+  budgetExceeded: boolean;
+  messages: ConversationMessage[];
+  usedTokens: number;
 }
 
 export function selectTailMessages(
   messages: ConversationMessage[],
   config: TailSelectionConfig
-): ConversationMessage[] {
+): TailSelectionResult {
   if (messages.length === 0) {
-    return [];
+    return {
+      budgetExceeded: false,
+      messages: [],
+      usedTokens: 0
+    };
   }
 
-  const minKeep = Math.min(config.tailMinMessages, messages.length);
+  const minKeep = Math.min(config.protectLastN ?? config.tailMinMessages, messages.length);
   let startIndex = messages.length - minKeep;
   let usedTokens = estimateMessagesSlice(messages, startIndex);
 
@@ -25,15 +36,21 @@ export function selectTailMessages(
       break;
     }
     const nextTokens = estimateMessagesSlice(messages, previousIndex);
-    if (nextTokens > config.tailTokenBudget) {
+    if (config.tailTokenBudget !== null && nextTokens > config.tailTokenBudget) {
       break;
     }
     startIndex = previousIndex;
     usedTokens = nextTokens;
-    void usedTokens;
   }
 
-  return messages.slice(startIndex);
+  const budgetExceeded =
+    config.tailTokenBudget !== null && usedTokens > config.tailTokenBudget;
+
+  return {
+    budgetExceeded,
+    messages: messages.slice(startIndex),
+    usedTokens
+  };
 }
 
 function estimateMessagesSlice(messages: ConversationMessage[], startIndex: number): number {

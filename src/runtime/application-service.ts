@@ -13,7 +13,7 @@ import type {
 } from "../experience/experience-plane.js";
 import type { ProviderCatalogEntry, ResolvedProviderConfig } from "../providers/index.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
-import type { ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "./runtime-config.js";
+import type { RuntimeConfig, ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "./runtime-config.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type {
   ApprovalRecord,
@@ -49,7 +49,9 @@ import type {
   ScheduleRecord,
   ScheduleRunListQuery,
   ScheduleRunRecord,
+  SessionMessageRepository,
   SessionSearchHit,
+  SessionLineageRepository,
   TaskRecord,
   SessionLineageRecord,
   SessionRecord,
@@ -93,6 +95,7 @@ import type {
   SessionCommitmentProjector
 } from "./commitments/index.js";
 import { FileRollbackService, ProviderStatsService, RuntimeDoctorService } from "./operations/index.js";
+import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
 import { ScheduleFacade, SessionFacade } from "./facades/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
@@ -256,8 +259,11 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   customShell: WorkflowCustomShell | null;
   databasePath: string;
   executionKernel: ExecutionKernel;
+  contextCompactor: ContextCompactor;
+  compact: RuntimeConfig["compact"];
   schedulerService: SchedulerService;
   resumePacketBuilder: ResumePacketBuilder;
+  sessionSummaryService: SessionSummaryService;
   sessionService: SessionService;
   experiencePlane: ExperiencePlane;
   maxShellTimeoutMs: number;
@@ -291,6 +297,8 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   sessionUiStateService: SessionUiStateService;
   sessionIndexService: SessionIndexService;
   sessionMessageSearchService: SessionMessageSearchService;
+  sessionMessageRepository: SessionMessageRepository;
+  sessionLineageRepository: SessionLineageRepository;
   sessionBranchService: SessionBranchService;
   sessionHandoffService: SessionHandoffService;
   gatewaySessionRepository: GatewaySessionRepository;

@@ -12,12 +12,14 @@ import {
   parseProviderSelection,
   resolveDefaultProviderSettings,
   requireProviderManifest,
+  resolveModelContextWindow,
   resolveProviderModel
 } from "./provider-registry.js";
 
 interface ProviderFileEntry extends JsonObject {
   apiKey?: string | null;
   baseUrl?: string | null;
+  contextWindowTokens?: number | null;
   maxRetries?: number;
   model?: string | null;
   streamIdleTimeoutMs?: number;
@@ -45,6 +47,7 @@ export interface ProviderConfigWriteOptions {
   cwd?: string;
   maxRetries?: number;
   model?: string;
+  contextWindowTokens?: number;
   scope?: ProviderConfigScope;
   streamIdleTimeoutMs?: number;
   timeoutMs?: number;
@@ -63,6 +66,15 @@ export interface ResolvedProviderConfig extends ProviderConfig {
   configPath: string;
   configSource: "defaults" | "env" | "file" | "user";
   configured?: boolean;
+  contextWindowSource:
+    | "custom_provider"
+    | "explicit_token_budget"
+    | "provider_api"
+    | "provider_config"
+    | "provider_manifest"
+    | "provider_model_manifest"
+    | null;
+  contextWindowTokens: number | null;
   displayName: string;
   family: ProviderTransportKind;
   providerLabel?: string | null;
@@ -160,6 +172,7 @@ function resolveProviderConfigInternal(
       model,
       name: configuredName,
       configured: true,
+      ...resolveBuiltinContextWindow(fileEntry, builtinProviderName, model, manifest),
       displayName: manifest.displayName,
       family: manifest.family,
       streamIdleTimeoutConfigured:
@@ -209,6 +222,7 @@ function resolveProviderConfigInternal(
     model,
     name: configuredName,
     configured: true,
+    ...resolveCustomContextWindow(fileEntry, customProvider),
     displayName: normalizeNullableString(customProvider.displayName) ?? configuredName,
     family: customProvider.transport,
     providerLabel:
@@ -248,6 +262,7 @@ export function resolveProviderCatalog(cwd = process.cwd()): ProviderCatalogEntr
     ...PROVIDER_CATALOG,
     ...Object.entries(customProviders).map(([name, provider]) => ({
       aliases: [],
+      contextWindowTokens: normalizeOptionalPositiveInteger(provider.contextWindowTokens) ?? null,
       displayName: normalizeNullableString(provider.displayName) ?? name,
       family: provider.transport,
       name,
@@ -395,6 +410,9 @@ function writeProviderConfig(
     ...existingEntry,
     ...(behavior.writeSetupEntry && options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
     ...(behavior.writeSetupEntry && options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+    ...(behavior.writeSetupEntry && options.contextWindowTokens !== undefined
+      ? { contextWindowTokens: options.contextWindowTokens }
+      : {}),
     ...(behavior.writeSetupEntry && options.maxRetries !== undefined
       ? { maxRetries: options.maxRetries }
       : {}),
@@ -437,6 +455,7 @@ function createPromotedProviderEntry(
     ...(existingEntry ?? {}),
     ...(config.apiKey !== null ? { apiKey: config.apiKey } : {}),
     ...(config.baseUrl !== null ? { baseUrl: config.baseUrl } : {}),
+    ...(config.contextWindowTokens !== null ? { contextWindowTokens: config.contextWindowTokens } : {}),
     maxRetries: config.maxRetries,
     ...(config.model !== null ? { model: config.model } : {}),
     streamIdleTimeoutMs: config.streamIdleTimeoutMs,
@@ -458,6 +477,7 @@ function createPromotedCustomProviderEntry(
       ? { anthropicVersion: config.anthropicVersion }
       : {}),
     displayName: config.displayName,
+    ...(config.contextWindowTokens !== null ? { contextWindowTokens: config.contextWindowTokens } : {}),
     ...(config.providerLabel !== undefined && config.providerLabel !== null
       ? { providerLabel: config.providerLabel }
       : {}),
@@ -587,6 +607,8 @@ function createUnconfiguredProviderConfig(
     configPath,
     configSource,
     configured: false,
+    contextWindowSource: null,
+    contextWindowTokens: null,
     displayName: "Provider not configured",
     family: "mock",
     maxRetries: 0,
@@ -597,6 +619,44 @@ function createUnconfiguredProviderConfig(
     timeoutConfigured: false,
     timeoutMs: 5_000,
     transport: "mock"
+  };
+}
+
+function resolveBuiltinContextWindow(
+  fileEntry: ProviderFileEntry | undefined,
+  providerName: SupportedProviderName,
+  model: string | null,
+  manifest: { contextWindowTokens: number | null }
+): Pick<ResolvedProviderConfig, "contextWindowSource" | "contextWindowTokens"> {
+  const configured = normalizeOptionalPositiveInteger(fileEntry?.contextWindowTokens);
+  if (configured !== null) {
+    return {
+      contextWindowSource: "provider_config",
+      contextWindowTokens: configured
+    };
+  }
+  const resolved = resolveModelContextWindow(providerName, model, manifest.contextWindowTokens);
+  return {
+    contextWindowSource: resolved.source,
+    contextWindowTokens: resolved.contextWindowTokens
+  };
+}
+
+function resolveCustomContextWindow(
+  fileEntry: ProviderFileEntry | undefined,
+  customProvider: CustomProviderFileEntry
+): Pick<ResolvedProviderConfig, "contextWindowSource" | "contextWindowTokens"> {
+  const configured = normalizeOptionalPositiveInteger(fileEntry?.contextWindowTokens);
+  if (configured !== null) {
+    return {
+      contextWindowSource: "provider_config",
+      contextWindowTokens: configured
+    };
+  }
+  const customConfigured = normalizeOptionalPositiveInteger(customProvider.contextWindowTokens);
+  return {
+    contextWindowSource: customConfigured === null ? null : "custom_provider",
+    contextWindowTokens: customConfigured
   };
 }
 
@@ -732,6 +792,16 @@ function resolveCustomProviderModel(
   }
 
   return normalized;
+}
+
+function normalizeOptionalPositiveInteger(value: number | null | undefined): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error("provider contextWindowTokens must be a positive integer.");
+  }
+  return value;
 }
 
 function normalizeNullableString(value: string | null | undefined): string | null {

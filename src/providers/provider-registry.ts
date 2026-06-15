@@ -23,6 +23,7 @@ export const SUPPORTED_PROVIDER_CONTRACT_VERSION = 1;
 
 export interface ProviderCatalogEntry {
   aliases: string[];
+  contextWindowTokens: number | null;
   displayName: string;
   family: ProviderTransportKind;
   name: string;
@@ -45,6 +46,7 @@ export interface ProviderManifest {
     | undefined;
   displayName: string;
   family: ProviderTransportKind;
+  contextWindowTokens: number | null;
   name: SupportedProviderName;
   openAiCompatible?:
     | {
@@ -183,6 +185,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
       defaultModel: "claude-sonnet-4-20250514",
       providerLabel: "Anthropic"
     },
+    contextWindowTokens: 200_000,
     displayName: "Anthropic",
     family: "anthropic-compatible",
     name: "anthropic",
@@ -194,6 +197,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   "xfyun-coding": {
     aliases: ["astron", "iflytek", "spark-coding", "xfyun"],
+    contextWindowTokens: 64_000,
     displayName: "iFLYTEK Coding Plan",
     family: "openai-compatible",
     name: "xfyun-coding",
@@ -211,6 +215,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   gemini: {
     aliases: ["google"],
+    contextWindowTokens: 1_000_000,
     displayName: "Gemini",
     family: "openai-compatible",
     name: "gemini",
@@ -228,6 +233,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   glm: {
     aliases: ["z.ai", "z-ai", "zhipu"],
+    contextWindowTokens: 128_000,
     displayName: "GLM",
     family: "openai-compatible",
     name: "glm",
@@ -252,6 +258,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
       defaultModel: "MiniMax-M2.7",
       providerLabel: "MiniMax"
     },
+    contextWindowTokens: 200_000,
     displayName: "MiniMax",
     family: "anthropic-compatible",
     name: "minimax",
@@ -263,6 +270,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   moonshot: {
     aliases: ["kimi"],
+    contextWindowTokens: 128_000,
     displayName: "Moonshot",
     family: "openai-compatible",
     name: "moonshot",
@@ -280,6 +288,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   "openai-compatible": {
     aliases: ["compatible", "custom", "custom-openai", "openai_compatible"],
+    contextWindowTokens: null,
     displayName: "OpenAI Compatible",
     family: "openai-compatible",
     name: "openai-compatible",
@@ -296,6 +305,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   openai: {
     aliases: ["openai-api"],
+    contextWindowTokens: 128_000,
     displayName: "OpenAI",
     family: "openai-compatible",
     name: "openai",
@@ -313,6 +323,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   ollama: {
     aliases: ["local"],
+    contextWindowTokens: null,
     displayName: "Ollama",
     family: "openai-compatible",
     name: "ollama",
@@ -330,6 +341,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   openrouter: {
     aliases: ["router"],
+    contextWindowTokens: null,
     displayName: "OpenRouter",
     family: "openai-compatible",
     name: "openrouter",
@@ -347,6 +359,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   mock: {
     aliases: [],
+    contextWindowTokens: 64_000,
     displayName: "Mock Provider",
     family: "mock",
     name: "mock",
@@ -358,6 +371,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   qwen: {
     aliases: ["aliyun", "dashscope", "tongyi"],
+    contextWindowTokens: 128_000,
     displayName: "Qwen",
     family: "openai-compatible",
     name: "qwen",
@@ -375,6 +389,7 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   },
   xai: {
     aliases: ["grok", "x.ai"],
+    contextWindowTokens: 256_000,
     displayName: "xAI",
     family: "openai-compatible",
     name: "xai",
@@ -392,10 +407,118 @@ const PROVIDER_MANIFESTS: Record<SupportedProviderName, ProviderManifest> = {
   }
 };
 
+const MODEL_CONTEXT_WINDOWS: Partial<Record<SupportedProviderName, Record<string, number>>> = {
+  anthropic: {
+    "claude-haiku-3-5-20241022": 200_000,
+    "claude-opus-4-20250514": 200_000,
+    "claude-sonnet-4-20250514": 200_000,
+    "claude-sonnet-4-*": 200_000,
+    "claude-opus-4-*": 200_000,
+    "claude-haiku-3-5-*": 200_000
+  },
+  gemini: {
+    "gemini-2.5-flash": 1_048_576,
+    "gemini-2.5-pro": 1_048_576,
+    "gemini-2.0-flash": 1_048_576,
+    "gemini-2.0-pro": 1_048_576,
+    "gemini-1.5-flash": 1_048_576,
+    "gemini-1.5-pro": 1_048_576
+  },
+  glm: {
+    "glm-4.5-air": 128_000,
+    "glm-4.5": 128_000,
+    "glm-4-plus": 128_000,
+    "glm-4": 128_000
+  },
+  minimax: {
+    "MiniMax-M2.7": 200_000,
+    "MiniMax-M2": 200_000,
+    "MiniMax-M2.5": 200_000
+  },
+  moonshot: {
+    "kimi-k2.5": 128_000,
+    "kimi-k2": 128_000,
+    "moonshot-v1-128k": 128_000,
+    "moonshot-v1-32k": 32_000,
+    "moonshot-v1-8k": 8_000
+  },
+  openai: {
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4": 128_000,
+    "o1": 200_000,
+    "o1-mini": 128_000,
+    "o1-preview": 128_000,
+    "o3": 200_000,
+    "o3-mini": 200_000,
+    "o4-mini": 200_000
+  },
+  qwen: {
+    "qwen-plus": 128_000,
+    "qwen-turbo": 128_000,
+    "qwen-max": 128_000,
+    "qwen-long": 1_000_000
+  },
+  xai: {
+    "grok-4.20-reasoning": 256_000,
+    "grok-3": 131_072,
+    "grok-2": 131_072
+  },
+  "xfyun-coding": {
+    "astron-code-latest": 64_000,
+    "astron-code-*": 64_000
+  }
+};
+
+export type ModelContextWindowSource = "provider_model_manifest" | "provider_manifest";
+
+export function resolveModelContextWindow(
+  providerName: SupportedProviderName,
+  model: string | null,
+  manifestDefault: number | null
+): { contextWindowTokens: number | null; source: ModelContextWindowSource | null } {
+  if (model === null) {
+    return {
+      contextWindowTokens: manifestDefault,
+      source: manifestDefault === null ? null : "provider_manifest"
+    };
+  }
+
+  const modelMap = MODEL_CONTEXT_WINDOWS[providerName];
+  if (modelMap !== undefined) {
+    if (modelMap[model] !== undefined) {
+      return {
+        contextWindowTokens: modelMap[model],
+        source: "provider_model_manifest"
+      };
+    }
+
+    for (const [pattern, tokens] of Object.entries(modelMap)) {
+      if (!pattern.endsWith("*")) {
+        continue;
+      }
+      const prefix = pattern.slice(0, -1);
+      if (model.startsWith(prefix)) {
+        return {
+          contextWindowTokens: tokens,
+          source: "provider_model_manifest"
+        };
+      }
+    }
+  }
+
+  return {
+    contextWindowTokens: manifestDefault,
+    source: manifestDefault === null ? null : "provider_manifest"
+  };
+}
+
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = SUPPORTED_PROVIDER_NAMES.map((name) => {
   const manifest = PROVIDER_MANIFESTS[name];
   return {
     aliases: [...manifest.aliases],
+    contextWindowTokens: manifest.contextWindowTokens,
     displayName: manifest.displayName,
     family: manifest.family,
     name: manifest.name,
