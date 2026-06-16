@@ -33,3 +33,6 @@ jobs:
 
       - name: Run verification
         run: pnpm check
+
+      - name: Run runtime smoke tests
+        run: pnpm exec vitest run test/runtime-smoke.test.ts
