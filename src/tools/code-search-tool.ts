@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { basename, extname, join, relative, sep } from "node:path";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 
 import { z } from "zod";
 
@@ -73,6 +73,11 @@ interface FileCount extends JsonObject {
 }
 
 export interface CodeSearchToolOptions {
+  runRgContent?: (
+    targetPath: string,
+    input: PreparedCodeSearchInput,
+    context: ToolExecutionContext
+  ) => Promise<CodeSearchMatch[] | null>;
   runRgFiles?: (directoryPath: string, input: PreparedCodeSearchInput) => Promise<string[] | null>;
 }
 
@@ -137,10 +142,95 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
     }
 
     const stat = await fs.stat(input.plan.resolvedPath);
-    const fileDiscovery = stat.isDirectory()
-      ? await collectFiles(input.plan.resolvedPath, input, context.signal, this.options.runRgFiles)
-      : [input.plan.resolvedPath];
-    const files = Array.isArray(fileDiscovery) ? fileDiscovery : fileDiscovery.files;
+    const rgResult = await collectRgSearchResult(
+      input.plan.resolvedPath,
+      stat.isDirectory(),
+      input,
+      context,
+      this.options
+    );
+    const searchResult =
+      rgResult ??
+      (await collectNodeSearchResult(
+        input.plan.resolvedPath,
+        stat.isDirectory(),
+        input,
+        matcher,
+        context,
+        this.options.runRgFiles
+      ));
+    const files = searchResult.files;
+
+    const modeOutput = buildModeOutput(input.mode, {
+      fileCounts: searchResult.fileCounts,
+      filenameMatches: searchResult.filenameMatches,
+      matchedFiles: searchResult.matchedFiles,
+      matches: searchResult.matches,
+      maxResults: input.maxResults
+    });
+
+    return {
+      output: {
+        ...modeOutput,
+        path: input.plan.resolvedPath,
+        query: input.query,
+        regex: input.regex,
+        searchBackend: searchResult.backend,
+        searchedFileCount: files.length
+      },
+      success: true,
+      summary: summarizeSearchResult(input.mode, input.query, modeOutput)
+    };
+  }
+}
+
+interface CodeSearchExecutionResult {
+  backend: "node" | "rg";
+  fileCounts: FileCount[];
+  filenameMatches: FilenameMatch[];
+  files: string[];
+  matchedFiles: FilenameMatch[];
+  matches: CodeSearchMatch[];
+}
+
+async function collectRgSearchResult(
+  targetPath: string,
+  isDirectory: boolean,
+  input: PreparedCodeSearchInput,
+  context: ToolExecutionContext,
+  options: CodeSearchToolOptions
+): Promise<CodeSearchExecutionResult | null> {
+  const contentMatches = await (options.runRgContent ?? defaultRunRgContent)(targetPath, input, context);
+  if (contentMatches === null) {
+    return null;
+  }
+  const fileDiscovery = isDirectory
+    ? await collectFiles(targetPath, input, context.signal, options.runRgFiles, "rg_only")
+    : { backend: "rg" as const, files: [targetPath] };
+  if (fileDiscovery === null) {
+    return null;
+  }
+  return collectSearchResultFromMatches(fileDiscovery.files, contentMatches, input, context, "rg");
+}
+
+async function collectNodeSearchResult(
+  targetPath: string,
+  isDirectory: boolean,
+  input: PreparedCodeSearchInput,
+  matcher: RegExp,
+  context: ToolExecutionContext,
+  runRgFiles?: (directoryPath: string, input: PreparedCodeSearchInput) => Promise<string[] | null>
+): Promise<CodeSearchExecutionResult> {
+  const fileDiscovery = isDirectory
+    ? await collectFiles(targetPath, input, context.signal, runRgFiles, "allow_node")
+    : { backend: "node" as const, files: [targetPath] };
+  if (fileDiscovery === null) {
+    throw new AppError({
+      code: "tool_execution_error",
+      message: "Code search file discovery did not return a Node fallback result."
+    });
+  }
+  const files = fileDiscovery.files;
     const matches: CodeSearchMatch[] = [];
     const filenameMatches: FilenameMatch[] = [];
     const fileCounts = new Map<string, FileCount>();
@@ -172,27 +262,60 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
       }
     }
 
-    const modeOutput = buildModeOutput(input.mode, {
-      fileCounts: [...fileCounts.values()],
-      filenameMatches,
-      matchedFiles: [...matchedFiles.entries()].map(([relativePath, path]) => ({ path, relativePath })),
-      matches,
-      maxResults: input.maxResults
-    });
+  return {
+    backend: "node",
+    fileCounts: [...fileCounts.values()],
+    filenameMatches,
+    files,
+    matchedFiles: [...matchedFiles.entries()].map(([relativePath, path]) => ({ path, relativePath })),
+    matches
+  };
+}
 
-    return {
-      output: {
-        ...modeOutput,
-        path: input.plan.resolvedPath,
-        query: input.query,
-        regex: input.regex,
-        searchBackend: Array.isArray(fileDiscovery) ? "node" : fileDiscovery.backend,
-        searchedFileCount: files.length
-      },
-      success: true,
-      summary: summarizeSearchResult(input.mode, input.query, modeOutput)
-    };
+function collectSearchResultFromMatches(
+  files: string[],
+  contentMatches: CodeSearchMatch[],
+  input: PreparedCodeSearchInput,
+  context: ToolExecutionContext,
+  backend: "node" | "rg"
+): CodeSearchExecutionResult {
+  const matches: CodeSearchMatch[] = [];
+  const filenameMatches: FilenameMatch[] = [];
+  const fileCounts = new Map<string, FileCount>();
+  const matchedFiles = new Map<string, string>();
+
+  for (const filePath of files) {
+    const relativePath = toRelativePath(context.workspaceRoot, filePath);
+    if (input.searchFilenames) {
+      const filenameMatcher = input.regex
+        ? new RegExp(input.query, input.caseSensitive ? "u" : "iu")
+        : literalMatcher(input.query, input.caseSensitive);
+      if (filenameMatcher.test(relativePath)) {
+        if (input.mode === "matches" && matches.length + filenameMatches.length < input.maxResults) {
+          filenameMatches.push({ path: filePath, relativePath });
+        }
+        addMatchedFile(matchedFiles, relativePath, filePath);
+        incrementFileCount(fileCounts, relativePath, filePath);
+      }
+    }
   }
+
+  for (const match of contentMatches) {
+    if (input.mode === "matches" && matches.length + filenameMatches.length < input.maxResults) {
+      matches.push(match);
+    }
+    addMatchedFile(matchedFiles, match.relativePath, match.path);
+    incrementFileCount(fileCounts, match.relativePath, match.path);
+  }
+
+  return {
+    backend,
+    fileCounts: [...fileCounts.values()],
+    filenameMatches,
+    files,
+    matchedFiles: [...matchedFiles.entries()].map(([relativePath, path]) => ({ path, relativePath })),
+    matches
+  };
 }
 
 function shouldStopSearch(
@@ -274,8 +397,9 @@ async function collectFiles(
   directoryPath: string,
   input: PreparedCodeSearchInput,
   signal: AbortSignal,
-  runRgFiles?: (directoryPath: string, input: PreparedCodeSearchInput) => Promise<string[] | null>
-): Promise<{ backend: "node" | "rg"; files: string[] }> {
+  runRgFiles?: (directoryPath: string, input: PreparedCodeSearchInput) => Promise<string[] | null>,
+  fallbackMode: "allow_node" | "rg_only" = "allow_node"
+): Promise<{ backend: "node" | "rg"; files: string[] } | null> {
   if (signal.aborted) {
     throw new AppError({
       code: "interrupt",
@@ -288,6 +412,10 @@ async function collectFiles(
       backend: "rg",
       files: await filterCandidateFiles(directoryPath, rgFiles, input, signal)
     };
+  }
+
+  if (fallbackMode === "rg_only") {
+    return null;
   }
 
   return {
@@ -360,6 +488,163 @@ async function defaultRunRgFiles(
   } catch {
     return null;
   }
+}
+
+async function defaultRunRgContent(
+  targetPath: string,
+  input: PreparedCodeSearchInput,
+  context: ToolExecutionContext
+): Promise<CodeSearchMatch[] | null> {
+  const stat = await fs.stat(targetPath);
+  const cwd = stat.isDirectory() ? targetPath : dirname(targetPath);
+  const target = stat.isDirectory() ? "." : basename(targetPath);
+  const args = [
+    "--json",
+    "--line-number",
+    "--with-filename",
+    "--hidden",
+    "--color",
+    "never",
+    "--max-filesize",
+    String(input.maxFileSizeBytes),
+    ...[...IGNORED_DIRECTORIES].flatMap((directory) => ["--glob", `!${directory}/**`]),
+    ...input.includeGlobs.flatMap((glob) => ["--glob", normalizePath(glob)]),
+    ...input.excludeGlobs.flatMap((glob) => ["--glob", `!${normalizePath(glob)}`]),
+    ...(input.caseSensitive ? [] : ["-i"]),
+    ...(input.regex ? [] : ["--fixed-strings"]),
+    ...(input.contextLines > 0 ? ["-C", String(input.contextLines)] : []),
+    "--",
+    input.query,
+    target
+  ];
+
+  try {
+    const result = await execFileAsync("rg", args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 20_000_000,
+      windowsHide: true
+    });
+    return parseRgJsonMatches(result.stdout, cwd, context.workspaceRoot, input.contextLines);
+  } catch (error) {
+    const exitCode = readProcessExitCode(error);
+    const stdout = readProcessStdout(error);
+    if (exitCode === 1 && stdout !== null) {
+      return parseRgJsonMatches(stdout, cwd, context.workspaceRoot, input.contextLines);
+    }
+    return null;
+  }
+}
+
+function parseRgJsonMatches(
+  stdout: string,
+  cwd: string,
+  workspaceRoot: string,
+  contextLines: number
+): CodeSearchMatch[] {
+  const matches: CodeSearchMatch[] = [];
+  const beforeContextByPath = new Map<string, string[]>();
+  const pendingAfterByPath = new Map<string, CodeSearchMatch[]>();
+
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (line.trim().length === 0) {
+      continue;
+    }
+    const event = parseRgJsonEvent(line);
+    if (event === null) {
+      continue;
+    }
+    const pathText = readRgText(event.data?.path);
+    const lineText = readRgText(event.data?.lines);
+    if (pathText === null || lineText === null) {
+      continue;
+    }
+    const path = join(cwd, pathText);
+    const relativePath = toRelativePath(workspaceRoot, path);
+    const cleanLine = trimLineEnding(lineText);
+
+    if (event.type === "match") {
+      const match: CodeSearchMatch = {
+        afterContext: [],
+        beforeContext: (beforeContextByPath.get(pathText) ?? []).slice(-contextLines),
+        line: cleanLine,
+        lineNumber: typeof event.data?.line_number === "number" ? event.data.line_number : 0,
+        matchText: readFirstRgSubmatch(event) ?? cleanLine,
+        path,
+        relativePath
+      };
+      matches.push(match);
+      if (contextLines > 0) {
+        const pending = pendingAfterByPath.get(pathText) ?? [];
+        pending.push(match);
+        pendingAfterByPath.set(pathText, pending);
+      }
+      beforeContextByPath.set(pathText, []);
+      continue;
+    }
+
+    if (event.type === "context") {
+      const pending = pendingAfterByPath.get(pathText) ?? [];
+      for (const match of pending) {
+        if (match.afterContext.length < contextLines) {
+          match.afterContext.push(cleanLine);
+        }
+      }
+      pendingAfterByPath.set(
+        pathText,
+        pending.filter((match) => match.afterContext.length < contextLines)
+      );
+      const beforeContext = beforeContextByPath.get(pathText) ?? [];
+      beforeContext.push(cleanLine);
+      beforeContextByPath.set(pathText, beforeContext.slice(-contextLines));
+    }
+  }
+
+  return matches;
+}
+
+interface RgJsonEvent {
+  data?: {
+    line_number?: unknown;
+    lines?: { text?: unknown };
+    path?: { text?: unknown };
+    submatches?: Array<{ match?: { text?: unknown } }>;
+  };
+  type?: unknown;
+}
+
+function parseRgJsonEvent(line: string): RgJsonEvent | null {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as RgJsonEvent)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readRgText(value: { text?: unknown } | undefined): string | null {
+  return typeof value?.text === "string" ? value.text : null;
+}
+
+function readFirstRgSubmatch(event: RgJsonEvent): string | null {
+  const text = event.data?.submatches?.[0]?.match?.text;
+  return typeof text === "string" ? text : null;
+}
+
+function trimLineEnding(value: string): string {
+  return value.replace(/\r?\n$/u, "");
+}
+
+function readProcessExitCode(error: unknown): number | null {
+  const candidate = error as { code?: unknown };
+  return typeof candidate.code === "number" ? candidate.code : null;
+}
+
+function readProcessStdout(error: unknown): string | null {
+  const candidate = error as { stdout?: unknown };
+  return typeof candidate.stdout === "string" ? candidate.stdout : null;
 }
 
 async function filterCandidateFiles(

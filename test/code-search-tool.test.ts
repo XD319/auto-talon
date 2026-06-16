@@ -109,12 +109,24 @@ describe("CodeSearchTool", () => {
     expect(result.errorMessage).toContain("Invalid regex");
   });
 
-  it("uses rg file discovery when available", async () => {
+  it("uses rg content search when available", async () => {
     const root = await createTempDir("auto-talon-code-search-");
     await fs.mkdir(join(root, "src"), { recursive: true });
     const targetPath = join(root, "src", "from-rg.ts");
     await fs.writeFile(targetPath, "export const token = true;\n", "utf8");
     const tool = new CodeSearchTool(createSandbox(root), {
+      runRgContent: () =>
+        Promise.resolve([
+          {
+            afterContext: [],
+            beforeContext: [],
+            line: "export const token = true;",
+            lineNumber: 1,
+            matchText: "token",
+            path: targetPath,
+            relativePath: "src/from-rg.ts"
+          }
+        ]),
       runRgFiles: () => Promise.resolve([targetPath])
     });
 
@@ -143,6 +155,7 @@ describe("CodeSearchTool", () => {
     await fs.mkdir(join(root, "src"), { recursive: true });
     await fs.writeFile(join(root, "src", "fallback.ts"), "const fallback = 1;\n", "utf8");
     const tool = new CodeSearchTool(createSandbox(root), {
+      runRgContent: () => Promise.resolve(null),
       runRgFiles: () => Promise.resolve(null)
     });
 
@@ -176,6 +189,7 @@ describe("CodeSearchTool", () => {
     );
     await fs.writeFile(join(root, "src", "z-target.ts"), "const targetNeedle = true;\n", "utf8");
     const tool = new CodeSearchTool(createSandbox(root), {
+      runRgContent: () => Promise.resolve(null),
       runRgFiles: () => Promise.resolve(null)
     });
 
@@ -209,6 +223,7 @@ describe("CodeSearchTool", () => {
     await fs.writeFile(join(root, "src", "name-sharedNeedle.ts"), "const other = true;\n", "utf8");
     await fs.writeFile(join(root, "src", "miss.ts"), "const other = true;\n", "utf8");
     const tool = new CodeSearchTool(createSandbox(root), {
+      runRgContent: () => Promise.resolve(null),
       runRgFiles: () => Promise.resolve(null)
     });
 
@@ -245,6 +260,7 @@ describe("CodeSearchTool", () => {
     await fs.writeFile(join(root, "src", "first.ts"), "needle\nneedle\n", "utf8");
     await fs.writeFile(join(root, "src", "needle-name.ts"), "needle\n", "utf8");
     const tool = new CodeSearchTool(createSandbox(root), {
+      runRgContent: () => Promise.resolve(null),
       runRgFiles: () => Promise.resolve(null)
     });
 
