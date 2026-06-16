@@ -342,7 +342,7 @@ describe("Phase 2 governance runtime", () => {
     }
   });
 
-  it("fails the task when approval is denied", async () => {
+  it("continues the task when approval is denied", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApprovalWriteApplication(workspaceRoot);
 
@@ -360,11 +360,162 @@ describe("Phase 2 governance runtime", () => {
       );
 
       expect(denied.approval.status).toBe("denied");
-      expect(denied.task.status).toBe("failed");
+      expect(denied.task.status).toBe("succeeded");
+      expect(denied.output).toContain("governed write was denied");
       await expect(fs.access(join(workspaceRoot, "governed.txt"))).rejects.toThrow();
 
       const details = handle.service.showTask(initial.task.taskId);
       expect(details.toolCalls[0]?.status).toBe("denied");
+      expect(
+        handle.service
+          .traceTask(initial.task.taskId)
+          .some((event) => event.eventType === "tool_call_failed")
+      ).toBe(true);
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("replans after an approval denial instead of executing later tools from the same batch", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider((input) => {
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.length === 0) {
+          return {
+            kind: "tool_calls",
+            message: "Create two governed files.",
+            toolCalls: [
+              {
+                input: {
+                  content: "first",
+                  path: "denied-first.txt"
+                },
+                reason: "This write requires approval.",
+                toolCallId: "denied-first-write",
+                toolName: "write_file"
+              },
+              {
+                input: {
+                  content: "second",
+                  path: "should-not-run.txt"
+                },
+                reason: "This write depends on the first write.",
+                toolCallId: "skipped-second-write",
+                toolName: "write_file"
+              }
+            ],
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5
+            }
+          };
+        }
+
+        expect(toolMessages.at(-1)?.content).toContain("approval_denied");
+        expect(toolMessages.at(-1)?.content).toContain("recoverable");
+        return {
+          kind: "final",
+          message: "The requested write was denied, so I will not run the dependent write.",
+          usage: {
+            inputTokens: 5,
+            outputTokens: 5
+          }
+        };
+      }),
+      policyConfig: APPROVAL_REQUIRED_POLICY_CONFIG
+    });
+
+    try {
+      const initial = await handle.service.runTask(
+        createDefaultRunOptions("create two governed files", workspaceRoot, handle.config)
+      );
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval).toBeDefined();
+
+      const denied = await handle.service.resolveApproval(
+        approval?.approvalId ?? "",
+        "deny",
+        "reviewer-batch"
+      );
+
+      expect(denied.task.status).toBe("succeeded");
+      expect(denied.output).toContain("dependent write");
+      await expect(fs.access(join(workspaceRoot, "denied-first.txt"))).rejects.toThrow();
+      await expect(fs.access(join(workspaceRoot, "should-not-run.txt"))).rejects.toThrow();
+
+      const details = handle.service.showTask(initial.task.taskId);
+      expect(details.toolCalls.find((toolCall) => toolCall.toolCallId === "denied-first-write")?.status).toBe(
+        "denied"
+      );
+      expect(details.toolCalls.find((toolCall) => toolCall.toolCallId === "skipped-second-write")).toBeUndefined();
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("continues the task when approval times out", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        approvalTtlMs: 1,
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider((input) => {
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+        if (toolMessages.length === 0) {
+          return {
+            kind: "tool_calls",
+            message: "Create a file that will wait for approval.",
+            toolCalls: [
+              {
+                input: {
+                  content: "timeout",
+                  path: "timed-out.txt"
+                },
+                reason: "Exercise timeout continuation.",
+                toolCallId: "timeout-write",
+                toolName: "write_file"
+              }
+            ],
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5
+            }
+          };
+        }
+
+        expect(toolMessages.at(-1)?.content).toContain("approval_timeout");
+        return {
+          kind: "final",
+          message: "Approval timed out, so I did not create timed-out.txt.",
+          usage: {
+            inputTokens: 5,
+            outputTokens: 5
+          }
+        };
+      }),
+      policyConfig: APPROVAL_REQUIRED_POLICY_CONFIG
+    });
+
+    try {
+      const initial = await handle.service.runTask(
+        createDefaultRunOptions("create timeout governed file", workspaceRoot, handle.config)
+      );
+      expect(initial.task.status).toBe("waiting_approval");
+
+      await delay(5);
+      expect(handle.service.listPendingApprovals()).toHaveLength(0);
+      const completed = await waitForTaskStatus(handle.service, initial.task.taskId, "succeeded");
+
+      expect(completed.finalOutput).toContain("Approval timed out");
+      await expect(fs.access(join(workspaceRoot, "timed-out.txt"))).rejects.toThrow();
+      const details = handle.service.showTask(initial.task.taskId);
+      expect(details.approvals[0]?.status).toBe("timed_out");
+      expect(details.toolCalls[0]?.status).toBe("timed_out");
     } finally {
       handle.close();
     }
@@ -1192,6 +1343,17 @@ function createApprovalWriteApplication(workspaceRoot: string) {
         };
       }
 
+      if (toolMessages.at(-1)?.content.includes("approval_denied")) {
+        return {
+          kind: "final",
+          message: "governed write was denied; no file changed",
+          usage: {
+            inputTokens: 4,
+            outputTokens: 4
+          }
+        };
+      }
+
       return {
         kind: "final",
         message: "governed.txt created after approval",
@@ -1250,4 +1412,28 @@ async function createTempWorkspace(): Promise<string> {
   const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-phase2-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForTaskStatus(
+  service: ReturnType<typeof createApplication>["service"],
+  taskId: string,
+  status: "succeeded" | "failed" | "cancelled",
+  timeoutMs = 1_000
+) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const task = service.showTask(taskId).task;
+    if (task?.status === status) {
+      return task;
+    }
+    await delay(10);
+  }
+  const task = service.showTask(taskId).task;
+  throw new Error(`Timed out waiting for task ${taskId} to reach ${status}; current=${task?.status ?? "missing"}`);
 }

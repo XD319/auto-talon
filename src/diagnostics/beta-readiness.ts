@@ -162,7 +162,7 @@ async function verifyApprovalDenyPath(): Promise<{
       if (toolMessages.length > 0) {
         return {
           kind: "final",
-          message: "unexpected follow-up after denial",
+          message: "approval denial was handled as a recoverable tool result",
           usage: {
             inputTokens: 4,
             outputTokens: 2
@@ -220,12 +220,18 @@ async function verifyApprovalDenyPath(): Promise<{
           (event) =>
             event.eventType === "approval_resolved" && event.payload.status === "denied"
         ) &&
+        trace.some(
+          (event) =>
+            event.eventType === "tool_call_failed" && event.payload.errorCode === "approval_denied"
+        ) &&
         audit.some(
           (entry) =>
             entry.action === "approval_resolved" && entry.outcome === "denied"
         ),
       errorCode: denied.task.errorCode,
-      ok: denied.task.status === "failed" && denied.task.errorCode === "approval_denied",
+      ok:
+        denied.task.status === "succeeded" &&
+        denied.output?.includes("recoverable tool result") === true,
       restrictedMemoryLeakDetected: recallEvents.some((event) =>
         event.payload.entries.some(
           (entry) => entry.privacyLevel === "restricted" && entry.selected
