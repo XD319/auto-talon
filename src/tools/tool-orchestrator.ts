@@ -64,10 +64,16 @@ export interface ToolExecutionClarifyRequiredOutcome {
   toolCall: ToolCallRecord;
 }
 
+export interface ToolExecutionClearedOutcome {
+  kind: "cleared";
+  toolCall: ToolCallRecord;
+}
+
 export type ToolExecutionOutcome =
   | ToolExecutionCompletedOutcome
   | ToolExecutionApprovalRequiredOutcome
-  | ToolExecutionClarifyRequiredOutcome;
+  | ToolExecutionClarifyRequiredOutcome
+  | ToolExecutionClearedOutcome;
 
 export class ToolOrchestrator {
   private readonly tools = new Map<string, ToolDefinition>();
@@ -412,6 +418,13 @@ export class ToolOrchestrator {
         context,
         prepared.preparedInput as PreparedAskUserInput
       );
+    }
+
+    if (context.governanceOnly === true) {
+      return {
+        kind: "cleared",
+        toolCall
+      };
     }
 
     toolCall = this.dependencies.toolCallRepository.update(toolCall.toolCallId, {

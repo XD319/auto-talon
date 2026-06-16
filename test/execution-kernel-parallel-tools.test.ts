@@ -233,9 +233,11 @@ describe("execution kernel parallel read tools", () => {
 
       expect(result.error).toBeUndefined();
       expect(result.output).toContain("All files read.");
-      expect(executeSpy.mock.calls.filter(([request]) => request.toolName === "read_file")).toHaveLength(
-        3
-      );
+      expect(
+        executeSpy.mock.calls.filter(
+          ([request, context]) => request.toolName === "read_file" && context.governanceOnly !== true
+        )
+      ).toHaveLength(3);
       expect(maxConcurrentExecutions).toBeGreaterThan(1);
 
       const details = handle.service.showTask(result.task.taskId);

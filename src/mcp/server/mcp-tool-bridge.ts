@@ -76,6 +76,15 @@ export class McpToolBridge {
       };
     }
 
+    if (outcome.kind === "cleared") {
+      return {
+        content: {
+          message: `Tool ${input.name} passed governance checks but did not execute in this context.`
+        },
+        status: "completed"
+      };
+    }
+
     if (!outcome.result.success) {
       return {
         content: {

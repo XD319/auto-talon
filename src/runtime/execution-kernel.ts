@@ -1175,52 +1175,19 @@ export class ExecutionKernel {
           toolCallIndex += 1;
         }
 
-        const batchInvocations = await Promise.all(
-          batchCalls.map((toolCall) => this.invokeToolCall(state, task, iteration, toolCall))
+        const batchResult = await this.executeParallelToolBatch(
+          state,
+          messages,
+          pendingToolCalls,
+          batchCalls,
+          batchStartIndex,
+          task,
+          iteration
         );
-
-        for (let batchOffset = 0; batchOffset < batchInvocations.length; batchOffset += 1) {
-          const invocation = batchInvocations[batchOffset];
-          if (invocation === undefined) {
-            continue;
-          }
-          const paused = this.tryPauseToolExecution(
-            state,
-            messages,
-            pendingToolCalls,
-            batchStartIndex + batchOffset,
-            task,
-            iteration,
-            invocation
-          );
-          if (paused !== null) {
-            for (let priorOffset = 0; priorOffset < batchOffset; priorOffset += 1) {
-              const priorInvocation = batchInvocations[priorOffset];
-              if (priorInvocation === undefined) {
-                continue;
-              }
-              this.applyCompletedToolCallOutcome(
-                state,
-                messages,
-                task,
-                iteration,
-                priorInvocation.toolCall,
-                priorInvocation.outcome
-              );
-              toolCallCount += 1;
-            }
-            return paused;
-          }
-          this.applyCompletedToolCallOutcome(
-            state,
-            messages,
-            task,
-            iteration,
-            invocation.toolCall,
-            invocation.outcome
-          );
-          toolCallCount += 1;
+        if (batchResult.kind === "paused") {
+          return batchResult.result;
         }
+        toolCallCount += batchResult.toolCallCount;
       }
 
       pendingToolCalls = [];
@@ -1468,11 +1435,17 @@ export class ExecutionKernel {
         task,
         tokenBudget: state.tokenBudget
       });
-    } catch {
-      throw new AppError({
-        code: "max_rounds_exceeded",
-        message: `Task exceeded ${state.maxIterations} iterations.`
-      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new AppError({
+          code: "interrupt",
+          message: error.message
+        });
+      }
+      throw toAppError(error);
     }
     state.managedAbortController.touchActivity("no_tools_final_summary");
 
@@ -2010,6 +1983,163 @@ export class ExecutionKernel {
       taskId: task.taskId,
       sessionId: task.sessionId
     });
+  }
+
+  private async executeParallelToolBatch(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    pendingToolCalls: ProviderToolCall[],
+    batchCalls: ProviderToolCall[],
+    batchStartIndex: number,
+    task: TaskRecord,
+    iteration: number
+  ): Promise<{ kind: "done"; toolCallCount: number } | { kind: "paused"; result: RuntimeRunResult }> {
+    const clearedCalls: ProviderToolCall[] = [];
+    const preflightOutcomes: Array<{ outcome: ToolExecutionOutcome; toolCall: ProviderToolCall }> = [];
+
+    for (let batchOffset = 0; batchOffset < batchCalls.length; batchOffset += 1) {
+      const toolCall = batchCalls[batchOffset];
+      if (toolCall === undefined) {
+        continue;
+      }
+      const invocation = await this.preflightToolCall(state, task, iteration, toolCall);
+      const paused = this.tryPauseToolExecution(
+        state,
+        messages,
+        pendingToolCalls,
+        batchStartIndex + batchOffset,
+        task,
+        iteration,
+        invocation
+      );
+      if (paused !== null) {
+        for (const prior of preflightOutcomes) {
+          if (prior.outcome.kind === "completed") {
+            this.applyCompletedToolCallOutcome(
+              state,
+              messages,
+              task,
+              iteration,
+              prior.toolCall,
+              prior.outcome
+            );
+          }
+        }
+        return { kind: "paused", result: paused };
+      }
+      if (invocation.outcome.kind === "completed") {
+        this.applyCompletedToolCallOutcome(
+          state,
+          messages,
+          task,
+          iteration,
+          invocation.toolCall,
+          invocation.outcome
+        );
+        preflightOutcomes.push(invocation);
+        continue;
+      }
+      if (invocation.outcome.kind === "cleared") {
+        clearedCalls.push(toolCall);
+        continue;
+      }
+    }
+
+    if (clearedCalls.length === 0) {
+      return { kind: "done", toolCallCount: preflightOutcomes.length };
+    }
+
+    const batchInvocations = await Promise.all(
+      clearedCalls.map((toolCall) => this.invokeToolCall(state, task, iteration, toolCall))
+    );
+
+    let toolCallCount = preflightOutcomes.length;
+    for (let batchOffset = 0; batchOffset < batchInvocations.length; batchOffset += 1) {
+      const invocation = batchInvocations[batchOffset];
+      if (invocation === undefined) {
+        continue;
+      }
+      const paused = this.tryPauseToolExecution(
+        state,
+        messages,
+        pendingToolCalls,
+        batchStartIndex + clearedCalls.findIndex((call) => call.toolCallId === invocation.toolCall.toolCallId),
+        task,
+        iteration,
+        invocation
+      );
+      if (paused !== null) {
+        for (let priorOffset = 0; priorOffset < batchOffset; priorOffset += 1) {
+          const priorInvocation = batchInvocations[priorOffset];
+          if (priorInvocation === undefined) {
+            continue;
+          }
+          this.applyCompletedToolCallOutcome(
+            state,
+            messages,
+            task,
+            iteration,
+            priorInvocation.toolCall,
+            priorInvocation.outcome
+          );
+          toolCallCount += 1;
+        }
+        return { kind: "paused", result: paused };
+      }
+      this.applyCompletedToolCallOutcome(
+        state,
+        messages,
+        task,
+        iteration,
+        invocation.toolCall,
+        invocation.outcome
+      );
+      toolCallCount += 1;
+    }
+
+    return { kind: "done", toolCallCount };
+  }
+
+  private async preflightToolCall(
+    state: ExecutionLoopState,
+    task: TaskRecord,
+    iteration: number,
+    toolCall: ProviderToolCall
+  ): Promise<{ outcome: ToolExecutionOutcome; toolCall: ProviderToolCall }> {
+    emitTaskEvent(state.onTaskEvent, {
+      iteration,
+      kind: "tool",
+      status: "started",
+      taskId: task.taskId,
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName
+    });
+    state.managedAbortController.touchActivity("tool_call_preflight");
+
+    const outcome = await this.dependencies.toolOrchestrator.execute(
+      {
+        input: toolCall.input,
+        iteration,
+        reason: toolCall.reason,
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      },
+      {
+        agentProfileId: task.agentProfileId,
+        cwd: state.cwd,
+        governanceOnly: true,
+        iteration,
+        signal: state.managedAbortController.abortController.signal,
+        taskId: task.taskId,
+        taskMetadata: buildToolTaskMetadata(task),
+        userId: task.requesterUserId,
+        workspaceRoot: this.dependencies.workspaceRoot
+      }
+    );
+    state.managedAbortController.touchActivity(`tool_call_preflight_${outcome.kind}`);
+
+    return { outcome, toolCall };
   }
 
   private async invokeToolCall(

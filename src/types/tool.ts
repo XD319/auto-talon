@@ -84,6 +84,8 @@ export interface ToolExecutionContext {
   agentProfileId: AgentProfileId;
   taskMetadata?: JsonObject;
   signal: AbortSignal;
+  /** When true, run policy/approval checks only and return `cleared` instead of executing. */
+  governanceOnly?: boolean;
 }
 
 export interface ToolGovernanceDescriptor {
