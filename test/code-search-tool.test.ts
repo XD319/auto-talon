@@ -201,6 +201,79 @@ describe("CodeSearchTool", () => {
       expect.objectContaining({ relativePath: "src/z-target.ts" })
     ]);
   });
+
+  it("returns matching files in files mode", async () => {
+    const root = await createTempDir("auto-talon-code-search-");
+    await fs.mkdir(join(root, "src"), { recursive: true });
+    await fs.writeFile(join(root, "src", "content-hit.ts"), "const sharedNeedle = true;\n", "utf8");
+    await fs.writeFile(join(root, "src", "name-sharedNeedle.ts"), "const other = true;\n", "utf8");
+    await fs.writeFile(join(root, "src", "miss.ts"), "const other = true;\n", "utf8");
+    const tool = new CodeSearchTool(createSandbox(root), {
+      runRgFiles: () => Promise.resolve(null)
+    });
+
+    const prepared = tool.prepare(
+      {
+        maxResults: 1,
+        mode: "files",
+        query: "sharedNeedle",
+        searchFilenames: true
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("Expected files mode to succeed.");
+    }
+    const output = result.output as {
+      fileCount: number;
+      files: Array<{ relativePath: string }>;
+      truncated: boolean;
+    };
+    expect(output.fileCount).toBe(1);
+    expect(output.truncated).toBe(true);
+    expect(output.files.map((file) => file.relativePath)).toEqual([
+      "src/content-hit.ts"
+    ]);
+  });
+
+  it("returns total and per-file counts in count mode", async () => {
+    const root = await createTempDir("auto-talon-code-search-");
+    await fs.mkdir(join(root, "src"), { recursive: true });
+    await fs.writeFile(join(root, "src", "first.ts"), "needle\nneedle\n", "utf8");
+    await fs.writeFile(join(root, "src", "needle-name.ts"), "needle\n", "utf8");
+    const tool = new CodeSearchTool(createSandbox(root), {
+      runRgFiles: () => Promise.resolve(null)
+    });
+
+    const prepared = tool.prepare(
+      {
+        mode: "count",
+        query: "needle",
+        searchFilenames: true
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("Expected count mode to succeed.");
+    }
+    const output = result.output as {
+      fileCounts: Array<{ count: number; relativePath: string }>;
+      totalMatchCount: number;
+      truncated: boolean;
+    };
+    expect(output.totalMatchCount).toBe(4);
+    expect(output.truncated).toBe(false);
+    expect(output.fileCounts).toEqual([
+      { count: 2, path: join(root, "src", "first.ts"), relativePath: "src/first.ts" },
+      { count: 2, path: join(root, "src", "needle-name.ts"), relativePath: "src/needle-name.ts" }
+    ]);
+  });
 });
 
 function createSandbox(workspaceRoot: string): SandboxService {

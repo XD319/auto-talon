@@ -26,6 +26,7 @@ const codeSearchSchema = z.object({
   includeGlobs: z.array(z.string().min(1)).max(50).default([]),
   maxFileSizeBytes: z.number().int().positive().max(10_000_000).default(1_000_000),
   maxResults: z.number().int().positive().max(200).default(50),
+  mode: z.enum(["matches", "files", "count"]).default("matches"),
   path: z.string().min(1).optional(),
   query: z.string().min(1),
   regex: z.boolean().default(false),
@@ -41,11 +42,14 @@ export interface PreparedCodeSearchInput {
   includeGlobs: string[];
   maxFileSizeBytes: number;
   maxResults: number;
+  mode: CodeSearchMode;
   plan: SandboxFileAccessPlan;
   query: string;
   regex: boolean;
   searchFilenames: boolean;
 }
+
+type CodeSearchMode = "matches" | "files" | "count";
 
 interface CodeSearchMatch extends JsonObject {
   afterContext: string[];
@@ -58,6 +62,12 @@ interface CodeSearchMatch extends JsonObject {
 }
 
 interface FilenameMatch extends JsonObject {
+  path: string;
+  relativePath: string;
+}
+
+interface FileCount extends JsonObject {
+  count: number;
   path: string;
   relativePath: string;
 }
@@ -98,6 +108,7 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
         includeGlobs: parsedInput.includeGlobs,
         maxFileSizeBytes: parsedInput.maxFileSizeBytes,
         maxResults: parsedInput.maxResults,
+        mode: parsedInput.mode,
         plan,
         query: parsedInput.query,
         regex: parsedInput.regex,
@@ -132,41 +143,131 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
     const files = Array.isArray(fileDiscovery) ? fileDiscovery : fileDiscovery.files;
     const matches: CodeSearchMatch[] = [];
     const filenameMatches: FilenameMatch[] = [];
+    const fileCounts = new Map<string, FileCount>();
+    const matchedFiles = new Map<string, string>();
 
     for (const filePath of files) {
-      if (context.signal.aborted || matches.length + filenameMatches.length >= input.maxResults) {
+      if (context.signal.aborted || shouldStopSearch(input, matches, filenameMatches, matchedFiles)) {
         break;
       }
       const relativePath = toRelativePath(context.workspaceRoot, filePath);
       if (input.searchFilenames && matcher.test(relativePath)) {
-        filenameMatches.push({ path: filePath, relativePath });
+        if (input.mode === "matches" && matches.length + filenameMatches.length < input.maxResults) {
+          filenameMatches.push({ path: filePath, relativePath });
+        }
+        addMatchedFile(matchedFiles, relativePath, filePath);
+        incrementFileCount(fileCounts, relativePath, filePath);
         matcher.lastIndex = 0;
       }
       const fileMatches = await searchFile(filePath, relativePath, matcher, input, context.signal);
       for (const match of fileMatches) {
-        matches.push(match);
-        if (matches.length + filenameMatches.length >= input.maxResults) {
+        if (input.mode === "matches" && matches.length + filenameMatches.length < input.maxResults) {
+          matches.push(match);
+        }
+        addMatchedFile(matchedFiles, relativePath, filePath);
+        incrementFileCount(fileCounts, relativePath, filePath);
+        if (shouldStopSearch(input, matches, filenameMatches, matchedFiles)) {
           break;
         }
       }
     }
 
+    const modeOutput = buildModeOutput(input.mode, {
+      fileCounts: [...fileCounts.values()],
+      filenameMatches,
+      matchedFiles: [...matchedFiles.entries()].map(([relativePath, path]) => ({ path, relativePath })),
+      matches,
+      maxResults: input.maxResults
+    });
+
     return {
       output: {
-        filenameMatches,
-        matchCount: matches.length,
-        matches,
+        ...modeOutput,
         path: input.plan.resolvedPath,
         query: input.query,
         regex: input.regex,
         searchBackend: Array.isArray(fileDiscovery) ? "node" : fileDiscovery.backend,
-        searchedFileCount: files.length,
-        truncated: matches.length + filenameMatches.length >= input.maxResults
+        searchedFileCount: files.length
       },
       success: true,
-      summary: `Found ${matches.length} content matches and ${filenameMatches.length} filename matches for "${input.query}"`
+      summary: summarizeSearchResult(input.mode, input.query, modeOutput)
     };
   }
+}
+
+function shouldStopSearch(
+  input: PreparedCodeSearchInput,
+  matches: CodeSearchMatch[],
+  filenameMatches: FilenameMatch[],
+  matchedFiles: Map<string, string>
+): boolean {
+  if (input.mode === "matches") {
+    return matches.length + filenameMatches.length >= input.maxResults;
+  }
+  return false;
+}
+
+function addMatchedFile(matchedFiles: Map<string, string>, relativePath: string, path: string): void {
+  if (!matchedFiles.has(relativePath)) {
+    matchedFiles.set(relativePath, path);
+  }
+}
+
+function incrementFileCount(fileCounts: Map<string, FileCount>, relativePath: string, path: string): void {
+  const existing = fileCounts.get(relativePath);
+  if (existing === undefined) {
+    fileCounts.set(relativePath, {
+      count: 1,
+      path,
+      relativePath
+    });
+    return;
+  }
+  existing.count += 1;
+}
+
+function buildModeOutput(
+  mode: CodeSearchMode,
+  input: {
+    fileCounts: FileCount[];
+    filenameMatches: FilenameMatch[];
+    matchedFiles: FilenameMatch[];
+    matches: CodeSearchMatch[];
+    maxResults: number;
+  }
+): JsonObject {
+  if (mode === "files") {
+    return {
+      fileCount: Math.min(input.matchedFiles.length, input.maxResults),
+      files: input.matchedFiles.slice(0, input.maxResults),
+      truncated: input.matchedFiles.length > input.maxResults
+    };
+  }
+  if (mode === "count") {
+    return {
+      fileCounts: input.fileCounts.slice(0, input.maxResults),
+      totalMatchCount: input.fileCounts.reduce((total, item) => total + item.count, 0),
+      truncated: input.fileCounts.length > input.maxResults
+    };
+  }
+  return {
+    filenameMatches: input.filenameMatches,
+    matchCount: input.matches.length,
+    matches: input.matches,
+    truncated: input.matches.length + input.filenameMatches.length >= input.maxResults
+  };
+}
+
+function summarizeSearchResult(mode: CodeSearchMode, query: string, output: JsonObject): string {
+  if (mode === "files") {
+    return `Found ${String(output.fileCount)} matching files for "${query}"`;
+  }
+  if (mode === "count") {
+    return `Found ${String(output.totalMatchCount)} total matches for "${query}"`;
+  }
+  const matchCount = typeof output.matchCount === "number" ? output.matchCount : 0;
+  const filenameMatches = Array.isArray(output.filenameMatches) ? output.filenameMatches.length : 0;
+  return `Found ${matchCount} content matches and ${filenameMatches} filename matches for "${query}"`;
 }
 
 async function collectFiles(
@@ -318,6 +419,8 @@ async function searchFile(
   }
   const lines = content.split(/\r?\n/u);
   const matches: CodeSearchMatch[] = [];
+  const maxFileMatches =
+    input.mode === "count" ? Number.POSITIVE_INFINITY : input.mode === "files" ? 1 : input.maxResults;
   for (const [index, line] of lines.entries()) {
     matcher.lastIndex = 0;
     const match = matcher.exec(line);
@@ -333,7 +436,7 @@ async function searchFile(
       path: filePath,
       relativePath
     });
-    if (matches.length >= input.maxResults) {
+    if (matches.length >= maxFileMatches) {
       break;
     }
   }
