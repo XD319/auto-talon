@@ -537,6 +537,98 @@ export class ExecutionKernel {
     }
   }
 
+  public async resumeTaskAfterApprovalFailure(
+    taskId: string,
+    toolCallId: string,
+    options: { onOutputEvent?: (event: RuntimeOutputEvent) => void; signal?: AbortSignal } = {}
+  ): Promise<RuntimeRunResult> {
+    const task = this.dependencies.taskRepository.findById(taskId);
+    if (task === null) {
+      throw new AppError({
+        code: "task_not_found",
+        message: `Task ${taskId} was not found.`
+      });
+    }
+
+    if (task.status !== "waiting_approval") {
+      throw new AppError({
+        code: "task_not_resumable",
+        message: `Task ${taskId} is not waiting for approval.`
+      });
+    }
+
+    const resumeCheckpoint = this.checkpointManager.loadForResume(task);
+    const checkpoint = resumeCheckpoint.checkpoint;
+    const rejectedToolCall = checkpoint.pendingToolCalls.find(
+      (toolCall) => toolCall.toolCallId === toolCallId
+    );
+    if (rejectedToolCall === undefined) {
+      throw new AppError({
+        code: "task_not_resumable",
+        message: `Task ${taskId} checkpoint has no pending tool call ${toolCallId}.`
+      });
+    }
+
+    const runMetadata = this.dependencies.runMetadataRepository.findByTaskId(taskId);
+    if (runMetadata === null) {
+      throw new AppError({
+        code: "task_not_resumable",
+        message: `Task ${taskId} has no run metadata to resume from.`
+      });
+    }
+
+    const managedAbortController = createManagedAbortController(runMetadata.timeoutMs, options.signal);
+    const stopOutputSubscription =
+      options.onOutputEvent === undefined
+        ? null
+        : this.dependencies.outputService.subscribe((event) => {
+            if (event.taskId === taskId) {
+              options.onOutputEvent?.(event);
+            }
+          });
+    let resumedTask = this.dependencies.taskRepository.update(taskId, {
+      status: "running"
+    });
+
+    try {
+      return await this.executeLoop({
+        ...this.createContextLoopFields(),
+        cwd: resumedTask.cwd,
+        costWarnedToolNames: [],
+        completionIntentSeenAt: null,
+        completionVerificationGuardEmitted: false,
+        completionVerificationSatisfied: false,
+        completionVerificationSatisfiedEmitted: false,
+        criticalBudgetPressureEmitted: false,
+        cumulativeToolCallCount: 0,
+        interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
+        managedAbortController,
+        maxIterations: resumedTask.maxIterations,
+        memoryContext: checkpoint.memoryContext,
+        memoryRecall: null,
+        messages: checkpoint.messages,
+        ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
+        pendingToolCalls: [rejectedToolCall],
+        postCompletionVerificationReads: 0,
+        selectedSkillContext: [],
+        silentToolTurns: 0,
+        task: resumedTask,
+        toolCallSignatures: resumeCheckpoint.toolCallSignatures,
+        turnFilteredFragments: [],
+        turnProviderMessages: checkpoint.messages,
+        tokenBudget: resumedTask.tokenBudget,
+        warningBudgetPressureEmitted: false,
+        writeToolSucceeded: resumeCheckpoint.writeToolSucceeded
+      });
+    } catch (error) {
+      resumedTask = this.dependencies.taskRepository.findById(taskId) ?? resumedTask;
+      throw this.finalizeTaskFailure(resumedTask, toAppError(error));
+    } finally {
+      stopOutputSubscription?.();
+      managedAbortController.dispose();
+    }
+  }
+
   public failWaitingApprovalTask(taskId: string, error: AppError): TaskRecord {
     const task = this.dependencies.taskRepository.findById(taskId);
     if (task === null) {

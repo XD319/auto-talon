@@ -352,6 +352,7 @@ const clarifyAnswerSchema = z
 export class AgentApplicationService {
   private readonly scheduleFacade: ScheduleFacade;
   private readonly sessionFacade: SessionFacade;
+  private readonly approvalFailureContinuations = new Map<string, Promise<ApprovalActionResult>>();
 
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {
     this.sessionFacade = new SessionFacade(
@@ -898,6 +899,9 @@ export class AgentApplicationService {
     });
     const existingApproval = this.dependencies.approvalService.findById(parsed.approvalId);
     if (existingApproval !== null && existingApproval.status !== "pending") {
+      if (existingApproval.status === "denied" || existingApproval.status === "timed_out") {
+        return this.resumeApprovalFailureOnce(existingApproval);
+      }
       return this.toCompletedApprovalActionResult(existingApproval);
     }
 
@@ -986,32 +990,53 @@ export class AgentApplicationService {
       }
     }
 
-    this.dependencies.updateToolCall(approval.toolCallId, {
-      errorCode: approval.status === "timed_out" ? "approval_timeout" : "approval_denied",
-      errorMessage:
-        approval.status === "timed_out"
-          ? `Approval ${approval.approvalId} timed out.`
-          : `Approval ${approval.approvalId} was denied.`,
-      finishedAt: new Date().toISOString(),
-      status: approval.status === "timed_out" ? "timed_out" : "denied"
+    return this.resumeApprovalFailureOnce(approval);
+  }
+
+  private resumeApprovalFailureOnce(approval: ApprovalRecord): Promise<ApprovalActionResult> {
+    const existing = this.approvalFailureContinuations.get(approval.approvalId);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const continuation = this.resumeApprovalFailure(approval).finally(() => {
+      this.approvalFailureContinuations.delete(approval.approvalId);
     });
+    this.approvalFailureContinuations.set(approval.approvalId, continuation);
+    return continuation;
+  }
 
-    const failedTask = this.dependencies.executionKernel.failWaitingApprovalTask(
-      approval.taskId,
-      new AppError({
-        code: approval.status === "timed_out" ? "approval_timeout" : "approval_denied",
-        message:
-          approval.status === "timed_out"
-            ? `Approval ${approval.approvalId} timed out.`
-            : `Approval ${approval.approvalId} was denied.`
-      })
-    );
+  private async resumeApprovalFailure(approval: ApprovalRecord): Promise<ApprovalActionResult> {
+    const task = this.dependencies.findTask(approval.taskId);
+    if (task === null || task.status !== "waiting_approval") {
+      return this.toCompletedApprovalActionResult(approval);
+    }
 
-    return {
-      approval,
-      output: null,
-      task: failedTask
-    };
+    try {
+      const result = await this.dependencies.executionKernel.resumeTaskAfterApprovalFailure(
+        approval.taskId,
+        approval.toolCallId
+      );
+      this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
+      return {
+        approval,
+        output: result.output,
+        task: result.task
+      };
+    } catch (error) {
+      const appError = toAppError(error);
+      const currentTask = this.dependencies.findTask(approval.taskId);
+      if (currentTask === null) {
+        throw appError;
+      }
+
+      return {
+        approval,
+        error: appError,
+        output: null,
+        task: currentTask
+      };
+    }
   }
 
   private toCompletedApprovalActionResult(approval: ApprovalRecord): ApprovalActionResult {
@@ -1635,20 +1660,7 @@ export class AgentApplicationService {
         toolCallId: approval.toolCallId
       });
 
-      this.dependencies.updateToolCall(approval.toolCallId, {
-        errorCode: "approval_timeout",
-        errorMessage: `Approval ${approval.approvalId} timed out.`,
-        finishedAt: new Date().toISOString(),
-        status: "timed_out"
-      });
-
-      this.dependencies.executionKernel.failWaitingApprovalTask(
-        approval.taskId,
-        new AppError({
-          code: "approval_timeout",
-          message: `Approval ${approval.approvalId} timed out.`
-        })
-      );
+      void this.resumeApprovalFailureOnce(approval);
     }
 
     for (const prompt of this.dependencies.clarifyService.expirePending()) {
