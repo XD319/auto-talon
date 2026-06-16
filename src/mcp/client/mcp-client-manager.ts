@@ -232,9 +232,18 @@ export class McpClientManager {
     try {
       const init = await handle.initialize();
       const [tools, resources, prompts] = await Promise.all([
-        handle.listTools().catch(() => catalog.tools),
-        handle.listResources().catch(() => catalog.resources),
-        handle.listPrompts().catch(() => catalog.prompts)
+        handle.listTools().catch((error) => {
+          catalog.discoveryError = error instanceof Error ? error.message : String(error);
+          return catalog.tools;
+        }),
+        handle.listResources().catch((error) => {
+          catalog.discoveryError = error instanceof Error ? error.message : String(error);
+          return catalog.resources;
+        }),
+        handle.listPrompts().catch((error) => {
+          catalog.discoveryError = error instanceof Error ? error.message : String(error);
+          return catalog.prompts;
+        })
       ]);
       this.catalogs.set(serverId, {
         discoveryError: null,

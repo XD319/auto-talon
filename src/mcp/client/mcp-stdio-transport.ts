@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:chil
 import { createInterface, type Interface } from "node:readline";
 
 import { AppError } from "../../core/app-error.js";
+import { buildChildEnv } from "../../tools/shell/shell-executor.js";
 import type {
   JsonObject,
   JsonValue,
@@ -205,10 +206,7 @@ export class McpStdioTransport implements McpClientHandle {
     }
     this.child = spawn(this.config.command, this.config.args ?? [], {
       cwd: this.config.cwd,
-      env: {
-        ...process.env,
-        ...this.config.env
-      },
+      env: buildChildEnv(process.env, this.config.env ?? {}),
       stdio: "pipe"
     });
     this.child.on("error", (error) => this.failAll(`Failed to run MCP server ${this.serverId}.`, error));
@@ -279,10 +277,7 @@ export class McpStdioTransport implements McpClientHandle {
     const output = spawnSync(this.config.command, this.config.args ?? [], {
       cwd: this.config.cwd,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        ...this.config.env
-      },
+      env: buildChildEnv(process.env, this.config.env ?? {}),
       input: `${requests.map((item) => JSON.stringify(item)).join("\n")}\n`,
       timeout: startupTimeoutMs(this.config)
     });
