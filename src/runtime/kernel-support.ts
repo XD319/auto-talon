@@ -129,7 +129,7 @@ export function rebuildSignaturesFromMessages(
  * look like the error envelope produced by `toolResultOutputForModel` on failure.
  *
  * Used when resuming a task from an approval/clarification checkpoint so the runtime
- * does not pessimistically treat the new turn as if no write has ever happened 鈥?
+ * does not pessimistically treat the new turn as if no write has ever happened -
  * otherwise `evaluateNoWriteFinal` defers a perfectly valid final response and the
  * next iteration is forced to retry, eventually tripping the `task_incomplete` guard.
  */

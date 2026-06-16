@@ -2097,7 +2097,7 @@ export class ExecutionKernel {
     const duplicateNotice =
       priorCall === null
         ? null
-        : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments 鈥?synthesize from the prior result and answer the user.`;
+        : `NOTE: duplicate tool call. You already invoked ${toolCall.toolName} with identical arguments at iteration ${priorCall.iteration} (call ${priorCall.toolCallId}). Do not call this tool again with the same arguments - synthesize from the prior result and answer the user.`;
     const finishedSummary =
       priorCall === null
         ? `${toolSummary} | ${structuredOutputSummary}`

@@ -11,6 +11,7 @@ import {
   validateNodeVersionPolicy,
   validatePackageMetadata,
   validatePackContents,
+  validatePackagedTextEncoding,
   validateReleaseRepository
 } from "../src/diagnostics/index.js";
 import { RUNTIME_SCHEMA_VERSION } from "../src/storage/migrations.js";
@@ -151,6 +152,34 @@ describe("release checklist helpers", () => {
 
     expect(result).toEqual({
       details: "7 release files",
+      ok: true
+    });
+  });
+
+  it("rejects mojibake residue in packaged text files", () => {
+    const workspace = createTempDir("auto-talon-release-text-");
+    mkdirSync(join(workspace, "dist", "cli"), { recursive: true });
+    const mojibake = `${String.fromCharCode(0x9225)}?`;
+    writeFileSync(
+      join(workspace, "dist", "cli", "bin.js"),
+      `console.error("same arguments ${mojibake}synthesize");\n`,
+      "utf8"
+    );
+
+    const result = validatePackagedTextEncoding(workspace, ["dist/cli/bin.js"]);
+
+    expect(result.ok).toBe(false);
+    expect(result.details).toContain("dist/cli/bin.js:1:");
+    expect(result.details).toContain("CJK mojibake marker");
+  });
+
+  it("accepts clean packaged text files", () => {
+    const workspace = createTempDir("auto-talon-release-text-clean-");
+    mkdirSync(join(workspace, "dist", "cli"), { recursive: true });
+    writeFileSync(join(workspace, "dist", "cli", "bin.js"), "console.log('ok');\n", "utf8");
+
+    expect(validatePackagedTextEncoding(workspace, ["dist/cli/bin.js", "assets/logo.png"])).toEqual({
+      details: "1 packaged text files scanned",
       ok: true
     });
   });

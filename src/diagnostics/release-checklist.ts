@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { runEvalReport } from "./eval.js";
@@ -54,6 +54,9 @@ export async function runReleaseChecklist(
   const packContents = pack.ok
     ? validatePackContents(pack.files)
     : { ok: false, details: pack.details };
+  const packagedTextEncoding = pack.ok
+    ? validatePackagedTextEncoding(cwd, pack.files)
+    : { ok: false, details: pack.details };
 
   const items: ReleaseChecklistItem[] = [
     toItem("release-repository", "Release check runs inside the auto-talon repository", true, repository.details),
@@ -89,7 +92,13 @@ export async function runReleaseChecklist(
     toItem("node-version", "Node.js minimum version is consistent", nodeVersion.ok, nodeVersion.details),
     toItem("lockfiles", "pnpm is the only repository lockfile", lockfiles.ok, lockfiles.details),
     toItem("package-metadata", "Public npm package metadata is complete", packageMetadata.ok, packageMetadata.details),
-    toItem("pack-contents", "npm package includes only release assets", packContents.ok, packContents.details)
+    toItem("pack-contents", "npm package includes only release assets", packContents.ok, packContents.details),
+    toItem(
+      "packaged-text-encoding",
+      "Packaged text has no mojibake residue",
+      packagedTextEncoding.ok,
+      packagedTextEncoding.details
+    )
   ];
 
   return {
@@ -253,6 +262,123 @@ export function validatePackContents(files: string[]): { details: string; ok: bo
     details: issues.length === 0 ? `${files.length} release files` : issues.join("; "),
     ok: issues.length === 0
   };
+}
+
+export function validatePackagedTextEncoding(cwd: string, files: string[]): { details: string; ok: boolean } {
+  const findings: string[] = [];
+  let scannedCount = 0;
+
+  for (const file of files) {
+    if (!isScannableReleaseTextFile(file)) {
+      continue;
+    }
+    const filePath = join(cwd, file);
+    if (!existsSync(filePath)) {
+      findings.push(`${file}: missing package text file`);
+      continue;
+    }
+    scannedCount += 1;
+    const contents = readFileSync(filePath, "utf8");
+    const residue = findEncodingResidue(contents);
+    if (residue !== null) {
+      findings.push(`${file}:${residue.line}:${residue.column} ${residue.label}`);
+    }
+  }
+
+  if (findings.length === 0) {
+    return {
+      details: `${scannedCount} packaged text files scanned`,
+      ok: true
+    };
+  }
+
+  const preview = findings.slice(0, 8).join("; ");
+  return {
+    details: `encoding residue found: ${preview}${findings.length > 8 ? "; ..." : ""}`,
+    ok: false
+  };
+}
+
+const releaseTextExtensions = new Set([
+  ".css",
+  ".cjs",
+  ".html",
+  ".js",
+  ".jsx",
+  ".json",
+  ".map",
+  ".md",
+  ".mjs",
+  ".ps1",
+  ".sh",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yaml",
+  ".yml"
+]);
+
+const releaseTextFilenames = new Set([
+  "changelog",
+  "license",
+  "notice",
+  "readme",
+  "security"
+]);
+
+const encodingResidueRules = [
+  { label: "unicode replacement character", token: String.fromCharCode(0xfffd) },
+  { label: "CJK mojibake marker", token: String.fromCharCode(0x9225) },
+  { label: "CJK replacement mojibake marker", token: String.fromCharCode(0x951f) },
+  { label: "Windows-1252 punctuation mojibake marker", token: String.fromCharCode(0x00e2, 0x20ac) },
+  { label: "Latin-1 mojibake marker", token: String.fromCharCode(0x00c2) },
+  { label: "Latin-1 mojibake marker", token: String.fromCharCode(0x00c3) }
+] as const;
+
+function isScannableReleaseTextFile(path: string): boolean {
+  const normalized = path.replace(/\\/gu, "/");
+  const filename = normalized.slice(normalized.lastIndexOf("/") + 1).toLowerCase();
+  const extension = extname(filename);
+  if (releaseTextExtensions.has(extension)) {
+    return true;
+  }
+  return releaseTextFilenames.has(filename);
+}
+
+function findEncodingResidue(contents: string): { column: number; label: string; line: number } | null {
+  let firstMatch: { index: number; label: string } | null = null;
+  for (const rule of encodingResidueRules) {
+    const index = contents.indexOf(rule.token);
+    if (index < 0) {
+      continue;
+    }
+    if (firstMatch === null || index < firstMatch.index) {
+      firstMatch = { index, label: rule.label };
+    }
+  }
+  if (firstMatch === null) {
+    return null;
+  }
+
+  const location = locateTextIndex(contents, firstMatch.index);
+  return {
+    ...location,
+    label: firstMatch.label
+  };
+}
+
+function locateTextIndex(contents: string, index: number): { column: number; line: number } {
+  let line = 1;
+  let column = 1;
+  for (let cursor = 0; cursor < index; cursor += 1) {
+    if (contents.charCodeAt(cursor) === 10) {
+      line += 1;
+      column = 1;
+    } else {
+      column += 1;
+    }
+  }
+  return { column, line };
 }
 
 function runPackDryRun(cwd: string): { details: string; files: string[]; ok: boolean } {
