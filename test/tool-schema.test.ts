@@ -106,4 +106,14 @@ describe("getToolInputSchemaDescriptor", () => {
       expect(() => getToolInputSchemaDescriptor(tool), name).not.toThrow();
     }
   });
+
+  it("exposes code search mode options", () => {
+    const sandbox = new SandboxService({ workspaceRoot: process.cwd() });
+    const descriptor = getToolInputSchemaDescriptor(new CodeSearchTool(sandbox));
+
+    expect(descriptor.properties?.mode).toEqual({
+      enum: ["matches", "files", "count"],
+      type: "string"
+    });
+  });
 });

@@ -84,7 +84,7 @@ export interface CodeSearchToolOptions {
 export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, PreparedCodeSearchInput> {
   public readonly name = "search_files";
   public readonly description =
-    "Search workspace code with literal or regex matching, optional glob filters, filename search, and context lines.";
+    "Search workspace files with grep-style literal or regex matching. Use mode=matches for line context, mode=files to list matching files, and mode=count to count matches per file.";
   public readonly capability = "filesystem.read" as const;
   public readonly riskLevel = "low" as const;
   public readonly privacyLevel = "internal" as const;

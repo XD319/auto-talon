@@ -84,3 +84,9 @@ Schedule notes:
 - Agent `cronjob` tool manages schedules in chat; scheduled runs cannot nest further schedule edits unless you opt in.
 - Scheduled agent runs are scanned for prompt-injection patterns before execution; set `metadata.allowDelegate: true` to allow `delegate_task` during a scheduled run.
 - Feishu `/schedule create cron <expr> | <prompt>` and `/schedule edit <id> cron <expr>` expose native cron in chat; unsupported timing or missing toolsets fail explicitly instead of falling back to another execution path.
+
+Search tool notes:
+
+- The runtime `search_files` tool is a grep-style workspace search tool. It supports literal or regex queries, include/exclude globs, filename matching, and result modes: `matches`, `files`, and `count`.
+- `matches` returns line hits with context, `files` lists matching files, and `count` reports per-file and total match counts.
+- `search_files` uses ripgrep for content matches when available, with a Node implementation as the only compatibility path. It does not add semantic search, vector recall, or LSP/code-intelligence behavior.
