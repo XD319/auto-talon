@@ -4,6 +4,7 @@ import { Command, InvalidArgumentError } from "commander";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
+import { assertSafeHttpBind } from "../core/http-auth.js";
 import {
   createGatewayApplication,
   createGatewayRuntime,
@@ -378,12 +379,17 @@ export async function main(argv = process.argv): Promise<void> {
     .command("serve")
     .option("--host <host>", "Bind host", "127.0.0.1")
     .option("--port <port>", "Bind port", "7080")
-    .action(async (commandOptions: { host?: string; port?: string }) => {
-      const handle = createApplication(process.cwd(), { scheduler: { autoStart: true } });
+    .option("--insecure", "Allow binding to non-loopback hosts without HTTP token")
+    .action(async (commandOptions: { host?: string; insecure?: boolean; port?: string }) => {
+      const cwd = process.cwd();
+      const host = commandOptions.host ?? "127.0.0.1";
+      assertSafeHttpBind({ cwd, host, insecure: commandOptions.insecure === true });
+      const handle = createApplication(cwd, { scheduler: { autoStart: true } });
       const port = Number.parseInt(commandOptions.port ?? "7080", 10);
       try {
         const started = await startSessionApiServer({
-          host: commandOptions.host ?? "127.0.0.1",
+          cwd,
+          host,
           port: Number.isFinite(port) ? port : 7080,
           service: handle.service
         });
@@ -2251,7 +2257,13 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--host <host>", "Host to bind", "127.0.0.1")
     .option("--port <port>", "Port to bind", parsePortOption("--port"), 7070)
-    .action(async (commandOptions: SandboxCommandOptions & { host: string; port: number }) => {
+    .option("--insecure", "Allow binding to non-loopback hosts without HTTP token")
+    .action(async (commandOptions: SandboxCommandOptions & { host: string; insecure?: boolean; port: number }) => {
+      assertSafeHttpBind({
+        cwd: commandOptions.cwd,
+        host: commandOptions.host,
+        insecure: commandOptions.insecure === true
+      });
       const gatewayApp = createGatewayApplication(commandOptions.cwd, {
         sandbox: resolveSandboxCliOptions(commandOptions)
       });

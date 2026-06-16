@@ -1,6 +1,7 @@
 import type { AppRuntimeHandle, CreateApplicationOptions } from "../runtime/index.js";
 import { createApplication } from "../runtime/index.js";
 
+import { createGatewayAuthHook } from "../core/http-auth.js";
 import type { GatewayAdapterPlugin } from "./plugins.js";
 import type { LocalWebhookAdapter } from "./local-webhook-adapter.js";
 import { GatewayManager } from "./gateway-manager.js";
@@ -17,6 +18,7 @@ export function createGatewayRuntime(runtimeHandle: AppRuntimeHandle): GatewayRu
     createRunOptions: runtimeHandle.infrastructure.createRunOptions,
     defaultCwd: runtimeHandle.config.workspaceRoot,
     guard: new GatewayGuard({
+      authHook: createGatewayAuthHook(runtimeHandle.config.workspaceRoot),
       cwd: runtimeHandle.config.workspaceRoot
     }),
     identityMapper: new DefaultGatewayIdentityMapper(),
@@ -76,8 +78,8 @@ export async function startLocalWebhookGateway(
 ): Promise<LocalWebhookGatewayHandle> {
   const adapterOptions =
     options.host === undefined
-      ? { port: options.port }
-      : { host: options.host, port: options.port };
+      ? { cwd: runtimeHandle.config.workspaceRoot, port: options.port }
+      : { cwd: runtimeHandle.config.workspaceRoot, host: options.host, port: options.port };
   const started = await startGatewayPlugin(
     runtimeHandle,
     createLocalWebhookPlugin(adapterOptions),

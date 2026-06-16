@@ -1,5 +1,6 @@
 import { readScheduleWebhookUrl } from "../scheduler/schedule-delivery.js";
 import type { ScheduleRecord } from "../../types/index.js";
+import { validateOutboundUrl } from "../../core/outbound-url.js";
 
 export interface ScheduleWebhookPayload {
   category: "task_completed" | "task_failed";
@@ -27,6 +28,18 @@ export class WebhookDeliveryService {
   ): Promise<void> {
     const webhookUrl = readScheduleWebhookUrl(schedule);
     if (webhookUrl === null) {
+      return;
+    }
+    try {
+      validateOutboundUrl(webhookUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Schedule webhook URL was blocked";
+      this.dependencies.onFailure?.({
+        errorMessage: message,
+        runId: payload.runId,
+        scheduleId: payload.scheduleId,
+        webhookUrl
+      });
       return;
     }
     const fetchImpl = this.dependencies.fetchImpl ?? fetch;

@@ -12,12 +12,14 @@ import type {
   JsonObject,
   JsonValue
 } from "../types/index.js";
+import { requireHttpAuth } from "../core/http-auth.js";
 
 const MAX_REQUEST_BODY_BYTES = 256_000;
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
 
 export interface LocalWebhookAdapterOptions {
   adapterId?: string;
+  cwd?: string;
   host?: string;
   port: number;
 }
@@ -124,6 +126,13 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
       this.respondJson(response, 503, {
         error: "adapter_not_ready"
       });
+      return;
+    }
+
+    const cwd = this.options.cwd ?? process.cwd();
+    const auth = requireHttpAuth(request, cwd);
+    if (!auth.authorized) {
+      this.respondJson(response, 401, { error: "unauthorized", message: auth.message });
       return;
     }
 

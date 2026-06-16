@@ -12,6 +12,7 @@ export interface GatewayAdapterPlugin {
 
 export function createLocalWebhookPlugin(options: {
   adapterId?: string;
+  cwd?: string;
   host?: string;
   port: number;
 }): GatewayAdapterPlugin {

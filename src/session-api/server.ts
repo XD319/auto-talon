@@ -1,17 +1,20 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
 
+import { requireHttpAuth } from "../core/http-auth.js";
 import type { AgentApplicationService } from "../runtime/application-service.js";
 
 export interface SessionApiServerOptions {
+  cwd?: string;
   host?: string;
   port: number;
   service: AgentApplicationService;
 }
 
 export function createSessionApiServer(options: SessionApiServerOptions) {
+  const cwd = options.cwd ?? process.cwd();
   return createServer((request, response) => {
-    void handleRequest(options.service, request, response);
+    void handleRequest(options.service, cwd, request, response);
   });
 }
 
@@ -39,10 +42,17 @@ export async function startSessionApiServer(options: SessionApiServerOptions): P
 
 async function handleRequest(
   service: AgentApplicationService,
+  cwd: string,
   request: IncomingMessage,
   response: ServerResponse
 ): Promise<void> {
   try {
+    const auth = requireHttpAuth(request, cwd);
+    if (!auth.authorized) {
+      writeJson(response, 401, { error: "unauthorized", message: auth.message });
+      return;
+    }
+
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "GET" && url.pathname === "/v1/sessions") {
       const ownerUserId = url.searchParams.get("ownerUserId") ?? undefined;
@@ -93,6 +103,10 @@ async function handleRequest(
     if (request.method === "POST" && continueMatch !== null) {
       const sessionId = decodeURIComponent(continueMatch[1] ?? "");
       const body = await readJsonBody(request);
+      if (body === null) {
+        writeJson(response, 400, { error: "invalid_json" });
+        return;
+      }
       const input = typeof body.input === "string" ? body.input : "";
       if (input.trim().length === 0) {
         writeJson(response, 400, { error: "input_required" });
@@ -121,7 +135,7 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
   response.end(JSON.stringify(payload));
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     const value: unknown = chunk;
@@ -139,6 +153,6 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
   } catch {
-    return {};
+    return null;
   }
 }

@@ -87,6 +87,15 @@ describe("session HTTP API", () => {
       const searchBody = (await searchResponse.json()) as { hits: unknown[] };
       expect(searchBody.hits.length).toBeGreaterThan(0);
 
+      const invalidJsonResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/continue`, {
+        body: "not-json",
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      });
+      expect(invalidJsonResponse.status).toBe(400);
+      const invalidBody = (await invalidJsonResponse.json()) as { error: string };
+      expect(invalidBody.error).toBe("invalid_json");
+
       const continueResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/continue`, {
         body: JSON.stringify({ input: "follow up" }),
         headers: { "content-type": "application/json" },

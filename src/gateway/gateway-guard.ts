@@ -38,6 +38,7 @@ export class GatewayGuard {
   private readonly authHook: GatewayGuardDependencies["authHook"];
   private readonly now: () => number;
   private readonly buckets = new Map<string, BucketState>();
+  private readonly bucketTtlMs = 3_600_000;
 
   public constructor(dependencies: GatewayGuardDependencies) {
     const config = loadGatewayConfig(dependencies.cwd);
@@ -92,6 +93,7 @@ export class GatewayGuard {
   }
 
   private consume(key: string): boolean {
+    this.pruneBuckets();
     const now = this.now();
     const existing = this.buckets.get(key);
     if (existing === undefined) {
@@ -108,6 +110,15 @@ export class GatewayGuard {
 
     this.buckets.set(key, { tokens: replenished - 1, updatedAtMs: now });
     return true;
+  }
+
+  private pruneBuckets(): void {
+    const now = this.now();
+    for (const [key, bucket] of this.buckets.entries()) {
+      if (now - bucket.updatedAtMs > this.bucketTtlMs) {
+        this.buckets.delete(key);
+      }
+    }
   }
 }
 
@@ -126,8 +137,26 @@ function loadGatewayConfig(cwd: string): {
   }
 
   const raw = readFileSync(configPath, "utf8").trim();
-  const parsed: unknown = raw.length === 0 ? {} : JSON.parse(raw);
-  const config = gatewayConfigSchema.parse(parsed);
+  let parsed: unknown = {};
+  if (raw.length > 0) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return {
+        allowlist: [],
+        denylist: [],
+        rateLimit: { burst: 20, refillPerSecond: 5 }
+      };
+    }
+  }
+  const result = gatewayConfigSchema.safeParse(parsed);
+  const config = result.success
+    ? result.data
+    : {
+        allowlist: [],
+        denylist: [],
+        rateLimit: { burst: 20, refillPerSecond: 5 }
+      };
 
   return {
     allowlist: (config.allowlist ?? []).map((value) => value.trim()).filter(Boolean),
