@@ -41,6 +41,7 @@ export interface SchedulerServiceDependencies {
 export class SchedulerService {
   private timer: NodeJS.Timeout | null = null;
   private tickInProgress = false;
+  private pendingRetick = false;
 
   public constructor(private readonly dependencies: SchedulerServiceDependencies) {}
 
@@ -80,16 +81,20 @@ export class SchedulerService {
 
   public async tick(now = new Date()): Promise<void> {
     if (this.tickInProgress) {
+      this.pendingRetick = true;
       return;
     }
     this.tickInProgress = true;
     try {
-      const nowIso = now.toISOString();
-      const dueSchedules = this.dependencies.scheduleRepository.findDue({ now: nowIso, limit: 25 });
-      for (const schedule of dueSchedules) {
-        this.enqueueScheduledRun(schedule, now);
-      }
-      await this.dependencies.jobRunner.drain(nowIso);
+      do {
+        this.pendingRetick = false;
+        const nowIso = now.toISOString();
+        const dueSchedules = this.dependencies.scheduleRepository.findDue({ now: nowIso, limit: 25 });
+        for (const schedule of dueSchedules) {
+          this.enqueueScheduledRun(schedule, now);
+        }
+        await this.dependencies.jobRunner.drain(nowIso);
+      } while (this.pendingRetick);
     } finally {
       this.tickInProgress = false;
     }

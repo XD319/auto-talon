@@ -20,6 +20,7 @@ export interface TerminalSessionSnapshot {
 }
 
 interface TerminalSession extends TerminalSessionSnapshot {
+  closeTimer: ReturnType<typeof setTimeout> | null;
   process: ChildProcessWithoutNullStreams;
   stderrBuffer: string;
   stdoutBuffer: string;
@@ -46,6 +47,7 @@ export class TerminalSessionManager {
     const session: TerminalSession = {
       command: request.command,
       cwd: request.cwd,
+      closeTimer: null,
       exitCode: null,
       process: child,
       running: true,
@@ -62,17 +64,11 @@ export class TerminalSessionManager {
       session.stderrBuffer = appendWithLimit(session.stderrBuffer, chunk.toString("utf8"), this.maxBufferedChars);
     });
     child.once("close", (exitCode) => {
-      setTimeout(() => {
-        session.exitCode = exitCode ?? -1;
-        session.running = false;
-      }, 25);
+      this.markSessionStopped(session, exitCode ?? -1);
     });
     child.once("error", (error) => {
-      setTimeout(() => {
-        session.stderrBuffer = appendWithLimit(session.stderrBuffer, error.message, this.maxBufferedChars);
-        session.exitCode = -1;
-        session.running = false;
-      }, 25);
+      session.stderrBuffer = appendWithLimit(session.stderrBuffer, error.message, this.maxBufferedChars);
+      this.markSessionStopped(session, -1);
     });
 
     this.sessions.set(sessionId, session);
@@ -108,9 +104,24 @@ export class TerminalSessionManager {
     const session = this.requireSession(sessionId);
     if (session.running) {
       session.process.kill();
-      session.running = false;
+      this.markSessionStopped(session, session.exitCode ?? -1);
     }
-    return snapshot(session);
+    const snapshotValue = snapshot(session);
+    this.removeSession(sessionId);
+    return snapshotValue;
+  }
+
+  private markSessionStopped(session: TerminalSession, exitCode: number): void {
+    if (session.closeTimer !== null) {
+      clearTimeout(session.closeTimer);
+      session.closeTimer = null;
+    }
+    session.exitCode = exitCode;
+    session.running = false;
+  }
+
+  private removeSession(sessionId: string): void {
+    this.sessions.delete(sessionId);
   }
 
   private requireSession(sessionId: string): TerminalSession {

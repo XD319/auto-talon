@@ -168,6 +168,13 @@ export async function runStatusLineCommand(
       });
     });
 
+    child.stdin.on("error", () => {
+      finish({
+        error: "status line command stdin failed",
+        ok: false,
+        text: null
+      });
+    });
     child.stdin.write(JSON.stringify(payload));
     child.stdin.end();
   });

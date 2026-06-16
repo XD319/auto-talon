@@ -10,6 +10,7 @@ export interface NoAgentRunResult {
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_CHARS = 65_536;
+const KILL_GRACE_MS = 5_000;
 
 export function runNoAgentCommand(
   config: ScheduleNoAgentConfig,
@@ -17,24 +18,32 @@ export function runNoAgentCommand(
   timeoutMs = DEFAULT_TIMEOUT_MS
 ): Promise<NoAgentRunResult> {
   return new Promise((resolve) => {
-    const child = spawn(config.command, {
+    const parsed = parseCommand(config.command);
+    const child = spawn(parsed.executable, parsed.args, {
       cwd: config.cwd ?? defaultCwd,
-      shell: true,
+      shell: parsed.shell,
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (result: NoAgentRunResult): void => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
+      if (killTimer !== null) {
+        clearTimeout(killTimer);
+      }
       resolve(result);
     };
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, KILL_GRACE_MS);
       finish({
         errorMessage: `Command timed out after ${String(timeoutMs)}ms`,
         output: truncateOutput(stdout, stderr),
@@ -63,6 +72,23 @@ export function runNoAgentCommand(
       });
     });
   });
+}
+
+function parseCommand(command: string): { args: string[]; executable: string; shell: boolean } {
+  const trimmed = command.trim();
+  if (trimmed.length === 0) {
+    return { args: [], executable: process.platform === "win32" ? "cmd.exe" : "sh", shell: false };
+  }
+  if (process.platform === "win32") {
+    return { args: ["/d", "/s", "/c", trimmed], executable: "cmd.exe", shell: false };
+  }
+  const parts = trimmed.split(/\s+/u);
+  const executable = parts[0] ?? trimmed;
+  return {
+    args: parts.slice(1),
+    executable,
+    shell: false
+  };
 }
 
 function appendCapped(current: string, chunk: string): string {
