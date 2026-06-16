@@ -165,6 +165,42 @@ describe("CodeSearchTool", () => {
     expect(output.searchBackend).toBe("node");
     expect(output.matches[0]?.relativePath).toBe("src/fallback.ts");
   });
+
+  it("does not stop node file discovery at the result limit", async () => {
+    const root = await createTempDir("auto-talon-code-search-");
+    await fs.mkdir(join(root, "src"), { recursive: true });
+    await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        fs.writeFile(join(root, "src", `a-no-hit-${index}.ts`), "const miss = true;\n", "utf8")
+      )
+    );
+    await fs.writeFile(join(root, "src", "z-target.ts"), "const targetNeedle = true;\n", "utf8");
+    const tool = new CodeSearchTool(createSandbox(root), {
+      runRgFiles: () => Promise.resolve(null)
+    });
+
+    const prepared = tool.prepare(
+      {
+        maxResults: 1,
+        query: "targetNeedle"
+      },
+      createContext(root)
+    );
+    const result = await tool.execute(prepared.preparedInput, createContext(root));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("Expected node-backed code_search to succeed.");
+    }
+    const output = result.output as {
+      matches: Array<{ relativePath: string }>;
+      searchedFileCount: number;
+    };
+    expect(output.searchedFileCount).toBe(6);
+    expect(output.matches).toEqual([
+      expect.objectContaining({ relativePath: "src/z-target.ts" })
+    ]);
+  });
 });
 
 function createSandbox(workspaceRoot: string): SandboxService {

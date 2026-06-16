@@ -201,9 +201,11 @@ async function collectFilesWithNode(
   signal: AbortSignal
 ): Promise<string[]> {
   const files: string[] = [];
-  const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  const entries = (await fs.readdir(directoryPath, { withFileTypes: true })).sort((left, right) =>
+    left.name.localeCompare(right.name)
+  );
   for (const entry of entries) {
-    if (signal.aborted || files.length >= input.maxResults) {
+    if (signal.aborted) {
       break;
     }
     const nextPath = join(directoryPath, entry.name);
