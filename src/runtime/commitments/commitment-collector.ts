@@ -1,5 +1,6 @@
 ﻿import type { TraceEvent, TaskRecord } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
+import { resolveDefaultUserId } from "../runtime-identity.js";
 import type { SessionSummaryService } from "../context/session-summary-service.js";
 import type { CommitmentService } from "./commitment-service.js";
 import type { NextActionService } from "./next-action-service.js";
@@ -122,10 +123,13 @@ export class CommitmentCollector {
       return;
     }
     const objective = sessionSummary.goal.trim().slice(0, 160);
+    const task =
+      sessionSummary.taskId === null ? null : this.dependencies.findTask(sessionSummary.taskId);
+    const ownerUserId = task?.requesterUserId ?? resolveDefaultUserId();
     const commitment =
       commitments[0] ??
       this.dependencies.commitmentService.create({
-        ownerUserId: "local-user",
+        ownerUserId,
         source: "snapshot",
         sourceTraceId: event.eventId,
         status: "in_progress",

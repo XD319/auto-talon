@@ -48,7 +48,7 @@ function resolveEditorCommand(draftPath: string): { args: string[]; command: str
 
   return {
     args: [draftPath],
-    command: "vi"
+    command: "nano"
   };
 }
 

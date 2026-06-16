@@ -194,6 +194,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const hiddenAssistantProgressRef = React.useRef<string[]>([]);
   const currentAssistantDraftRef = React.useRef("");
   const flushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queuedPromptTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const approvalInFlightRef = React.useRef(false);
   const submitInFlightRef = React.useRef(false);
   const queuedPromptsRef = React.useRef<QueuedPromptEntry[]>([]);
@@ -701,6 +702,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         clearTimeout(flushTimerRef.current);
         flushTimerRef.current = null;
       }
+      if (queuedPromptTimerRef.current !== null) {
+        clearTimeout(queuedPromptTimerRef.current);
+        queuedPromptTimerRef.current = null;
+      }
       pendingDeltaRef.current = "";
     };
   }, [stopTraceSubscription]);
@@ -1078,7 +1083,11 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           resetAssistantProgressBuffers();
           endBusy();
           stopTraceSubscription();
-          setTimeout(() => {
+          if (queuedPromptTimerRef.current !== null) {
+            clearTimeout(queuedPromptTimerRef.current);
+          }
+          queuedPromptTimerRef.current = setTimeout(() => {
+            queuedPromptTimerRef.current = null;
             refresh();
             if (submitInFlightRef.current) {
               return;

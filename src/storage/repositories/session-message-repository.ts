@@ -209,8 +209,12 @@ export class SqliteSessionMessageRepository implements SessionMessageRepository 
         sessionId: row.session_id,
         sessionTitle: row.session_title
       }));
-    } catch {
-      return null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/no such (table|column)|malformed/i.test(message)) {
+        return null;
+      }
+      throw error;
     }
   }
 

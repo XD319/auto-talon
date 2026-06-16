@@ -46,7 +46,9 @@ export class TodoSessionStore {
       });
     }
 
-    const next = order.map((id) => byId.get(id)!);
+    const next = order
+      .map((id) => byId.get(id))
+      .filter((todo): todo is TodoItem => todo !== undefined);
     this.todosBySession.set(sessionKey, next);
     return this.get(sessionKey);
   }

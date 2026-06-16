@@ -125,7 +125,7 @@ export function formatCompactTokenMetric(
     parts.push(`${compactTokenCount(inputTokens)}/${compactTokenCount(usableWindow)}`);
   }
   if (estimatedCostUsd >= 0.0001) {
-    parts.push(`~$${estimatedCostUsd.toFixed(3)}`);
+    parts.push(`~$${estimatedCostUsd.toFixed(3)} est.`);
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }
