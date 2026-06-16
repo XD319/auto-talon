@@ -10,6 +10,13 @@ CLI:
 
 `--scope` defaults to `once`. Use `session` to skip repeat prompts in the current TUI session, or `always` to persist an exact-match rule in `.auto-talon/approval-rules.json`.
 
+Approval results:
+
+- allow resumes the paused tool call and continues the task
+- deny returns a recoverable tool failure to the model so it can replan or explain the blocked action
+- timeout behaves like deny; the timed-out tool call is reported as recoverable and the task continues
+- later tool calls from the same pending batch are not executed after deny or timeout
+
 TUI chat shortcuts (when input is empty):
 
 - approval prompt opens as a bottom overlay card

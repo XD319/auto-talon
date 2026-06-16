@@ -38,7 +38,8 @@ Runtime lifecycle around approvals:
 - task enters `waiting_approval`
 - execution checkpoint is written
 - approval allow resumes the task
-- approval deny or timeout fails the task
+- approval deny or timeout resumes the task with a recoverable tool failure
+- pending tool calls from the same batch after the rejected call are discarded so the model can replan
 
 CLI commands:
 
