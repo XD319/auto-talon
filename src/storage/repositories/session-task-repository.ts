@@ -23,7 +23,7 @@ export class SqliteSessionTaskRepository implements SessionTaskRepository {
   public create(record: SessionTaskDraft): SessionTaskRecord {
     const latest = this.findLatestBySessionId(record.sessionId);
     const runNumber = latest === null ? 1 : latest.runNumber + 1;
-    const createdAt = new Date().toISOString();
+    const createdAt = record.createdAt ?? new Date().toISOString();
     this.database
       .prepare(
         `INSERT INTO session_tasks (

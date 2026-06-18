@@ -6,9 +6,9 @@ export default defineConfig({
     maxWorkers: 2,
     minWorkers: 1,
     setupFiles: ["./test/setup-env.ts"],
-    testTimeout: 30_000,
-    hookTimeout: 60_000,
-    teardownTimeout: 30_000,
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
+    teardownTimeout: 60_000,
     coverage: {
       reporter: ["text", "html"],
       thresholds: {

@@ -56,6 +56,7 @@ export interface SessionTaskDraft {
   taskId: string;
   input: string;
   status: TaskStatus;
+  createdAt?: string;
   finishedAt?: string | null;
   summary?: JsonObject;
   metadata?: JsonObject;

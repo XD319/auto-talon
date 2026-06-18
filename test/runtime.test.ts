@@ -115,6 +115,84 @@ describe("Phase 2 governance runtime", () => {
     }
   });
 
+  it("records session task run creation time from the task start time", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      provider: new ScriptedProvider(() => ({
+        kind: "final",
+        message: "session task complete",
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1
+        }
+      }))
+    });
+
+    try {
+      const session = handle.service.createSession({
+        agentProfileId: "executor",
+        cwd: workspaceRoot,
+        ownerUserId: "u1",
+        providerName: "scripted-provider",
+        title: "Session task timing"
+      });
+      const options = createDefaultRunOptions("record session task timing", workspaceRoot, handle.config);
+      options.sessionId = session.sessionId;
+
+      const result = await handle.service.runTask(options);
+      const sessionTasks = handle.service.showSession(session.sessionId).tasks;
+
+      expect(sessionTasks).toHaveLength(1);
+      expect(sessionTasks[0]?.createdAt).toBe(result.task.startedAt);
+      expect(sessionTasks[0]?.finishedAt).toBe(result.task.finishedAt);
+      expect(Date.parse(sessionTasks[0]?.createdAt ?? "")).toBeLessThanOrEqual(
+        Date.parse(sessionTasks[0]?.finishedAt ?? "")
+      );
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("passes disabled web_search reasons into provider context for explicit web search requests", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    let capturedInput: ProviderInput | null = null;
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db"),
+        web: {
+          searchBackend: "disabled"
+        }
+      },
+      provider: new ScriptedProvider((input) => {
+        capturedInput = input;
+        return {
+          kind: "final",
+          message: "web search unavailable",
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1
+          }
+        };
+      })
+    });
+
+    try {
+      const options = createDefaultRunOptions("联网搜索下 skills 和 mcp 的区别", workspaceRoot, handle.config);
+      await handle.service.runTask(options);
+
+      const systemMessage = capturedInput?.messages.find((message) => message.role === "system")?.content;
+      expect(capturedInput?.availableTools.some((tool) => tool.name === "web_search")).toBe(false);
+      expect(systemMessage).toContain("web_search is unavailable: web_search backend is disabled");
+      expect(systemMessage).toContain("Do not answer from general knowledge");
+      expect(systemMessage).toContain("cannot discover search results");
+    } finally {
+      handle.close();
+    }
+  });
+
   it("filters trace subscriptions by task id", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApplication(workspaceRoot, {
@@ -1435,5 +1513,8 @@ async function waitForTaskStatus(
     await delay(10);
   }
   const task = service.showTask(taskId).task;
+  if (task?.status === status) {
+    return task;
+  }
   throw new Error(`Timed out waiting for task ${taskId} to reach ${status}; current=${task?.status ?? "missing"}`);
 }
