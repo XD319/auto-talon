@@ -66,6 +66,7 @@ import {
   CronjobTool
 } from "../tools/index.js";
 import { TodoSessionStore } from "../tools/todo-session-store.js";
+import { ProviderWebPageSummarizer } from "../tools/web-page-summarizer.js";
 import { DockerShellExecutor } from "../tools/shell/docker-shell-executor.js";
 import { ShellExecutor } from "../tools/shell/shell-executor.js";
 import { resolveToolsetForTool } from "../tools/toolsets.js";
@@ -113,6 +114,7 @@ import {
   resolveRuntimeConfig,
   type RuntimeConfig,
   type TuiStatusLineConfig,
+  type WebRuntimeConfig,
   type WebSearchRuntimeConfig,
   type WorkflowCustomShell,
   type WorkflowRuntimeConfig
@@ -279,6 +281,7 @@ export interface AppConfig {
     statusLine: TuiStatusLineConfig;
   };
   webSearch: WebSearchRuntimeConfig;
+  web: WebRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
   workspaceRoot: string;
   scheduler: {
@@ -326,6 +329,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     tokenBudgetInputLimitExplicit: runtimeConfig.tokenBudgetInputLimitExplicit,
     tui: runtimeConfig.tui,
     webSearch: runtimeConfig.webSearch,
+    web: runtimeConfig.web,
     workflow: runtimeConfig.workflow,
     scheduler: runtimeConfig.scheduler,
     workspaceRoot
@@ -508,6 +512,14 @@ function mergeCreateApplicationConfig(
       ...resolvedConfig.webSearch,
       ...options.config?.webSearch
     },
+    web: {
+      ...resolvedConfig.web,
+      ...options.config?.web,
+      providers: {
+        ...resolvedConfig.web.providers,
+        ...options.config?.web?.providers
+      }
+    },
     workflow: {
       ...resolvedConfig.workflow,
       ...options.config?.workflow,
@@ -615,6 +627,10 @@ function buildApplicationRuntime(
   const todoSessionStore = new TodoSessionStore();
   const delegateTaskTool = new DelegateTaskTool();
   const cronjobTool = new CronjobTool();
+  const webPageSummarizer =
+    config.routing.helpers.summarize === null
+      ? undefined
+      : new ProviderWebPageSummarizer(providerRouter, provider);
   const toolRegistry = new ToolRegistry().registerAll([
     new AskUserTool(),
     new CodeSearchTool(sandboxService),
@@ -627,8 +643,8 @@ function buildApplicationRuntime(
     new SkillsListTool(skillRegistry),
     new SkillViewTool(skillRegistry),
     new ShellTool(shellExecutor, sandboxService),
-    new WebFetchTool(sandboxService),
-    new WebSearchTool(sandboxService, config.webSearch),
+    new WebFetchTool(sandboxService, undefined, config.web, undefined, webPageSummarizer),
+    new WebSearchTool(sandboxService, config.web),
     new SessionSearchTool({ searchService: sessionMessageSearchService }),
     new TodoTool(todoSessionStore),
     cronjobTool,

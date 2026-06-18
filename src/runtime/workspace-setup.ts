@@ -24,6 +24,34 @@ const DEFAULT_RUNTIME_CONFIG: JsonObject = {
     apiUrl: "https://api.firecrawl.dev/v1/search",
     maxResults: 5
   },
+  web: {
+    backend: "auto",
+    searchBackend: "auto",
+    extractBackend: "http",
+    maxResults: 5,
+    longPageThresholdBytes: 64000,
+    summaryTargetBytes: 5000,
+    providers: {
+      firecrawl: {
+        apiKeyEnv: "FIRECRAWL_API_KEY",
+        apiUrl: "https://api.firecrawl.dev/v1/search"
+      },
+      tavily: {
+        apiKeyEnv: "TAVILY_API_KEY",
+        apiUrl: "https://api.tavily.com/search"
+      },
+      exa: {
+        apiKeyEnv: "EXA_API_KEY",
+        apiUrl: "https://api.exa.ai/search"
+      },
+      searxng: {},
+      brave: {
+        apiKeyEnv: "BRAVE_SEARCH_API_KEY",
+        apiUrl: "https://api.search.brave.com/res/v1/web/search"
+      },
+      ddgs: {}
+    }
+  },
   context: {
     engine: "hermes_compressor"
   },

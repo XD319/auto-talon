@@ -11,11 +11,33 @@ import {
   statusLineConfigSchema,
   type TuiStatusLineConfig
 } from "./tui-status-line-config.js";
-import type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
+import type {
+  WebBackend,
+  WebExtractBackend,
+  WebProviderRuntimeConfig,
+  WebRuntimeConfig,
+  WebSearchBackend,
+  WebSearchRuntimeConfig
+} from "../core/web-search-config.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import type { BudgetLimits, BudgetPricingEntry, ProviderTier, RoutingMode, TokenBudget } from "../types/index.js";
 
-export type { WebSearchRuntimeConfig } from "../core/web-search-config.js";
+export type { WebRuntimeConfig, WebSearchRuntimeConfig } from "../core/web-search-config.js";
+
+const webBackendSchema = z.enum([
+  "auto",
+  "brave",
+  "ddgs",
+  "disabled",
+  "exa",
+  "firecrawl",
+  "http",
+  "searxng",
+  "tavily"
+]);
+
+const webSearchBackendSchema = webBackendSchema.exclude(["http"]);
+const webExtractBackendSchema = webBackendSchema.exclude(["brave", "ddgs", "searxng"]);
 
 const tokenBudgetConfigSchema = z.object({
   inputLimit: z.number().int().positive().optional(),
@@ -59,6 +81,26 @@ const runtimeConfigFileSchema = z.object({
       apiUrl: z.string().url().optional(),
       backend: z.enum(["disabled", "firecrawl"]).optional(),
       maxResults: z.number().int().positive().max(50).optional()
+    })
+    .optional(),
+  web: z
+    .object({
+      backend: webBackendSchema.optional(),
+      searchBackend: webSearchBackendSchema.optional(),
+      extractBackend: webExtractBackendSchema.optional(),
+      maxResults: z.number().int().positive().max(50).optional(),
+      longPageThresholdBytes: z.number().int().positive().optional(),
+      summaryTargetBytes: z.number().int().positive().optional(),
+      providers: z
+        .object({
+          brave: z.object({ apiKeyEnv: z.string().min(1).optional(), apiUrl: z.string().url().optional() }).optional(),
+          ddgs: z.object({ apiKeyEnv: z.string().min(1).optional(), apiUrl: z.string().url().optional() }).optional(),
+          exa: z.object({ apiKeyEnv: z.string().min(1).optional(), apiUrl: z.string().url().optional() }).optional(),
+          firecrawl: z.object({ apiKeyEnv: z.string().min(1).optional(), apiUrl: z.string().url().optional() }).optional(),
+          searxng: z.object({ apiKeyEnv: z.string().min(1).optional(), apiUrl: z.string().url().optional() }).optional(),
+          tavily: z.object({ apiKeyEnv: z.string().min(1).optional(), apiUrl: z.string().url().optional() }).optional()
+        })
+        .optional()
     })
     .optional(),
   scheduler: z
@@ -304,6 +346,7 @@ export interface RuntimeConfig {
     statusLine: TuiStatusLineConfig;
   };
   webSearch: WebSearchRuntimeConfig;
+  web: WebRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
   scheduler: {
     pollIntervalMs: number;
@@ -324,6 +367,46 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     apiUrl: "https://api.firecrawl.dev/v1/search",
     backend: "disabled",
     maxResults: 5
+  },
+  web: {
+    backend: "auto",
+    searchBackend: "ddgs",
+    extractBackend: "http",
+    maxResults: 5,
+    longPageThresholdBytes: 64_000,
+    summaryTargetBytes: 5_000,
+    providers: {
+      brave: {
+        apiKey: null,
+        apiKeyEnv: "BRAVE_SEARCH_API_KEY",
+        apiUrl: "https://api.search.brave.com/res/v1/web/search"
+      },
+      ddgs: {
+        apiKey: null,
+        apiKeyEnv: null,
+        apiUrl: null
+      },
+      exa: {
+        apiKey: null,
+        apiKeyEnv: "EXA_API_KEY",
+        apiUrl: "https://api.exa.ai/search"
+      },
+      firecrawl: {
+        apiKey: null,
+        apiKeyEnv: "FIRECRAWL_API_KEY",
+        apiUrl: "https://api.firecrawl.dev/v1/search"
+      },
+      searxng: {
+        apiKey: null,
+        apiKeyEnv: null,
+        apiUrl: null
+      },
+      tavily: {
+        apiKey: null,
+        apiKeyEnv: "TAVILY_API_KEY",
+        apiUrl: "https://api.tavily.com/search"
+      }
+    }
   },
   compact: {
     bufferTokens: 0,
@@ -494,6 +577,7 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       fileConfig?.webSearch?.maxResults ??
       DEFAULT_RUNTIME_CONFIG.webSearch.maxResults
   };
+  const web = resolveWebRuntimeConfig(fileConfig, envConfig, webSearch);
   const merged = {
     allowedFetchHosts:
       envConfig.allowedFetchHosts ??
@@ -692,6 +776,7 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         DEFAULT_RUNTIME_CONFIG.scheduler.pollIntervalMs
     },
     webSearch,
+    web,
     workflow
   };
 
@@ -767,8 +852,35 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
       ...(config.webSearch ?? {}),
       backend: webSearchBackend
     };
-  } else if (webSearchBackend !== undefined && webSearchBackend.length > 0) {
-    throw new Error("AGENT_WEB_SEARCH_BACKEND must be disabled or firecrawl.");
+  } else if (
+    webSearchBackend !== undefined &&
+    webSearchBackend.length > 0 &&
+    webSearchBackendSchema.safeParse(webSearchBackend).success === false
+  ) {
+    throw new Error("AGENT_WEB_SEARCH_BACKEND must be a supported web search backend.");
+  }
+
+  const webBackend = process.env.AGENT_WEB_BACKEND?.trim();
+  if (webBackend !== undefined && webBackend.length > 0) {
+    config.web = {
+      ...(config.web ?? {}),
+      backend: webBackendSchema.parse(webBackend)
+    };
+  }
+
+  if (webSearchBackend !== undefined && webSearchBackend.length > 0) {
+    config.web = {
+      ...(config.web ?? {}),
+      searchBackend: webSearchBackendSchema.parse(webSearchBackend)
+    };
+  }
+
+  const webExtractBackend = process.env.AGENT_WEB_EXTRACT_BACKEND?.trim();
+  if (webExtractBackend !== undefined && webExtractBackend.length > 0) {
+    config.web = {
+      ...(config.web ?? {}),
+      extractBackend: webExtractBackendSchema.parse(webExtractBackend)
+    };
   }
 
   const firecrawlApiUrl = process.env.FIRECRAWL_API_URL?.trim();
@@ -777,6 +889,16 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
       ...(config.webSearch ?? {}),
       apiUrl: firecrawlApiUrl
     };
+    config.web = {
+      ...(config.web ?? {}),
+      providers: {
+        ...(config.web?.providers ?? {}),
+        firecrawl: {
+          ...(config.web?.providers?.firecrawl ?? {}),
+          apiUrl: firecrawlApiUrl
+        }
+      }
+    };
   }
 
   const webSearchMaxResults = readPositiveIntegerEnv("AGENT_WEB_SEARCH_MAX_RESULTS");
@@ -784,6 +906,38 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
     config.webSearch = {
       ...(config.webSearch ?? {}),
       maxResults: webSearchMaxResults
+    };
+    config.web = {
+      ...(config.web ?? {}),
+      maxResults: webSearchMaxResults
+    };
+  }
+
+  const searxngUrl = process.env.SEARXNG_URL?.trim();
+  if (searxngUrl !== undefined && searxngUrl.length > 0) {
+    config.web = {
+      ...(config.web ?? {}),
+      providers: {
+        ...(config.web?.providers ?? {}),
+        searxng: {
+          ...(config.web?.providers?.searxng ?? {}),
+          apiUrl: searxngUrl
+        }
+      }
+    };
+  }
+
+  const ddgsUrl = process.env.DDGS_URL?.trim();
+  if (ddgsUrl !== undefined && ddgsUrl.length > 0) {
+    config.web = {
+      ...(config.web ?? {}),
+      providers: {
+        ...(config.web?.providers ?? {}),
+        ddgs: {
+          ...(config.web?.providers?.ddgs ?? {}),
+          apiUrl: ddgsUrl
+        }
+      }
     };
   }
 
@@ -911,6 +1065,162 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
   }
 
   return runtimeConfigFileSchema.partial().parse(config);
+}
+
+function resolveWebRuntimeConfig(
+  fileConfig: RuntimeConfigFile | null,
+  envConfig: Partial<RuntimeConfigFile>,
+  legacyWebSearch: WebSearchRuntimeConfig
+): WebRuntimeConfig {
+  const rawBackend =
+    envConfig.web?.backend ??
+    fileConfig?.web?.backend ??
+    (legacyWebSearch.backend === "firecrawl" ? "firecrawl" : DEFAULT_RUNTIME_CONFIG.web.backend);
+  const backend = rawBackend;
+  const searchBackend = normalizeSearchBackend(
+    envConfig.web?.searchBackend ??
+      fileConfig?.web?.searchBackend ??
+      (backend !== "http" ? backend : "disabled"),
+    legacyWebSearch,
+    fileConfig,
+    envConfig
+  );
+  const extractBackend = normalizeExtractBackend(
+    envConfig.web?.extractBackend ??
+      fileConfig?.web?.extractBackend ??
+      (backend === "firecrawl" || backend === "tavily" || backend === "exa" || backend === "auto"
+        ? backend
+        : DEFAULT_RUNTIME_CONFIG.web.extractBackend)
+  );
+  const maxResults =
+    envConfig.web?.maxResults ??
+    fileConfig?.web?.maxResults ??
+    legacyWebSearch.maxResults ??
+    DEFAULT_RUNTIME_CONFIG.web.maxResults;
+  const firecrawlProvider = resolveWebProviderConfig("firecrawl", fileConfig, envConfig);
+  const providers = {
+    brave: resolveWebProviderConfig("brave", fileConfig, envConfig),
+    ddgs: resolveWebProviderConfig("ddgs", fileConfig, envConfig),
+    exa: resolveWebProviderConfig("exa", fileConfig, envConfig),
+    firecrawl: {
+      ...firecrawlProvider,
+      apiKey: firecrawlProvider.apiKey ?? legacyWebSearch.apiKey,
+      apiKeyEnv: firecrawlProvider.apiKeyEnv ?? legacyWebSearch.apiKeyEnv,
+      apiUrl: firecrawlProvider.apiUrl ?? legacyWebSearch.apiUrl
+    },
+    searxng: resolveWebProviderConfig("searxng", fileConfig, envConfig),
+    tavily: resolveWebProviderConfig("tavily", fileConfig, envConfig)
+  };
+
+  return {
+    backend,
+    extractBackend,
+    longPageThresholdBytes:
+      envConfig.web?.longPageThresholdBytes ??
+      fileConfig?.web?.longPageThresholdBytes ??
+      DEFAULT_RUNTIME_CONFIG.web.longPageThresholdBytes,
+    maxResults,
+    providers,
+    searchBackend,
+    summaryTargetBytes:
+      envConfig.web?.summaryTargetBytes ??
+      fileConfig?.web?.summaryTargetBytes ??
+      DEFAULT_RUNTIME_CONFIG.web.summaryTargetBytes
+  };
+}
+
+function normalizeSearchBackend(
+  backend: WebBackend | WebSearchBackend,
+  legacyWebSearch: WebSearchRuntimeConfig,
+  fileConfig: RuntimeConfigFile | null,
+  envConfig: Partial<RuntimeConfigFile>
+): WebSearchBackend {
+  if (backend === "http") {
+    return "disabled";
+  }
+  if (backend === "auto") {
+    const candidates: Array<keyof WebRuntimeConfig["providers"]> = [
+      "firecrawl",
+      "tavily",
+      "exa",
+      "brave",
+      "searxng",
+      "ddgs"
+    ];
+    return (
+      candidates.find((candidate) =>
+        isSearchProviderConfigured(
+          candidate,
+          legacyWebSearch,
+          resolveWebProviderConfig(candidate, fileConfig, envConfig)
+        )
+      ) ?? "disabled"
+    );
+  }
+  return backend;
+}
+
+function normalizeExtractBackend(backend: WebBackend | WebExtractBackend): WebExtractBackend {
+  if (backend === "brave" || backend === "ddgs" || backend === "searxng" || backend === "disabled") {
+    return "http";
+  }
+  if (backend === "auto") {
+    if (readEnvValue("FIRECRAWL_API_KEY") !== null) {
+      return "firecrawl";
+    }
+    if (readEnvValue("TAVILY_API_KEY") !== null) {
+      return "tavily";
+    }
+    if (readEnvValue("EXA_API_KEY") !== null) {
+      return "exa";
+    }
+    return "http";
+  }
+  return backend;
+}
+
+function isSearchProviderConfigured(
+  backend: WebSearchBackend,
+  legacyWebSearch: WebSearchRuntimeConfig,
+  provider: WebProviderRuntimeConfig
+): boolean {
+  if (backend === "disabled") {
+    return false;
+  }
+  if (backend === "ddgs") {
+    return true;
+  }
+  if (backend === "searxng") {
+    return provider.apiUrl !== null;
+  }
+  if (backend === "firecrawl") {
+    const apiKey = provider.apiKey ?? legacyWebSearch.apiKey;
+    return apiKey !== null && provider.apiUrl !== null;
+  }
+  if (backend === "tavily" || backend === "exa" || backend === "brave") {
+    return provider.apiKey !== null && provider.apiUrl !== null;
+  }
+  return false;
+}
+
+function resolveWebProviderConfig(
+  provider: keyof WebRuntimeConfig["providers"],
+  fileConfig: RuntimeConfigFile | null,
+  envConfig: Partial<RuntimeConfigFile>
+): WebProviderRuntimeConfig {
+  const defaults = DEFAULT_RUNTIME_CONFIG.web.providers[provider];
+  const fileProvider = fileConfig?.web?.providers?.[provider];
+  const envProvider = envConfig.web?.providers?.[provider];
+  const apiKeyEnv = envProvider?.apiKeyEnv ?? fileProvider?.apiKeyEnv ?? defaults.apiKeyEnv;
+  return {
+    apiKey: apiKeyEnv === null ? null : readEnvValue(apiKeyEnv),
+    apiKeyEnv,
+    apiUrl: envProvider?.apiUrl ?? fileProvider?.apiUrl ?? defaults.apiUrl
+  };
+}
+
+function readEnvValue(name: string): string | null {
+  return process.env[name]?.trim() || null;
 }
 
 function normalizeWorkflowTestCommand(command: WorkflowTestCommand): WorkflowTestCommand | null {

@@ -141,14 +141,92 @@ Tool availability gating details:
 - `docs/tool-availability-gating.md`
 
 Network fetch controls:
-- `runtime.config.json > allowedFetchHosts` sets the public host allowlist for `web_fetch`.
+- `runtime.config.json > allowedFetchHosts` sets the public host allowlist for `web_extract` and search provider API endpoints used by `web_search`.
 - `*` allows public hosts broadly, but localhost, private IP ranges, link-local metadata endpoints, and single-label internal hostnames are still blocked.
 
 Web search controls:
-- `runtime.config.json > webSearch.backend` is `disabled` or `firecrawl`; default is `disabled`.
-- `AGENT_WEB_SEARCH_BACKEND=firecrawl` enables the Firecrawl-backed `web_search` tool when `FIRECRAWL_API_KEY` is set.
-- `FIRECRAWL_API_URL` can override the default Firecrawl search endpoint; the endpoint is still checked by the sandbox host policy.
-- `web_search` returns normalized `{ provider, query, results[] }`; use `web_fetch` to expand selected result URLs.
+- `runtime.config.json > web` is the preferred web configuration surface.
+- `web.backend`, `web.searchBackend`, and `web.extractBackend` default to `auto`, `auto`, and `http` respectively. With no provider credentials, `auto` search resolves to built-in zero-config search (`ddgs`: DuckDuckGo with Bing HTML fallback).
+- `web.backend`, `web.searchBackend`, and `web.extractBackend` support `auto`, `disabled`, and provider-specific values.
+- Search backends: `firecrawl`, `tavily`, `exa`, `searxng`, `brave`, and `ddgs`.
+- Extract backends: `firecrawl`, `tavily`, `exa`, and local sandboxed `http`.
+- `searxng`, `brave`, and `ddgs` are search-only; extraction falls back to `http` unless an extract backend is configured.
+- `webSearch` remains supported as a legacy Firecrawl-only compatibility field.
+- Historical workspaces with only `"webSearch": { "backend": "disabled" }` keep search disabled until a `web.searchBackend` is added or an env override is provided.
+- Env overrides:
+  - `AGENT_WEB_BACKEND`
+  - `AGENT_WEB_SEARCH_BACKEND`
+  - `AGENT_WEB_EXTRACT_BACKEND`
+  - `AGENT_WEB_SEARCH_MAX_RESULTS`
+  - `FIRECRAWL_API_KEY`, `FIRECRAWL_API_URL`
+  - `TAVILY_API_KEY`, `EXA_API_KEY`, `SEARXNG_URL`, `DDGS_URL`, `BRAVE_SEARCH_API_KEY`
+- `DDGS` works out of the box via built-in DuckDuckGo search (with Bing HTML fallback when DuckDuckGo is blocked). Optionally set `web.providers.ddgs.apiUrl` or `DDGS_URL` to use a JSON HTTP gateway instead.
+- `web_search` returns normalized `{ provider, query, results[] }`; each result may include `citation` metadata with `{ citationId, url, title, citedText, source }`. Use `web_extract` to expand selected result URLs.
+- `web_extract` accepts an optional `prompt` string up to 2000 characters. Without `prompt`, extraction keeps the normal full/summarized behavior. With `prompt`, extraction returns a page-grounded answer with `extractionMode: "prompt_extract"` and `citations[]`.
+- Successful `web_extract` results are cached in-process for 15 minutes by backend, URL, prompt, `maxBytes`, and `summaryTargetBytes`. Tool output includes `cached: false` on the first read and `cached: true` on cache hits.
+- Web search v1 does not include browser rendering, Playwright-backed extraction, or dynamic code filtering.
+
+Extract-only configuration:
+
+```json
+{
+  "web": {
+    "searchBackend": "disabled",
+    "extractBackend": "http"
+  }
+}
+```
+
+API-backed search configuration:
+
+```json
+{
+  "web": {
+    "searchBackend": "firecrawl",
+    "extractBackend": "http",
+    "providers": {
+      "firecrawl": {
+        "apiKeyEnv": "FIRECRAWL_API_KEY",
+        "apiUrl": "https://api.firecrawl.dev/v1/search"
+      }
+    }
+  }
+}
+```
+
+Self-hosted search configuration:
+
+```json
+{
+  "web": {
+    "searchBackend": "searxng",
+    "extractBackend": "http",
+    "providers": {
+      "searxng": {
+        "apiUrl": "https://search.example.com/search"
+      }
+    }
+  }
+}
+```
+
+Example split configuration:
+
+```json
+{
+  "web": {
+    "searchBackend": "brave",
+    "extractBackend": "http",
+    "maxResults": 8,
+    "providers": {
+      "brave": {
+        "apiKeyEnv": "BRAVE_SEARCH_API_KEY",
+        "apiUrl": "https://api.search.brave.com/res/v1/web/search"
+      }
+    }
+  }
+}
+```
 
 Governance:
 - `policy.config.json` controls default policy effect and rule list (`allow`, `allow_with_approval`, `deny`) matched by capability, tool, profile, and path scope.

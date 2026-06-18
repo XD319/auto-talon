@@ -7,7 +7,8 @@ import type {
   ProviderInput,
   ProviderToolDescriptor,
   TaskRecord,
-  TokenBudget
+  TokenBudget,
+  ToolExposureDecision
 } from "../types/index.js";
 import { estimateMessagesTokens } from "./context/token-counter.js";
 
@@ -51,16 +52,19 @@ export class ExecutionContextAssembler {
     task: TaskRecord,
     availableTools: ProviderToolDescriptor[],
     profile: AgentProfile,
-    repoMapSummary?: string
+    repoMapSummary?: string,
+    toolExposureDecisions: ToolExposureDecision[] = []
   ): ConversationMessage[] {
     const toolNames = availableTools.map((tool) => tool.name).join(", ");
     const publicWebFetchAvailable = availableTools.some(
       (tool) => tool.capability === "network.fetch_public_readonly"
     );
+    const unavailableWebSearchNote = buildUnavailableWebSearchNote(task.input, toolExposureDecisions);
     const systemMessage = [
       profile.systemPrompt,
       "Use tools only when needed.",
       "Visible tools may still be denied by policy, sandbox checks, or approval requirements at execution time.",
+      unavailableWebSearchNote,
       publicWebFetchAvailable
         ? "When web_extract is available, you may use it to read public web pages for current documentation or realtime public information. When web_search is available, you may use it to find public web pages before fetching them. These are sandboxed, read-only network tools and must not be used for private, internal, or authenticated resources."
         : null,
@@ -104,6 +108,46 @@ export class ExecutionContextAssembler {
     );
     return messages;
   }
+}
+
+function buildUnavailableWebSearchNote(
+  taskInput: string,
+  decisions: ToolExposureDecision[]
+): string | null {
+  const webSearchDecision = decisions.find(
+    (decision) => decision.toolName === "web_search" && !decision.exposed
+  );
+  if (webSearchDecision === undefined) {
+    return null;
+  }
+  const reason = normalizeUnavailableToolReason(webSearchDecision.reason);
+  const setupHint = buildWebSearchSetupHint();
+  if (isExplicitWebSearchRequest(taskInput)) {
+    return [
+      `The user explicitly asked for web search, but web_search is unavailable: ${reason}.`,
+      "Do not answer from general knowledge or training data as a substitute for live search results.",
+      "Explain the limitation clearly, then offer the setup steps below.",
+      `Setup: ${setupHint}`,
+      "web_extract can read only known public URLs and cannot discover search results."
+    ].join(" ");
+  }
+  return `Unavailable web capability: web_search unavailable: ${reason}. Setup: ${setupHint}`;
+}
+
+function buildWebSearchSetupHint(): string {
+  return [
+    "Set web.searchBackend to \"auto\" (default) or a specific provider in runtime config,",
+    "or set provider credentials in the environment (FIRECRAWL_API_KEY, TAVILY_API_KEY, EXA_API_KEY, BRAVE_SEARCH_API_KEY, SEARXNG_URL, DDGS_URL).",
+    "Built-in search uses DuckDuckGo with Bing HTML fallback when DuckDuckGo is blocked."
+  ].join(" ");
+}
+
+function normalizeUnavailableToolReason(reason: string): string {
+  return reason.replace(/^unavailable:\s*/iu, "").trim();
+}
+
+function isExplicitWebSearchRequest(input: string): boolean {
+  return /联网搜索|web search|search the web|search public web/iu.test(input);
 }
 
 function buildContextDebugView(input: ContextAssemblerInput): ContextAssemblyDebugView {

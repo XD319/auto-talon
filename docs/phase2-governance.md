@@ -61,7 +61,7 @@ The sandbox MVP lives in `src/sandbox/sandbox-service.ts` and enforces:
 - env allowlist
 - shell executable allowlist
 - obvious dangerous shell pattern denylist
-- network access closed to shell and controlled through `web_fetch`
+- network access closed to shell and controlled through `web_extract`
 
 Sandbox planning happens before tool execution and every allow/deny outcome is recorded into trace and audit.
 

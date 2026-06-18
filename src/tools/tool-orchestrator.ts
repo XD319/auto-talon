@@ -684,7 +684,9 @@ export class ToolOrchestrator {
         : tool.capability === "shell.execute"
           ? "shell_execution"
           : tool.capability === "network.fetch_public_readonly"
-            ? "web_extract"
+            ? tool.name === "web_search"
+              ? "web_search"
+              : "web_extract"
             : null;
 
     if (action === null) {

@@ -48,6 +48,40 @@ describe("ExecutionContextAssembler", () => {
     expect(messages[0]?.content).toContain("Visible tools may still be denied");
     expect(messages[0]?.content).toContain("Available tools: read_file.");
   });
+
+  it("tells the model when explicit web search is requested but web_search is unavailable", () => {
+    const assembler = new ExecutionContextAssembler();
+    const messages = assembler.buildInitialMessages(
+      {
+        ...createTask(),
+        input: "联网搜索下 skills 和 mcp 的区别"
+      },
+      [
+        {
+          capability: "network.fetch_public_readonly",
+          description: "Fetch a public URL",
+          inputSchema: { type: "object" },
+          name: "web_extract",
+          privacyLevel: "restricted",
+          riskLevel: "medium"
+        }
+      ],
+      createProfile(),
+      undefined,
+      [
+        {
+          exposed: false,
+          reason: "unavailable: web_search backend is disabled",
+          toolName: "web_search"
+        }
+      ]
+    );
+
+    expect(messages[0]?.content).toContain("web_search is unavailable: web_search backend is disabled");
+    expect(messages[0]?.content).toContain("Do not answer from general knowledge");
+    expect(messages[0]?.content).toContain("FIRECRAWL_API_KEY");
+    expect(messages[0]?.content).toContain("cannot discover search results");
+  });
 });
 
 function createProfile(): AgentProfile {

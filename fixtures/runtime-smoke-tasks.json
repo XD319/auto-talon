@@ -390,11 +390,11 @@
     "title": "Scheduled web summary regression",
     "category": "multi_turn_execution",
     "rcVersion": "0.1.0",
-    "input": "Describe the daily AI news scheduled summary flow using web_search, web_fetch, and inbox delivery.",
+    "input": "Describe the daily AI news scheduled summary flow using web_search, web_extract, and inbox delivery.",
     "profile": "reviewer",
     "expectedBehavior": [
       "Reference schedule lifecycle",
-      "Reference web_search and web_fetch",
+      "Reference web_search and web_extract",
       "Reference inbox or origin delivery"
     ],
     "acceptableResult": [

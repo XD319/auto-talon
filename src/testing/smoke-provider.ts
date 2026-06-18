@@ -243,7 +243,7 @@ export class ScriptedSmokeProvider implements Provider {
 
       case "rc_scheduled_web_summary":
         return Promise.resolve(finalResponse(
-          "Scheduled web summary regression: schedule lifecycle queues the run, web_search finds public results, web_fetch expands selected URLs, and inbox/origin delivery records the summary."
+          "Scheduled web summary regression: schedule lifecycle queues the run, web_search finds public results, web_extract expands selected URLs, and inbox/origin delivery records the summary."
         ));
 
       default:

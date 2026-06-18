@@ -33,7 +33,7 @@ describe("ToolOrchestrator network policy", () => {
         summary: "fetched"
       }),
       inputSchema: fetchSchema,
-      name: "fake_web_fetch",
+      name: "fake_web_extract",
       prepare: (input) => {
         const parsedInput = fetchSchema.parse(input);
         return {
@@ -77,7 +77,7 @@ describe("ToolOrchestrator network policy", () => {
               status: "pending",
               taskId: "task-1",
               toolCallId: "call-1",
-              toolName: "fake_web_fetch"
+              toolName: "fake_web_extract"
             } satisfies ApprovalRecord,
             created: true
           };
@@ -108,7 +108,7 @@ describe("ToolOrchestrator network policy", () => {
         reason: "Need current docs",
         taskId: "task-1",
         toolCallId: "call-1",
-        toolName: "fake_web_fetch"
+        toolName: "fake_web_extract"
       },
       createContext()
     );

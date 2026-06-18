@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApplication, resolveAppConfig, resolveRuntimeConfig } from "../src/runtime/index.js";
+import { RuntimeDoctorService } from "../src/runtime/operations/runtime-doctor-service.js";
 import { SandboxService } from "../src/sandbox/sandbox-service.js";
 
 const tempPaths: string[] = [];
@@ -20,7 +21,7 @@ afterEach(async () => {
 });
 
 describe("runtime config", () => {
-  it("defaults fetch hosts to open web_fetch and uses larger coding budgets", async () => {
+  it("defaults fetch hosts to open web_extract and uses larger coding budgets", async () => {
     const workspaceRoot = await createTempWorkspace();
     const config = resolveRuntimeConfig(workspaceRoot);
 
@@ -38,6 +39,8 @@ describe("runtime config", () => {
     expect(config.tui.statusLine.style).toBe("standard");
     expect(config.tui.statusLine.type).toBe("builtin");
     expect(config.tui.statusLine.showCost).toBe(false);
+    expect(config.web.backend).toBe("auto");
+    expect(config.web.searchBackend).toBe("ddgs");
 
     const sandbox = new SandboxService({
       allowedFetchHosts: config.allowedFetchHosts,
@@ -218,6 +221,76 @@ describe("runtime config", () => {
     expect(config.workflow.testCommands).toEqual(["npm test", "npm run build"]);
   });
 
+  it("reports legacy disabled web search config without a web section in doctor output", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        webSearch: {
+          backend: "disabled"
+        }
+      }),
+      "utf8"
+    );
+
+    const doctor = new RuntimeDoctorService({
+      allowedFetchHosts: ["*"],
+      customShell: null,
+      databasePath: ":memory:",
+      listExperiences: () => [],
+      maxShellTimeoutMs: 30_000,
+      providerConfig: {
+        apiKey: null,
+        baseUrl: null,
+        builtinProviderName: "mock",
+        configPath: join(workspaceRoot, ".auto-talon", "provider.config.json"),
+        configSource: "defaults",
+        contextWindowSource: null,
+        contextWindowTokens: 64_000,
+        displayName: "Mock",
+        family: "mock",
+        maxRetries: 0,
+        model: "mock-model",
+        name: "mock",
+        streamIdleTimeoutMs: 30_000,
+        timeoutMs: 30_000,
+        transport: "mock"
+      },
+      providerName: "mock",
+      runtimeConfigPath: join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      runtimeConfigSource: "file",
+      runtimeVersion: "test",
+      shellBackend: "default",
+      skillStats: () => ({ issues: [], skills: [] }),
+      testCommands: [],
+      testCurrentProvider: () =>
+        Promise.resolve({
+          apiKeyConfigured: true,
+          endpointReachable: true,
+          message: "ok",
+          modelAvailable: true,
+          modelConfigured: true,
+          modelName: "mock-model",
+          ok: true,
+          providerName: "mock"
+        }),
+      tokenBudget: {
+        inputLimit: 64_000,
+        outputLimit: 8_000,
+        reservedOutput: 1_000
+      },
+      workspaceRoot
+    });
+
+    const report = await doctor.configDoctor();
+    expect(report.issues).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Legacy webSearch.backend is disabled and no web config is present")
+      ])
+    );
+  });
+
   it("normalizes custom shell backend config", async () => {
     const workspaceRoot = await createTempWorkspace();
     await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
@@ -286,6 +359,76 @@ describe("runtime config", () => {
     const envConfig = resolveRuntimeConfig(workspaceRoot);
     expect(envConfig.configSource).toBe("env");
     expect(envConfig.webSearch.backend).toBe("disabled");
+  });
+
+  it("resolves unified web config with multi-provider env overrides", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        web: {
+          backend: "auto",
+          extractBackend: "http",
+          maxResults: 9,
+          providers: {
+            searxng: {
+              apiUrl: "https://search.local/search"
+            }
+          },
+          searchBackend: "searxng"
+        }
+      }),
+      "utf8"
+    );
+
+    const fileConfig = resolveRuntimeConfig(workspaceRoot);
+    expect(fileConfig.web.searchBackend).toBe("searxng");
+    expect(fileConfig.web.extractBackend).toBe("http");
+    expect(fileConfig.web.providers.searxng.apiUrl).toBe("https://search.local/search");
+    expect(fileConfig.web.maxResults).toBe(9);
+
+    vi.stubEnv("AGENT_WEB_SEARCH_BACKEND", "brave");
+    vi.stubEnv("AGENT_WEB_EXTRACT_BACKEND", "tavily");
+    vi.stubEnv("BRAVE_SEARCH_API_KEY", "brave-key");
+    vi.stubEnv("TAVILY_API_KEY", "tavily-key");
+    const envConfig = resolveRuntimeConfig(workspaceRoot);
+
+    expect(envConfig.web.searchBackend).toBe("brave");
+    expect(envConfig.web.extractBackend).toBe("tavily");
+    expect(envConfig.web.providers.brave.apiKey).toBe("brave-key");
+    expect(envConfig.web.providers.tavily.apiKey).toBe("tavily-key");
+  });
+
+  it("auto-selects searxng from file-based provider apiUrl", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        web: {
+          backend: "auto",
+          extractBackend: "http",
+          providers: {
+            searxng: {
+              apiUrl: "https://search.local/search"
+            }
+          }
+        }
+      }),
+      "utf8"
+    );
+
+    const config = resolveRuntimeConfig(workspaceRoot);
+    expect(config.web.searchBackend).toBe("searxng");
+    expect(config.web.providers.searxng.apiUrl).toBe("https://search.local/search");
+  });
+
+  it("loads DDGS_URL into web.providers.ddgs.apiUrl", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    vi.stubEnv("DDGS_URL", "https://ddgs.local/search");
+    const config = resolveRuntimeConfig(workspaceRoot);
+    expect(config.web.providers.ddgs.apiUrl).toBe("https://ddgs.local/search");
   });
 
   it("reuses the nearest initialized parent workspace from nested directories", async () => {

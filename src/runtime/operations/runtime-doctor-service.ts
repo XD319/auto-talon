@@ -59,6 +59,7 @@ export class RuntimeDoctorService {
       this.dependencies.testCommands,
       this.dependencies.maxShellTimeoutMs
     );
+    const webConfigIssues = collectWebConfigIssues(this.dependencies.workspaceRoot);
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
@@ -82,7 +83,8 @@ export class RuntimeDoctorService {
             `Workspace config ${finding.file} contains provider secret fields (${finding.fields.join(", ")}). Move secrets to env or user config.`
         ),
         ...shellIssues,
-        ...testTimeoutIssues
+        ...testTimeoutIssues,
+        ...webConfigIssues
       ],
       maxRetries: this.dependencies.providerConfig.maxRetries,
       modelAvailable: providerHealth.modelAvailable,
@@ -117,6 +119,37 @@ export class RuntimeDoctorService {
       workspaceRoot: this.dependencies.workspaceRoot
     };
   }
+}
+
+function collectWebConfigIssues(workspaceRoot: string): string[] {
+  const runtimeConfigPath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
+  if (!existsSync(runtimeConfigPath)) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(runtimeConfigPath, "utf8")) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return [];
+    }
+    const record = parsed as Record<string, unknown>;
+    if (record.web !== undefined) {
+      return [];
+    }
+    const legacyWebSearch = record.webSearch;
+    if (
+      legacyWebSearch !== null &&
+      typeof legacyWebSearch === "object" &&
+      !Array.isArray(legacyWebSearch) &&
+      (legacyWebSearch as Record<string, unknown>).backend === "disabled"
+    ) {
+      return [
+        "Legacy webSearch.backend is disabled and no web config is present. Add web.searchBackend (for example firecrawl/tavily/exa/brave/searxng) to enable web_search, or keep web.searchBackend=disabled when only web_extract is intended."
+      ];
+    }
+  } catch {
+    return [];
+  }
+  return [];
 }
 
 function scanWorkspaceConfigSecrets(

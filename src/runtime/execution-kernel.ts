@@ -390,7 +390,8 @@ export class ExecutionKernel {
         task,
         availableTools,
         profile,
-        repoMap?.summary
+        repoMap?.summary,
+        initialToolExposure?.decisions ?? []
       );
       const resumeContextMessages = readSessionResumeMessages(taskMetadata);
       if (resumeContextMessages.length > 0) {
@@ -1967,6 +1968,7 @@ export class ExecutionKernel {
       return;
     }
     this.dependencies.sessionTaskRepository.create({
+      createdAt: task.startedAt ?? task.createdAt,
       finishedAt: task.finishedAt,
       input,
       metadata: {
