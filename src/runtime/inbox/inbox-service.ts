@@ -86,6 +86,16 @@ export class InboxService {
     return item;
   }
 
+  public markMatchingDone(
+    query: InboxListQuery,
+    predicate: (item: InboxItem) => boolean,
+    reviewerId: string
+  ): InboxItem[] {
+    return this.list(query)
+      .filter((item) => item.status !== "done" && predicate(item))
+      .map((item) => this.markDone(item.inboxId, reviewerId));
+  }
+
   public markDismissed(inboxId: string): InboxItem {
     const item = this.dependencies.inboxRepository.update(inboxId, {
       status: "dismissed"

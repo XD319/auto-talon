@@ -49,6 +49,7 @@ export class InboxCollector {
   private handleTrace(event: TraceEvent): void {
     switch (event.eventType) {
       case "task_success":
+        this.markTaskBlockedItemsDone(event.taskId, "system");
         if (this.isScheduledTaskRun(event.taskId) || this.findRelatedScheduleRun(event.taskId) !== null) {
           return;
         }
@@ -65,6 +66,7 @@ export class InboxCollector {
         });
         return;
       case "task_failure":
+        this.markTaskBlockedItemsDone(event.taskId, "system");
         if (this.isScheduledTaskRun(event.taskId) || this.findRelatedScheduleRun(event.taskId) !== null) {
           return;
         }
@@ -111,6 +113,11 @@ export class InboxCollector {
             event.payload.reviewerId ?? "system-reviewer"
           );
         }
+        this.markTaskBlockedItemsDone(
+          event.taskId,
+          event.payload.reviewerId ?? "system-reviewer",
+          (item) => item.summary.includes(`awaiting approval: ${event.payload.toolName}`)
+        );
         return;
       }
       case "experience_promoted":
@@ -211,6 +218,26 @@ export class InboxCollector {
           userId: this.resolveUserId(event.taskId)
         });
         return;
+      case "commitment_unblocked":
+        this.markBlockedItemsDone(
+          {
+            sessionId: event.payload.sessionId,
+            taskId: event.payload.taskId
+          },
+          "system",
+          (item) => item.dedupKey === `task_blocked:${event.payload.commitmentId}`
+        );
+        return;
+      case "commitment_completed":
+        this.markBlockedItemsDone(
+          {
+            sessionId: event.payload.sessionId,
+            taskId: event.payload.taskId
+          },
+          "system",
+          (item) => item.dedupKey === `task_blocked:${event.payload.commitmentId}`
+        );
+        return;
       case "next_action_blocked":
         this.dependencies.inboxService.append({
           category: "task_blocked",
@@ -223,6 +250,32 @@ export class InboxCollector {
           title: "Next action blocked",
           userId: this.resolveUserId(event.taskId)
         });
+        return;
+      case "next_action_updated":
+        if (
+          event.payload.blockedReason !== null ||
+          (event.payload.status !== "active" && event.payload.status !== "done")
+        ) {
+          return;
+        }
+        this.markBlockedItemsDone(
+          {
+            sessionId: event.payload.sessionId,
+            taskId: event.payload.taskId
+          },
+          "system",
+          (item) => item.dedupKey === `task_blocked:next_action:${event.payload.nextActionId}`
+        );
+        return;
+      case "next_action_done":
+        this.markBlockedItemsDone(
+          {
+            sessionId: event.payload.sessionId,
+            taskId: event.payload.taskId
+          },
+          "system",
+          (item) => item.dedupKey === `task_blocked:next_action:${event.payload.nextActionId}`
+        );
         return;
       case "commitment_updated":
         if (event.payload.status !== "waiting_decision" || event.payload.pendingDecision === null) {
@@ -258,6 +311,50 @@ export class InboxCollector {
       }
     }
     return "local-user";
+  }
+
+  private markTaskBlockedItemsDone(
+    taskId: string,
+    reviewerId: string,
+    predicate: (item: { summary: string }) => boolean = () => true
+  ): void {
+    this.dependencies.inboxService.markMatchingDone(
+      {
+        category: "task_blocked",
+        status: "pending",
+        taskId
+      },
+      (item) => predicate(item),
+      reviewerId
+    );
+  }
+
+  private markBlockedItemsDone(
+    scope: { sessionId: string; taskId: string | null },
+    reviewerId: string,
+    predicate: (item: { dedupKey: string | null; summary: string }) => boolean = () => true
+  ): void {
+    if (scope.taskId !== null) {
+      this.dependencies.inboxService.markMatchingDone(
+        {
+          category: "task_blocked",
+          status: "pending",
+          taskId: scope.taskId
+        },
+        (item) => predicate(item),
+        reviewerId
+      );
+      return;
+    }
+    this.dependencies.inboxService.markMatchingDone(
+      {
+        category: "task_blocked",
+        status: "pending",
+        sessionId: scope.sessionId
+      },
+      (item) => predicate(item),
+      reviewerId
+    );
   }
 
   private resolveScheduleOwner(scheduleId: string, fallbackTaskId: string | null): string {

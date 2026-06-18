@@ -495,4 +495,212 @@ describe("inbox collector", () => {
       storage.close();
     }
   });
+
+  it("clears approval-related blocked inbox items when approval is resolved", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    try {
+      const traceService = new TraceService(storage.traces);
+      const deliveryService = new DeliveryService();
+      const inboxService = new InboxService({
+        deliveryProducer: deliveryService.createProducer(),
+        deliveryProducerKey: deliveryService.producerKey(),
+        deliveryService,
+        inboxRepository: storage.inbox,
+        traceService
+      });
+      const nextActionService = new NextActionService({
+        nextActionRepository: storage.nextActions,
+        traceService
+      });
+      const collector = new InboxCollector({
+        findSchedule: () => null,
+        findScheduleRun: () => null,
+        findTask: (taskId) => storage.tasks.findById(taskId),
+        inboxService,
+        listScheduleRunsByTask: () => [],
+        nextActionService,
+        traceService
+      });
+
+      storage.sessions.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        ownerUserId: "u1",
+        providerName: "test-provider",
+        sessionId: "session-search",
+        title: "Search session"
+      });
+      storage.tasks.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        input: "search web",
+        maxIterations: 2,
+        metadata: {},
+        providerName: "test-provider",
+        requesterUserId: "u1",
+        status: "running",
+        taskId: "task-approval-blocked",
+        sessionId: "session-search",
+        tokenBudget: {
+          inputLimit: 1000,
+          outputLimit: 1000,
+          reservedOutput: 100,
+          usedInput: 0,
+          usedOutput: 0,
+          usedCostUsd: 0
+        }
+      });
+
+      collector.start();
+      traceService.record({
+        actor: "runtime",
+        eventType: "approval_requested",
+        payload: {
+          approvalId: "approval-search",
+          expiresAt: new Date().toISOString(),
+          toolCallId: "tool-search",
+          toolName: "mcp_tool_search"
+        },
+        stage: "governance",
+        summary: "approval requested",
+        taskId: "task-approval-blocked"
+      });
+      traceService.record({
+        actor: "runtime.next-action",
+        eventType: "next_action_blocked",
+        payload: {
+          blockedReason: "awaiting approval: mcp_tool_search",
+          commitmentId: "commitment-search",
+          nextActionId: "next-search",
+          sessionId: "session-search",
+          taskId: "task-approval-blocked"
+        },
+        stage: "planning",
+        summary: "next action blocked",
+        taskId: "task-approval-blocked"
+      });
+      traceService.record({
+        actor: "reviewer.u1",
+        eventType: "approval_resolved",
+        payload: {
+          approvalId: "approval-search",
+          reviewerId: "u1",
+          status: "approved",
+          toolCallId: "tool-search",
+          toolName: "mcp_tool_search"
+        },
+        stage: "governance",
+        summary: "approval approved",
+        taskId: "task-approval-blocked"
+      });
+      collector.stop();
+
+      const items = storage.inbox.list({ taskId: "task-approval-blocked", userId: "u1" });
+      expect(items.find((item) => item.category === "approval_requested")?.status).toBe("done");
+      expect(items.find((item) => item.category === "task_blocked")?.status).toBe("done");
+    } finally {
+      storage.close();
+    }
+  });
+
+  it("clears only matching blocked inbox items when a task succeeds", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    try {
+      const traceService = new TraceService(storage.traces);
+      const deliveryService = new DeliveryService();
+      const inboxService = new InboxService({
+        deliveryProducer: deliveryService.createProducer(),
+        deliveryProducerKey: deliveryService.producerKey(),
+        deliveryService,
+        inboxRepository: storage.inbox,
+        traceService
+      });
+      const nextActionService = new NextActionService({
+        nextActionRepository: storage.nextActions,
+        traceService
+      });
+      const collector = new InboxCollector({
+        findSchedule: () => null,
+        findScheduleRun: () => null,
+        findTask: (taskId) => storage.tasks.findById(taskId),
+        inboxService,
+        listScheduleRunsByTask: () => [],
+        nextActionService,
+        traceService
+      });
+
+      storage.sessions.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        ownerUserId: "u1",
+        providerName: "test-provider",
+        sessionId: "session-blocked",
+        title: "Blocked session"
+      });
+      for (const taskId of ["task-success-clears-blocked", "task-still-blocked"]) {
+        storage.tasks.create({
+          agentProfileId: "executor",
+          cwd: process.cwd(),
+          input: taskId,
+          maxIterations: 2,
+          metadata: {},
+          providerName: "test-provider",
+          requesterUserId: "u1",
+          status: "running",
+          taskId,
+          sessionId: "session-blocked",
+          tokenBudget: {
+            inputLimit: 1000,
+            outputLimit: 1000,
+            reservedOutput: 100,
+            usedInput: 0,
+            usedOutput: 0,
+            usedCostUsd: 0
+          }
+        });
+      }
+
+      collector.start();
+      for (const taskId of ["task-success-clears-blocked", "task-still-blocked"]) {
+        traceService.record({
+          actor: "runtime.next-action",
+          eventType: "next_action_blocked",
+          payload: {
+            blockedReason: "awaiting approval: shell",
+            commitmentId: null,
+            nextActionId: `next-${taskId}`,
+            sessionId: "session-blocked",
+            taskId
+          },
+          stage: "planning",
+          summary: "next action blocked",
+          taskId
+        });
+      }
+      traceService.record({
+        actor: "runtime",
+        eventType: "task_success",
+        payload: {
+          cwd: process.cwd(),
+          outputSummary: "done",
+          status: "succeeded"
+        },
+        stage: "completion",
+        summary: "task success",
+        taskId: "task-success-clears-blocked"
+      });
+      collector.stop();
+
+      expect(
+        storage.inbox.list({ taskId: "task-success-clears-blocked", userId: "u1" })
+          .find((item) => item.category === "task_blocked")?.status
+      ).toBe("done");
+      expect(
+        storage.inbox.list({ taskId: "task-still-blocked", userId: "u1" })
+          .find((item) => item.category === "task_blocked")?.status
+      ).toBe("pending");
+    } finally {
+      storage.close();
+    }
+  });
 });
