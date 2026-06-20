@@ -180,11 +180,12 @@ describe("Phase 2 governance runtime", () => {
     });
 
     try {
-      const options = createDefaultRunOptions("联网搜索下 skills 和 mcp 的区别", workspaceRoot, handle.config);
+      const options = createDefaultRunOptions("search web for skills and mcp differences", workspaceRoot, handle.config);
       await handle.service.runTask(options);
 
-      const systemMessage = capturedInput?.messages.find((message) => message.role === "system")?.content;
-      expect(capturedInput?.availableTools.some((tool) => tool.name === "web_search")).toBe(false);
+      const providerInput = requireCapturedProviderInput(capturedInput);
+      const systemMessage = providerInput.messages.find((message) => message.role === "system")?.content;
+      expect(providerInput.availableTools.some((tool) => tool.name === "web_search")).toBe(false);
       expect(systemMessage).toContain("web_search is unavailable: web_search backend is disabled");
       expect(systemMessage).toContain("Do not answer from general knowledge");
       expect(systemMessage).toContain("cannot discover search results");
@@ -1490,6 +1491,13 @@ async function createTempWorkspace(): Promise<string> {
   const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-phase2-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
+}
+
+function requireCapturedProviderInput(input: ProviderInput | null): ProviderInput {
+  if (input === null) {
+    throw new Error("Expected provider input to be captured.");
+  }
+  return input;
 }
 
 async function delay(ms: number): Promise<void> {

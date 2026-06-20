@@ -1,4 +1,4 @@
-import type { ApprovalDraft, ApprovalRecord, ApprovalRepository, ApprovalUpdatePatch } from "../src/types/index.js";
+import type { ApprovalDraft, ApprovalRecord, ApprovalRepository, ApprovalUpdatePatch } from "../../src/types/index.js";
 
 export class InMemoryApprovalRepository implements ApprovalRepository {
   private readonly records = new Map<string, ApprovalRecord>();

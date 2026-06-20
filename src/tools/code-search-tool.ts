@@ -237,7 +237,7 @@ async function collectNodeSearchResult(
     const matchedFiles = new Map<string, string>();
 
     for (const filePath of files) {
-      if (context.signal.aborted || shouldStopSearch(input, matches, filenameMatches, matchedFiles)) {
+      if (context.signal.aborted || shouldStopSearch(input, matches, filenameMatches)) {
         break;
       }
       const relativePath = toRelativePath(context.workspaceRoot, filePath);
@@ -256,7 +256,7 @@ async function collectNodeSearchResult(
         }
         addMatchedFile(matchedFiles, relativePath, filePath);
         incrementFileCount(fileCounts, relativePath, filePath);
-        if (shouldStopSearch(input, matches, filenameMatches, matchedFiles)) {
+        if (shouldStopSearch(input, matches, filenameMatches)) {
           break;
         }
       }
@@ -321,8 +321,7 @@ function collectSearchResultFromMatches(
 function shouldStopSearch(
   input: PreparedCodeSearchInput,
   matches: CodeSearchMatch[],
-  filenameMatches: FilenameMatch[],
-  matchedFiles: Map<string, string>
+  filenameMatches: FilenameMatch[]
 ): boolean {
   if (input.mode === "matches") {
     return matches.length + filenameMatches.length >= input.maxResults;
@@ -383,10 +382,12 @@ function buildModeOutput(
 
 function summarizeSearchResult(mode: CodeSearchMode, query: string, output: JsonObject): string {
   if (mode === "files") {
-    return `Found ${String(output.fileCount)} matching files for "${query}"`;
+    const fileCount = typeof output.fileCount === "number" ? output.fileCount : 0;
+    return `Found ${fileCount} matching files for "${query}"`;
   }
   if (mode === "count") {
-    return `Found ${String(output.totalMatchCount)} total matches for "${query}"`;
+    const totalMatchCount = typeof output.totalMatchCount === "number" ? output.totalMatchCount : 0;
+    return `Found ${totalMatchCount} total matches for "${query}"`;
   }
   const matchCount = typeof output.matchCount === "number" ? output.matchCount : 0;
   const filenameMatches = Array.isArray(output.filenameMatches) ? output.filenameMatches.length : 0;

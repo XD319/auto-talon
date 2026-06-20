@@ -84,8 +84,13 @@ export function requireHttpAuth(
   if (token === null) {
     return { authorized: true };
   }
-  const header = request.headers.authorization;
-  const headerValue = Array.isArray(header) ? header[0] : header;
+  const header = (request.headers as Record<string, unknown>).authorization;
+  const headerValue =
+    typeof header === "string"
+      ? header
+      : Array.isArray(header) && typeof header[0] === "string"
+        ? header[0]
+        : undefined;
   if (validateHttpBearerAuth(headerValue, token)) {
     return { authorized: true };
   }

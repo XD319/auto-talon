@@ -40,7 +40,7 @@ describe("WebSearchTool", () => {
     const tool = new WebSearchTool(createSandbox(), createFullWebConfig(), {
       backend: "firecrawl",
       requiresApiKey: true,
-      search: async () => ({
+      search: () => Promise.resolve({
         provider: "firecrawl",
         query: "ai news",
         results: [

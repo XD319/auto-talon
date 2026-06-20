@@ -182,7 +182,9 @@ export class WebSearchTool implements ToolDefinition<typeof webSearchSchema, Pre
       searchBackend === "disabled"
         ? "https://example.invalid/search"
         : searchBackend === "ddgs"
-          ? isExternalDdgsGateway ? provider!.apiUrl! : BING_SEARCH_URL
+          ? provider?.apiUrl !== null && provider?.apiUrl !== undefined && isExternalDdgsGateway
+            ? provider.apiUrl
+            : BING_SEARCH_URL
           : provider?.apiUrl ?? "https://example.invalid/search";
     const endpointPlan = this.sandboxService.prepareWebFetch(endpointUrl);
     const usesGetMethod =
