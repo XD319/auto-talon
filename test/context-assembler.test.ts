@@ -49,12 +49,12 @@ describe("ExecutionContextAssembler", () => {
     expect(messages[0]?.content).toContain("Available tools: read_file.");
   });
 
-  it("tells the model when explicit web search is requested but web_search is unavailable", () => {
+  it("injects full web_search unavailability guidance whenever web_search is unavailable", () => {
     const assembler = new ExecutionContextAssembler();
     const messages = assembler.buildInitialMessages(
       {
         ...createTask(),
-        input: "联网搜索下 skills 和 mcp 的区别"
+        input: "search web for skills and mcp differences"
       },
       [
         {

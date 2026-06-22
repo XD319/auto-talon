@@ -59,7 +59,7 @@ export class ExecutionContextAssembler {
     const publicWebFetchAvailable = availableTools.some(
       (tool) => tool.capability === "network.fetch_public_readonly"
     );
-    const unavailableWebSearchNote = buildUnavailableWebSearchNote(task.input, toolExposureDecisions);
+    const unavailableWebSearchNote = buildUnavailableWebSearchNote(toolExposureDecisions);
     const systemMessage = [
       profile.systemPrompt,
       "Use tools only when needed.",
@@ -111,7 +111,6 @@ export class ExecutionContextAssembler {
 }
 
 function buildUnavailableWebSearchNote(
-  taskInput: string,
   decisions: ToolExposureDecision[]
 ): string | null {
   const webSearchDecision = decisions.find(
@@ -122,16 +121,13 @@ function buildUnavailableWebSearchNote(
   }
   const reason = normalizeUnavailableToolReason(webSearchDecision.reason);
   const setupHint = buildWebSearchSetupHint();
-  if (isExplicitWebSearchRequest(taskInput)) {
-    return [
-      `The user explicitly asked for web search, but web_search is unavailable: ${reason}.`,
-      "Do not answer from general knowledge or training data as a substitute for live search results.",
-      "Explain the limitation clearly, then offer the setup steps below.",
-      `Setup: ${setupHint}`,
-      "web_extract can read only known public URLs and cannot discover search results."
-    ].join(" ");
-  }
-  return `Unavailable web capability: web_search unavailable: ${reason}. Setup: ${setupHint}`;
+  return [
+    `web_search is unavailable: ${reason}.`,
+    "Do not answer from general knowledge or training data as a substitute for live search results.",
+    "Explain the limitation clearly, then offer the setup steps below.",
+    `Setup: ${setupHint}`,
+    "web_extract can read only known public URLs and cannot discover search results."
+  ].join(" ");
 }
 
 function buildWebSearchSetupHint(): string {
@@ -144,10 +140,6 @@ function buildWebSearchSetupHint(): string {
 
 function normalizeUnavailableToolReason(reason: string): string {
   return reason.replace(/^unavailable:\s*/iu, "").trim();
-}
-
-function isExplicitWebSearchRequest(input: string): boolean {
-  return /联网搜索|web search|search the web|search public web/iu.test(input);
 }
 
 function buildContextDebugView(input: ContextAssemblerInput): ContextAssemblyDebugView {
