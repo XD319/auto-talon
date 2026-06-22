@@ -176,7 +176,7 @@ export class SqliteSessionSummaryRepository implements SessionSummaryRepository 
   public listBySession(sessionId: string): SessionSummaryRecord[] {
     const rows = this.database
       .prepare(
-        "SELECT * FROM session_summary_events WHERE session_id = ? ORDER BY created_at DESC, session_memory_id DESC"
+        "SELECT * FROM session_summary_events WHERE session_id = ? ORDER BY created_at DESC, rowid DESC"
       )
       .all(sessionId) as unknown as SessionSummaryEventRow[];
     return rows.map((row) => this.mapRow(row));

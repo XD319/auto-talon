@@ -760,7 +760,7 @@ function migrateV10(database: DatabaseSync): void {
       SELECT candidate.session_memory_id
       FROM session_summary AS candidate
       WHERE candidate.session_id = source.session_id
-      ORDER BY candidate.created_at DESC, candidate.session_memory_id DESC
+      ORDER BY candidate.created_at DESC, candidate.rowid DESC
       LIMIT 1
     )
     ON CONFLICT(session_id) DO UPDATE SET

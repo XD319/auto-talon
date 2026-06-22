@@ -62,7 +62,7 @@ describe("session session memory repository", () => {
     }
   });
 
-  it("writes events, upserts current, and keeps history order", async () => {
+  it("writes events, upserts current, and keeps history order", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
       storage.sessions.create({
@@ -83,9 +83,6 @@ describe("session session memory repository", () => {
         taskId: "task-1",
         sessionId: "session-memory-1",
         trigger: "manual"
-      });
-      await new Promise((resolve) => {
-        setTimeout(resolve, 1);
       });
       const second = storage.sessionSummaries.create({
         decisions: ["switch to plan B"],
