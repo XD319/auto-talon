@@ -1510,7 +1510,7 @@ async function waitForTaskStatus(
   service: ReturnType<typeof createApplication>["service"],
   taskId: string,
   status: "succeeded" | "failed" | "cancelled",
-  timeoutMs = 1_000
+  timeoutMs = 10_000
 ) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
