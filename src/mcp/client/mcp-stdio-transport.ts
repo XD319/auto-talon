@@ -323,6 +323,11 @@ export class McpStdioTransport implements McpClientHandle {
     try {
       message = JSON.parse(text) as JsonRpcMessage;
     } catch {
+      if (this.pending.size > 0) {
+        this.failAll(formatMalformedJsonRpcError(this.serverId, text));
+      } else {
+        console.warn(`MCP ${this.serverId} ignored malformed JSON line: ${truncateJsonRpcLine(text)}`);
+      }
       return;
     }
     if (message.id === undefined) {
@@ -426,17 +431,30 @@ function toolTimeoutMs(config: Pick<McpServerConfig, "toolTimeoutMs">): number {
 }
 
 function parseJsonRpcLines(raw: string): JsonRpcMessage[] {
-  return raw
-    .split(/\r?\n/gu)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => {
-      try {
-        return JSON.parse(line) as JsonRpcMessage;
-      } catch {
-        return {};
-      }
-    });
+  const messages: JsonRpcMessage[] = [];
+  for (const line of raw.split(/\r?\n/gu)) {
+    const text = line.trim();
+    if (text.length === 0) {
+      continue;
+    }
+    try {
+      messages.push(JSON.parse(text) as JsonRpcMessage);
+    } catch {
+      continue;
+    }
+  }
+  return messages;
+}
+
+export function formatMalformedJsonRpcError(serverId: string, line: string): string {
+  return `MCP ${serverId} returned malformed JSON: ${truncateJsonRpcLine(line)}`;
+}
+
+function truncateJsonRpcLine(line: string, maxLength = 120): string {
+  if (line.length <= maxLength) {
+    return line;
+  }
+  return `${line.slice(0, maxLength)}...`;
 }
 
 function jsonRpcError(
