@@ -23,6 +23,7 @@ import {
   deleteCharacterAfter,
   deleteCharacterBefore,
   deletePreviousWord,
+  formatTextInputError,
   isReturnKey,
   moveCursorVertical,
   resolveApprovalShortcut
@@ -2185,6 +2186,14 @@ describe("use-text-input helpers", () => {
     expect(isReturnKey("\r", {})).toBe(true);
     expect(isReturnKey("\n", {})).toBe(true);
     expect(isReturnKey("x", {})).toBe(false);
+  });
+
+  it("formats input errors with actionable context", () => {
+    expect(formatTextInputError("Clipboard read failed", new Error("permission denied"))).toBe(
+      "Clipboard read failed: permission denied"
+    );
+    expect(formatTextInputError("Submit failed", "timeout")).toBe("Submit failed: timeout");
+    expect(formatTextInputError("External editor failed", "")).toBe("External editor failed");
   });
 
   it("completes new memory slash commands", () => {

@@ -41,6 +41,7 @@ export interface UseTextInputOptions {
   onEscape?: () => void;
   onSubmit: (text: string) => boolean | Promise<boolean>;
   onSubmitBlockedBusy?: () => void;
+  onError?: (message: string) => void;
   /** Return replacement value, or null to leave input unchanged. */
   onTabComplete?: (value: string) => string | null;
   onExternalEditorEdit?: (value: string) => Promise<string>;
@@ -81,6 +82,12 @@ export function canSubmitTextInput(value: string, busy: boolean): boolean {
   return value.trim().length > 0;
 }
 
+export function formatTextInputError(context: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  const trimmed = detail.trim();
+  return trimmed.length > 0 ? `${context}: ${trimmed}` : context;
+}
+
 export function isReturnKey(input: string, key: { return?: boolean }): boolean {
   return key.return === true || input === "\r" || input === "\n";
 }
@@ -116,7 +123,9 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         preferredColumnRef.current = null;
         setCollapsedByPaste(false);
       })
-      .catch(() => {})
+      .catch((error) => {
+        options.onError?.(formatTextInputError("External editor failed", error));
+      })
       .finally(() => {
         setRawMode(true);
       });
@@ -287,7 +296,9 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
         setCursorIndex(insertionIndex + clip.length);
         preferredColumnRef.current = null;
         setCollapsedByPaste(shouldAutoCollapse(clip));
-      }).catch(() => {});
+      }).catch((error) => {
+        options.onError?.(formatTextInputError("Clipboard read failed", error));
+      });
       return;
     }
 
@@ -404,7 +415,9 @@ export function useTextInput(options: UseTextInputOptions): TextInputController 
               setCollapsedByPaste(false);
               preferredColumnRef.current = null;
             })
-            .catch(() => {});
+            .catch((error) => {
+              options.onError?.(formatTextInputError("Submit failed", error));
+            });
         } else if (hasInput && options.busy) {
           options.onSubmitBlockedBusy?.();
         }

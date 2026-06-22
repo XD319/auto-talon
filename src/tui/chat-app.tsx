@@ -1220,6 +1220,9 @@ export function ChatTuiApp({
     },
     onSubmitBlockedBusy: () => {
       controller.addSystemMessage("Agent is still running. Wait for completion or use /stop to interrupt.");
+    },
+    onError: (message) => {
+      controller.addSystemMessage(message);
     }
   });
 
