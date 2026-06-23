@@ -109,7 +109,7 @@ function assistantToolCallsMessage(
 }
 
 describe("sanitizeToolCallPairing", () => {
-  it("inserts placeholder tool results for missing tool_call_ids", () => {
+  it("inserts placeholder tool results when no tool results exist yet", () => {
     const messages: ConversationMessage[] = [
       assistantToolCallsMessage([
         {
@@ -124,20 +124,15 @@ describe("sanitizeToolCallPairing", () => {
           toolCallId: "call-b",
           toolName: "web_search"
         }
-      ]),
-      {
-        content: '{"results":[]}',
-        role: "tool",
-        toolCallId: "call-a",
-        toolName: "web_search"
-      }
+      ])
     ];
 
     const result = sanitizeToolCallPairing(messages);
-    expect(result.insertedCount).toBe(1);
+    expect(result.insertedCount).toBe(2);
     expect(messages).toHaveLength(3);
+    expect(messages[1]?.role).toBe("tool");
     expect(messages[2]?.role).toBe("tool");
-    expect(messages[2]?.toolCallId).toBe("call-b");
+    expect(messages[1]?.content).toContain("tool_result_missing");
     expect(messages[2]?.content).toContain("tool_result_missing");
   });
 
