@@ -59,6 +59,14 @@ export class ProviderRouter {
     this.mode = mode;
   }
 
+  public clearProviderCache(providerName?: string): void {
+    if (providerName === undefined) {
+      this.providers.clear();
+      return;
+    }
+    this.providers.delete(providerName);
+  }
+
   public selectProvider(input: SelectProviderInput): SelectProviderResult {
     const modeApplied = input.mode ?? this.mode;
     const softDowngrade =

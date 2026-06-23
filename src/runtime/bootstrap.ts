@@ -128,7 +128,7 @@ export const RUNTIME_VERSION = "0.1.0";
 
 const DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS = 128_000;
 
-function resolveEffectiveContextWindow(
+export function resolveEffectiveContextWindow(
   provider: ResolvedProviderConfig,
   runtimeConfig: Pick<RuntimeConfig, "tokenBudget" | "tokenBudgetInputLimitExplicit">
 ): { provider: ResolvedProviderConfig; tokenBudget: TokenBudget } {
@@ -1076,8 +1076,14 @@ function buildApplicationRuntime(
     tokenBudget: {
       inputLimit: config.tokenBudget.inputLimit,
       outputLimit: config.tokenBudget.outputLimit,
-      reservedOutput: config.tokenBudget.reservedOutput
+      reservedOutput: config.tokenBudget.reservedOutput,
+      usedInput: config.tokenBudget.usedInput,
+      usedOutput: config.tokenBudget.usedOutput,
+      ...(config.tokenBudget.usedCostUsd !== undefined
+        ? { usedCostUsd: config.tokenBudget.usedCostUsd }
+        : {})
     },
+    tokenBudgetInputLimitExplicit: config.tokenBudgetInputLimitExplicit,
     traceService,
     outputService,
     auditService,
