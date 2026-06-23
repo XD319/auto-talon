@@ -4,6 +4,7 @@ export * from "./config.js";
 export * from "./context-window-enrichment.js";
 export * from "./context-window-query.js";
 export * from "./glm-provider.js";
+export * from "./model-aliases.js";
 export * from "./mock-provider.js";
 export * from "./openai-compatible-provider.js";
 export * from "./provider-error.js";

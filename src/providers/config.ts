@@ -4,6 +4,12 @@ import { dirname, join, resolve } from "node:path";
 
 import type { JsonObject, ProviderConfig } from "../types/index.js";
 import {
+  mergeModelAliases,
+  normalizeModelAliases,
+  resolveModelAlias,
+  type ModelAliasMap
+} from "./model-aliases.js";
+import {
   PROVIDER_CATALOG,
   type ProviderCatalogEntry,
   type ProviderTransportKind,
@@ -36,6 +42,7 @@ interface CustomProviderFileEntry extends ProviderFileEntry {
 interface ProviderConfigFile extends JsonObject {
   currentProvider?: string;
   customProviders?: Record<string, CustomProviderFileEntry>;
+  modelAliases?: Record<string, string>;
   providers?: Record<string, ProviderFileEntry>;
 }
 
@@ -101,9 +108,21 @@ export function resolveProviderConfigForProvider(
   });
 }
 
+export function resolveProviderConfigForSwitch(
+  cwd: string,
+  providerSelection: string
+): ResolvedProviderConfig {
+  return resolveProviderConfigInternal(cwd, {
+    ignoreProviderEnv: true,
+    includeProviderSelectionEnv: false,
+    providerSelection
+  });
+}
+
 function resolveProviderConfigInternal(
   cwd: string,
   options: {
+    ignoreProviderEnv?: boolean;
     includeProviderSelectionEnv: boolean;
     providerSelection?: string;
   }
@@ -140,7 +159,7 @@ function resolveProviderConfigInternal(
     userConfig,
     workspaceConfig,
     configuredName,
-    options.includeProviderSelectionEnv
+    options.includeProviderSelectionEnv && options.ignoreProviderEnv !== true
   );
   const configPath = resolveConfigPath(configSource, userConfigPath, workspaceConfigPath);
 
@@ -149,24 +168,39 @@ function resolveProviderConfigInternal(
     const defaults = resolveDefaultProviderSettings(builtinProviderName);
     const model = resolveProviderModel(
       builtinProviderName,
-      process.env.AGENT_PROVIDER_MODEL ??
-        fileEntry?.model ??
-        providerSelection.modelName ??
+      resolveSwitchableModelValue(
+        options.ignoreProviderEnv === true,
+        fileEntry?.model,
+        providerSelection.modelName,
         defaults.model
+      ) ?? null
     );
 
     return {
       apiKey: normalizeNullableString(
-        process.env.AGENT_PROVIDER_API_KEY ?? fileEntry?.apiKey ?? defaults.apiKey
+        resolveSwitchableEnvString(
+          options.ignoreProviderEnv === true,
+          process.env.AGENT_PROVIDER_API_KEY,
+          fileEntry?.apiKey ?? defaults.apiKey
+        )
       ),
       baseUrl: normalizeNullableString(
-        process.env.AGENT_PROVIDER_BASE_URL ?? fileEntry?.baseUrl ?? defaults.baseUrl
+        resolveSwitchableEnvString(
+          options.ignoreProviderEnv === true,
+          process.env.AGENT_PROVIDER_BASE_URL,
+          fileEntry?.baseUrl ?? defaults.baseUrl
+        )
       ),
       builtinProviderName,
       configPath,
       configSource,
       maxRetries: normalizePositiveNumber(
-        process.env.AGENT_PROVIDER_MAX_RETRIES ?? fileEntry?.maxRetries,
+        resolveSwitchableEnvNumber(
+          options.ignoreProviderEnv === true,
+          process.env.AGENT_PROVIDER_MAX_RETRIES,
+          fileEntry?.maxRetries,
+          defaults.maxRetries
+        ),
         defaults.maxRetries
       ),
       model,
@@ -176,16 +210,28 @@ function resolveProviderConfigInternal(
       displayName: manifest.displayName,
       family: manifest.family,
       streamIdleTimeoutConfigured:
-        process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS !== undefined ||
+        (options.ignoreProviderEnv !== true &&
+          process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS !== undefined) ||
         fileEntry?.streamIdleTimeoutMs !== undefined,
       streamIdleTimeoutMs: normalizePositiveNumber(
-        process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS ?? fileEntry?.streamIdleTimeoutMs,
+        resolveSwitchableEnvNumber(
+          options.ignoreProviderEnv === true,
+          process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+          fileEntry?.streamIdleTimeoutMs,
+          defaults.streamIdleTimeoutMs
+        ),
         defaults.streamIdleTimeoutMs
       ),
       timeoutConfigured:
-        process.env.AGENT_PROVIDER_TIMEOUT_MS !== undefined || fileEntry?.timeoutMs !== undefined,
+        (options.ignoreProviderEnv !== true && process.env.AGENT_PROVIDER_TIMEOUT_MS !== undefined) ||
+        fileEntry?.timeoutMs !== undefined,
       timeoutMs: normalizePositiveNumber(
-        process.env.AGENT_PROVIDER_TIMEOUT_MS ?? fileEntry?.timeoutMs,
+        resolveSwitchableEnvNumber(
+          options.ignoreProviderEnv === true,
+          process.env.AGENT_PROVIDER_TIMEOUT_MS,
+          fileEntry?.timeoutMs,
+          defaults.timeoutMs
+        ),
         defaults.timeoutMs
       ),
       transport: manifest.transport
@@ -198,25 +244,40 @@ function resolveProviderConfigInternal(
 
   const model = resolveCustomProviderModel(
     configuredName,
-    process.env.AGENT_PROVIDER_MODEL ??
-      fileEntry?.model ??
-      providerSelection.modelName ??
+    resolveSwitchableModelValue(
+      options.ignoreProviderEnv === true,
+      fileEntry?.model,
+      providerSelection.modelName,
       customProvider.model
+    ) ?? null
   );
 
   return {
     anthropicVersion: normalizeNullableString(customProvider.anthropicVersion),
     apiKey: normalizeNullableString(
-      process.env.AGENT_PROVIDER_API_KEY ?? fileEntry?.apiKey ?? customProvider.apiKey
+      resolveSwitchableEnvString(
+        options.ignoreProviderEnv === true,
+        process.env.AGENT_PROVIDER_API_KEY,
+        fileEntry?.apiKey ?? customProvider.apiKey
+      )
     ),
     baseUrl: normalizeNullableString(
-      process.env.AGENT_PROVIDER_BASE_URL ?? fileEntry?.baseUrl ?? customProvider.baseUrl
+      resolveSwitchableEnvString(
+        options.ignoreProviderEnv === true,
+        process.env.AGENT_PROVIDER_BASE_URL,
+        fileEntry?.baseUrl ?? customProvider.baseUrl
+      )
     ),
     builtinProviderName: null,
     configPath,
     configSource,
     maxRetries: normalizePositiveNumber(
-      process.env.AGENT_PROVIDER_MAX_RETRIES ?? fileEntry?.maxRetries,
+      resolveSwitchableEnvNumber(
+        options.ignoreProviderEnv === true,
+        process.env.AGENT_PROVIDER_MAX_RETRIES,
+        fileEntry?.maxRetries,
+        normalizePositiveNumber(customProvider.maxRetries, 2)
+      ),
       normalizePositiveNumber(customProvider.maxRetries, 2)
     ),
     model,
@@ -230,23 +291,80 @@ function resolveProviderConfigInternal(
       normalizeNullableString(customProvider.displayName) ??
       configuredName,
     streamIdleTimeoutConfigured:
-      process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS !== undefined ||
+      (options.ignoreProviderEnv !== true &&
+        process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS !== undefined) ||
       fileEntry?.streamIdleTimeoutMs !== undefined ||
       customProvider.streamIdleTimeoutMs !== undefined,
     streamIdleTimeoutMs: normalizePositiveNumber(
-      process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS ?? fileEntry?.streamIdleTimeoutMs,
+      resolveSwitchableEnvNumber(
+        options.ignoreProviderEnv === true,
+        process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS,
+        fileEntry?.streamIdleTimeoutMs ?? customProvider.streamIdleTimeoutMs,
+        normalizePositiveNumber(customProvider.streamIdleTimeoutMs, 300_000)
+      ),
       normalizePositiveNumber(customProvider.streamIdleTimeoutMs, 300_000)
     ),
     timeoutConfigured:
-      process.env.AGENT_PROVIDER_TIMEOUT_MS !== undefined ||
+      (options.ignoreProviderEnv !== true && process.env.AGENT_PROVIDER_TIMEOUT_MS !== undefined) ||
       fileEntry?.timeoutMs !== undefined ||
       customProvider.timeoutMs !== undefined,
     timeoutMs: normalizePositiveNumber(
-      process.env.AGENT_PROVIDER_TIMEOUT_MS ?? fileEntry?.timeoutMs,
+      resolveSwitchableEnvNumber(
+        options.ignoreProviderEnv === true,
+        process.env.AGENT_PROVIDER_TIMEOUT_MS,
+        fileEntry?.timeoutMs ?? customProvider.timeoutMs,
+        normalizePositiveNumber(customProvider.timeoutMs, 120_000)
+      ),
       normalizePositiveNumber(customProvider.timeoutMs, 120_000)
     ),
     transport: customProvider.transport
   };
+}
+
+export function resolveMergedModelAliases(cwd = process.cwd()): ModelAliasMap {
+  const workspaceConfigPath = join(resolve(cwd), ".auto-talon", "provider.config.json");
+  const userConfigPath = resolveUserProviderConfigPath();
+  return mergeModelAliases(
+    loadProviderConfigFile(userConfigPath).modelAliases,
+    loadProviderConfigFile(workspaceConfigPath).modelAliases
+  );
+}
+
+export function resolveProviderSelectionWithAliases(
+  selection: string,
+  cwd = process.cwd()
+): string {
+  const aliases = resolveMergedModelAliases(cwd);
+  return resolveModelAlias(selection, aliases);
+}
+
+export function listConfiguredProviderNames(cwd = process.cwd()): string[] {
+  const workspaceConfigPath = join(resolve(cwd), ".auto-talon", "provider.config.json");
+  const userConfigPath = resolveUserProviderConfigPath();
+  const fileConfig = mergeProviderConfigFiles(
+    loadProviderConfigFile(userConfigPath),
+    loadProviderConfigFile(workspaceConfigPath)
+  );
+  const names = new Set<string>();
+
+  for (const name of Object.keys(normalizeCustomProviders(fileConfig.customProviders))) {
+    names.add(name);
+  }
+
+  for (const [rawName, entry] of Object.entries(fileConfig.providers ?? {})) {
+    const normalized = normalizeProviderName(rawName);
+    const providerName = normalized ?? rawName;
+    if (normalized === "mock" || normalized === "ollama") {
+      names.add(providerName);
+      continue;
+    }
+    const apiKey = entry.apiKey;
+    if (typeof apiKey === "string" && apiKey.length > 0) {
+      names.add(providerName);
+    }
+  }
+
+  return [...names].sort((left, right) => left.localeCompare(right));
 }
 
 export function resolveProviderCatalog(cwd = process.cwd()): ProviderCatalogEntry[] {
@@ -498,6 +616,7 @@ function mergeProviderConfigFiles(
     workspaceConfig.customProviders
   );
   const providers = mergeNamedEntries(userConfig.providers, workspaceConfig.providers);
+  const modelAliases = mergeModelAliases(userConfig.modelAliases, workspaceConfig.modelAliases);
 
   return {
     ...userConfig,
@@ -508,6 +627,7 @@ function mergeProviderConfigFiles(
         ? { currentProvider: userConfig.currentProvider }
         : {}),
     ...(customProviders !== undefined ? { customProviders } : {}),
+    ...(Object.keys(modelAliases).length > 0 ? { modelAliases } : {}),
     ...(providers !== undefined ? { providers } : {})
   };
 }
@@ -806,6 +926,46 @@ function normalizeOptionalPositiveInteger(value: number | null | undefined): num
     throw new Error("provider contextWindowTokens must be a positive integer.");
   }
   return value;
+}
+
+function resolveSwitchableModelValue(
+  ignoreProviderEnv: boolean,
+  fileModel: string | null | undefined,
+  selectionModel: string | null,
+  fallback: string | null | undefined
+): string | null {
+  if (ignoreProviderEnv) {
+    return selectionModel ?? normalizeNullableString(fileModel) ?? normalizeNullableString(fallback);
+  }
+  return (
+    normalizeNullableString(process.env.AGENT_PROVIDER_MODEL) ??
+    normalizeNullableString(fileModel) ??
+    selectionModel ??
+    normalizeNullableString(fallback)
+  );
+}
+
+function resolveSwitchableEnvString(
+  ignoreProviderEnv: boolean,
+  envValue: string | undefined,
+  fallback: string | null | undefined
+): string | null | undefined {
+  if (ignoreProviderEnv) {
+    return fallback;
+  }
+  return envValue ?? fallback;
+}
+
+function resolveSwitchableEnvNumber(
+  ignoreProviderEnv: boolean,
+  envValue: string | undefined,
+  fileValue: number | undefined,
+  fallback: number
+): number | string | undefined {
+  if (ignoreProviderEnv) {
+    return fileValue ?? fallback;
+  }
+  return envValue ?? fileValue ?? fallback;
 }
 
 function normalizeNullableString(value: string | null | undefined): string | null {
