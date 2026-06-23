@@ -62,6 +62,7 @@ import type {
   SessionMessageSearchHit,
   SessionListQuery,
   SessionUiState,
+  TokenBudget,
   TraceEvent,
   ToolCallRecord
 } from "../types/index.js";
@@ -95,6 +96,13 @@ import type {
   SessionCommitmentProjector
 } from "./commitments/index.js";
 import { FileRollbackService, ProviderStatsService, RuntimeDoctorService } from "./operations/index.js";
+import {
+  listConfiguredProviders,
+  switchProviderRuntime,
+  type ConfiguredProviderEntry,
+  type ProviderSwitchPersistScope,
+  type SwitchProviderResult
+} from "./operations/provider-switch-service.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
 import { ScheduleFacade, SessionFacade } from "./facades/index.js";
 
@@ -285,11 +293,8 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   commitmentService: CommitmentService;
   nextActionService: NextActionService;
   sessionCommitmentProjector: SessionCommitmentProjector;
-  tokenBudget: {
-    inputLimit: number;
-    outputLimit: number;
-    reservedOutput: number;
-  };
+  tokenBudget: TokenBudget;
+  tokenBudgetInputLimitExplicit: boolean;
   traceService: TraceService;
   testCommands: WorkflowTestCommand[];
   outputService: RuntimeOutputService;
@@ -1290,6 +1295,79 @@ export class AgentApplicationService {
 
   public currentProvider(): ResolvedProviderConfig {
     return this.dependencies.providerConfig;
+  }
+
+  public listConfiguredProviders(): ConfiguredProviderEntry[] {
+    return listConfiguredProviders(this.dependencies.workspaceRoot);
+  }
+
+  public async switchProvider(input: {
+    persist: ProviderSwitchPersistScope;
+    selection: string;
+  }): Promise<SwitchProviderResult> {
+    const runningTasks = this.dependencies.listTasks().filter((task) => task.status === "running");
+    if (runningTasks.length > 0) {
+      throw new Error("Cannot switch model while a task is running. Use /stop first.");
+    }
+    if (this.dependencies.listPendingApprovals().length > 0) {
+      throw new Error("Cannot switch model while an approval is pending.");
+    }
+    if (this.dependencies.listPendingClarifyPrompts().length > 0) {
+      throw new Error("Cannot switch model while clarification is pending.");
+    }
+
+    const previousName = this.dependencies.providerConfig.name;
+    const result = await switchProviderRuntime({
+      cwd: this.dependencies.workspaceRoot,
+      persist: input.persist,
+      selection: input.selection,
+      tokenBudget: this.dependencies.tokenBudget,
+      tokenBudgetInputLimitExplicit: this.dependencies.tokenBudgetInputLimitExplicit
+    });
+
+    this.dependencies.provider = result.provider;
+    this.dependencies.providerConfig = result.providerConfig;
+    this.dependencies.tokenBudget = result.tokenBudget;
+    this.dependencies.executionKernel.setPrimaryProvider(result.provider);
+    this.dependencies.providerRouter?.clearProviderCache(previousName);
+    this.dependencies.providerRouter?.clearProviderCache(result.providerConfig.name);
+
+    this.dependencies.traceService.record({
+      actor: "runtime.application",
+      eventType: "route_decision",
+      payload: {
+        kind: "main",
+        mode: this.dependencies.providerRouter?.getMode() ?? "balanced",
+        providerName: result.providerConfig.name,
+        reason: `model switched to ${result.selection}`,
+        sessionId: null,
+        taskId: "runtime",
+        tier: null
+      },
+      stage: "planning",
+      summary: `Switched model to ${result.selection}`,
+      taskId: "runtime"
+    });
+    this.dependencies.auditService.record({
+      action: "route_decided",
+      actor: "runtime.application",
+      approvalId: null,
+      outcome: "succeeded",
+      payload: {
+        kind: "main",
+        modelName: result.providerConfig.model,
+        persist: input.persist,
+        previousProviderName: previousName,
+        providerName: result.providerConfig.name,
+        reason: `model switched to ${result.selection}`,
+        selection: result.selection
+      },
+      summary: `Provider switched to ${result.selection}`,
+      taskId: null,
+      toolCallId: null
+    });
+
+    return result;
   }
 
   public providerStats(groupBy: "provider" | "session" | "task" | "mode" = "provider"): ProviderStatsSnapshot | null | JsonObject {
