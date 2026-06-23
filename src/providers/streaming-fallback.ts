@@ -26,11 +26,15 @@ export function classifyStreamingFallback(error: unknown): StreamingFallbackKind
     return "transient";
   }
   const category = (error as Partial<ProviderError> | null | undefined)?.category;
-  if (category === "unsupported_capability" || category === "invalid_request" || category === "malformed_response") {
+  if (category === "unsupported_capability" || category === "malformed_response") {
     return "persistent";
   }
-  if (category === "auth_error" || category === "rate_limit") {
-    // Auth/rate-limit problems will keep failing on the non-streaming path too,
+  if (
+    category === "invalid_request" ||
+    category === "auth_error" ||
+    category === "rate_limit"
+  ) {
+    // Payload/auth/rate-limit failures will keep failing on the non-streaming path too,
     // so propagate the original error instead of looping fallbacks.
     return "ineligible";
   }

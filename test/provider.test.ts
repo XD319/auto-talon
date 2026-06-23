@@ -1568,6 +1568,56 @@ describe("Provider integration", () => {
     expect(requestModes).toEqual([true]);
   });
 
+  it("propagates OpenAI-compatible invalid_request errors instead of looping into a non-streaming retry", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "deepseek-chat",
+        name: "deepseek",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "DeepSeek",
+        defaultModel: "deepseek-chat"
+      }
+    );
+
+    const requestModes: Array<boolean | undefined> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string) as { stream?: boolean };
+        requestModes.push(body.stream);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                message:
+                  "An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'.",
+                type: "invalid_request_error"
+              }
+            }),
+            { status: 400 }
+          )
+        );
+      })
+    );
+
+    await expect(
+      provider.generate({
+        ...createProviderInput(),
+        onTextDelta: () => {
+          throw new Error("invalid_request should not stream text");
+        }
+      })
+    ).rejects.toMatchObject({ category: "invalid_request" });
+
+    expect(requestModes).toEqual([true]);
+  });
+
   it("maps Anthropic-compatible responses into the unified provider response shape", async () => {
     const provider = new AnthropicCompatibleProvider(
       {

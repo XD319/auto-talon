@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { historyHasSuccessfulWrite } from "../src/runtime/kernel-support.js";
-import type { ConversationMessage } from "../src/types/index.js";
+import {
+  findLastAssistantToolCallsResponse,
+  historyHasSuccessfulWrite,
+  sanitizeToolCallPairing
+} from "../src/runtime/kernel-support.js";
+import type { ConversationMessage, ProviderToolCall } from "../src/types/index.js";
 
 function toolResultMessage(toolName: string, content: string): ConversationMessage {
   return {
@@ -90,5 +94,94 @@ describe("historyHasSuccessfulWrite", () => {
   it("treats empty or null payloads as inconclusive (no proof of write)", () => {
     expect(historyHasSuccessfulWrite([toolResultMessage("write_file", "")], isWriteTool)).toBe(false);
     expect(historyHasSuccessfulWrite([toolResultMessage("write_file", "null")], isWriteTool)).toBe(false);
+  });
+});
+
+function assistantToolCallsMessage(
+  toolCalls: ProviderToolCall[],
+  content = ""
+): ConversationMessage {
+  return {
+    content,
+    role: "assistant",
+    toolCalls
+  };
+}
+
+describe("sanitizeToolCallPairing", () => {
+  it("inserts placeholder tool results for missing tool_call_ids", () => {
+    const messages: ConversationMessage[] = [
+      assistantToolCallsMessage([
+        {
+          input: { query: "a" },
+          reason: "search",
+          toolCallId: "call-a",
+          toolName: "web_search"
+        },
+        {
+          input: { query: "b" },
+          reason: "search",
+          toolCallId: "call-b",
+          toolName: "web_search"
+        }
+      ]),
+      {
+        content: '{"results":[]}',
+        role: "tool",
+        toolCallId: "call-a",
+        toolName: "web_search"
+      }
+    ];
+
+    const result = sanitizeToolCallPairing(messages);
+    expect(result.insertedCount).toBe(1);
+    expect(messages).toHaveLength(3);
+    expect(messages[2]?.role).toBe("tool");
+    expect(messages[2]?.toolCallId).toBe("call-b");
+    expect(messages[2]?.content).toContain("tool_result_missing");
+  });
+
+  it("leaves already-paired assistant and tool messages unchanged", () => {
+    const messages: ConversationMessage[] = [
+      assistantToolCallsMessage([
+        {
+          input: { query: "a" },
+          reason: "search",
+          toolCallId: "call-a",
+          toolName: "web_search"
+        }
+      ]),
+      {
+        content: '{"results":[]}',
+        role: "tool",
+        toolCallId: "call-a",
+        toolName: "web_search"
+      }
+    ];
+
+    const result = sanitizeToolCallPairing(messages);
+    expect(result.insertedCount).toBe(0);
+    expect(messages).toHaveLength(2);
+  });
+});
+
+describe("findLastAssistantToolCallsResponse", () => {
+  it("returns the most recent assistant message that contains tool calls", () => {
+    const messages: ConversationMessage[] = [
+      assistantToolCallsMessage([
+        {
+          input: { query: "old" },
+          reason: "search",
+          toolCallId: "call-old",
+          toolName: "web_search"
+        }
+      ]),
+      assistantMessage("final answer")
+    ];
+
+    const response = findLastAssistantToolCallsResponse(messages);
+    expect(response?.kind).toBe("tool_calls");
+    expect(response?.toolCalls[0]?.toolCallId).toBe("call-old");
+    expect(response?.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
   });
 });

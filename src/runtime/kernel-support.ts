@@ -5,6 +5,7 @@ import type {
   ContextFragment,
   ConversationMessage,
   Provider,
+  ProviderResponse,
   RuntimeRunOptions,
   RuntimeTaskEvent,
   SessionCompactInput,
@@ -378,6 +379,87 @@ export function rebuildTurnProviderMessages(
 ): ConversationMessage[] {
   void previousProviderMessages;
   return messages;
+}
+
+export interface ToolCallPairingSanitizeResult {
+  insertedCount: number;
+}
+
+/**
+ * Ensures every assistant `toolCalls` entry has a matching `role: "tool"` message
+ * with the same `toolCallId` immediately following the assistant turn's tool block.
+ */
+export function sanitizeToolCallPairing(messages: ConversationMessage[]): ToolCallPairingSanitizeResult {
+  let insertedCount = 0;
+  let index = 0;
+
+  while (index < messages.length) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || message.toolCalls === undefined || message.toolCalls.length === 0) {
+      index += 1;
+      continue;
+    }
+
+    const requiredIds = new Set(message.toolCalls.map((toolCall) => toolCall.toolCallId));
+    let scanIndex = index + 1;
+    const satisfiedIds = new Set<string>();
+
+    while (scanIndex < messages.length && messages[scanIndex]?.role === "tool") {
+      const toolCallId = messages[scanIndex]?.toolCallId;
+      if (toolCallId !== undefined) {
+        satisfiedIds.add(toolCallId);
+      }
+      scanIndex += 1;
+    }
+
+    const missingIds = [...requiredIds].filter((toolCallId) => !satisfiedIds.has(toolCallId));
+    if (missingIds.length > 0) {
+      const placeholders = missingIds.map((toolCallId) => {
+        const matchedCall = message.toolCalls?.find((toolCall) => toolCall.toolCallId === toolCallId);
+        return createToolFeedbackMessage(
+          {
+            error: "Tool result was not recorded for this call.",
+            errorCode: "tool_result_missing",
+            recoverable: true
+          },
+          {
+            toolCallId,
+            toolName: matchedCall?.toolName ?? "unknown"
+          },
+          "internal"
+        );
+      });
+      messages.splice(scanIndex, 0, ...placeholders);
+      insertedCount += placeholders.length;
+      index = scanIndex + placeholders.length;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return { insertedCount };
+}
+
+export function findLastAssistantToolCallsResponse(
+  messages: ConversationMessage[]
+): Extract<ProviderResponse, { kind: "tool_calls" }> | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message?.role === "assistant" &&
+      message.toolCalls !== undefined &&
+      message.toolCalls.length > 0
+    ) {
+      return {
+        kind: "tool_calls",
+        message: message.content,
+        toolCalls: message.toolCalls,
+        usage: { inputTokens: 0, outputTokens: 0 }
+      };
+    }
+  }
+  return null;
 }
 
 export function estimateTokenCount(messages: ConversationMessage[]): number {

@@ -12,6 +12,7 @@ import {
   buildReviewerTracePayload,
   createToolFeedbackMessage,
   emitTaskEvent,
+  findLastAssistantToolCallsResponse,
   injectResumeContextMessages,
   safeSerializeToolOutputForBudget,
   normalizeProviderFailure,
@@ -19,6 +20,7 @@ import {
   readSessionResumeMemoryContext,
   readSessionResumeMessages,
   rebuildTurnProviderMessages,
+  sanitizeToolCallPairing,
   sleepWithAbort,
   summarizeText,
   summarizeToolOutput,
@@ -201,6 +203,10 @@ export class ExecutionKernel {
       describeTool: (toolName) => dependencies.toolOrchestrator.describeTool(toolName),
       recordTrace: (event) => dependencies.traceService.record(event)
     });
+  }
+
+  public setPrimaryProvider(provider: Provider): void {
+    this.dependencies.provider = provider;
   }
 
   private async planRecall(
@@ -711,6 +717,7 @@ export class ExecutionKernel {
     let task = state.task;
     const messages = [...state.messages];
     let pendingToolCalls = [...state.pendingToolCalls];
+    let lastToolCallsResponse: Extract<ProviderResponse, { kind: "tool_calls" }> | null = null;
 
     for (
       let iteration = pendingToolCalls.length > 0 ? task.currentIteration : task.currentIteration + 1;
@@ -761,6 +768,7 @@ export class ExecutionKernel {
           availableTools = baseAvailableTools;
         }
         this.syncRecentFileCacheMode(state, pendingToolCalls, availableTools);
+        sanitizeToolCallPairing(state.turnProviderMessages);
         const pruneResult = pruneOldToolResults(state.turnProviderMessages);
         if (pruneResult.prunedCount > 0) {
           state.microPrunedCount += pruneResult.prunedCount;
@@ -974,10 +982,6 @@ export class ExecutionKernel {
         });
         state.managedAbortController.touchActivity("assistant_turn_completed");
 
-        if (providerResponse.kind === "tool_calls") {
-          this.completionController.observeProviderToolTurn(state, messages, iteration, providerResponse);
-        }
-
         this.dependencies.traceService.record({
           actor: `provider.${activeProvider.name}`,
           eventType: "provider_request_succeeded",
@@ -1116,6 +1120,7 @@ export class ExecutionKernel {
           status: "waiting_tool"
         });
         pendingToolCalls = providerResponse.toolCalls;
+        lastToolCallsResponse = providerResponse;
         state.managedAbortController.touchActivity("tool_call_requested");
       }
 
@@ -1189,6 +1194,15 @@ export class ExecutionKernel {
           return batchResult.result;
         }
         toolCallCount += batchResult.toolCallCount;
+      }
+
+      if (toolCallCount > 0) {
+        const toolTurnResponse =
+          lastToolCallsResponse ?? findLastAssistantToolCallsResponse(messages);
+        if (toolTurnResponse !== null) {
+          this.completionController.observeProviderToolTurn(state, messages, iteration, toolTurnResponse);
+        }
+        lastToolCallsResponse = null;
       }
 
       pendingToolCalls = [];
@@ -2264,6 +2278,30 @@ export class ExecutionKernel {
     outcome: ToolExecutionOutcome
   ): void {
     if (outcome.kind !== "completed") {
+      const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
+      const privacyLevel = toolDescriptor?.privacyLevel ?? "internal";
+      if (toolDescriptor?.capability !== "interaction.ask_user") {
+        messages.push(
+          createToolFeedbackMessage(
+            {
+              error: `Tool execution did not complete (${outcome.kind}).`,
+              errorCode: `tool_${outcome.kind}`,
+              recoverable: true
+            },
+            toolCall,
+            privacyLevel
+          )
+        );
+      }
+      emitTaskEvent(state.onTaskEvent, {
+        iteration,
+        kind: "tool",
+        status: "failed",
+        summary: `Tool ${toolCall.toolName} ended with ${outcome.kind}`,
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      });
       return;
     }
 
