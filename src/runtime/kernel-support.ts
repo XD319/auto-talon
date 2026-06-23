@@ -414,6 +414,18 @@ export function sanitizeToolCallPairing(messages: ConversationMessage[]): ToolCa
 
     const missingIds = [...requiredIds].filter((toolCallId) => !satisfiedIds.has(toolCallId));
     if (missingIds.length > 0) {
+      if (satisfiedIds.size > 0) {
+        // Partial batch completion (e.g. approval pause skipped later siblings): drop
+        // unexecuted tool_calls from the assistant turn instead of inventing results.
+        messages[index] = {
+          ...message,
+          toolCalls: message.toolCalls?.filter((toolCall) => !missingIds.includes(toolCall.toolCallId))
+        };
+        insertedCount += missingIds.length;
+        index += 1;
+        continue;
+      }
+
       const placeholders = missingIds.map((toolCallId) => {
         const matchedCall = message.toolCalls?.find((toolCall) => toolCall.toolCallId === toolCallId);
         return createToolFeedbackMessage(

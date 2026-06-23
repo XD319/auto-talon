@@ -163,6 +163,40 @@ describe("sanitizeToolCallPairing", () => {
     expect(result.insertedCount).toBe(0);
     expect(messages).toHaveLength(2);
   });
+
+  it("drops unexecuted tool_calls from assistant turns with partial results", () => {
+    const messages: ConversationMessage[] = [
+      assistantToolCallsMessage([
+        {
+          input: { content: "first", path: "a.txt" },
+          reason: "write",
+          toolCallId: "call-a",
+          toolName: "write_file"
+        },
+        {
+          input: { content: "second", path: "b.txt" },
+          reason: "write",
+          toolCallId: "call-b",
+          toolName: "write_file"
+        }
+      ]),
+      {
+        content: JSON.stringify({
+          error: "Approval denied",
+          errorCode: "approval_denied",
+          recoverable: true
+        }),
+        role: "tool",
+        toolCallId: "call-a",
+        toolName: "write_file"
+      }
+    ];
+
+    const result = sanitizeToolCallPairing(messages);
+    expect(result.insertedCount).toBe(1);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.toolCalls?.map((toolCall) => toolCall.toolCallId)).toEqual(["call-a"]);
+  });
 });
 
 describe("findLastAssistantToolCallsResponse", () => {
