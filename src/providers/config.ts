@@ -5,7 +5,6 @@ import { dirname, join, resolve } from "node:path";
 import type { JsonObject, ProviderConfig } from "../types/index.js";
 import {
   mergeModelAliases,
-  normalizeModelAliases,
   resolveModelAlias,
   type ModelAliasMap
 } from "./model-aliases.js";
