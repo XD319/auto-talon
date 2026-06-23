@@ -63,5 +63,6 @@ export interface SessionIndexEntry {
 export interface SessionUiState {
   interactionMode: "agent" | "plan" | "acceptEdits";
   messages: JsonObject[];
+  providerSelection: string | null;
   sessionApprovalFingerprints: string[];
 }

@@ -56,6 +56,13 @@ import {
   pickerIndexForSession,
   reconcilePickerSelection
 } from "./view-models/session-picker-model.js";
+import { resolveMergedModelAliases } from "../providers/config.js";
+import { listModelAliasEntries } from "../providers/model-aliases.js";
+import {
+  currentProviderSelection,
+  handleModelCommand,
+  restoreSessionProviderSelection
+} from "./model-command-handler.js";
 
 export interface ChatTuiAppProps {
   config: TuiAppConfig;
@@ -97,6 +104,7 @@ export function ChatTuiApp({
   service
 }: ChatTuiAppProps): React.ReactElement {
   const { exit } = useApp();
+  const [liveConfig, setLiveConfig] = React.useState(config);
   const resolvedSessionId = React.useMemo(() => initialSessionId ?? randomUUID(), [initialSessionId]);
   const [sessionTitle, setSessionTitle] = React.useState(initialSessionTitle ?? "assistant");
   const [interactionMode, setInteractionMode] = React.useState<TuiInteractionMode>(
@@ -122,7 +130,7 @@ export function ChatTuiApp({
   const scrollbackRef = React.useRef<ReturnType<typeof useScrollbackTranscript> | null>(null);
 
   const controller = useChatController({
-    config,
+    config: liveConfig,
     cwd,
     ...(initialMessages !== undefined ? { initialMessages } : {}),
     ...(initialSessionApprovalFingerprints !== undefined
@@ -136,7 +144,7 @@ export function ChatTuiApp({
     service
   });
 
-  const scrollback = useScrollbackTranscript(controller.messages, config.tui.diffDisplay);
+  const scrollback = useScrollbackTranscript(controller.messages, liveConfig.tui.diffDisplay);
   React.useEffect(() => {
     scrollbackRef.current = scrollback;
   }, [scrollback]);
@@ -203,6 +211,7 @@ export function ChatTuiApp({
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
+        providerSelection: currentProviderSelection(liveConfig),
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title
       });
@@ -217,6 +226,7 @@ export function ChatTuiApp({
       controller.messages,
       controller.sessionApprovalFingerprints,
       interactionMode,
+      liveConfig,
       refreshSessionIndex,
       service,
       sessionTitle
@@ -284,6 +294,7 @@ export function ChatTuiApp({
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
+        providerSelection: currentProviderSelection(liveConfig),
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title: sessionTitle
       });
@@ -300,6 +311,7 @@ export function ChatTuiApp({
     controller.messages,
     controller.sessionApprovalFingerprints,
     interactionMode,
+    liveConfig,
     refreshSessionIndex,
     service,
     sessionTitle
@@ -367,12 +379,13 @@ export function ChatTuiApp({
       const dynamicSuggestions = buildDynamicSlashSuggestions(
         value,
         controller.activeSessionId,
+        cwd,
         service,
         reviewerId
       );
       return getMatchingSuggestions(value, [...STATIC_SLASH_SUGGESTIONS, ...dynamicSuggestions]);
     },
-    [controller.activeSessionId, reviewerId, service]
+    [controller.activeSessionId, cwd, reviewerId, service]
   );
 
   const completeInput = React.useCallback(
@@ -405,8 +418,28 @@ export function ChatTuiApp({
     [slashSuggestions]
   );
 
+  const persistProviderSelection = React.useCallback(
+    (sessionId: string, selection: string) => {
+      service.saveSessionUiState(sessionId, {
+        entrySource: "tui",
+        interactionMode,
+        messages: controller.messages as never,
+        providerSelection: selection,
+        sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
+        title: sessionTitle
+      });
+    },
+    [
+      controller.messages,
+      controller.sessionApprovalFingerprints,
+      interactionMode,
+      service,
+      sessionTitle
+    ]
+  );
+
   const activateSessionById = React.useCallback(
-    (sessionId: string): boolean => {
+    async (sessionId: string): Promise<boolean> => {
       if (
         controller.busy ||
         controller.pendingApproval !== null ||
@@ -419,6 +452,29 @@ export function ChatTuiApp({
       }
       if (controller.activeSessionId !== null && controller.activeSessionId !== sessionId) {
         flushActiveSessionState();
+      }
+      const uiStateBeforeActivate = service.loadSessionUiState(sessionId);
+      if (uiStateBeforeActivate?.providerSelection !== null && uiStateBeforeActivate?.providerSelection !== undefined) {
+        try {
+          const restored = await restoreSessionProviderSelection({
+            currentProvider: service.currentProvider(),
+            providerSelection: uiStateBeforeActivate.providerSelection,
+            service
+          });
+          if (restored !== null) {
+            setLiveConfig((current) => ({
+              ...current,
+              provider: restored.providerConfig,
+              tokenBudget: {
+                ...current.tokenBudget,
+                ...restored.tokenBudget
+              }
+            }));
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          controller.addSystemMessage(`Could not restore session model: ${message}`);
+        }
       }
       const activated = controller.activateSession(sessionId);
       if (!activated) {
@@ -448,14 +504,15 @@ export function ChatTuiApp({
 
   const restoreSession = React.useCallback(
     (session: PersistedChatSession): boolean => {
-      return activateSessionById(session.sessionId ?? session.id);
+      void activateSessionById(session.sessionId ?? session.id);
+      return true;
     },
     [activateSessionById]
   );
 
   const runWelcomeEntry = React.useCallback(
     (entry: WelcomeHomeEntry) => {
-      activateSessionById(entry.sessionId);
+      void activateSessionById(entry.sessionId);
     },
     [activateSessionById]
   );
@@ -483,7 +540,7 @@ export function ChatTuiApp({
 
   const runSessionPickerEntry = React.useCallback(() => {
     if (sessionPickerSessionId !== null) {
-      activateSessionById(sessionPickerSessionId);
+      void activateSessionById(sessionPickerSessionId);
     }
   }, [activateSessionById, sessionPickerSessionId]);
 
@@ -498,9 +555,9 @@ export function ChatTuiApp({
           [
             "Most used: /resume <session> /sessions /today /inbox /new <title> /schedule create <when> | <prompt>",
             "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
-            "Session: /mode [agent|plan] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
+            "Session: /mode [agent|plan] /model [provider:model] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
             "File edits: scrollback shows +added/-removed line counts with a folded diff preview; use /diff for more detail.",
-            `Diff display: ${config.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
+            `Diff display: ${liveConfig.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
             "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | Ctrl+T tasks panel",
             "Saved sessions: use `talon tui --resume <id>` to restore UI state and messages from SQLite.",
@@ -574,20 +631,20 @@ export function ChatTuiApp({
       }
 
       if (text.startsWith("/memory")) {
-        return handleMemoryCommand(text, controller, service, cwd, config.defaultProfileId, reviewerId);
+        return handleMemoryCommand(text, controller, service, cwd, liveConfig.defaultProfileId, reviewerId);
       }
 
       if (text === "/schedule") {
         return handleScheduleCommand(text, controller, service, {
           cwd,
-          providerName: config.provider.name
+          providerName: liveConfig.provider.name
         });
       }
 
       if (text.startsWith("/schedule")) {
         return handleScheduleCommand(text, controller, service, {
           cwd,
-          providerName: config.provider.name
+          providerName: liveConfig.provider.name
         });
       }
 
@@ -620,6 +677,42 @@ export function ChatTuiApp({
         return true;
       }
 
+      if (text === "/model" || text.startsWith("/model ")) {
+        void handleModelCommand({
+          busy: controller.busy,
+          cwd,
+          currentProvider: liveConfig.provider,
+          pendingApproval: controller.pendingApproval !== null,
+          pendingClarify: controller.pendingClarifyPrompt !== null,
+          service,
+          text
+        }).then((result) => {
+          if (result === null) {
+            return;
+          }
+          controller.addSystemMessage(result.message);
+          if (
+            result.kind === "switched" &&
+            result.providerConfig !== undefined &&
+            result.tokenBudget !== undefined &&
+            result.selection !== undefined
+          ) {
+            setLiveConfig((current) => ({
+              ...current,
+              provider: result.providerConfig!,
+              tokenBudget: {
+                ...current.tokenBudget,
+                ...result.tokenBudget!
+              }
+            }));
+            if (controller.activeSessionId !== null) {
+              persistProviderSelection(controller.activeSessionId, result.selection);
+            }
+          }
+        });
+        return true;
+      }
+
       if (text === "/transcript" || text.startsWith("/transcript ")) {
         const args = text.trim().split(/\s+/u).slice(1);
         const command = args[0] ?? "print";
@@ -637,7 +730,7 @@ export function ChatTuiApp({
               : "current session";
         if (command === "export") {
           const format = args[1] === "json" ? "json" : "md";
-          const dir = join(config.workspaceRoot, ".auto-talon", "transcripts");
+          const dir = join(liveConfig.workspaceRoot, ".auto-talon", "transcripts");
           const file = join(dir, `transcript-${Date.now()}.${format}`);
           void mkdir(dir, { recursive: true })
             .then(() =>
@@ -703,13 +796,13 @@ export function ChatTuiApp({
         const branchTitle = text === "/branch" ? undefined : text.slice("/branch ".length).trim();
         flushActiveSessionState();
         const branched = service.branchSession({
-          agentProfileId: config.defaultProfileId,
+          agentProfileId: liveConfig.defaultProfileId,
           cwd,
           ownerUserId: reviewerId,
           sourceSessionId,
           ...(branchTitle !== undefined && branchTitle.length > 0 ? { title: branchTitle } : {})
         });
-        activateSessionById(branched.sessionId);
+        void activateSessionById(branched.sessionId);
         controller.addSystemMessage(
           `Branched from ${sourceSessionId.slice(0, 8)} into ${branched.sessionId.slice(0, 8)} | ${branched.title}`
         );
@@ -795,11 +888,11 @@ export function ChatTuiApp({
       }
 
       if (text === "/context") {
-        const b = config.tokenBudget;
+        const b = liveConfig.tokenBudget;
         const usableInputWindow = Math.max(b.inputLimit - b.reservedOutput, 1);
         controller.addSystemMessage(
           [
-            `Context window: ${b.inputLimit} tokens (${config.provider.contextWindowSource ?? "unknown"}).`,
+            `Context window: ${b.inputLimit} tokens (${liveConfig.provider.contextWindowSource ?? "unknown"}).`,
             `Usable input window: ${usableInputWindow} tokens (reservedOutput=${b.reservedOutput}; outputLimit=${b.outputLimit}).`,
             `Prompt usage: ${controller.tokenHud.contextPercent}% of context window.`,
             `Used (telemetry): input=${controller.tokenHud.inputTokens} output=${controller.tokenHud.outputTokens}`,
@@ -825,7 +918,7 @@ export function ChatTuiApp({
       }
 
       if (text === "/status") {
-        const statusLineConfig = config.tui.statusLine;
+        const statusLineConfig = liveConfig.tui.statusLine;
         const statusLineFields = resolveStatusLineFields(statusLineConfig);
         const statusCwd =
           activeSessionId !== null
@@ -836,10 +929,10 @@ export function ChatTuiApp({
           `session: ${sessionTitle}`,
           `session_id: ${activeSessionId}`,
           `cwd: ${cwd}`,
-          `sandbox_mode: ${config.sandbox.mode}`,
-          `write_roots: ${config.sandbox.writeRoots.join(", ")}`,
-          `model: ${config.provider.model ?? config.provider.name}`,
-          `provider: ${config.provider.name}`,
+          `sandbox_mode: ${liveConfig.sandbox.mode}`,
+          `write_roots: ${liveConfig.sandbox.writeRoots.join(", ")}`,
+          `model: ${liveConfig.provider.model ?? liveConfig.provider.name}`,
+          `provider: ${liveConfig.provider.name}`,
           `reviewer: ${reviewerId}`,
           `mode: ${interactionMode}`,
           `session: ${controller.activeSessionId ?? "(none)"}`,
@@ -867,7 +960,7 @@ export function ChatTuiApp({
       }
 
       if (text === "/sandbox") {
-        const sandbox = config.sandbox;
+        const sandbox = liveConfig.sandbox;
         controller.addSystemMessage(
           [
             `sandbox_mode: ${sandbox.mode}`,
@@ -923,15 +1016,12 @@ export function ChatTuiApp({
       return true;
     },
     [
-      config.provider.model,
-      config.provider.name,
-      config.sandbox,
-      config.tokenBudget,
-      config.workspaceRoot,
+      liveConfig,
       controller,
       cwd,
       activateSessionById,
       openSessionPicker,
+      persistProviderSelection,
       refreshSessionIndex,
       restoreSession,
       service,
@@ -1242,23 +1332,23 @@ export function ChatTuiApp({
   const renderWidthChars = stdout.columns ?? process.stdout.columns ?? 120;
   const statusLine = useStatusLine({
     activeSessionId: controller.activeSessionId,
-    config: config.tui.statusLine,
+    config: liveConfig.tui.statusLine,
     cwd: bannerCwd,
-    inputLimit: config.tokenBudget.inputLimit,
+    inputLimit: liveConfig.tokenBudget.inputLimit,
     interactionMode,
     pendingApprovalToolName: controller.pendingApproval?.toolName ?? null,
     pendingClarify: controller.pendingClarifyPrompt !== null,
     primaryLabel: controller.uiStatus.primaryLabel,
     primaryTone: controller.uiStatus.primaryTone,
-    provider: config.provider,
+    provider: liveConfig.provider,
     renderWidthChars,
-    reservedOutput: config.tokenBudget.reservedOutput,
+    reservedOutput: liveConfig.tokenBudget.reservedOutput,
     runState: controller.uiStatus.runState,
     tokenHud: controller.tokenHud
   });
-  const showModelInStatusLine = resolveStatusLineFields(config.tui.statusLine).showModel;
+  const showModelInStatusLine = resolveStatusLineFields(liveConfig.tui.statusLine).showModel;
   const bannerDetails = [
-    ...(showModelInStatusLine ? [] : [config.provider.model ?? config.provider.name]),
+    ...(showModelInStatusLine ? [] : [liveConfig.provider.model ?? liveConfig.provider.name]),
     shortenPath(bannerCwd, 20)
   ];
   const statusHint =
@@ -1462,11 +1552,39 @@ function parseSlashInput(text: string): { args: string[]; command: string; rest:
 function buildDynamicSlashSuggestions(
   value: string,
   activeSessionId: string | null,
+  cwd: string,
   service: TuiRuntimeService,
   sessionOwnerUserId = resolveRuntimeUserId()
 ): SlashSuggestion[] {
   const parsed = parseSlashInput(value);
   const userId = resolveRuntimeUserId();
+
+  if (parsed.command === "/model") {
+    const suggestions: SlashSuggestion[] = [];
+    for (const provider of service.listConfiguredProviders()) {
+      const selection =
+        provider.model !== null && provider.model.length > 0
+          ? `${provider.name}:${provider.model}`
+          : provider.name;
+      suggestions.push({
+        description: provider.displayName,
+        insertText: `/model ${selection}`,
+        key: `model:${provider.name}`,
+        label: `/model ${selection}`,
+        rank: 1
+      });
+    }
+    for (const entry of listModelAliasEntries(resolveMergedModelAliases(cwd))) {
+      suggestions.push({
+        description: `alias -> ${entry.target}`,
+        insertText: `/model ${entry.alias}`,
+        key: `alias:${entry.alias}`,
+        label: `/model ${entry.alias}`,
+        rank: 2
+      });
+    }
+    return suggestions.filter((item) => item.insertText.startsWith(value.trim()));
+  }
 
   if (parsed.command === "/resume") {
     return service

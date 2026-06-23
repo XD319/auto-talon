@@ -19,6 +19,7 @@ export interface SaveSessionUiStateInput {
   entrySource?: SessionEntrySource;
   interactionMode?: "agent" | "plan" | "acceptEdits";
   messages: JsonObject[];
+  providerSelection?: string | null;
   sessionApprovalFingerprints?: string[];
   title?: string;
 }
@@ -35,6 +36,7 @@ export class SessionUiStateService {
     return {
       interactionMode: readInteractionMode(session.metadata),
       messages: records.map((record) => record.payload),
+      providerSelection: readProviderSelection(session.metadata),
       sessionApprovalFingerprints: readApprovalFingerprints(session.metadata)
     };
   }
@@ -50,8 +52,16 @@ export class SessionUiStateService {
     const metadata: JsonObject = {
       ...session.metadata,
       interactionMode: input.interactionMode ?? readInteractionMode(session.metadata),
+      ...(input.providerSelection !== undefined
+        ? input.providerSelection === null
+          ? {}
+          : { providerSelection: input.providerSelection }
+        : {}),
       sessionApprovalFingerprints: input.sessionApprovalFingerprints ?? readApprovalFingerprints(session.metadata)
     };
+    if (input.providerSelection === null) {
+      delete metadata.providerSelection;
+    }
     const patch: { metadata: JsonObject; title?: string } = { metadata };
     if (input.title !== undefined) {
       patch.title = input.title;
@@ -112,4 +122,9 @@ function readApprovalFingerprints(metadata: JsonObject): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function readProviderSelection(metadata: JsonObject): string | null {
+  const value = metadata.providerSelection;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }

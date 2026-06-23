@@ -31,6 +31,8 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/mode", "mode", "Show or switch chat mode"),
   suggestion("/mode plan", "mode-plan", "Use read-only planning mode"),
   suggestion("/mode agent", "mode-agent", "Use normal agent mode"),
+  suggestion("/model", "model", "Show or switch the current model"),
+  suggestion("/model list", "model-list", "List configured models"),
   suggestion("/ops", "ops", "Open ops guidance"),
   suggestion("/status", "status", "Show TUI status"),
   suggestion("/clear", "clear", "Save current session and start a new one"),

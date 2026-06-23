@@ -23,6 +23,12 @@ also set the request timeout explicitly, for example
 Run `talon provider smoke` to exercise the post-tool model turn with the active
 provider.
 
+Inside `talon tui`, switch among already-configured providers with `/model`
+(for example `/model deepseek:deepseek-chat`). Use `/model <selection> --global`
+to persist the choice to user config, or `--workspace` for a project override.
+Add short aliases in `provider.config.json` under `modelAliases`. Configure new
+providers or API keys outside the session with `talon provider setup`.
+
 Commands started from a subdirectory of an initialized project reuse the
 nearest parent `.auto-talon/` directory. Use `--cwd` or
 `AGENT_WORKSPACE_ROOT` when you want to pin a project root explicitly.

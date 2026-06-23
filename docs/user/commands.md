@@ -61,6 +61,12 @@ TUI slash commands (chat mode):
 - `/handoff status`
 - `/sessions` (session picker)
 - `/resume <session-id-prefix|title>`
+- `/model` (show current model and configured providers)
+- `/model list` (same as `/model`)
+- `/model <provider:model>` (switch model for this session without restarting TUI)
+- `/model <provider:model> --global` (switch and save to user provider config)
+- `/model <provider:model> --workspace` (switch and save to workspace provider config)
+- `/model <alias>` (use `modelAliases` from provider config)
 - `/next list [session-id-prefix]`
 - `/next done <next-action-id-prefix>`
 - `/next block <next-action-id-prefix> <reason...>`

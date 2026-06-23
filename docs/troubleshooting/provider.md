@@ -37,6 +37,11 @@ Common configuration knobs:
 - Current provider selector: `currentProvider`
 - Provider-specific entries: `providers`
 - Custom HTTP-compatible entries: `customProviders`
+- Model aliases for `/model`: `modelAliases`
+
+In `talon tui`, `/model` switches among already-configured providers without
+restarting the TUI. Use `talon provider setup` (or edit provider config) to add
+providers and credentials first.
 
 New workspaces do not choose `mock` automatically. If diagnostics show
 `Provider: unconfigured`, run `talon provider setup <provider>` to save a user

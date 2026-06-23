@@ -2200,6 +2200,11 @@ describe("use-text-input helpers", () => {
     expect(completeSlashCommand("/mem")).toBe("/memory ");
     expect(completeSlashCommand("/memory a")).toBe("/memory add ");
   });
+
+  it("completes model slash commands", () => {
+    expect(completeSlashCommand("/model")).toBe("/model ");
+    expect(completeSlashCommand("/model l")).toBe("/model list ");
+  });
 });
 
 describe("schedule slash command helper", () => {
