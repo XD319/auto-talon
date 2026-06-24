@@ -1498,6 +1498,284 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
+  it("clears waiting approval status after the user resolves an approval", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const approval = createApprovalRecord();
+    const task = {
+      ...createControllerTask({
+        ...createDefaultRunOptions("resume", process.cwd(), config),
+        taskId: approval.taskId,
+        sessionId: "session-1"
+      }),
+      status: "waiting_approval" as const
+    };
+    let approvalResolved = false;
+    const listPendingApprovals = vi.fn((): ApprovalRecord[] => (approvalResolved ? [] : [approval]));
+    const resolveApproval = vi.fn(() => {
+      approvalResolved = true;
+      return Promise.resolve({
+        output: "done",
+        task: { ...task, finalOutput: "done", status: "succeeded" as const }
+      });
+    });
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      listPendingApprovals,
+      listTasks: () => [task],
+      resolveApproval,
+      showTask: (taskId: string) => ({
+        approvals: [],
+        artifacts: [],
+        inboxItems: [],
+        scheduleRuns: [],
+        task: taskId === task.taskId ? task : null,
+        toolCalls: [createToolCallRecord()],
+        trace: []
+      })
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionId: "session-1",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+
+      await waitFor(() => getController().pendingApproval !== null);
+      expect(getController().uiStatus.runState).toBe("waiting_approval");
+
+      await getController().resolvePendingApproval("allow");
+      await waitFor(
+        () =>
+          !getController().busy &&
+          getController().uiStatus.runState !== "waiting_approval"
+      );
+
+      expect(resolveApproval).toHaveBeenCalledTimes(1);
+      expect(getController().uiStatus.runState).toBe("succeeded");
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("shows running task while an approved task is still resuming", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const approval: ApprovalRecord = {
+      ...createApprovalRecord(),
+      toolName: "process"
+    };
+    let taskStatus: TaskRecord["status"] = "waiting_approval";
+    const task = () => ({
+      ...createControllerTask({
+        ...createDefaultRunOptions("resume", process.cwd(), config),
+        taskId: approval.taskId,
+        sessionId: "session-1"
+      }),
+      status: taskStatus
+    });
+    let approvalResolved = false;
+    let finishResume: ((result: { output: string | null; task: TaskRecord }) => void) | null = null;
+    const resumePromise = new Promise<{ output: string | null; task: TaskRecord }>((resolve) => {
+      finishResume = resolve;
+    });
+    const resolveApproval = vi.fn(() => {
+      approvalResolved = true;
+      taskStatus = "running";
+      return resumePromise;
+    });
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      listPendingApprovals: () => (approvalResolved ? [] : [approval]),
+      listTasks: () => [task()],
+      resolveApproval,
+      showTask: (taskId: string) => ({
+        approvals: [],
+        artifacts: [],
+        inboxItems: [],
+        scheduleRuns: [],
+        task: taskId === approval.taskId ? task() : null,
+        toolCalls: [{ ...createToolCallRecord(), toolName: "process" }],
+        trace: []
+      })
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionId: "session-1",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+    let approvalPromise: Promise<void> | null = null;
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+
+      await waitFor(() => getController().pendingApproval?.toolName === "process");
+      approvalPromise = getController().resolvePendingApproval("allow");
+      await waitFor(() => getController().uiStatus.primaryLabel === "running task");
+
+      expect(resolveApproval).toHaveBeenCalledTimes(1);
+      expect(getController().uiStatus).toMatchObject({
+        primaryLabel: "running task",
+        runState: "running"
+      });
+    } finally {
+      taskStatus = "succeeded";
+      finishResume?.({ output: "done", task: { ...task(), finalOutput: "done", status: "succeeded" } });
+      if (approvalPromise !== null) {
+        await approvalPromise.catch(() => undefined);
+      }
+      await unmountInkApp(app);
+    }
+  });
+
+  it("syncs the next pending approval after the user resolves one approval", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const firstApproval = createApprovalRecord();
+    const secondApproval: ApprovalRecord = {
+      ...createApprovalRecord(),
+      approvalId: "approval-2",
+      reason: "Need to run a shell command",
+      toolCallId: "call-002",
+      toolName: "shell"
+    };
+    const task = {
+      ...createControllerTask({
+        ...createDefaultRunOptions("resume", process.cwd(), config),
+        taskId: firstApproval.taskId,
+        sessionId: "session-1"
+      }),
+      status: "waiting_approval" as const
+    };
+    const firstToolCall = createToolCallRecord();
+    const secondToolCall: ToolCallRecord = {
+      ...createToolCallRecord(),
+      toolCallId: "call-002",
+      toolName: "shell"
+    };
+    let pendingApprovals: ApprovalRecord[] = [firstApproval];
+    const resolveApproval = vi.fn(() => {
+      pendingApprovals = [secondApproval];
+      return Promise.resolve({
+        output: null,
+        task: { ...task, status: "waiting_approval" as const }
+      });
+    });
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      listPendingApprovals: () => pendingApprovals,
+      listTasks: () => [task],
+      resolveApproval,
+      showTask: (taskId: string) => ({
+        approvals: [],
+        artifacts: [],
+        inboxItems: [],
+        scheduleRuns: [],
+        task: taskId === task.taskId ? task : null,
+        toolCalls: [firstToolCall, secondToolCall],
+        trace: []
+      })
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionId: "session-1",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+
+      await waitFor(() => getController().pendingApproval?.approvalId === firstApproval.approvalId);
+      expect(getController().pendingApproval?.toolName).toBe("write_file");
+
+      await getController().resolvePendingApproval("allow");
+      await waitFor(() => getController().pendingApproval?.approvalId === secondApproval.approvalId);
+
+      expect(resolveApproval).toHaveBeenCalledTimes(1);
+      expect(getController().pendingApproval?.toolName).toBe("shell");
+      expect(getController().uiStatus).toMatchObject({
+        primaryLabel: "approval required: shell",
+        runState: "waiting_approval"
+      });
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
   it("resets the visible transcript without abandoning the active session", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();

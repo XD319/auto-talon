@@ -611,25 +611,36 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       setSummary((current) => (summaryEquals(current, nextSummary) ? current : nextSummary));
       const activeClarifyPrompt =
         clarifyPrompts.find((item) => item.taskId === activeTaskIdRef.current) ?? clarifyPrompts[0] ?? null;
-      setPendingClarifyPrompt((current) =>
-        clarifyPromptRefEquals(current, activeClarifyPrompt) ? current : activeClarifyPrompt
-      );
       const activeApproval =
         approvals.find((item) => item.taskId === activeTaskIdRef.current) ?? approvals[0] ?? null;
-      setPendingApproval((current) => (approvalRefEquals(current, activeApproval) ? current : activeApproval));
-      if (activeClarifyPrompt !== null) {
+      if (!approvalInFlightRef.current) {
+        setPendingClarifyPrompt((current) =>
+          clarifyPromptRefEquals(current, activeClarifyPrompt) ? current : activeClarifyPrompt
+        );
+        setPendingApproval((current) => (approvalRefEquals(current, activeApproval) ? current : activeApproval));
+      }
+      if (activeClarifyPrompt !== null && !approvalInFlightRef.current) {
         updateUiStatus(setUiStatus, {
           primaryLabel: "clarification required",
           primaryTone: "warn",
           runState: "waiting_clarification",
           taskLabel: activeClarifyPrompt.taskId.slice(0, 8)
         });
-      } else if (activeApproval !== null) {
+      } else if (activeApproval !== null && !approvalInFlightRef.current) {
         updateUiStatus(setUiStatus, {
           primaryLabel: `approval required: ${activeApproval.toolName}`,
           primaryTone: "warn",
           runState: "waiting_approval",
           taskLabel: activeApproval.taskId.slice(0, 8)
+        });
+      } else if (activeClarifyPrompt === null && activeApproval === null) {
+        setUiStatus((current) => {
+          const next = resolveUiStatusAfterGovernanceCleared(
+            input.service,
+            activeTaskIdRef.current,
+            current
+          );
+          return uiStatusEquals(current, next) ? current : next;
         });
       }
       setMessages((current) =>
@@ -1220,6 +1231,13 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       approvalInFlightRef.current = true;
       beginBusy();
       const approval = pendingApproval;
+      setPendingApproval(null);
+      setUiStatus({
+        primaryLabel: "running task",
+        primaryTone: "accent",
+        runState: "running",
+        taskLabel: approval.taskId.slice(0, 8)
+      });
       startTraceSubscription(approval.taskId);
       try {
         const result = await input.service.resolveApproval(
@@ -1342,6 +1360,13 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       approvalInFlightRef.current = true;
       beginBusy();
       const prompt = pendingClarifyPrompt;
+      setPendingClarifyPrompt(null);
+      setUiStatus({
+        primaryLabel: "answering clarification",
+        primaryTone: "accent",
+        runState: "running",
+        taskLabel: prompt.taskId.slice(0, 8)
+      });
       startTraceSubscription(prompt.taskId);
       try {
         const result = await input.service.answerClarifyPrompt(prompt.promptId, input.reviewerId, clarifyInput);
@@ -1432,6 +1457,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     approvalInFlightRef.current = true;
     beginBusy();
     const prompt = pendingClarifyPrompt;
+    setPendingClarifyPrompt(null);
     try {
       const result = input.service.cancelClarifyPrompt(prompt.promptId, input.reviewerId);
       appendNewTraceEvents(result.task.taskId);
@@ -1748,6 +1774,49 @@ function updateUiStatus(
   next: UiStatus
 ): void {
   setUiStatus((current) => (uiStatusEquals(current, next) ? current : next));
+}
+
+function resolveUiStatusAfterGovernanceCleared(
+  service: Pick<TuiRuntimeService, "showTask">,
+  activeTaskId: string | null,
+  current: UiStatus
+): UiStatus {
+  if (current.runState !== "waiting_approval" && current.runState !== "waiting_clarification") {
+    return current;
+  }
+
+  const task = activeTaskId !== null ? service.showTask(activeTaskId).task : null;
+  if (task?.status === "running") {
+    return {
+      ...current,
+      primaryLabel: "running task",
+      primaryTone: "accent",
+      runState: "running"
+    };
+  }
+  if (task?.status === "succeeded") {
+    return {
+      ...current,
+      primaryLabel: "completed successfully",
+      primaryTone: "success",
+      runState: "succeeded"
+    };
+  }
+  if (task?.status === "failed") {
+    return {
+      ...current,
+      primaryLabel: "failed",
+      primaryTone: "danger",
+      runState: "failed"
+    };
+  }
+
+  return {
+    ...current,
+    primaryLabel: "idle",
+    primaryTone: "muted",
+    runState: "idle"
+  };
 }
 
 function uiStatusEquals(left: UiStatus, right: UiStatus): boolean {
