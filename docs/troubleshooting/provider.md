@@ -38,10 +38,24 @@ Common configuration knobs:
 - Provider-specific entries: `providers`
 - Custom HTTP-compatible entries: `customProviders`
 - Model aliases for `/model`: `modelAliases`
+- Fallback provider chain: `fallbackProviders`
+- Auxiliary model slots: `.auto-talon/runtime.config.json` → `auxiliary`
 
 In `talon tui`, `/model` switches among already-configured providers without
-restarting the TUI. Use `talon provider setup` (or edit provider config) to add
-providers and credentials first.
+restarting the TUI. Provider visibility is global-first: user-level providers in
+`~/.auto-talon/provider.config.json` appear in every workspace. Workspace config
+can override fields for the current project or add workspace-only custom providers.
+Use `talon model`, `talon provider setup`, or `talon provider custom add` to add
+providers and credentials outside the session.
+
+Model routing notes:
+
+- `runtime.config.json` → `routing.providers` selects tiered main providers when no explicit `/model` or `talon model set` switch is active in the session.
+- After an explicit switch, that provider is used for main turns until you switch again (soft budget downgrade can still move main turns to the cheap tier).
+- Auxiliary slots in `runtime.config.json` → `auxiliary` set to `auto` follow the current main provider.
+- `modelAliases` can be used with `/model`, but persisted config writes the resolved provider name.
+- `AGENT_PROVIDER` is applied at startup and can override a saved `currentProvider`.
+- `talon model list` and `talon model status` currently return the same summary.
 
 New workspaces do not choose `mock` automatically. If diagnostics show
 `Provider: unconfigured`, run `talon provider setup <provider>` to save a user

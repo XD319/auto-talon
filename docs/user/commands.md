@@ -34,6 +34,11 @@ Operational:
 Subsystems:
 
 - `talon provider list|current|status|setup|use|promote|test|smoke|stats|route`
+- `talon provider alias list|add|remove`
+- `talon provider custom list|add|remove`
+- `talon provider fallback list|add|remove|clear`
+- `talon model|model list|model status|model set <selection>`
+- `talon model auxiliary list|set|reset`
 - `talon budget show --task <id>|--session <id>`
 - `talon memory list|show|search|snapshot|review|guide|add|forget|why|review-queue`
 - `talon experience list|show|review|promote|search`
@@ -67,6 +72,10 @@ TUI slash commands (chat mode):
 - `/model <provider:model> --global` (switch and save to user provider config)
 - `/model <provider:model> --workspace` (switch and save to workspace provider config)
 - `/model <alias>` (use `modelAliases` from provider config)
+- Explicit `/model` switches take priority over `routing.providers` tier selection (soft budget downgrade still routes to the cheap tier)
+- Auxiliary slots set to `auto` follow the current main provider after a `/model` switch
+- Alias selections persist as the resolved provider name in `provider.config.json`
+- `talon model list` and `talon model status` currently show the same information
 - `/next list [session-id-prefix]`
 - `/next done <next-action-id-prefix>`
 - `/next block <next-action-id-prefix> <reason...>`

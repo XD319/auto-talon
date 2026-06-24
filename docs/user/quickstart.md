@@ -7,12 +7,12 @@
 5. Open runtime Ops view when needed: `talon ops` (`talon dashboard` is a compatibility alias)
 6. Optional: connect a chat entry point with `talon gateway serve-feishu --cwd .`
 
-`talon provider setup` writes user config by default, so new projects inherit
-the selected provider. Use `talon provider setup <provider> --workspace` for a
-project-local override, `talon provider use <provider>` to switch a saved user
-selection, `talon provider promote` to copy the current effective project
-provider into user defaults, and `talon provider status` to see which layer is
-active. Environment variables such as `AGENT_PROVIDER` and
+`talon provider setup` writes user config by default, so configured providers are
+visible from any workspace directory in `/model`. Use
+`talon provider setup <provider> --workspace` only when a project needs a local
+override, `talon provider use <provider>` to switch a saved user selection,
+`talon provider promote` to copy the current effective project provider into user
+defaults, and `talon provider status` to see which layer is active. Environment variables such as `AGENT_PROVIDER` and
 `AGENT_PROVIDER_API_KEY` still take precedence when you prefer env-managed
 credentials.
 
@@ -24,10 +24,18 @@ Run `talon provider smoke` to exercise the post-tool model turn with the active
 provider.
 
 Inside `talon tui`, switch among already-configured providers with `/model`
-(for example `/model deepseek:deepseek-chat`). Use `/model <selection> --global`
+(for example `/model deepseek:deepseek-chat`). The list is global-first: user-level
+providers appear in every workspace, with `[user]`, `[workspace override]`, or
+`[workspace-only]` labels when relevant. Use `/model <selection> --global`
 to persist the choice to user config, or `--workspace` for a project override.
-Add short aliases in `provider.config.json` under `modelAliases`. Configure new
-providers or API keys outside the session with `talon provider setup`.
+An explicit `/model` switch overrides `routing.providers` for the main model (budget
+downgrade to the cheap tier still applies when soft limits are hit). Auxiliary slots
+configured as `auto` reuse the current main provider, so they update immediately after
+a switch. Aliases work for switching, but saved config stores the resolved provider name.
+If `AGENT_PROVIDER` is set in the environment, it can still override saved config on
+the next process start.
+Configure providers outside the session with `talon model`, `talon provider setup`,
+or `talon provider custom add`.
 
 Commands started from a subdirectory of an initialized project reuse the
 nearest parent `.auto-talon/` directory. Use `--cwd` or
