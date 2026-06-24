@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -20,6 +20,18 @@ import type {
   WebSearchRuntimeConfig
 } from "../core/web-search-config.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
+import {
+  AUXILIARY_SLOTS,
+  DEFAULT_AUXILIARY_CONFIG,
+  normalizeAuxiliaryConfig,
+  type AuxiliaryRuntimeConfig
+} from "../providers/auxiliary-resolver.js";
+import type { AuxiliarySlot } from "../providers/auxiliary-resolver.js";
+import {
+  resolveProviderConfigForProvider,
+  resolveProviderSelectionWithAliases
+} from "../providers/config.js";
+import { isProviderSwitchable } from "../providers/provider-switchable.js";
 import type { BudgetLimits, BudgetPricingEntry, ProviderTier, RoutingMode, TokenBudget } from "../types/index.js";
 
 export type { WebRuntimeConfig, WebSearchRuntimeConfig } from "../core/web-search-config.js";
@@ -170,6 +182,16 @@ const runtimeConfigFileSchema = z.object({
           quality: z.string().min(1).optional()
         })
         .optional()
+    })
+    .optional(),
+  auxiliary: z
+    .object({
+      classify: z.string().optional(),
+      compression: z.string().optional(),
+      recallRank: z.string().optional(),
+      summarize: z.string().optional(),
+      title: z.string().optional(),
+      vision: z.string().optional()
     })
     .optional(),
   budget: z
@@ -334,6 +356,7 @@ export interface RuntimeConfig {
       recallRank: ProviderTier | null;
     };
   };
+  auxiliary: AuxiliaryRuntimeConfig;
   budget: {
     task: BudgetLimits;
     session: BudgetLimits;
@@ -465,6 +488,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
       recallRank: null
     }
   },
+  auxiliary: DEFAULT_AUXILIARY_CONFIG,
   budget: {
     task: {},
     session: {},
@@ -720,6 +744,11 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
           DEFAULT_RUNTIME_CONFIG.routing.helpers.recallRank
       }
     },
+    auxiliary: normalizeAuxiliaryConfig({
+      ...DEFAULT_RUNTIME_CONFIG.auxiliary,
+      ...fileConfig?.auxiliary,
+      ...envConfig.auxiliary
+    }),
     budget: {
       task: normalizeBudgetLimits(
         envConfig.budget?.task ?? fileConfig?.budget?.task ?? DEFAULT_RUNTIME_CONFIG.budget.task
@@ -1392,4 +1421,38 @@ function normalizeBudgetPricing(
     };
   }
   return normalized;
+}
+
+export function writeAuxiliarySlot(cwd: string, slot: AuxiliarySlot, value: string): string {
+  if (!AUXILIARY_SLOTS.includes(slot)) {
+    throw new Error(`Unknown auxiliary slot "${slot}".`);
+  }
+  const normalizedValue = value.trim();
+  if (normalizedValue.length === 0) {
+    throw new Error("Auxiliary slot value is required.");
+  }
+  if (normalizedValue.toLowerCase() !== "auto") {
+    const resolvedSelection = resolveProviderSelectionWithAliases(normalizedValue, cwd);
+    const providerConfig = resolveProviderConfigForProvider(cwd, resolvedSelection);
+    if (!isProviderSwitchable(providerConfig)) {
+      throw new Error(
+        `Auxiliary selection "${normalizedValue}" is not a configured provider. Run talon provider setup first.`
+      );
+    }
+  }
+  const workspaceRoot = resolve(cwd);
+  const configPath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
+  const fileConfig = loadRuntimeConfigFile(configPath) ?? {};
+  const nextConfig = {
+    version: 1,
+    ...fileConfig,
+    auxiliary: {
+      ...DEFAULT_AUXILIARY_CONFIG,
+      ...fileConfig.auxiliary,
+      [slot]: normalizedValue.toLowerCase() === "auto" ? "auto" : normalizedValue
+    }
+  };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return configPath;
 }

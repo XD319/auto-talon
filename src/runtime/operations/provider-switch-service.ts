@@ -1,15 +1,17 @@
 import type { Provider, TokenBudget } from "../../types/index.js";
 import {
-  listConfiguredProviderNames,
+  listConfiguredProviderEntries,
   resolveProviderConfigForProvider,
   resolveProviderConfigForSwitch,
   resolveProviderSelectionWithAliases,
   useProviderConfig,
   type ProviderConfigScope,
+  type ProviderListSource,
   type ResolvedProviderConfig
 } from "../../providers/config.js";
 import { createProvider } from "../../providers/provider-factory.js";
 import { enrichProviderContextFromApi } from "../../providers/context-window-enrichment.js";
+import { isProviderSwitchable } from "../../providers/provider-switchable.js";
 import { resolveEffectiveContextWindow } from "../bootstrap.js";
 
 export type ProviderSwitchPersistScope = "session" | "user" | "workspace";
@@ -31,6 +33,7 @@ export interface SwitchProviderResult {
 }
 
 export interface ConfiguredProviderEntry {
+  configSource: ProviderListSource;
   displayName: string;
   model: string | null;
   name: string;
@@ -44,32 +47,15 @@ export function formatProviderSelection(config: ResolvedProviderConfig): string 
   return config.name;
 }
 
-export function isProviderSwitchable(config: ResolvedProviderConfig): boolean {
-  if (config.configured === false) {
-    return false;
-  }
-  if (config.name === "mock") {
-    return true;
-  }
-  if (config.builtinProviderName === "ollama") {
-    return true;
-  }
-  if (config.apiKey !== null && config.apiKey.length > 0) {
-    return true;
-  }
-  if (config.builtinProviderName === null && config.baseUrl !== null && config.baseUrl.length > 0) {
-    return config.apiKey !== null && config.apiKey.length > 0;
-  }
-  return false;
-}
+export { isProviderSwitchable } from "../../providers/provider-switchable.js";
 
 export function listConfiguredProviders(cwd: string): ConfiguredProviderEntry[] {
   const entries: ConfiguredProviderEntry[] = [];
 
-  for (const name of listConfiguredProviderNames(cwd)) {
+  for (const providerEntry of listConfiguredProviderEntries(cwd)) {
     let config: ResolvedProviderConfig;
     try {
-      config = resolveProviderConfigForProvider(cwd, name);
+      config = resolveProviderConfigForProvider(cwd, providerEntry.name);
     } catch {
       continue;
     }
@@ -77,6 +63,7 @@ export function listConfiguredProviders(cwd: string): ConfiguredProviderEntry[] 
       continue;
     }
     entries.push({
+      configSource: providerEntry.source,
       displayName: config.displayName,
       model: config.model,
       name: config.name,

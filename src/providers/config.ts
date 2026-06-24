@@ -8,6 +8,8 @@ import {
   resolveModelAlias,
   type ModelAliasMap
 } from "./model-aliases.js";
+import { isProviderSwitchable } from "./provider-switchable.js";
+import { parseProviderConfigFile } from "./provider-config-schema.js";
 import {
   PROVIDER_CATALOG,
   type ProviderCatalogEntry,
@@ -41,8 +43,16 @@ interface CustomProviderFileEntry extends ProviderFileEntry {
 interface ProviderConfigFile extends JsonObject {
   currentProvider?: string;
   customProviders?: Record<string, CustomProviderFileEntry>;
+  fallbackProviders?: string[];
   modelAliases?: Record<string, string>;
   providers?: Record<string, ProviderFileEntry>;
+}
+
+export type ProviderListSource = "user" | "workspace" | "workspace-only";
+
+export interface ConfiguredProviderNameEntry {
+  name: string;
+  source: ProviderListSource;
 }
 
 export type ProviderConfigScope = "user" | "workspace";
@@ -337,20 +347,14 @@ export function resolveProviderSelectionWithAliases(
   return resolveModelAlias(selection, aliases);
 }
 
-export function listConfiguredProviderNames(cwd = process.cwd()): string[] {
-  const workspaceConfigPath = join(resolve(cwd), ".auto-talon", "provider.config.json");
-  const userConfigPath = resolveUserProviderConfigPath();
-  const fileConfig = mergeProviderConfigFiles(
-    loadProviderConfigFile(userConfigPath),
-    loadProviderConfigFile(workspaceConfigPath)
-  );
+function collectConfiguredProviderNamesFromConfig(config: ProviderConfigFile): Set<string> {
   const names = new Set<string>();
 
-  for (const name of Object.keys(normalizeCustomProviders(fileConfig.customProviders))) {
+  for (const name of Object.keys(normalizeCustomProviders(config.customProviders))) {
     names.add(name);
   }
 
-  for (const [rawName, entry] of Object.entries(fileConfig.providers ?? {})) {
+  for (const [rawName, entry] of Object.entries(config.providers ?? {})) {
     const normalized = normalizeProviderName(rawName);
     const providerName = normalized ?? rawName;
     if (normalized === "mock" || normalized === "ollama") {
@@ -363,7 +367,119 @@ export function listConfiguredProviderNames(cwd = process.cwd()): string[] {
     }
   }
 
-  return [...names].sort((left, right) => left.localeCompare(right));
+  return names;
+}
+
+export function listUserConfiguredProviderNames(): string[] {
+  const userConfig = loadProviderConfigFile(resolveUserProviderConfigPath());
+  return [...collectConfiguredProviderNamesFromConfig(userConfig)].sort((left, right) =>
+    left.localeCompare(right)
+  );
+}
+
+function hasWorkspaceProviderOverride(
+  name: string,
+  userConfig: ProviderConfigFile,
+  workspaceConfig: ProviderConfigFile
+): boolean {
+  const workspaceCustom = workspaceConfig.customProviders?.[name];
+  const workspaceBuiltin = workspaceConfig.providers?.[name];
+  if (workspaceCustom === undefined && workspaceBuiltin === undefined) {
+    return false;
+  }
+
+  const userCustom = normalizeCustomProviders(userConfig.customProviders)[name] ?? userConfig.customProviders?.[name];
+  const userBuiltin = userConfig.providers?.[name];
+  const userEntry = userCustom ?? userBuiltin;
+  const workspaceEntry = workspaceCustom ?? workspaceBuiltin;
+  if (userEntry === undefined || workspaceEntry === undefined) {
+    return workspaceEntry !== undefined;
+  }
+
+  const overrideFields: Array<keyof ProviderFileEntry> = [
+    "apiKey",
+    "baseUrl",
+    "model",
+    "contextWindowTokens",
+    "maxRetries",
+    "streamIdleTimeoutMs",
+    "timeoutMs"
+  ];
+  return overrideFields.some((field) => {
+    const workspaceValue = workspaceEntry[field];
+    if (workspaceValue === undefined) {
+      return false;
+    }
+    return workspaceValue !== userEntry[field];
+  });
+}
+
+function hasWorkspaceProviderEntry(name: string, workspaceConfig: ProviderConfigFile): boolean {
+  return (
+    workspaceConfig.customProviders?.[name] !== undefined ||
+    workspaceConfig.providers?.[name] !== undefined
+  );
+}
+
+function resolveProviderListSource(
+  name: string,
+  userConfig: ProviderConfigFile,
+  workspaceConfig: ProviderConfigFile,
+  userNames: Set<string>,
+  workspaceNames: Set<string>
+): ProviderListSource {
+  const inUser = userNames.has(name);
+  const inWorkspace = workspaceNames.has(name) || hasWorkspaceProviderEntry(name, workspaceConfig);
+  if (!inUser && inWorkspace) {
+    return "workspace-only";
+  }
+  if (inUser && inWorkspace && hasWorkspaceProviderOverride(name, userConfig, workspaceConfig)) {
+    return "workspace";
+  }
+  return "user";
+}
+
+export function listConfiguredProviderEntries(cwd = process.cwd()): ConfiguredProviderNameEntry[] {
+  const workspaceConfigPath = join(resolve(cwd), ".auto-talon", "provider.config.json");
+  const userConfig = loadProviderConfigFile(resolveUserProviderConfigPath());
+  const workspaceConfig = loadProviderConfigFile(workspaceConfigPath);
+  const userNames = collectConfiguredProviderNamesFromConfig(userConfig);
+  const workspaceNames = collectConfiguredProviderNamesFromConfig(workspaceConfig);
+  const allNames = new Set([...userNames, ...workspaceNames]);
+
+  return [...allNames]
+    .map((name) => ({
+      name,
+      source: resolveProviderListSource(name, userConfig, workspaceConfig, userNames, workspaceNames)
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function listConfiguredProviderNames(cwd = process.cwd()): string[] {
+  return listConfiguredProviderEntries(cwd).map((entry) => entry.name);
+}
+
+export function listEnvOnlyProviderSelections(cwd = process.cwd()): Array<{ selection: string }> {
+  const envProvider = process.env.AGENT_PROVIDER?.trim();
+  if (envProvider === undefined || envProvider.length === 0) {
+    return [];
+  }
+
+  const parsed = parseProviderSelection(envProvider);
+  const providerName = parsed.providerName;
+  if (providerName === null) {
+    return [];
+  }
+
+  const configuredNames = new Set(listConfiguredProviderEntries(cwd).map((entry) => entry.name));
+  if (configuredNames.has(providerName)) {
+    return [];
+  }
+
+  const envModel = process.env.AGENT_PROVIDER_MODEL?.trim();
+  const selection =
+    envModel !== undefined && envModel.length > 0 ? `${providerName}:${envModel}` : providerName;
+  return [{ selection }];
 }
 
 export function resolveProviderCatalog(cwd = process.cwd()): ProviderCatalogEntry[] {
@@ -404,9 +520,283 @@ export function useProviderConfig(
   providerSelection: string,
   options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
 ): ProviderConfigWriteResult {
-  return writeProviderConfig(providerSelection, options, {
+  const cwd = options.cwd ?? process.cwd();
+  const resolvedSelection = resolveProviderSelectionWithAliases(providerSelection, cwd);
+  const providerConfig = resolveProviderConfigForSwitch(cwd, resolvedSelection);
+  if (!isProviderSwitchable(providerConfig)) {
+    throw new Error(
+      `Provider "${providerConfig.name}" is not configured. Run talon provider setup ${providerConfig.name} first.`
+    );
+  }
+  return writeProviderConfig(resolvedSelection, options, {
     writeSetupEntry: false
   });
+}
+
+export interface AliasConfigWriteResult {
+  alias: string;
+  configPath: string;
+  scope: ProviderConfigScope;
+  target: string;
+}
+
+export function addModelAliasConfig(
+  alias: string,
+  target: string,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): AliasConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const normalizedAlias = alias.trim().toLowerCase();
+  const normalizedTarget = target.trim();
+  if (normalizedAlias.length === 0) {
+    throw new Error("Alias is required.");
+  }
+  if (normalizedTarget.length === 0) {
+    throw new Error("Alias target is required.");
+  }
+  const cwd = options.cwd ?? process.cwd();
+  const resolvedTarget = resolveProviderSelectionWithAliases(normalizedTarget, cwd);
+  try {
+    const targetConfig = resolveProviderConfigForProvider(cwd, resolvedTarget);
+    if (!isProviderSwitchable(targetConfig)) {
+      throw new Error(`Alias target "${normalizedTarget}" is not a configured provider.`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Alias target "${normalizedTarget}" is invalid: ${message}`);
+  }
+  const mergedAliases = mergeModelAliases(
+    loadProviderConfigFile(resolveUserProviderConfigPath()).modelAliases,
+    loadProviderConfigFile(join(resolve(cwd), ".auto-talon", "provider.config.json")).modelAliases
+  );
+  const probeAliases = { ...mergedAliases, [normalizedAlias]: normalizedTarget };
+  resolveModelAlias(normalizedAlias, probeAliases);
+  const nextConfig: ProviderConfigFile = {
+    ...fileConfig,
+    modelAliases: {
+      ...(fileConfig.modelAliases ?? {}),
+      [normalizedAlias]: normalizedTarget
+    }
+  };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return {
+    alias: normalizedAlias,
+    configPath,
+    scope,
+    target: normalizedTarget
+  };
+}
+
+export function removeModelAliasConfig(
+  alias: string,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): AliasConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const normalizedAlias = alias.trim().toLowerCase();
+  const target = fileConfig.modelAliases?.[normalizedAlias];
+  if (target === undefined) {
+    throw new Error(`Alias "${normalizedAlias}" is not configured.`);
+  }
+  const nextAliases = { ...(fileConfig.modelAliases ?? {}) };
+  delete nextAliases[normalizedAlias];
+  const nextConfig = omitProviderConfigKeys(
+    {
+      ...fileConfig,
+      ...(Object.keys(nextAliases).length > 0 ? { modelAliases: nextAliases } : {})
+    },
+    Object.keys(nextAliases).length > 0 ? [] : ["modelAliases"]
+  );
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return {
+    alias: normalizedAlias,
+    configPath,
+    scope,
+    target
+  };
+}
+
+export interface CustomProviderSetupOptions extends Pick<ProviderConfigWriteOptions, "cwd" | "scope"> {
+  anthropicVersion?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  contextWindowTokens?: number;
+  displayName?: string;
+  maxRetries?: number;
+  model?: string;
+  streamIdleTimeoutMs?: number;
+  timeoutMs?: number;
+  transport: Exclude<ProviderTransportKind, "mock">;
+}
+
+export function setupCustomProviderConfig(
+  name: string,
+  options: CustomProviderSetupOptions
+): ProviderConfigWriteResult {
+  const normalizedName = name.trim();
+  if (normalizedName.length === 0) {
+    throw new Error("Custom provider name is required.");
+  }
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const existingEntry = fileConfig.customProviders?.[normalizedName] ?? {};
+  const nextEntry: CustomProviderFileEntry = {
+    ...existingEntry,
+    transport: options.transport,
+    ...(options.apiKey !== undefined ? { apiKey: options.apiKey } : {}),
+    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+    ...(options.model !== undefined ? { model: options.model } : {}),
+    ...(options.displayName !== undefined ? { displayName: options.displayName } : {}),
+    ...(options.contextWindowTokens !== undefined
+      ? { contextWindowTokens: options.contextWindowTokens }
+      : {}),
+    ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.streamIdleTimeoutMs !== undefined
+      ? { streamIdleTimeoutMs: options.streamIdleTimeoutMs }
+      : {}),
+    ...(options.anthropicVersion !== undefined ? { anthropicVersion: options.anthropicVersion } : {})
+  };
+  const nextConfig: ProviderConfigFile = {
+    version: 1,
+    ...fileConfig,
+    currentProvider: normalizedName,
+    customProviders: {
+      ...(fileConfig.customProviders ?? {}),
+      [normalizedName]: nextEntry
+    }
+  };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return {
+    configPath,
+    model: normalizeNullableString(options.model) ?? normalizeNullableString(existingEntry.model),
+    providerName: normalizedName,
+    scope
+  };
+}
+
+export function removeCustomProviderConfig(
+  name: string,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): ProviderConfigWriteResult {
+  const normalizedName = name.trim();
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  if (fileConfig.customProviders?.[normalizedName] === undefined) {
+    throw new Error(`Custom provider "${normalizedName}" is not configured.`);
+  }
+  const nextCustomProviders = { ...(fileConfig.customProviders ?? {}) };
+  delete nextCustomProviders[normalizedName];
+  let nextConfig: ProviderConfigFile = {
+    ...fileConfig,
+    ...(Object.keys(nextCustomProviders).length > 0 ? { customProviders: nextCustomProviders } : {})
+  };
+  nextConfig = omitProviderConfigKeys(
+    nextConfig,
+    Object.keys(nextCustomProviders).length > 0 ? [] : ["customProviders"]
+  );
+  if (fileConfig.currentProvider === normalizedName) {
+    nextConfig = omitProviderConfigKeys(nextConfig, ["currentProvider"]);
+  }
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return {
+    configPath,
+    model: null,
+    providerName: normalizedName,
+    scope
+  };
+}
+
+export interface FallbackConfigWriteResult {
+  configPath: string;
+  fallbackProviders: string[];
+  scope: ProviderConfigScope;
+}
+
+export function resolveMergedFallbackProviders(cwd = process.cwd()): string[] {
+  const workspaceConfigPath = join(resolve(cwd), ".auto-talon", "provider.config.json");
+  const userConfig = loadProviderConfigFile(resolveUserProviderConfigPath());
+  const workspaceConfig = loadProviderConfigFile(workspaceConfigPath);
+  return mergeFallbackProviderLists(userConfig.fallbackProviders, workspaceConfig.fallbackProviders);
+}
+
+export function addFallbackProviderConfig(
+  selection: string,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): FallbackConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const normalizedSelection = selection.trim();
+  if (normalizedSelection.length === 0) {
+    throw new Error("Fallback provider selection is required.");
+  }
+  const cwd = options.cwd ?? process.cwd();
+  const resolvedSelection = resolveProviderSelectionWithAliases(normalizedSelection, cwd);
+  const fallbackConfig = resolveProviderConfigForProvider(cwd, resolvedSelection);
+  if (!isProviderSwitchable(fallbackConfig)) {
+    throw new Error(
+      `Fallback provider "${normalizedSelection}" is not configured. Run talon provider setup first.`
+    );
+  }
+  const existing = fileConfig.fallbackProviders ?? [];
+  if (existing.includes(normalizedSelection)) {
+    throw new Error(`Fallback provider "${normalizedSelection}" is already configured.`);
+  }
+  const fallbackProviders = [...existing, normalizedSelection];
+  const nextConfig: ProviderConfigFile = {
+    ...fileConfig,
+    fallbackProviders
+  };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return { configPath, fallbackProviders, scope };
+}
+
+export function removeFallbackProviderConfig(
+  selection: string,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): FallbackConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const normalizedSelection = selection.trim();
+  const existing = fileConfig.fallbackProviders ?? [];
+  const fallbackProviders = existing.filter((entry) => entry !== normalizedSelection);
+  if (fallbackProviders.length === existing.length) {
+    throw new Error(`Fallback provider "${normalizedSelection}" is not configured.`);
+  }
+  const nextConfig = omitProviderConfigKeys(
+    {
+      ...fileConfig,
+      ...(fallbackProviders.length > 0 ? { fallbackProviders } : {})
+    },
+    fallbackProviders.length > 0 ? [] : ["fallbackProviders"]
+  );
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return { configPath, fallbackProviders, scope };
+}
+
+export function clearFallbackProviderConfig(
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): FallbackConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const nextConfig = omitProviderConfigKeys(fileConfig, ["fallbackProviders"]);
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return { configPath, fallbackProviders: [], scope };
 }
 
 export function promoteProviderConfig(config: ResolvedProviderConfig): ProviderConfigWriteResult {
@@ -480,6 +870,17 @@ export function hasLegacyShortRemoteTimeout(config: ResolvedProviderConfig): boo
   );
 }
 
+function omitProviderConfigKeys(
+  config: ProviderConfigFile,
+  keys: Array<keyof ProviderConfigFile>
+): ProviderConfigFile {
+  const nextConfig = { ...config };
+  for (const key of keys) {
+    delete nextConfig[key];
+  }
+  return nextConfig;
+}
+
 function loadProviderConfigFile(configPath: string): ProviderConfigFile {
   if (!existsSync(configPath)) {
     return {};
@@ -491,7 +892,8 @@ function loadProviderConfigFile(configPath: string): ProviderConfigFile {
   }
 
   try {
-    return JSON.parse(content) as ProviderConfigFile;
+    const parsed = JSON.parse(content);
+    return parseProviderConfigFile(parsed, configPath) as ProviderConfigFile;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse provider config ${configPath}: ${message}`);
@@ -511,10 +913,12 @@ function writeProviderConfig(
   behavior: { writeSetupEntry: boolean }
 ): ProviderConfigWriteResult {
   const scope = options.scope ?? "user";
-  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const cwd = options.cwd ?? process.cwd();
+  const configPath = resolveProviderConfigPath(scope, cwd);
   const fileConfig = loadProviderConfigFile(configPath);
+  const aliasedSelection = resolveProviderSelectionWithAliases(providerSelection, cwd);
   const selection = resolveConfiguredProviderSelection(
-    providerSelection,
+    aliasedSelection,
     normalizeCustomProviders(fileConfig.customProviders)
   );
   if (selection.providerName === null) {
@@ -616,6 +1020,10 @@ function mergeProviderConfigFiles(
   );
   const providers = mergeNamedEntries(userConfig.providers, workspaceConfig.providers);
   const modelAliases = mergeModelAliases(userConfig.modelAliases, workspaceConfig.modelAliases);
+  const fallbackProviders = mergeFallbackProviderLists(
+    userConfig.fallbackProviders,
+    workspaceConfig.fallbackProviders
+  );
 
   return {
     ...userConfig,
@@ -627,8 +1035,26 @@ function mergeProviderConfigFiles(
         : {}),
     ...(customProviders !== undefined ? { customProviders } : {}),
     ...(Object.keys(modelAliases).length > 0 ? { modelAliases } : {}),
-    ...(providers !== undefined ? { providers } : {})
+    ...(providers !== undefined ? { providers } : {}),
+    ...(fallbackProviders.length > 0 ? { fallbackProviders } : {})
   };
+}
+
+function mergeFallbackProviderLists(
+  userList: string[] | undefined,
+  workspaceList: string[] | undefined
+): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const entry of [...(workspaceList ?? []), ...(userList ?? [])]) {
+    const normalized = entry.trim();
+    if (normalized.length === 0 || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    merged.push(normalized);
+  }
+  return merged;
 }
 
 function mergeNamedEntries<TEntry extends JsonObject>(
