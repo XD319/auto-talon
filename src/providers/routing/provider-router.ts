@@ -39,6 +39,7 @@ export interface BudgetDowngradeReader {
 
 export class ProviderRouter {
   private readonly providers = new Map<string, Provider>();
+  private mainProviderOverride: Provider | null = null;
   private mode: RoutingMode;
 
   public constructor(
@@ -59,6 +60,10 @@ export class ProviderRouter {
     this.mode = mode;
   }
 
+  public setMainProvider(provider: Provider | null): void {
+    this.mainProviderOverride = provider;
+  }
+
   public clearProviderCache(providerName?: string): void {
     if (providerName === undefined) {
       this.providers.clear();
@@ -72,30 +77,94 @@ export class ProviderRouter {
     const softDowngrade =
       this.budgetService.isDowngradeActive("task", input.taskId) ||
       (input.sessionId !== null && this.budgetService.isDowngradeActive("session", input.sessionId));
+
+    if (input.kind === "main") {
+      if (softDowngrade) {
+        return this.selectRoutedProvider(input, modeApplied, "cheap", "soft budget downgrade");
+      }
+      if (this.mainProviderOverride !== null) {
+        const provider = this.mainProviderOverride;
+        return this.recordAndReturn(input, {
+          modeApplied,
+          provider,
+          providerName: provider.name,
+          reason: "explicit model switch",
+          tier: null
+        });
+      }
+      if (!this.hasConfiguredRoutingProviders()) {
+        return this.recordAndReturn(input, {
+          modeApplied,
+          provider: null,
+          providerName: null,
+          reason: "no routing providers configured",
+          tier: null
+        });
+      }
+      const tier = tierFor(modeApplied);
+      return this.selectRoutedProvider(input, modeApplied, tier, `routing mode ${modeApplied}`);
+    }
+
     const tier = this.resolveTier(input.kind, modeApplied, softDowngrade);
     const providerName = tier === null ? null : this.resolveProviderName(tier);
     const provider = providerName === null ? null : this.getOrCreateProvider(providerName);
     const reason =
-      input.kind === "main"
-        ? softDowngrade
-          ? "soft budget downgrade"
-          : `routing mode ${modeApplied}`
-        : `helper route ${input.kind}`;
+      input.kind === "summarize" || input.kind === "classify" || input.kind === "recall_rank"
+        ? `helper route ${input.kind}`
+        : `routing mode ${modeApplied}`;
 
+    return this.recordAndReturn(input, {
+      modeApplied,
+      provider,
+      providerName,
+      reason,
+      tier
+    });
+  }
+
+  private hasConfiguredRoutingProviders(): boolean {
+    return (
+      this.config.providers.cheap !== undefined ||
+      this.config.providers.balanced !== undefined ||
+      this.config.providers.quality !== undefined
+    );
+  }
+
+  private selectRoutedProvider(
+    input: SelectProviderInput,
+    modeApplied: RoutingMode,
+    tier: ProviderTier,
+    reason: string
+  ): SelectProviderResult {
+    const providerName = this.resolveProviderName(tier);
+    const provider = providerName === null ? null : this.getOrCreateProvider(providerName);
+    return this.recordAndReturn(input, {
+      modeApplied,
+      provider,
+      providerName,
+      reason,
+      tier
+    });
+  }
+
+  private recordAndReturn(
+    input: SelectProviderInput,
+    result: SelectProviderResult
+  ): SelectProviderResult {
     this.traceService.record({
       actor: "runtime.router",
       eventType: "route_decision",
       payload: {
         kind: input.kind,
-        mode: modeApplied,
-        providerName,
-        reason,
+        mode: result.modeApplied,
+        providerName: result.providerName,
+        reason: result.reason,
         taskId: input.taskId,
         sessionId: input.sessionId,
-        tier
+        tier: result.tier
       },
       stage: "planning",
-      summary: `Route ${input.kind} to ${providerName ?? "none"}`,
+      summary: `Route ${input.kind} to ${result.providerName ?? "none"}`,
       taskId: input.taskId
     });
     this.auditService.record({
@@ -105,19 +174,18 @@ export class ProviderRouter {
       outcome: "succeeded",
       payload: {
         kind: input.kind,
-        mode: modeApplied,
-        providerName,
-        reason,
+        mode: result.modeApplied,
+        providerName: result.providerName,
+        reason: result.reason,
         taskId: input.taskId,
         sessionId: input.sessionId,
-        tier
+        tier: result.tier
       },
       summary: `Route decision for ${input.kind}`,
       taskId: input.taskId,
       toolCallId: null
     });
-
-    return { modeApplied, provider, providerName, reason, tier };
+    return result;
   }
 
   private resolveTier(kind: RouteKind, mode: RoutingMode, downgrade: boolean): ProviderTier | null {

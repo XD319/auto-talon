@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -91,6 +91,75 @@ describe("provider switch service", () => {
       });
       expect(result.providerConfig.name).toBe("vendor-b");
       expect(handle.service.currentProvider().model).toBe("vendor-b-model");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("persists alias selections as the resolved provider name", async () => {
+    await writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "vendor-a",
+        customProviders: {
+          "vendor-a": {
+            transport: "openai-compatible",
+            displayName: "Vendor A",
+            baseUrl: "https://vendor-a.example.test/v1",
+            apiKey: "vendor-a-key",
+            model: "vendor-a-model"
+          },
+          "vendor-b": {
+            transport: "openai-compatible",
+            displayName: "Vendor B",
+            baseUrl: "https://vendor-b.example.test/v1",
+            apiKey: "vendor-b-key",
+            model: "vendor-b-model"
+          }
+        },
+        modelAliases: {
+          backup: "vendor-b:vendor-b-model"
+        }
+      }),
+      "utf8"
+    );
+
+    const handle = createApplication(workspaceRoot);
+    try {
+      await handle.service.switchProvider({
+        persist: "workspace",
+        selection: "backup"
+      });
+      const saved = JSON.parse(
+        await readFile(join(workspaceRoot, ".auto-talon", "provider.config.json"), "utf8")
+      ) as { currentProvider: string };
+      expect(saved.currentProvider).toBe("vendor-b");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("keeps explicit /model switch effective when routing.providers is configured", async () => {
+    await writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        routing: {
+          helpers: { classify: null, recallRank: null, summarize: "cheap" },
+          mode: "quality_first",
+          providers: { balanced: "vendor-a", cheap: "vendor-a", quality: "vendor-b" }
+        },
+        version: 1
+      }),
+      "utf8"
+    );
+
+    const handle = createApplication(workspaceRoot);
+    try {
+      await handle.service.switchProvider({
+        persist: "session",
+        selection: "vendor-a:vendor-a-model"
+      });
+      expect(handle.service.currentProvider().name).toBe("vendor-a");
     } finally {
       handle.close();
     }

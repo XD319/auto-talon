@@ -12,6 +12,8 @@ import type {
   ExperienceReviewRequest
 } from "../experience/experience-plane.js";
 import type { ProviderCatalogEntry, ResolvedProviderConfig } from "../providers/index.js";
+import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
+import { clearFallbackProviderCache } from "../providers/provider-failover.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { RuntimeConfig, ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "./runtime-config.js";
 import type { BudgetService } from "./budget/budget-service.js";
@@ -308,6 +310,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   sessionHandoffService: SessionHandoffService;
   gatewaySessionRepository: GatewaySessionRepository;
   providerRouter?: ProviderRouter;
+  auxiliaryProviderResolver?: AuxiliaryProviderResolver;
   budgetService?: BudgetService;
   workspaceRoot: string;
 }
@@ -358,6 +361,7 @@ export class AgentApplicationService {
   private readonly scheduleFacade: ScheduleFacade;
   private readonly sessionFacade: SessionFacade;
   private readonly approvalFailureContinuations = new Map<string, Promise<ApprovalActionResult>>();
+  private switchProviderInFlight: Promise<SwitchProviderResult> | null = null;
 
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {
     this.sessionFacade = new SessionFacade(
@@ -1305,6 +1309,23 @@ export class AgentApplicationService {
     persist: ProviderSwitchPersistScope;
     selection: string;
   }): Promise<SwitchProviderResult> {
+    if (this.switchProviderInFlight !== null) {
+      throw new Error("Model switch already in progress.");
+    }
+
+    const switchTask = this.switchProviderInternal(input);
+    this.switchProviderInFlight = switchTask;
+    try {
+      return await switchTask;
+    } finally {
+      this.switchProviderInFlight = null;
+    }
+  }
+
+  private async switchProviderInternal(input: {
+    persist: ProviderSwitchPersistScope;
+    selection: string;
+  }): Promise<SwitchProviderResult> {
     const runningTasks = this.dependencies.listTasks().filter((task) => task.status === "running");
     if (runningTasks.length > 0) {
       throw new Error("Cannot switch model while a task is running. Use /stop first.");
@@ -1329,8 +1350,11 @@ export class AgentApplicationService {
     this.dependencies.providerConfig = result.providerConfig;
     this.dependencies.tokenBudget = result.tokenBudget;
     this.dependencies.executionKernel.setPrimaryProvider(result.provider);
-    this.dependencies.providerRouter?.clearProviderCache(previousName);
-    this.dependencies.providerRouter?.clearProviderCache(result.providerConfig.name);
+    this.dependencies.providerRouter?.setMainProvider(result.provider);
+    this.dependencies.providerRouter?.clearProviderCache();
+    this.dependencies.auxiliaryProviderResolver?.setMainProvider(result.provider);
+    this.dependencies.auxiliaryProviderResolver?.clearProviderCache();
+    clearFallbackProviderCache();
 
     this.dependencies.traceService.record({
       actor: "runtime.application",

@@ -18,6 +18,11 @@ import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config.js"
 import { loadLocalPolicyConfig, PolicyEngine } from "../policy/policy-engine.js";
 import { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import {
+  createAuxiliaryProviderResolver,
+  type AuxiliaryProviderResolver,
+  type AuxiliaryRuntimeConfig
+} from "../providers/auxiliary-resolver.js";
+import {
   createProvider,
   ManagedProvider,
   ProviderRouter,
@@ -261,6 +266,7 @@ export interface AppConfig {
       recallRank: "cheap" | "balanced" | "quality" | null;
     };
   };
+  auxiliary: AuxiliaryRuntimeConfig;
   budget: {
     task: BudgetLimits;
     session: BudgetLimits;
@@ -319,6 +325,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     recall: runtimeConfig.recall,
     promotion: runtimeConfig.promotion,
     routing: runtimeConfig.routing,
+    auxiliary: runtimeConfig.auxiliary,
     budget: runtimeConfig.budget,
     provider,
     runtimeVersion: RUNTIME_VERSION,
@@ -496,6 +503,10 @@ function mergeCreateApplicationConfig(
         ...options.config?.routing?.providers
       }
     },
+    auxiliary: {
+      ...resolvedConfig.auxiliary,
+      ...options.config?.auxiliary
+    },
     sandbox: {
       ...resolvedSandbox,
       ...options.config?.sandbox
@@ -549,12 +560,13 @@ function buildApplicationRuntime(
   const auditService = new AuditService(storage.auditLogs);
   const budgetService = new BudgetService(config.budget, traceService, auditService);
   budgetService.start();
+  const mainProviderRef = { current: provider };
   const routedProviders = new Map<string, Provider>();
   const providerRouter = new ProviderRouter(
     config.routing,
     (providerName) => {
-      if (providerName === provider.name) {
-        return provider;
+      if (providerName === mainProviderRef.current.name) {
+        return mainProviderRef.current;
       }
       const existing = routedProviders.get(providerName);
       if (existing !== undefined) {
@@ -627,10 +639,21 @@ function buildApplicationRuntime(
   const todoSessionStore = new TodoSessionStore();
   const delegateTaskTool = new DelegateTaskTool();
   const cronjobTool = new CronjobTool();
-  const webPageSummarizer =
-    config.routing.helpers.summarize === null
-      ? undefined
-      : new ProviderWebPageSummarizer(providerRouter, provider);
+  const auxiliaryProviderResolver = createAuxiliaryProviderResolver({
+    auxiliary: config.auxiliary,
+    createProvider: (providerConfig) => createProvider(providerConfig),
+    cwd: config.workspaceRoot,
+    mainProviderRef,
+    providerRouter
+  });
+  const summarizeEnabled =
+    config.auxiliary.summarize !== "auto" || config.routing.helpers.summarize !== null;
+  const webPageSummarizer = summarizeEnabled
+    ? new ProviderWebPageSummarizer(
+        (context) => auxiliaryProviderResolver.resolve("summarize", context),
+        provider
+      )
+    : undefined;
   const toolRegistry = new ToolRegistry().registerAll([
     new AskUserTool(),
     new CodeSearchTool(sandboxService),
@@ -825,6 +848,7 @@ function buildApplicationRuntime(
   });
 
   const executionKernel = new ExecutionKernel({
+    auxiliaryProviderResolver,
     compact: config.compact,
     contextRetention: config.contextRetention,
     compactPolicy,
@@ -1062,6 +1086,7 @@ function buildApplicationRuntime(
     providerCatalog: options.providerCatalog ?? resolveProviderCatalog(config.workspaceRoot),
     providerConfig: config.provider,
     providerRouter,
+    auxiliaryProviderResolver,
     budgetService,
     runtimeConfigPath: config.runtimeConfigPath,
     runtimeConfigSource: config.runtimeConfigSource,

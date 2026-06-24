@@ -58,6 +58,8 @@ import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./work
 import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
 import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-exposure-planner.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
+import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
+import { generateWithProviderFailover } from "../providers/provider-failover.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type {
   ConversationMessage,
@@ -106,6 +108,7 @@ import type { SkillContextService } from "../skills/index.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
+  auxiliaryProviderResolver?: AuxiliaryProviderResolver;
   compactPolicy: CompactTriggerPolicy;
   executionCheckpointRepository: ExecutionCheckpointRepository;
   getSessionCommitmentState?: (sessionId: string) => SessionCommitmentState | null;
@@ -207,6 +210,18 @@ export class ExecutionKernel {
 
   public setPrimaryProvider(provider: Provider): void {
     this.dependencies.provider = provider;
+  }
+
+  private resolveActiveMainProvider(task: TaskRecord): Provider {
+    const routed = this.dependencies.providerRouter?.selectProvider({
+      kind: "main",
+      taskId: task.taskId,
+      sessionId: task.sessionId ?? null,
+      ...(this.dependencies.routingMode !== undefined
+        ? { mode: this.dependencies.routingMode }
+        : {})
+    });
+    return routed?.provider ?? this.dependencies.provider;
   }
 
   private async planRecall(
@@ -872,15 +887,7 @@ export class ExecutionKernel {
           taskId: task.taskId
         });
 
-        const activeProvider =
-          this.dependencies.providerRouter?.selectProvider({
-            kind: "main",
-            taskId: task.taskId,
-            sessionId: task.sessionId ?? null,
-            ...(this.dependencies.routingMode !== undefined
-              ? { mode: this.dependencies.routingMode }
-              : {})
-          }).provider ?? this.dependencies.provider;
+        const activeProvider = this.resolveActiveMainProvider(task);
 
         this.dependencies.traceService.record({
           actor: `provider.${activeProvider.name}`,
@@ -915,7 +922,16 @@ export class ExecutionKernel {
         const startedAt = Date.now();
         let providerResponse;
         try {
-          providerResponse = await activeProvider.generate(providerInput);
+          providerResponse = await generateWithProviderFailover(
+            {
+              cwd: this.dependencies.workspaceRoot,
+              enableFailover: true,
+              primaryProvider: activeProvider,
+              taskId: task.taskId,
+              traceService: this.dependencies.traceService
+            },
+            providerInput
+          );
         } catch (error) {
           const providerError = normalizeProviderFailure(error, activeProvider);
           const abortReason = state.managedAbortController.getReason();
@@ -958,11 +974,18 @@ export class ExecutionKernel {
         const transcriptVisibility =
           providerResponse.kind === "tool_calls" ? "hidden" : "visible";
 
+        const assistantReasoningContent =
+          providerResponse.kind === "final" || providerResponse.kind === "tool_calls"
+            ? providerResponse.reasoningContent
+            : undefined;
         messages.push({
           content: providerResponse.message,
           role: "assistant",
           ...(providerResponse.metadata?.raw !== undefined
             ? { metadata: providerResponse.metadata.raw }
+            : {}),
+          ...(assistantReasoningContent !== undefined
+            ? { reasoningContent: assistantReasoningContent }
             : {}),
           ...(providerResponse.kind === "tool_calls"
             ? { toolCalls: providerResponse.toolCalls }
@@ -1013,7 +1036,7 @@ export class ExecutionKernel {
             message: providerResponse.message,
             toolNames:
               providerResponse.kind === "tool_calls"
-                ? providerResponse.toolCalls.map((call) => call.toolName)
+                ? providerResponse.toolCalls.map((call: ProviderToolCall) => call.toolName)
                 : []
           },
           stage: "planning",
@@ -1408,22 +1431,13 @@ export class ExecutionKernel {
     iteration: number,
     reason: "max_iterations_exhausted" | "post_completion_verification_exhausted"
   ): Promise<RuntimeRunResult> {
-    const activeProvider =
-      this.dependencies.providerRouter?.selectProvider({
-        kind: "main",
-        taskId: task.taskId,
-        sessionId: task.sessionId ?? null,
-        ...(this.dependencies.routingMode !== undefined
-          ? { mode: this.dependencies.routingMode }
-          : {})
-      }).provider ?? this.dependencies.provider;
+    const activeProvider = this.resolveActiveMainProvider(task);
     const summaryPrompt =
       reason === "max_iterations_exhausted"
         ? `The loop reached its iteration budget (${state.maxIterations}). Do not call tools. Summarize the completed work, files changed or inspected, and any remaining work.`
         : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
     const finalMessages: ConversationMessage[] = [
       ...state.turnProviderMessages,
-      ...messages.filter((message) => message.role === "tool").slice(-6),
       {
         content: summaryPrompt,
         metadata: {
@@ -1437,19 +1451,28 @@ export class ExecutionKernel {
     const startedAt = Date.now();
     let providerResponse: ProviderResponse;
     try {
-      providerResponse = await activeProvider.generate({
-        agentProfileId: task.agentProfileId,
-        availableTools: [],
-        iteration: iteration + 1,
-        memoryContext: state.memoryContext,
-        messages: finalMessages,
-        ...(state.onAssistantTextDelta !== undefined
-          ? { onTextDelta: state.onAssistantTextDelta }
-          : {}),
-        signal: state.managedAbortController.abortController.signal,
-        task,
-        tokenBudget: state.tokenBudget
-      });
+      providerResponse = await generateWithProviderFailover(
+        {
+          cwd: this.dependencies.workspaceRoot,
+          enableFailover: true,
+          primaryProvider: activeProvider,
+          taskId: task.taskId,
+          traceService: this.dependencies.traceService
+        },
+        {
+          agentProfileId: task.agentProfileId,
+          availableTools: [],
+          iteration: iteration + 1,
+          memoryContext: state.memoryContext,
+          messages: finalMessages,
+          ...(state.onAssistantTextDelta !== undefined
+            ? { onTextDelta: state.onAssistantTextDelta }
+            : {}),
+          signal: state.managedAbortController.abortController.signal,
+          task,
+          tokenBudget: state.tokenBudget
+        }
+      );
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
@@ -1850,13 +1873,17 @@ export class ExecutionKernel {
     if (this.dependencies.compact.summarizer !== "provider_subagent") {
       return new DeterministicCompactSummarizer();
     }
-    const helperSelection = this.dependencies.providerRouter?.selectProvider({
-      kind: "summarize",
-      taskId,
-      sessionId
-    });
     const helperProvider =
-      helperSelection?.provider ?? this.dependencies.provider;
+      this.dependencies.auxiliaryProviderResolver?.resolve("compression", {
+        sessionId,
+        taskId
+      }) ??
+      this.dependencies.providerRouter?.selectProvider({
+        kind: "summarize",
+        taskId,
+        sessionId
+      }).provider ??
+      this.dependencies.provider;
     const helperContextWindow =
       helperProvider.describe?.().contextWindowTokens ?? Math.min(mainContextWindowTokens, 32_000);
     return new ProviderSubagentSummarizer(

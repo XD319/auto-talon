@@ -192,6 +192,26 @@ describe("sanitizeToolCallPairing", () => {
     expect(messages).toHaveLength(2);
     expect(messages[0]?.toolCalls?.map((toolCall) => toolCall.toolCallId)).toEqual(["call-a"]);
   });
+
+  it("removes orphan tool results when assistant tool_calls were cleared", () => {
+    const messages: ConversationMessage[] = [
+      {
+        content: "calling tool",
+        role: "assistant",
+        toolCalls: []
+      },
+      {
+        content: "orphan",
+        role: "tool",
+        toolCallId: "call-a",
+        toolName: "read_file"
+      }
+    ];
+
+    const result = sanitizeToolCallPairing(messages);
+    expect(result.insertedCount).toBe(1);
+    expect(messages).toEqual([{ content: "calling tool", role: "assistant" }]);
+  });
 });
 
 describe("findLastAssistantToolCallsResponse", () => {

@@ -2203,7 +2203,7 @@ describe("use-text-input helpers", () => {
 
   it("completes model slash commands", () => {
     expect(completeSlashCommand("/model")).toBe("/model ");
-    expect(completeSlashCommand("/model l")).toBe("/model list ");
+    expect(completeSlashCommand("/model l")).toBeNull();
   });
 });
 
