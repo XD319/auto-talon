@@ -30,7 +30,16 @@ import {
   runReleaseChecklist
 } from "../diagnostics/index.js";
 import {
+  addFallbackProviderConfig,
+  addModelAliasConfig,
+  clearFallbackProviderConfig,
   promoteProviderConfig,
+  removeCustomProviderConfig,
+  removeFallbackProviderConfig,
+  removeModelAliasConfig,
+  resolveMergedFallbackProviders,
+  resolveMergedModelAliases,
+  setupCustomProviderConfig,
   setupProviderConfig,
   useProviderConfig,
   type ProviderConfigScope,
@@ -57,6 +66,18 @@ import { runGitReadOnly } from "../runtime/workspace/git-readonly.js";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing/index.js";
 import { startDashboardTui, startTui } from "../tui/index.js";
 import { startSessionApiServer } from "../session-api/server.js";
+import {
+  formatModelList,
+  formatModelStatus,
+  runInteractiveModelWizard,
+  setModelSelection
+} from "./model-command.js";
+import { resolveRuntimeConfig, writeAuxiliarySlot } from "../runtime/runtime-config.js";
+import {
+  AUXILIARY_SLOTS,
+  type AuxiliarySlot
+} from "../providers/auxiliary-resolver.js";
+import { listModelAliasEntries } from "../providers/model-aliases.js";
 
 import {
   formatApprovalList,
@@ -1441,6 +1462,245 @@ export async function main(argv = process.argv): Promise<void> {
       } finally {
         handle.close();
       }
+    });
+
+  const providerAliasCommand = providerCommand.command("alias").description("Manage model aliases");
+
+  providerAliasCommand
+    .command("list")
+    .option("--workspace", "Read workspace aliases only")
+    .action((commandOptions: { workspace?: boolean }) => {
+      const appConfig = resolveAppConfig(process.cwd());
+      const aliases = resolveMergedModelAliases(appConfig.workspaceRoot);
+      const entries = listModelAliasEntries(aliases);
+      if (entries.length === 0) {
+        console.log("No model aliases configured.");
+        return;
+      }
+      for (const entry of entries) {
+        console.log(`${entry.alias} -> ${entry.target}`);
+      }
+      if (commandOptions.workspace === true) {
+        console.log(`Scope note: showing merged aliases for ${appConfig.workspaceRoot}`);
+      }
+    });
+
+  providerAliasCommand
+    .command("add")
+    .description("Add a model alias")
+    .argument("<alias>", "Alias name")
+    .argument("<target>", "Provider:model target")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action((alias: string, target: string, commandOptions: { workspace?: boolean }) => {
+      const result = addModelAliasConfig(alias, target, resolveProviderConfigTarget(commandOptions.workspace === true));
+      console.log(`Added alias ${result.alias} -> ${result.target}\nConfig Path: ${result.configPath}`);
+    });
+
+  providerAliasCommand
+    .command("remove")
+    .description("Remove a model alias")
+    .argument("<alias>", "Alias name")
+    .option("--workspace", "Remove from workspace config instead of user config")
+    .action((alias: string, commandOptions: { workspace?: boolean }) => {
+      const result = removeModelAliasConfig(alias, resolveProviderConfigTarget(commandOptions.workspace === true));
+      console.log(`Removed alias ${result.alias} -> ${result.target}\nConfig Path: ${result.configPath}`);
+    });
+
+  const providerCustomCommand = providerCommand.command("custom").description("Manage custom providers");
+
+  providerCustomCommand
+    .command("list")
+    .action(() => {
+      const configured = createApplication(process.cwd());
+      try {
+        for (const provider of configured.service.listConfiguredProviders()) {
+          if (provider.providerConfig.builtinProviderName === null) {
+            console.log(`${provider.name} (${provider.displayName}) -> ${provider.model ?? "(default)"}`);
+          }
+        }
+      } finally {
+        configured.close();
+      }
+    });
+
+  providerCustomCommand
+    .command("add")
+    .description("Add or update a custom provider")
+    .argument("<name>", "Custom provider name")
+    .requiredOption("--transport <transport>", "openai-compatible | anthropic-compatible")
+    .option("--api-key <key>", "API key")
+    .option("--base-url <url>", "Provider base URL")
+    .option("--model <model>", "Default model")
+    .option("--display-name <name>", "Display name")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action(
+      (
+        name: string,
+        commandOptions: {
+          apiKey?: string;
+          baseUrl?: string;
+          displayName?: string;
+          model?: string;
+          transport: "anthropic-compatible" | "openai-compatible";
+          workspace?: boolean;
+        }
+      ) => {
+        const result = setupCustomProviderConfig(name, {
+          transport: commandOptions.transport,
+          ...(commandOptions.apiKey !== undefined ? { apiKey: commandOptions.apiKey } : {}),
+          ...(commandOptions.baseUrl !== undefined ? { baseUrl: commandOptions.baseUrl } : {}),
+          ...(commandOptions.model !== undefined ? { model: commandOptions.model } : {}),
+          ...(commandOptions.displayName !== undefined ? { displayName: commandOptions.displayName } : {}),
+          ...resolveProviderConfigTarget(commandOptions.workspace === true)
+        });
+        console.log(formatProviderConfigWrite("Configured custom", result));
+      }
+    );
+
+  providerCustomCommand
+    .command("remove")
+    .description("Remove a custom provider")
+    .argument("<name>", "Custom provider name")
+    .option("--workspace", "Remove from workspace config instead of user config")
+    .action((name: string, commandOptions: { workspace?: boolean }) => {
+      const result = removeCustomProviderConfig(name, resolveProviderConfigTarget(commandOptions.workspace === true));
+      console.log(formatProviderConfigWrite("Removed custom", result));
+    });
+
+  const providerFallbackCommand = providerCommand
+    .command("fallback")
+    .description("Manage provider fallback chain");
+
+  providerFallbackCommand
+    .command("list")
+    .action(() => {
+      const appConfig = resolveAppConfig(process.cwd());
+      const fallbackProviders = resolveMergedFallbackProviders(appConfig.workspaceRoot);
+      if (fallbackProviders.length === 0) {
+        console.log("No fallback providers configured.");
+        return;
+      }
+      for (const [index, selection] of fallbackProviders.entries()) {
+        console.log(`${index + 1}. ${selection}`);
+      }
+    });
+
+  providerFallbackCommand
+    .command("add")
+    .description("Append a fallback provider selection")
+    .argument("<selection>", "Provider:model selection")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action((selection: string, commandOptions: { workspace?: boolean }) => {
+      const result = addFallbackProviderConfig(
+        selection,
+        resolveProviderConfigTarget(commandOptions.workspace === true)
+      );
+      console.log(`Fallback providers:\n${result.fallbackProviders.map((entry, index) => `${index + 1}. ${entry}`).join("\n")}`);
+      console.log(`Config Path: ${result.configPath}`);
+    });
+
+  providerFallbackCommand
+    .command("remove")
+    .description("Remove a fallback provider selection")
+    .argument("<selection>", "Provider:model selection")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action((selection: string, commandOptions: { workspace?: boolean }) => {
+      const result = removeFallbackProviderConfig(
+        selection,
+        resolveProviderConfigTarget(commandOptions.workspace === true)
+      );
+      console.log(`Fallback providers:\n${result.fallbackProviders.map((entry, index) => `${index + 1}. ${entry}`).join("\n")}`);
+      console.log(`Config Path: ${result.configPath}`);
+    });
+
+  providerFallbackCommand
+    .command("clear")
+    .description("Clear fallback provider chain")
+    .option("--workspace", "Clear workspace config instead of user config")
+    .action((commandOptions: { workspace?: boolean }) => {
+      const result = clearFallbackProviderConfig(resolveProviderConfigTarget(commandOptions.workspace === true));
+      console.log(`Cleared fallback providers.\nConfig Path: ${result.configPath}`);
+    });
+
+  const modelCommand = program.command("model").description("Configure and inspect models");
+
+  modelCommand
+    .command("list")
+    .description("List configured models and status")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((commandOptions: { cwd: string }) => {
+      console.log(formatModelList(commandOptions.cwd));
+    });
+
+  modelCommand
+    .command("status")
+    .description("Show current model, fallback chain, and auxiliary slots")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((commandOptions: { cwd: string }) => {
+      console.log(formatModelStatus(commandOptions.cwd));
+    });
+
+  modelCommand
+    .command("set")
+    .description("Set the default model selection")
+    .argument("<selection>", "Provider or provider:model")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((selection: string, commandOptions: { cwd: string; workspace?: boolean }) => {
+      console.log(setModelSelection(selection, { cwd: commandOptions.cwd, workspace: commandOptions.workspace === true }));
+    });
+
+  const modelAuxiliaryCommand = modelCommand.command("auxiliary").description("Manage auxiliary model slots");
+
+  modelAuxiliaryCommand
+    .command("list")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((commandOptions: { cwd: string }) => {
+      const runtimeConfig = resolveRuntimeConfig(commandOptions.cwd);
+      for (const [slot, value] of Object.entries(runtimeConfig.auxiliary)) {
+        console.log(`${slot}: ${value}`);
+      }
+    });
+
+  modelAuxiliaryCommand
+    .command("set")
+    .description("Set an auxiliary slot to auto or provider:model")
+    .argument("<slot>", "compression | summarize | vision | title | classify | recallRank")
+    .argument("<selection>", "auto or provider:model")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((slot: string, selection: string, commandOptions: { cwd: string }) => {
+      const normalizedSlot = slot.trim();
+      if (!AUXILIARY_SLOTS.includes(normalizedSlot as AuxiliarySlot)) {
+        throw new Error(`Unknown auxiliary slot "${normalizedSlot}".`);
+      }
+      const configPath = writeAuxiliarySlot(
+        commandOptions.cwd,
+        normalizedSlot as AuxiliarySlot,
+        selection.trim()
+      );
+      console.log(`Auxiliary slot ${normalizedSlot} set to ${selection.trim()}\nConfig Path: ${configPath}`);
+    });
+
+  modelAuxiliaryCommand
+    .command("reset")
+    .description("Reset an auxiliary slot to auto")
+    .argument("<slot>", "compression | summarize | vision | title | classify | recallRank")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action((slot: string, commandOptions: { cwd: string }) => {
+      const normalizedSlot = slot.trim();
+      if (!AUXILIARY_SLOTS.includes(normalizedSlot as AuxiliarySlot)) {
+        throw new Error(`Unknown auxiliary slot "${normalizedSlot}".`);
+      }
+      const configPath = writeAuxiliarySlot(commandOptions.cwd, normalizedSlot as AuxiliarySlot, "auto");
+      console.log(`Auxiliary slot ${normalizedSlot} reset to auto\nConfig Path: ${configPath}`);
+    });
+
+  modelCommand
+    .description("Interactive model picker and default model setup")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action(async (commandOptions: { cwd: string; workspace?: boolean }) => {
+      await runInteractiveModelWizard(commandOptions.cwd, commandOptions.workspace === true);
     });
 
   const budgetCommand = program.command("budget").description("Inspect runtime budget usage");

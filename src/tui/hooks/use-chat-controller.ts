@@ -397,6 +397,15 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     });
   }, []);
 
+  const providerSelectionRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const selection = `${input.config.provider.name}:${input.config.provider.model ?? ""}`;
+    if (providerSelectionRef.current !== null && providerSelectionRef.current !== selection) {
+      resetTokenHudState();
+    }
+    providerSelectionRef.current = selection;
+  }, [input.config.provider.model, input.config.provider.name, resetTokenHudState]);
+
   const clearConversation = React.useCallback(() => {
     setMessages([welcomeMessage]);
     setUiStatus({

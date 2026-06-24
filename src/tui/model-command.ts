@@ -2,6 +2,7 @@ import type { ConfiguredProviderEntry } from "../runtime/operations/provider-swi
 import { formatProviderSelection } from "../runtime/operations/provider-switch-service.js";
 import type { ResolvedProviderConfig } from "../providers/config.js";
 import { listModelAliasEntries, type ModelAliasMap } from "../providers/model-aliases.js";
+import { formatEnvProviderOverrideNotice } from "../providers/provider-env.js";
 import type { ProviderSwitchPersistScope } from "../runtime/operations/provider-switch-service.js";
 
 export interface ModelCommandResult {
@@ -20,6 +21,21 @@ export interface ModelCommandResult {
 export interface ParsedModelCommand {
   persist: ProviderSwitchPersistScope;
   selection: string | null;
+}
+
+export interface EnvOnlyProviderEntry {
+  selection: string;
+}
+
+function formatProviderListSource(source: ConfiguredProviderEntry["configSource"]): string {
+  switch (source) {
+    case "workspace-only":
+      return " [workspace-only]";
+    case "workspace":
+      return " [workspace override]";
+    default:
+      return " [user]";
+  }
 }
 
 export function parseModelCommand(text: string): ParsedModelCommand | null {
@@ -49,6 +65,9 @@ export function parseModelCommand(text: string): ParsedModelCommand | null {
       persist = "workspace";
       continue;
     }
+    if (token.startsWith("--")) {
+      throw new Error(`Unknown /model flag "${token}". Supported flags: --global, --workspace`);
+    }
     selectionTokens.push(token);
   }
 
@@ -66,23 +85,46 @@ export function parseModelCommand(text: string): ParsedModelCommand | null {
   };
 }
 
+export function formatFlagsOnlyModelHint(persist: ProviderSwitchPersistScope): string {
+  const scopeLabel =
+    persist === "user" ? "--global" : persist === "workspace" ? "--workspace" : "session";
+  return [
+    `Persist flag (${scopeLabel}) requires a model selection.`,
+    "Example: /model deepseek:deepseek-chat --global",
+    "Run /model to list configured providers."
+  ].join("\n");
+}
+
 export function formatModelListMessage(input: {
   aliases: ModelAliasMap;
   configuredProviders: ConfiguredProviderEntry[];
   current: ResolvedProviderConfig;
+  envOnlyProviders?: EnvOnlyProviderEntry[];
+  userProviderCount?: number;
 }): string {
   const current = formatProviderSelection(input.current);
   const lines = [`Current model: ${current}`, "", "Configured providers:"];
 
   if (input.configuredProviders.length === 0) {
-    lines.push("- (none) Run talon provider setup <provider> to configure one.");
+    if (input.userProviderCount === 0) {
+      lines.push("- (none) No user-level providers configured.");
+      lines.push("  Tip: run `talon provider setup <provider>` or `talon model` to add one globally.");
+    } else {
+      lines.push("- (none) Providers are configured but missing credentials in this workspace.");
+      lines.push("  Tip: run `talon provider setup <provider>` or check API keys.");
+    }
   } else {
     for (const provider of input.configuredProviders) {
       const selection = formatProviderSelection(provider.providerConfig);
       const marker = selection === current ? " *" : "";
-      lines.push(
-        `- ${provider.name} (${provider.displayName}) -> ${provider.model ?? "(default)"}${marker}`
-      );
+      lines.push(`- ${selection} (${provider.displayName})${formatProviderListSource(provider.configSource)}${marker}`);
+    }
+  }
+
+  if (input.envOnlyProviders !== undefined && input.envOnlyProviders.length > 0) {
+    lines.push("", "Environment-only (not persistable via /model):");
+    for (const entry of input.envOnlyProviders) {
+      lines.push(`- ${entry.selection} [env]`);
     }
   }
 
@@ -90,7 +132,8 @@ export function formatModelListMessage(input: {
   if (aliasEntries.length > 0) {
     lines.push("", "Aliases:");
     for (const entry of aliasEntries) {
-      lines.push(`- ${entry.alias} -> ${entry.target}`);
+      const marker = entry.target === current || entry.alias === current ? " *" : "";
+      lines.push(`- ${entry.alias} -> ${entry.target}${marker}`);
     }
   }
 
@@ -101,6 +144,7 @@ export function formatModelListMessage(input: {
   );
   return lines.join("\n");
 }
+
 
 export function formatModelSwitchMessage(input: {
   persist: ProviderSwitchPersistScope;
@@ -114,5 +158,12 @@ export function formatModelSwitchMessage(input: {
       : input.persist === "workspace"
         ? " (saved to workspace config)"
         : " (session only)";
-  return `Model switched: ${previous} -> ${input.resultSelection}${persistLabel}`;
+  const lines = [`Model switched: ${previous} -> ${input.resultSelection}${persistLabel}`];
+  if (input.persist === "user" || input.persist === "workspace") {
+    const envNotice = formatEnvProviderOverrideNotice();
+    if (envNotice !== null) {
+      lines.push(envNotice);
+    }
+  }
+  return lines.join("\n");
 }

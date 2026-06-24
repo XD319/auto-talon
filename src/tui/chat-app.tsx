@@ -555,7 +555,7 @@ export function ChatTuiApp({
           [
             "Most used: /resume <session> /sessions /today /inbox /new <title> /schedule create <when> | <prompt>",
             "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
-            "Session: /mode [agent|plan] /model [provider:model] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
+            "Session: /mode [agent|plan] /model [provider:model] [--global|--workspace] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
             "File edits: scrollback shows +added/-removed line counts with a folded diff preview; use /diff for more detail.",
             `Diff display: ${liveConfig.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
@@ -678,6 +678,10 @@ export function ChatTuiApp({
       }
 
       if (text === "/model" || text.startsWith("/model ")) {
+        const hasSelection = text.trim().length > "/model".length && !text.trim().match(/^\/model\s+(list)?$/u);
+        if (hasSelection) {
+          controller.addSystemMessage("Switching model...");
+        }
         void handleModelCommand({
           busy: controller.busy,
           cwd,
@@ -702,7 +706,10 @@ export function ChatTuiApp({
               provider: result.providerConfig!,
               tokenBudget: {
                 ...current.tokenBudget,
-                ...result.tokenBudget!
+                ...result.tokenBudget!,
+                usedInput: 0,
+                usedOutput: 0,
+                usedCostUsd: 0
               }
             }));
             if (controller.activeSessionId !== null) {
@@ -1583,6 +1590,22 @@ function buildDynamicSlashSuggestions(
         rank: 2
       });
     }
+    suggestions.push(
+      {
+        description: "Persist selection to user config",
+        insertText: "/model <provider:model> --global",
+        key: "model:global",
+        label: "/model <selection> --global",
+        rank: 3
+      },
+      {
+        description: "Persist selection to workspace config",
+        insertText: "/model <provider:model> --workspace",
+        key: "model:workspace",
+        label: "/model <selection> --workspace",
+        rank: 3
+      }
+    );
     return suggestions.filter((item) => item.insertText.startsWith(value.trim()));
   }
 
