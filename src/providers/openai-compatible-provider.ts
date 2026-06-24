@@ -29,6 +29,11 @@ import {
 } from "./context-window-query.js";
 import { composeAbortSignal, ensureTrailingSlash } from "./provider-http.js";
 import {
+  parseReasoningContent,
+  reasoningContentForReplay
+} from "./reasoning-content.js";
+import { normalizeOpenAiCompatibleMessages } from "./openai-message-sanitizer.js";
+import {
   StreamingFallbackState,
   classifyStreamingFallback,
   describeStreamingFallbackReason,
@@ -46,6 +51,7 @@ interface OpenAiCompatibleTool {
 
 interface OpenAiCompatibleMessage extends JsonObject {
   content: string | null;
+  reasoning_content?: string;
   role: "assistant" | "system" | "tool" | "user";
   tool_call_id?: string;
   tool_calls?: Array<{
@@ -64,6 +70,7 @@ interface OpenAiCompatibleResponse {
     index: number;
     message?: {
       content?: string | null;
+      reasoning_content?: string | null;
       role?: string;
       tool_calls?: Array<{
         id?: string;
@@ -137,12 +144,18 @@ export class OpenAiCompatibleProvider implements Provider {
     return this.generateComplete(input);
   }
 
+  private mapProviderMessages(input: ProviderRequest): OpenAiCompatibleMessage[] {
+    return normalizeOpenAiCompatibleMessages(input.messages).map((message, index, messages) =>
+      toProviderMessage(message, messages, index)
+    );
+  }
+
   private async generateComplete(input: ProviderRequest): Promise<ProviderResponse> {
     const response = await this.requestJson<OpenAiCompatibleResponse>(
       "chat/completions",
       {
         max_tokens: Math.max(1, input.tokenBudget.outputLimit),
-        messages: input.messages.map((message) => toProviderMessage(message)),
+        messages: this.mapProviderMessages(input),
         model: this.model,
         stream: false,
         tools: input.availableTools.map((tool) => toProviderTool(tool) as unknown as JsonObject)
@@ -169,6 +182,7 @@ export class OpenAiCompatibleProvider implements Provider {
       .map((toolCall, index) => parseToolCall(toolCall, index, this.name))
       .filter((toolCall): toolCall is ProviderToolCall => toolCall !== null);
     const content = message?.content?.trim() ?? "";
+    const reasoningContent = parseReasoningContent(message?.reasoning_content);
     const usage = toUsage(response.usage);
     const metadata = {
       finishReason: choice?.finish_reason ?? null,
@@ -184,6 +198,7 @@ export class OpenAiCompatibleProvider implements Provider {
         kind: "tool_calls",
         message: content,
         metadata,
+        ...(reasoningContent !== undefined ? { reasoningContent } : {}),
         toolCalls,
         usage
       };
@@ -193,6 +208,7 @@ export class OpenAiCompatibleProvider implements Provider {
       kind: "final",
       message: content,
       metadata,
+      ...(reasoningContent !== undefined ? { reasoningContent } : {}),
       usage
     };
   }
@@ -242,7 +258,7 @@ export class OpenAiCompatibleProvider implements Provider {
       const init: RequestInit = {
         body: JSON.stringify({
           max_tokens: Math.max(1, input.tokenBudget.outputLimit),
-          messages: input.messages.map((message) => toProviderMessage(message)),
+          messages: this.mapProviderMessages(input),
           model: this.model,
           stream: true,
           tools: input.availableTools.map((tool) => toProviderTool(tool) as unknown as JsonObject)
@@ -298,6 +314,7 @@ export class OpenAiCompatibleProvider implements Provider {
 
       let buffer = "";
       let fullContent = "";
+      let fullReasoningContent = "";
       const toolParts = new Map<number, { arguments: string; id: string; name: string }>();
       let lastUsage: ProviderUsage | undefined;
       const decoder = new TextDecoder();
@@ -358,6 +375,7 @@ export class OpenAiCompatibleProvider implements Provider {
         const delta = choice?.delta as
           | {
               content?: string;
+              reasoning_content?: string;
               tool_calls?: Array<{
                 function?: { arguments?: string; name?: string };
                 id?: string;
@@ -374,6 +392,11 @@ export class OpenAiCompatibleProvider implements Provider {
           progress.madeProgress = true;
           fullContent += delta.content;
           input.onTextDelta?.(delta.content);
+        }
+
+        if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+          progress.madeProgress = true;
+          fullReasoningContent += delta.reasoning_content;
         }
 
         if (Array.isArray(delta.tool_calls)) {
@@ -450,12 +473,15 @@ export class OpenAiCompatibleProvider implements Provider {
       }
 
       const content = fullContent.trim();
+      const reasoningContent =
+        fullReasoningContent.length > 0 ? fullReasoningContent : undefined;
 
       if (toolCalls.length > 0) {
         return {
           kind: "tool_calls",
           message: content,
           metadata,
+          ...(reasoningContent !== undefined ? { reasoningContent } : {}),
           toolCalls,
           usage
         };
@@ -465,6 +491,7 @@ export class OpenAiCompatibleProvider implements Provider {
         kind: "final",
         message: content,
         metadata,
+        ...(reasoningContent !== undefined ? { reasoningContent } : {}),
         usage
       };
     } catch (error) {
@@ -724,12 +751,18 @@ export class OpenAiCompatibleProvider implements Provider {
   }
 }
 
-function toProviderMessage(message: ConversationMessage): OpenAiCompatibleMessage {
+function toProviderMessage(
+  message: ConversationMessage,
+  messages: ConversationMessage[],
+  messageIndex: number
+): OpenAiCompatibleMessage {
   const content = typeof message.content === "string" ? message.content : "";
+  const replayedReasoning = reasoningContentForReplay(message, messages, messageIndex);
   if (message.role === "assistant" && message.toolCalls !== undefined && message.toolCalls.length > 0) {
     return {
       content: content.length > 0 ? content : null,
       role: "assistant",
+      ...(replayedReasoning !== undefined ? { reasoning_content: replayedReasoning } : {}),
       tool_calls: message.toolCalls.map((toolCall) => ({
         function: {
           arguments: JSON.stringify(toolCall.input),
@@ -746,6 +779,14 @@ function toProviderMessage(message: ConversationMessage): OpenAiCompatibleMessag
       content,
       role: "tool",
       ...(message.toolCallId !== undefined ? { tool_call_id: message.toolCallId } : {})
+    };
+  }
+
+  if (message.role === "assistant" && replayedReasoning !== undefined) {
+    return {
+      content,
+      reasoning_content: replayedReasoning,
+      role: "assistant"
     };
   }
 

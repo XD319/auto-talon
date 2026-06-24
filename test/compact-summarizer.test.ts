@@ -29,6 +29,34 @@ class ThrowingSummaryProvider implements Provider {
   }
 }
 
+class EmptyFinalSummaryProvider implements Provider {
+  public readonly name = "empty-final-summary-provider";
+
+  public generate(input: ProviderRequest): Promise<ProviderResponse> {
+    void input;
+    return Promise.resolve({
+      kind: "final",
+      message: "",
+      usage: { inputTokens: 1, outputTokens: 1 }
+    });
+  }
+}
+
+class ReasoningOnlySummaryProvider implements Provider {
+  public readonly name = "reasoning-only-summary-provider";
+
+  public generate(input: ProviderRequest): Promise<ProviderResponse> {
+    void input;
+    return Promise.resolve({
+      kind: "final",
+      message: "",
+      reasoningContent:
+        "goal=Ship feature\nlatest_user_request=continue\ncompletedWork=done\nfilesTouched=src/app.ts\ncommandsRun=npm test\nblockers=[none]\nremaining_work=commit\ntool_signals=ok",
+      usage: { inputTokens: 1, outputTokens: 1 }
+    });
+  }
+}
+
 describe("compact summarizer", () => {
   const compactInput = {
     maxMessagesBeforeCompact: 8,
@@ -73,6 +101,21 @@ describe("compact summarizer", () => {
     const result = await summarizer.summarize(compactInput);
     expect(result.summarizerId).toContain("provider_subagent:final-summary-provider");
     expect(result.summary).toContain("completedWork=done");
+  });
+
+  it("accepts thinking-mode summaries from reasoning_content when content is empty", async () => {
+    const summarizer = new ProviderSubagentSummarizer(() => new ReasoningOnlySummaryProvider());
+    const result = await summarizer.summarize(compactInput);
+    expect(result.summarizerId).toContain("provider_subagent:reasoning-only-summary-provider");
+    expect(result.summary).toContain("completedWork=done");
+  });
+
+  it("throws when provider_subagent returns an empty final response", async () => {
+    const summarizer = new ProviderSubagentSummarizer(() => new EmptyFinalSummaryProvider());
+    await expect(summarizer.summarize(compactInput)).rejects.toMatchObject({
+      code: "compact_summarizer_failed",
+      message: "Provider subagent summarizer returned an empty final response."
+    });
   });
 
   it("throws when provider_subagent fails", async () => {

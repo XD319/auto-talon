@@ -1,4 +1,5 @@
 import { AppError } from "../core/app-error.js";
+import { resolveProviderFinalText } from "../providers/reasoning-content.js";
 import type { SessionCompactInput, TokenBudget } from "../types/index.js";
 import type { Provider } from "../types/index.js";
 import { estimateMessagesTokens } from "../runtime/context/token-counter.js";
@@ -64,15 +65,19 @@ export class ProviderSubagentSummarizer implements CompactSummarizer {
         usedOutput: 0
       }
     });
-    if (response.kind !== "final" || response.message.trim().length === 0) {
+    const summaryText = resolveProviderFinalText(response);
+    if (summaryText === null) {
       throw new AppError({
         code: "compact_summarizer_failed",
-        message: `Provider subagent summarizer returned an invalid response (kind=${response.kind}).`
+        message:
+          response.kind === "final"
+            ? "Provider subagent summarizer returned an empty final response."
+            : `Provider subagent summarizer returned an invalid response (kind=${response.kind}).`
       });
     }
     return {
       summarizerId: `provider_subagent:${helperProvider.name}`,
-      summary: redactSensitiveSummary(response.message)
+      summary: redactSensitiveSummary(summaryText)
     };
   }
 }

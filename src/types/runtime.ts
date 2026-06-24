@@ -11,6 +11,7 @@ export type ConversationRole = "assistant" | "system" | "tool" | "user";
 export interface ConversationMessage {
   role: ConversationRole;
   content: string;
+  reasoningContent?: string;
   toolCallId?: string;
   toolName?: string;
   toolCalls?: ProviderToolCall[];
@@ -77,6 +78,7 @@ export interface ProviderResponseBase {
 export interface ProviderFinalResponse extends ProviderResponseBase {
   kind: "final";
   message: string;
+  reasoningContent?: string;
 }
 
 export interface ProviderRetryResponse extends ProviderResponseBase {
@@ -89,6 +91,7 @@ export interface ProviderRetryResponse extends ProviderResponseBase {
 export interface ProviderToolCallResponse extends ProviderResponseBase {
   kind: "tool_calls";
   message: string;
+  reasoningContent?: string;
   toolCalls: ProviderToolCall[];
 }
 

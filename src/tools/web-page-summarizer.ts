@@ -1,22 +1,28 @@
-import type { ProviderRouter } from "../providers/routing/provider-router.js";
+import { resolveProviderFinalText } from "../providers/reasoning-content.js";
 import type { Provider } from "../types/index.js";
 import type { WebPageSummarizer, WebPageSummarizerInput } from "./web-fetch-tool.js";
 
 export class ProviderWebPageSummarizer implements WebPageSummarizer {
   public constructor(
-    private readonly providerRouter: ProviderRouter,
+    private readonly resolveSummarizeProvider: (context: {
+      sessionId: string | null;
+      taskId: string;
+    }) => Provider,
     private readonly fallbackProvider: Provider,
     private readonly options: { maxInputTokens: number } = { maxInputTokens: 32_000 }
   ) {}
 
   public async summarize(input: WebPageSummarizerInput): Promise<string> {
-    const helperSelection = this.providerRouter.selectProvider({
-      kind: "summarize",
+    const helperProvider = this.resolveSummarizeProvider({
       sessionId: null,
       taskId: "web-extract"
     });
-    const helperProvider = helperSelection.provider ?? this.fallbackProvider;
-    const response = await helperProvider.generate({
+    const activeProvider =
+      helperProvider.name === this.fallbackProvider.name &&
+      helperProvider.model === this.fallbackProvider.model
+        ? this.fallbackProvider
+        : helperProvider;
+    const response = await activeProvider.generate({
       agentProfileId: "planner",
       availableTools: [],
       iteration: 1,
@@ -44,7 +50,7 @@ export class ProviderWebPageSummarizer implements WebPageSummarizer {
         input: input.url,
         maxIterations: 1,
         metadata: {},
-        providerName: helperProvider.name,
+        providerName: activeProvider.name,
         requesterUserId: "system",
         startedAt: null,
         status: "running",
@@ -69,10 +75,15 @@ export class ProviderWebPageSummarizer implements WebPageSummarizer {
         usedOutput: 0
       }
     });
-    if (response.kind !== "final" || response.message.trim().length === 0) {
-      throw new Error(`Web page summarizer returned an invalid response (kind=${response.kind}).`);
+    const summaryText = resolveProviderFinalText(response);
+    if (summaryText === null) {
+      throw new Error(
+        response.kind === "final"
+          ? "Web page summarizer returned an empty final response."
+          : `Web page summarizer returned an invalid response (kind=${response.kind}).`
+      );
     }
-    return response.message.trim();
+    return summaryText;
   }
 }
 

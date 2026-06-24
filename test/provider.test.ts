@@ -769,6 +769,164 @@ describe("Provider integration", () => {
     expect(response.metadata?.modelName).toBe("kimi-k2");
   });
 
+  it("preserves and replays reasoning_content for thinking-mode tool calls", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "deepseek-v4-pro",
+        name: "deepseek",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "DeepSeek",
+        defaultModel: "deepseek-v4-pro"
+      }
+    );
+
+    let capturedBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        const messages = capturedBody.messages as Array<Record<string, unknown>>;
+        const hasToolResult = messages.some((message) => message.role === "tool");
+        if (!hasToolResult) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [
+                  {
+                    finish_reason: "tool_calls",
+                    index: 0,
+                    message: {
+                      content: "Let me read the file.",
+                      reasoning_content: "Need to inspect README first.",
+                      role: "assistant",
+                      tool_calls: [
+                        {
+                          function: {
+                            arguments: "{\"path\":\"README.md\"}",
+                            name: "read_file"
+                          },
+                          id: "call-1",
+                          type: "function"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                id: "resp-thinking-1",
+                model: "deepseek-v4-pro",
+                usage: {
+                  completion_tokens: 9,
+                  prompt_tokens: 12,
+                  total_tokens: 21
+                }
+              }),
+              { status: 200 }
+            )
+          );
+        }
+
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "stop",
+                  index: 0,
+                  message: {
+                    content: "Done.",
+                    role: "assistant"
+                  }
+                }
+              ],
+              id: "resp-thinking-2",
+              model: "deepseek-v4-pro",
+              usage: {
+                completion_tokens: 4,
+                prompt_tokens: 20,
+                total_tokens: 24
+              }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    const firstResponse = await provider.generate({
+      ...createProviderInput(),
+      availableTools: [
+        {
+          capability: "filesystem_read",
+          description: "Read a file",
+          inputSchema: {
+            properties: {
+              path: { type: "string" }
+            },
+            required: ["path"],
+            type: "object"
+          },
+          name: "read_file",
+          privacyLevel: "workspace",
+          riskLevel: "low"
+        }
+      ]
+    });
+
+    expect(firstResponse.kind).toBe("tool_calls");
+    if (firstResponse.kind !== "tool_calls") {
+      throw new Error("expected tool_calls");
+    }
+    expect(firstResponse.reasoningContent).toBe("Need to inspect README first.");
+
+    const followUp = await provider.generate({
+      ...createProviderInput(),
+      availableTools: [
+        {
+          capability: "filesystem_read",
+          description: "Read a file",
+          inputSchema: {
+            properties: {
+              path: { type: "string" }
+            },
+            required: ["path"],
+            type: "object"
+          },
+          name: "read_file",
+          privacyLevel: "workspace",
+          riskLevel: "low"
+        }
+      ],
+      messages: [
+        { content: "read README.md", role: "user" },
+        {
+          content: firstResponse.message,
+          reasoningContent: firstResponse.reasoningContent,
+          role: "assistant",
+          toolCalls: firstResponse.toolCalls
+        },
+        {
+          content: "README contents",
+          role: "tool",
+          toolCallId: "call-1",
+          toolName: "read_file"
+        }
+      ]
+    });
+
+    expect(followUp.kind).toBe("final");
+    const replayedMessages = (capturedBody?.messages ?? []) as Array<Record<string, unknown>>;
+    const assistantMessage = replayedMessages.find(
+      (message) => message.role === "assistant" && Array.isArray(message.tool_calls)
+    );
+    expect(assistantMessage?.reasoning_content).toBe("Need to inspect README first.");
+  });
+
   it("uses non-streaming requests when OpenAI-compatible streaming is disabled", async () => {
     const provider = new OpenAiCompatibleProvider(
       {
