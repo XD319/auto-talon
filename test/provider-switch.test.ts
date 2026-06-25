@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createApplication } from "../src/runtime/bootstrap.js";
+import { readSessionModelSelection } from "../src/runtime/operations/model-selection-service.js";
 import { resolveProviderConfigForSwitch } from "../src/providers/config.js";
 import {
   formatProviderSelection,
@@ -139,7 +140,36 @@ describe("provider switch service", () => {
     }
   });
 
-  it("keeps explicit /model switch effective when routing.providers is configured", async () => {
+  it("persists and clears session model selection metadata", async () => {
+    const handle = createApplication(workspaceRoot);
+    try {
+      const session = handle.service.createSession({
+        agentProfileId: "executor",
+        cwd: workspaceRoot,
+        metadata: {},
+        ownerUserId: "local-user",
+        providerName: "vendor-a",
+        title: "Session model"
+      });
+
+      const selected = await handle.service.setSessionModelSelection({
+        selection: "vendor-b:vendor-b-model",
+        sessionId: session.sessionId
+      });
+      expect(readSessionModelSelection(selected.session.metadata)?.selection).toBe("vendor-b:vendor-b-model");
+      expect(selected.view.current.source).toBe("session_user");
+      expect(selected.view.current.strict).toBe(true);
+
+      const cleared = await handle.service.clearSessionModelSelection(session.sessionId);
+      expect(readSessionModelSelection(cleared.session.metadata)).toBeNull();
+      expect(cleared.view.current.source).not.toBe("session_user");
+      expect(cleared.view.current.selection).toBe("vendor-a:vendor-a-model");
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("reports explicit runtime switch above routing.providers in the model view", async () => {
     await writeFile(
       join(workspaceRoot, ".auto-talon", "runtime.config.json"),
       JSON.stringify({
@@ -159,9 +189,49 @@ describe("provider switch service", () => {
         persist: "session",
         selection: "vendor-a:vendor-a-model"
       });
+      const view = handle.service.modelSelectionView();
+      expect(view.current.selection).toBe("vendor-a:vendor-a-model");
+      expect(view.current.source).toBe("runtime");
+    } finally {
+      handle.close();
+    }
+  });
+  it("keeps explicit session model selection effective when routing.providers is configured", async () => {
+    await writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        routing: {
+          helpers: { classify: null, recallRank: null, summarize: "cheap" },
+          mode: "quality_first",
+          providers: { balanced: "vendor-a", cheap: "vendor-a", quality: "vendor-b" }
+        },
+        version: 1
+      }),
+      "utf8"
+    );
+
+    const handle = createApplication(workspaceRoot);
+    try {
+      const session = handle.service.createSession({
+        agentProfileId: "executor",
+        cwd: workspaceRoot,
+        metadata: {},
+        ownerUserId: "local-user",
+        providerName: "vendor-a",
+        title: "Routing model"
+      });
+      await handle.service.setSessionModelSelection({
+        selection: "vendor-a:vendor-a-model",
+        sessionId: session.sessionId
+      });
+      const view = handle.service.modelSelectionView(session.sessionId);
+      expect(view.current.selection).toBe("vendor-a:vendor-a-model");
+      expect(view.current.source).toBe("session_user");
       expect(handle.service.currentProvider().name).toBe("vendor-a");
     } finally {
       handle.close();
     }
   });
 });
+
+

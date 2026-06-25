@@ -9,6 +9,7 @@ import type {
   SessionRepository,
   SessionUiState
 } from "../../types/index.js";
+import { readSessionModelSelection } from "../operations/model-selection-service.js";
 
 export interface SessionUiStateServiceDependencies {
   messageRepository: SessionMessageRepository;
@@ -125,6 +126,6 @@ function readApprovalFingerprints(metadata: JsonObject): string[] {
 }
 
 function readProviderSelection(metadata: JsonObject): string | null {
-  const value = metadata.providerSelection;
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  return readSessionModelSelection(metadata)?.selection ?? null;
 }
+

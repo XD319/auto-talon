@@ -109,6 +109,108 @@ describe("session HTTP API", () => {
       handle.close();
     }
   });
+
+  it("exposes and updates session model selections", async () => {
+    const fs = await import("node:fs/promises");
+    const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-session-model-api-"));
+    tempPaths.push(workspaceRoot);
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({ version: 1 }),
+      "utf8"
+    );
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      JSON.stringify({
+        currentProvider: "vendor-a",
+        customProviders: {
+          "vendor-a": {
+            transport: "openai-compatible",
+            displayName: "Vendor A",
+            baseUrl: "https://vendor-a.example.test/v1",
+            apiKey: "vendor-a-key",
+            model: "vendor-a-model"
+          },
+          "vendor-b": {
+            transport: "openai-compatible",
+            displayName: "Vendor B",
+            baseUrl: "https://vendor-b.example.test/v1",
+            apiKey: "vendor-b-key",
+            model: "vendor-b-model"
+          }
+        }
+      }),
+      "utf8"
+    );
+
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") }
+    });
+    const port = await getFreePort();
+    const server = await startSessionApiServer({
+      host: "127.0.0.1",
+      port,
+      service: handle.service
+    });
+
+    try {
+      const session = handle.service.createSession({
+        agentProfileId: "executor",
+        cwd: workspaceRoot,
+        metadata: {},
+        ownerUserId: "local-user",
+        providerName: "vendor-a",
+        title: "Model API session"
+      });
+
+      const modelsResponse = await fetch(`http://127.0.0.1:${port}/v1/models?sessionId=${session.sessionId}`);
+      expect(modelsResponse.status).toBe(200);
+      const modelsBody = (await modelsResponse.json()) as { configuredModels: Array<{ selection: string }> };
+      expect(modelsBody.configuredModels.map((entry) => entry.selection)).toContain("vendor-b:vendor-b-model");
+
+      const setResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/model`, {
+        body: JSON.stringify({ selection: "vendor-b:vendor-b-model" }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH"
+      });
+      expect(setResponse.status).toBe(200);
+      const setBody = (await setResponse.json()) as {
+        modelSelection: { selection: string; source: string } | null;
+        view: { current: { selection: string; source: string } };
+      };
+      expect(setBody.modelSelection?.selection).toBe("vendor-b:vendor-b-model");
+      expect(setBody.view.current.source).toBe("session_user");
+
+      const detailResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}`);
+      expect(detailResponse.status).toBe(200);
+      const detailBody = (await detailResponse.json()) as { modelSelection: { selection: string } | null };
+      expect(detailBody.modelSelection?.selection).toBe("vendor-b:vendor-b-model");
+
+      const clearResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/model`, {
+        body: JSON.stringify({ selection: null }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH"
+      });
+      expect(clearResponse.status).toBe(200);
+      const clearBody = (await clearResponse.json()) as {
+        modelSelection: { selection: string } | null;
+        view: { current: { selection: string; source: string } };
+      };
+      expect(clearBody.modelSelection).toBeNull();
+      expect(clearBody.view.current.source).not.toBe("session_user");
+
+      const invalidResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/model`, {
+        body: JSON.stringify({ selection: "" }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH"
+      });
+      expect(invalidResponse.status).toBe(400);
+    } finally {
+      await server.close();
+      handle.close();
+    }
+  });
 });
 
 async function getFreePort(): Promise<number> {
@@ -126,3 +228,5 @@ async function getFreePort(): Promise<number> {
   });
   return port;
 }
+
+

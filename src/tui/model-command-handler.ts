@@ -1,27 +1,28 @@
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import type { ResolvedProviderConfig } from "../providers/config.js";
-import {
-  listEnvOnlyProviderSelections,
-  listUserConfiguredProviderNames,
-  resolveMergedModelAliases
-} from "../providers/config.js";
 import type { ProviderSwitchPersistScope } from "../runtime/operations/provider-switch-service.js";
 import { formatProviderSelection } from "../runtime/operations/provider-switch-service.js";
 import {
   formatFlagsOnlyModelHint,
+  formatModelClearMessage,
   formatModelListMessage,
+  formatModelStatusMessage,
   formatModelSwitchMessage,
   parseModelCommand,
   type ModelCommandResult
 } from "./model-command.js";
 
 export async function handleModelCommand(input: {
+  activeSessionId: string | null;
   busy: boolean;
   cwd: string;
   currentProvider: ResolvedProviderConfig;
   pendingApproval: boolean;
   pendingClarify: boolean;
-  service: Pick<TuiRuntimeService, "listConfiguredProviders" | "switchProvider">;
+  service: Pick<
+    TuiRuntimeService,
+    "clearSessionModelSelection" | "modelSelectionView" | "switchProvider"
+  >;
   text: string;
 }): Promise<ModelCommandResult | null> {
   let parsed;
@@ -39,51 +40,107 @@ export async function handleModelCommand(input: {
     return null;
   }
 
-  if (parsed.selection === null) {
-    const hasPersistFlag = parsed.persist !== "session";
-    const configuredProviders = input.service.listConfiguredProviders();
-    if (hasPersistFlag && configuredProviders.length === 0) {
+  if (parsed.action === "list" || parsed.action === "status") {
+    try {
+      const view = input.service.modelSelectionView(input.activeSessionId ?? undefined);
       return {
-        kind: "list",
-        message: formatFlagsOnlyModelHint(parsed.persist)
+        kind: parsed.action,
+        message:
+          parsed.action === "status"
+            ? formatModelStatusMessage(view)
+            : formatModelListMessage(view)
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        kind: "error",
+        message: `Model status failed: ${message}`
       };
     }
+  }
 
+  const readinessError = validateModelMutationReadiness(input);
+  if (readinessError !== null) {
+    return {
+      kind: "error",
+      message: readinessError
+    };
+  }
+
+  if (parsed.action === "clear") {
+    if (input.activeSessionId === null) {
+      return {
+        kind: "error",
+        message: "No active session to clear. Start or resume a session first."
+      };
+    }
+    try {
+      const result = await input.service.clearSessionModelSelection(input.activeSessionId);
+      const commandResult: ModelCommandResult = {
+        kind: "cleared",
+        message: formatModelClearMessage({
+          currentSelection: result.view.current.selection,
+          sessionId: result.session.sessionId
+        }),
+        persist: "session",
+        selection: result.view.current.selection
+      };
+      if (result.result !== null) {
+        commandResult.providerConfig = result.result.providerConfig;
+        commandResult.tokenBudget = result.result.tokenBudget;
+      }
+      return commandResult;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        kind: "error",
+        message: `Model clear failed: ${message}`
+      };
+    }
+  }
+
+  let selection = parsed.selection;
+  if (parsed.index !== null) {
+    try {
+      const view = input.service.modelSelectionView(input.activeSessionId ?? undefined);
+      const entry = view.configuredModels[parsed.index - 1];
+      if (entry === undefined) {
+        return {
+          kind: "error",
+          message: `Model number ${parsed.index} is not in the configured model list. Run /model to see available models.`
+        };
+      }
+      selection = entry.selection;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        kind: "error",
+        message: `Model list failed: ${message}`
+      };
+    }
+  }
+
+  if (selection === null || selection.trim().length === 0) {
     return {
       kind: "list",
-      message: formatModelListMessage({
-        aliases: resolveMergedModelAliases(input.cwd),
-        configuredProviders,
-        current: input.currentProvider,
-        envOnlyProviders: listEnvOnlyProviderSelections(input.cwd),
-        userProviderCount: listUserConfiguredProviderNames().length
-      })
+      message: formatFlagsOnlyModelHint(parsed.persist)
     };
   }
 
-  if (input.busy) {
+  if (parsed.persist === "session" && input.activeSessionId === null) {
     return {
       kind: "error",
-      message: "Cannot switch model while a task is running. Use /stop first."
-    };
-  }
-  if (input.pendingApproval) {
-    return {
-      kind: "error",
-      message: "Cannot switch model while an approval is pending."
-    };
-  }
-  if (input.pendingClarify) {
-    return {
-      kind: "error",
-      message: "Cannot switch model while clarification is pending."
+      message: "No active session to switch. Start or resume a session first, or use --global/--workspace."
     };
   }
 
   try {
     const result = await input.service.switchProvider({
       persist: parsed.persist,
-      selection: parsed.selection
+      selection,
+      ...(parsed.persist === "session" && input.activeSessionId !== null
+        ? { sessionId: input.activeSessionId }
+        : {})
     });
     return {
       kind: "switched",
@@ -124,6 +181,7 @@ export async function restoreSessionProviderSelection(input: {
   currentProvider: ResolvedProviderConfig;
   providerSelection: string;
   service: Pick<TuiRuntimeService, "switchProvider">;
+  sessionId: string;
 }): Promise<{
   providerConfig: ResolvedProviderConfig;
   selection: string;
@@ -138,7 +196,8 @@ export async function restoreSessionProviderSelection(input: {
   }
   const result = await input.service.switchProvider({
     persist: "session",
-    selection: input.providerSelection
+    selection: input.providerSelection,
+    sessionId: input.sessionId
   });
   return {
     providerConfig: result.providerConfig,
@@ -147,4 +206,22 @@ export async function restoreSessionProviderSelection(input: {
   };
 }
 
+function validateModelMutationReadiness(input: {
+  busy: boolean;
+  pendingApproval: boolean;
+  pendingClarify: boolean;
+}): string | null {
+  if (input.busy) {
+    return "Cannot switch model while a task is running. Use /stop first.";
+  }
+  if (input.pendingApproval) {
+    return "Cannot switch model while an approval is pending.";
+  }
+  if (input.pendingClarify) {
+    return "Cannot switch model while clarification is pending.";
+  }
+  return null;
+}
+
 export type { ProviderSwitchPersistScope };
+

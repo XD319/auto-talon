@@ -1,4 +1,4 @@
-﻿import { writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 
 import { Command, InvalidArgumentError } from "commander";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
@@ -32,15 +32,20 @@ import {
 import {
   addFallbackProviderConfig,
   addModelAliasConfig,
+  addProviderCredentialEnvConfig,
   clearFallbackProviderConfig,
+  listProviderCredentialConfig,
   promoteProviderConfig,
   removeCustomProviderConfig,
   removeFallbackProviderConfig,
   removeModelAliasConfig,
+  removeProviderCredentialConfig,
   resolveMergedFallbackProviders,
+  resolveMergedFallbackProvidersForSlot,
   resolveMergedModelAliases,
   setupCustomProviderConfig,
   setupProviderConfig,
+  setProviderCredentialEnabledConfig,
   useProviderConfig,
   type ProviderConfigScope,
   type ProviderConfigWriteResult,
@@ -67,6 +72,7 @@ import { formatSmokeSuiteReport, runSmokeSuite } from "../testing/index.js";
 import { startDashboardTui, startTui } from "../tui/index.js";
 import { startSessionApiServer } from "../session-api/server.js";
 import {
+  clearSessionModelSelection,
   formatModelList,
   formatModelStatus,
   runInteractiveModelWizard,
@@ -1567,15 +1573,110 @@ export async function main(argv = process.argv): Promise<void> {
       console.log(formatProviderConfigWrite("Removed custom", result));
     });
 
+  const providerCredentialCommand = providerCommand
+    .command("credential")
+    .description("Manage provider credential pool");
+
+  providerCredentialCommand
+    .command("list")
+    .argument("<provider>", "Provider name")
+    .option("--workspace", "Read workspace config instead of user config")
+    .action((provider: string, commandOptions: { workspace?: boolean }) => {
+      const result = listProviderCredentialConfig(
+        provider,
+        resolveProviderConfigTarget(commandOptions.workspace === true)
+      );
+      if (result.credentials.length === 0) {
+        console.log(`No credentials configured for ${result.providerName}.`);
+      } else {
+        for (const credential of result.credentials) {
+          const disabled = credential.disabled ? "disabled" : "enabled";
+          console.log(
+            `${credential.id}: ${disabled}, env=${credential.apiKeyEnv ?? "-"}, priority=${credential.priority}`
+          );
+        }
+      }
+      console.log(`Config Path: ${result.configPath}`);
+    });
+
+  providerCredentialCommand
+    .command("add-env")
+    .argument("<provider>", "Provider name")
+    .argument("<env>", "Environment variable containing the API key")
+    .option("--id <id>", "Credential id")
+    .option("--priority <number>", "Lower numbers are tried first", (value) => Number(value))
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action(
+      (
+        provider: string,
+        envName: string,
+        commandOptions: { id?: string; priority?: number; workspace?: boolean }
+      ) => {
+        const result = addProviderCredentialEnvConfig(provider, {
+          envName,
+          ...(commandOptions.id !== undefined ? { id: commandOptions.id } : {}),
+          ...(commandOptions.priority !== undefined ? { priority: commandOptions.priority } : {}),
+          ...resolveProviderConfigTarget(commandOptions.workspace === true)
+        });
+        console.log(`Credential added for ${result.providerName}.\nConfig Path: ${result.configPath}`);
+      }
+    );
+
+  providerCredentialCommand
+    .command("disable")
+    .argument("<provider>", "Provider name")
+    .argument("<id>", "Credential id")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action((provider: string, id: string, commandOptions: { workspace?: boolean }) => {
+      const result = setProviderCredentialEnabledConfig(
+        provider,
+        id,
+        false,
+        resolveProviderConfigTarget(commandOptions.workspace === true)
+      );
+      console.log(`Credential ${id} disabled for ${result.providerName}.\nConfig Path: ${result.configPath}`);
+    });
+
+  providerCredentialCommand
+    .command("enable")
+    .argument("<provider>", "Provider name")
+    .argument("<id>", "Credential id")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action((provider: string, id: string, commandOptions: { workspace?: boolean }) => {
+      const result = setProviderCredentialEnabledConfig(
+        provider,
+        id,
+        true,
+        resolveProviderConfigTarget(commandOptions.workspace === true)
+      );
+      console.log(`Credential ${id} enabled for ${result.providerName}.\nConfig Path: ${result.configPath}`);
+    });
+
+  providerCredentialCommand
+    .command("remove")
+    .argument("<provider>", "Provider name")
+    .argument("<id>", "Credential id")
+    .option("--workspace", "Write to workspace config instead of user config")
+    .action((provider: string, id: string, commandOptions: { workspace?: boolean }) => {
+      const result = removeProviderCredentialConfig(
+        provider,
+        id,
+        resolveProviderConfigTarget(commandOptions.workspace === true)
+      );
+      console.log(`Credential ${id} removed for ${result.providerName}.\nConfig Path: ${result.configPath}`);
+    });
   const providerFallbackCommand = providerCommand
     .command("fallback")
     .description("Manage provider fallback chain");
 
   providerFallbackCommand
     .command("list")
-    .action(() => {
+    .option("--slot <slot>", "Show fallback chain for an auxiliary slot")
+    .action((commandOptions: { slot?: string }) => {
       const appConfig = resolveAppConfig(process.cwd());
-      const fallbackProviders = resolveMergedFallbackProviders(appConfig.workspaceRoot);
+      const fallbackProviders = commandOptions.slot === undefined
+        ? resolveMergedFallbackProviders(appConfig.workspaceRoot)
+        : resolveMergedFallbackProvidersForSlot(appConfig.workspaceRoot, commandOptions.slot);
       if (fallbackProviders.length === 0) {
         console.log("No fallback providers configured.");
         return;
@@ -1590,11 +1691,12 @@ export async function main(argv = process.argv): Promise<void> {
     .description("Append a fallback provider selection")
     .argument("<selection>", "Provider:model selection")
     .option("--workspace", "Write to workspace config instead of user config")
-    .action((selection: string, commandOptions: { workspace?: boolean }) => {
-      const result = addFallbackProviderConfig(
-        selection,
-        resolveProviderConfigTarget(commandOptions.workspace === true)
-      );
+    .option("--slot <slot>", "Write fallback chain for an auxiliary slot")
+    .action((selection: string, commandOptions: { slot?: string; workspace?: boolean }) => {
+      const result = addFallbackProviderConfig(selection, {
+        ...resolveProviderConfigTarget(commandOptions.workspace === true),
+        ...(commandOptions.slot !== undefined ? { slot: commandOptions.slot } : {})
+      });
       console.log(`Fallback providers:\n${result.fallbackProviders.map((entry, index) => `${index + 1}. ${entry}`).join("\n")}`);
       console.log(`Config Path: ${result.configPath}`);
     });
@@ -1604,11 +1706,12 @@ export async function main(argv = process.argv): Promise<void> {
     .description("Remove a fallback provider selection")
     .argument("<selection>", "Provider:model selection")
     .option("--workspace", "Write to workspace config instead of user config")
-    .action((selection: string, commandOptions: { workspace?: boolean }) => {
-      const result = removeFallbackProviderConfig(
-        selection,
-        resolveProviderConfigTarget(commandOptions.workspace === true)
-      );
+    .option("--slot <slot>", "Remove fallback from an auxiliary slot")
+    .action((selection: string, commandOptions: { slot?: string; workspace?: boolean }) => {
+      const result = removeFallbackProviderConfig(selection, {
+        ...resolveProviderConfigTarget(commandOptions.workspace === true),
+        ...(commandOptions.slot !== undefined ? { slot: commandOptions.slot } : {})
+      });
       console.log(`Fallback providers:\n${result.fallbackProviders.map((entry, index) => `${index + 1}. ${entry}`).join("\n")}`);
       console.log(`Config Path: ${result.configPath}`);
     });
@@ -1617,8 +1720,12 @@ export async function main(argv = process.argv): Promise<void> {
     .command("clear")
     .description("Clear fallback provider chain")
     .option("--workspace", "Clear workspace config instead of user config")
-    .action((commandOptions: { workspace?: boolean }) => {
-      const result = clearFallbackProviderConfig(resolveProviderConfigTarget(commandOptions.workspace === true));
+    .option("--slot <slot>", "Clear fallback chain for an auxiliary slot")
+    .action((commandOptions: { slot?: string; workspace?: boolean }) => {
+      const result = clearFallbackProviderConfig({
+        ...resolveProviderConfigTarget(commandOptions.workspace === true),
+        ...(commandOptions.slot !== undefined ? { slot: commandOptions.slot } : {})
+      });
       console.log(`Cleared fallback providers.\nConfig Path: ${result.configPath}`);
     });
 
@@ -1628,16 +1735,26 @@ export async function main(argv = process.argv): Promise<void> {
     .command("list")
     .description("List configured models and status")
     .option("--cwd <path>", "Workspace path", process.cwd())
-    .action((commandOptions: { cwd: string }) => {
-      console.log(formatModelList(commandOptions.cwd));
+    .option("--json", "Print JSON")
+    .option("--session <sessionId>", "Show effective model for a session")
+    .action((commandOptions: { cwd: string; json?: boolean; session?: string }) => {
+      console.log(formatModelList(commandOptions.cwd, {
+        json: commandOptions.json === true,
+        ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {})
+      }));
     });
 
   modelCommand
     .command("status")
     .description("Show current model, fallback chain, and auxiliary slots")
     .option("--cwd <path>", "Workspace path", process.cwd())
-    .action((commandOptions: { cwd: string }) => {
-      console.log(formatModelStatus(commandOptions.cwd));
+    .option("--json", "Print JSON")
+    .option("--session <sessionId>", "Show effective model for a session")
+    .action((commandOptions: { cwd: string; json?: boolean; session?: string }) => {
+      console.log(formatModelStatus(commandOptions.cwd, {
+        json: commandOptions.json === true,
+        ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {})
+      }));
     });
 
   modelCommand
@@ -1645,9 +1762,26 @@ export async function main(argv = process.argv): Promise<void> {
     .description("Set the default model selection")
     .argument("<selection>", "Provider or provider:model")
     .option("--workspace", "Write to workspace config instead of user config")
+    .option("--session <sessionId>", "Write a session-only model override")
     .option("--cwd <path>", "Workspace path", process.cwd())
-    .action((selection: string, commandOptions: { cwd: string; workspace?: boolean }) => {
-      console.log(setModelSelection(selection, { cwd: commandOptions.cwd, workspace: commandOptions.workspace === true }));
+    .action(async (selection: string, commandOptions: { cwd: string; session?: string; workspace?: boolean }) => {
+      if (commandOptions.session !== undefined && commandOptions.workspace === true) {
+        throw new Error("Choose either --session or --workspace, not both.");
+      }
+      console.log(await setModelSelection(selection, {
+        cwd: commandOptions.cwd,
+        ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {}),
+        workspace: commandOptions.workspace === true
+      }));
+    });
+
+  modelCommand
+    .command("clear")
+    .description("Clear a session model override")
+    .requiredOption("--session <sessionId>", "Session id")
+    .option("--cwd <path>", "Workspace path", process.cwd())
+    .action(async (commandOptions: { cwd: string; session: string }) => {
+      console.log(await clearSessionModelSelection(commandOptions.cwd, commandOptions.session));
     });
 
   const modelAuxiliaryCommand = modelCommand.command("auxiliary").description("Manage auxiliary model slots");
@@ -3083,3 +3217,5 @@ function parseApprovalAllowScope(value: string | undefined): ApprovalAllowScope 
   }
   throw new InvalidArgumentError("Scope must be once, session, or always.");
 }
+
+

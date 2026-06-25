@@ -3,71 +3,121 @@ import { stdin as input, stdout as output } from "node:process";
 
 import {
   listConfiguredProviders,
-  formatProviderSelection,
   type ConfiguredProviderEntry
 } from "../runtime/operations/provider-switch-service.js";
 import {
-  resolveMergedFallbackProviders,
-  resolveMergedModelAliases,
   resolveProviderCatalog,
   useProviderConfig,
   type ProviderConfigScope
 } from "../providers/config.js";
-import { listModelAliasEntries } from "../providers/model-aliases.js";
 import {
   normalizeProviderName,
   resolveDefaultProviderSettings
 } from "../providers/provider-registry.js";
-import { resolveAppConfig } from "../runtime/bootstrap.js";
-import { resolveRuntimeConfig, writeAuxiliarySlot } from "../runtime/runtime-config.js";
+import { createApplication, resolveAppConfig } from "../runtime/bootstrap.js";
+import type { ModelSelectionView } from "../runtime/operations/model-selection-service.js";
 import { formatEnvProviderOverrideNotice } from "../providers/provider-env.js";
-import { formatCurrentProvider } from "./formatters.js";
 
-export function formatModelStatus(cwd: string): string {
-  const handle = resolveAppConfig(cwd);
-  const runtimeConfig = resolveRuntimeConfig(cwd);
-  const configured = listConfiguredProviders(handle.workspaceRoot);
+export interface ModelCommandFormatOptions {
+  json?: boolean;
+  sessionId?: string;
+}
+
+export function formatModelStatus(cwd: string, options: ModelCommandFormatOptions = {}): string {
+  const handle = createApplication(cwd);
+  try {
+    const view = handle.service.modelSelectionView(options.sessionId);
+    return options.json === true ? JSON.stringify(view, null, 2) : formatModelSelectionView(view);
+  } finally {
+    handle.close();
+  }
+}
+
+export function formatModelList(cwd: string, options: ModelCommandFormatOptions = {}): string {
+  return formatModelStatus(cwd, options);
+}
+
+export function formatModelSelectionView(view: ModelSelectionView): string {
   const lines = [
-    formatCurrentProvider(handle.provider),
+    `Current model: ${view.current.selection}`,
+    `Source: ${view.current.source}${view.current.strict ? " (strict)" : ""}`,
+    `Provider: ${view.current.providerName}`,
+    `Model: ${view.current.model ?? "-"}`,
+    `Base URL: ${view.current.baseUrl ?? "-"}`,
+    `Context Window Tokens: ${view.current.contextWindowTokens ?? "-"}`,
+    `Credential: ${view.current.credential.credentialStatus} (${view.current.credential.activeCredentialId ?? "-"})`,
     "",
-    "Configured providers:"
+    "Configured models:"
   ];
-  if (configured.length === 0) {
+
+  if (view.configuredModels.length === 0) {
     lines.push("- (none)");
   } else {
-    for (const provider of configured) {
-      lines.push(`- ${formatProviderSelection(provider.providerConfig)} [${provider.configSource}]`);
+    for (const [index, entry] of view.configuredModels.entries()) {
+      const marker = entry.current ? " *" : "";
+      lines.push(
+        `- ${index + 1}. ${entry.selection} (${entry.displayName}) [${entry.configSource}]${marker}`
+      );
     }
   }
 
-  const fallbackProviders = resolveMergedFallbackProviders(handle.workspaceRoot);
+  if (view.envOnlyProviders.length > 0) {
+    lines.push("", "Environment-only (not persistable):");
+    for (const entry of view.envOnlyProviders) {
+      lines.push(`- ${entry.selection} [env]`);
+    }
+  }
+
+  if (view.aliases.length > 0) {
+    lines.push("", "Aliases:");
+    for (const entry of view.aliases) {
+      lines.push(`- ${entry.alias} -> ${entry.target}${entry.current ? " *" : ""}`);
+    }
+  }
+
   lines.push("", "Fallback providers:");
-  if (fallbackProviders.length === 0) {
+  if (view.fallback.main.length === 0) {
     lines.push("- (none)");
   } else {
-    for (const [index, selection] of fallbackProviders.entries()) {
+    for (const [index, selection] of view.fallback.main.entries()) {
       lines.push(`- ${index + 1}. ${selection}`);
     }
   }
 
-  lines.push("", "Auxiliary slots:");
-  for (const [slot, value] of Object.entries(runtimeConfig.auxiliary)) {
-    lines.push(`- ${slot}: ${value}`);
-  }
-
-  const aliases = listModelAliasEntries(resolveMergedModelAliases(handle.workspaceRoot));
-  if (aliases.length > 0) {
-    lines.push("", "Aliases:");
-    for (const entry of aliases) {
-      lines.push(`- ${entry.alias} -> ${entry.target}`);
+  if (Object.keys(view.fallback.auxiliary).length > 0) {
+    lines.push("", "Auxiliary fallback:");
+    for (const [slot, selections] of Object.entries(view.fallback.auxiliary)) {
+      lines.push(`- ${slot}: ${selections.join(" -> ")}`);
     }
   }
 
-  return lines.join("\n");
-}
+  if (view.fallback.status.updatedAt !== null) {
+    lines.push("", "Fallback status:");
+    lines.push(`- updatedAt: ${view.fallback.status.updatedAt}`);
+    if (view.fallback.status.activeFallback !== null) {
+      lines.push(
+        `- active: ${view.fallback.status.activeFallback.fromProvider} -> ${view.fallback.status.activeFallback.providerName} (${view.fallback.status.activeFallback.reason})`
+      );
+    }
+    if (view.fallback.status.lastFailure !== null) {
+      lines.push(
+        `- last failure: ${view.fallback.status.lastFailure.providerName} ${view.fallback.status.lastFailure.errorCategory}`
+      );
+    }
+  }
 
-export function formatModelList(cwd: string): string {
-  return formatModelStatus(cwd);
+  lines.push("", "Auxiliary slots:");
+  for (const [slot, value] of Object.entries(view.auxiliary)) {
+    lines.push(`- ${slot}: ${value}`);
+  }
+
+  lines.push(
+    "",
+    "Switch with: talon model set <provider:model>",
+    "Session override: talon model set <selection> --session <id>",
+    "Clear session override: talon model clear --session <id>"
+  );
+  return lines.join("\n");
 }
 
 export async function runInteractiveModelWizard(cwd: string, workspace = false): Promise<void> {
@@ -131,21 +181,61 @@ export async function runInteractiveModelWizard(cwd: string, workspace = false):
   }
 }
 
-export function setModelSelection(
+export async function setModelSelection(
   selection: string,
-  options: { cwd?: string; workspace?: boolean } = {}
-): string {
+  options: { cwd?: string; sessionId?: string; workspace?: boolean } = {}
+): Promise<string> {
+  if (options.sessionId !== undefined) {
+    const handle = createApplication(options.cwd ?? process.cwd());
+    try {
+      const result = await handle.service.setSessionModelSelection({
+        selection,
+        sessionId: options.sessionId
+      });
+      return [
+        `Session model selected: ${result.result.selection}`,
+        `Session: ${result.session.sessionId}`,
+        `Source: ${result.view.current.source}`
+      ].join("\n");
+    } finally {
+      handle.close();
+    }
+  }
+
   const appConfig = resolveAppConfig(options.cwd ?? process.cwd());
   const scope: ProviderConfigScope = options.workspace === true ? "workspace" : "user";
-  const result = useProviderConfig(selection, { cwd: appConfig.workspaceRoot, scope });
-  const lines = [
-    `Selected ${result.providerName}`,
-    `Model: ${result.model ?? "-"}`,
-    `Config Path: ${result.configPath}`
-  ];
-  const envNotice = formatEnvProviderOverrideNotice();
-  if (envNotice !== null) {
-    lines.push(envNotice);
+  const handle = createApplication(appConfig.workspaceRoot);
+  try {
+    const result = await handle.service.switchProvider({
+      persist: scope,
+      selection
+    });
+    const lines = [
+      `Selected ${result.providerConfig.name}`,
+      `Model: ${result.providerConfig.model ?? "-"}`,
+      `Config Path: ${result.providerConfig.configPath}`
+    ];
+    const envNotice = formatEnvProviderOverrideNotice();
+    if (envNotice !== null) {
+      lines.push(envNotice);
+    }
+    return lines.join("\n");
+  } finally {
+    handle.close();
   }
-  return lines.join("\n");
 }
+
+export async function clearSessionModelSelection(cwd: string, sessionId: string): Promise<string> {
+  const handle = createApplication(cwd);
+  try {
+    const result = await handle.service.clearSessionModelSelection(sessionId);
+    return [
+      `Session model override cleared: ${result.session.sessionId}`,
+      `Current model: ${result.view.current.selection}`,
+      `Source: ${result.view.current.source}`
+    ].join("\n");
+  } finally {
+    handle.close();
+  }
+}
+

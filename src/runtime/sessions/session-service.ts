@@ -98,4 +98,8 @@ export class SessionService {
   public updateTitle(sessionId: string, title: string): SessionRecord {
     return this.dependencies.sessionRepository.update(sessionId, { title });
   }
+
+  public updateMetadata(sessionId: string, metadata: SessionRecord["metadata"]): SessionRecord {
+    return this.dependencies.sessionRepository.update(sessionId, { metadata });
+  }
 }

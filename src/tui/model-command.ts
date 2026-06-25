@@ -1,12 +1,11 @@
-import type { ConfiguredProviderEntry } from "../runtime/operations/provider-switch-service.js";
-import { formatProviderSelection } from "../runtime/operations/provider-switch-service.js";
 import type { ResolvedProviderConfig } from "../providers/config.js";
-import { listModelAliasEntries, type ModelAliasMap } from "../providers/model-aliases.js";
-import { formatEnvProviderOverrideNotice } from "../providers/provider-env.js";
+import type { ModelSelectionView } from "../runtime/operations/model-selection-service.js";
 import type { ProviderSwitchPersistScope } from "../runtime/operations/provider-switch-service.js";
+import { formatProviderSelection } from "../runtime/operations/provider-switch-service.js";
+import { formatEnvProviderOverrideNotice } from "../providers/provider-env.js";
 
 export interface ModelCommandResult {
-  kind: "error" | "list" | "switched";
+  kind: "cleared" | "error" | "list" | "status" | "switched";
   message: string;
   persist?: ProviderSwitchPersistScope | null;
   providerConfig?: ResolvedProviderConfig;
@@ -18,37 +17,28 @@ export interface ModelCommandResult {
   };
 }
 
-export interface ParsedModelCommand {
-  persist: ProviderSwitchPersistScope;
-  selection: string | null;
-}
-
-export interface EnvOnlyProviderEntry {
-  selection: string;
-}
-
-function formatProviderListSource(source: ConfiguredProviderEntry["configSource"]): string {
-  switch (source) {
-    case "workspace-only":
-      return " [workspace-only]";
-    case "workspace":
-      return " [workspace override]";
-    default:
-      return " [user]";
-  }
-}
+export type ParsedModelCommand =
+  | { action: "list"; persist: ProviderSwitchPersistScope }
+  | { action: "status"; persist: ProviderSwitchPersistScope }
+  | { action: "clear"; persist: "session" }
+  | {
+      action: "switch";
+      index: number | null;
+      persist: ProviderSwitchPersistScope;
+      selection: string | null;
+    };
 
 export function parseModelCommand(text: string): ParsedModelCommand | null {
   const trimmed = text.trim();
-  if (!trimmed.startsWith("/model")) {
+  if (trimmed !== "/model" && !trimmed.startsWith("/model ")) {
     return null;
   }
 
   const args = trimmed.slice("/model".length).trim();
-  if (args.length === 0 || args === "list") {
+  if (args.length === 0) {
     return {
-      persist: "session",
-      selection: null
+      action: "list",
+      persist: "session"
     };
   }
 
@@ -71,17 +61,53 @@ export function parseModelCommand(text: string): ParsedModelCommand | null {
     selectionTokens.push(token);
   }
 
-  const selection = selectionTokens.join(" ").trim();
-  if (selection.length === 0) {
+  if (selectionTokens.length === 0) {
     return {
-      persist,
-      selection: null
+      action: "list",
+      persist
     };
   }
 
+  if (selectionTokens.length === 1) {
+    const command = selectionTokens[0]!;
+    if (command === "list") {
+      return {
+        action: "list",
+        persist
+      };
+    }
+    if (command === "status") {
+      return {
+        action: "status",
+        persist
+      };
+    }
+    if (command === "default") {
+      if (persist !== "session") {
+        throw new Error("/model default clears the current session override and does not accept persist flags.");
+      }
+      return {
+        action: "clear",
+        persist: "session"
+      };
+    }
+    const index = Number(command);
+    if (Number.isInteger(index) && index > 0) {
+      return {
+        action: "switch",
+        index,
+        persist,
+        selection: null
+      };
+    }
+  }
+
+  const selection = selectionTokens.join(" ").trim();
   return {
+    action: "switch",
+    index: null,
     persist,
-    selection
+    selection: selection.length === 0 ? null : selection
   };
 }
 
@@ -95,56 +121,129 @@ export function formatFlagsOnlyModelHint(persist: ProviderSwitchPersistScope): s
   ].join("\n");
 }
 
-export function formatModelListMessage(input: {
-  aliases: ModelAliasMap;
-  configuredProviders: ConfiguredProviderEntry[];
-  current: ResolvedProviderConfig;
-  envOnlyProviders?: EnvOnlyProviderEntry[];
-  userProviderCount?: number;
-}): string {
-  const current = formatProviderSelection(input.current);
-  const lines = [`Current model: ${current}`, "", "Configured providers:"];
+export function formatModelListMessage(view: ModelSelectionView): string {
+  const credential = resolveCredentialSummary(view);
+  const fallback = resolveFallbackSummary(view);
+  const lines = [
+    `Current model: ${view.current.selection}`,
+    `Source: ${formatModelSource(view.current.source)}${view.current.strict ? " (strict)" : ""}`,
+    "",
+    "Configured models:"
+  ];
 
-  if (input.configuredProviders.length === 0) {
-    if (input.userProviderCount === 0) {
-      lines.push("- (none) No user-level providers configured.");
-      lines.push("  Tip: run `talon provider setup <provider>` or `talon model` to add one globally.");
-    } else {
-      lines.push("- (none) Providers are configured but missing credentials in this workspace.");
-      lines.push("  Tip: run `talon provider setup <provider>` or check API keys.");
-    }
+  if (view.configuredModels.length === 0) {
+    lines.push("- (none)");
   } else {
-    for (const provider of input.configuredProviders) {
-      const selection = formatProviderSelection(provider.providerConfig);
-      const marker = selection === current ? " *" : "";
-      lines.push(`- ${selection} (${provider.displayName})${formatProviderListSource(provider.configSource)}${marker}`);
+    for (const [index, entry] of view.configuredModels.entries()) {
+      const marker = entry.current ? " *" : "";
+      lines.push(`- ${index + 1}. ${entry.selection} (${entry.displayName}) [${entry.configSource}]${marker}`);
     }
   }
 
-  if (input.envOnlyProviders !== undefined && input.envOnlyProviders.length > 0) {
-    lines.push("", "Environment-only (not persistable via /model):");
-    for (const entry of input.envOnlyProviders) {
-      lines.push(`- ${entry.selection} [env]`);
-    }
-  }
-
-  const aliasEntries = listModelAliasEntries(input.aliases);
-  if (aliasEntries.length > 0) {
+  if (view.aliases.length > 0) {
     lines.push("", "Aliases:");
-    for (const entry of aliasEntries) {
-      const marker = entry.target === current || entry.alias === current ? " *" : "";
-      lines.push(`- ${entry.alias} -> ${entry.target}${marker}`);
+    for (const entry of view.aliases) {
+      lines.push(`- ${entry.alias} -> ${entry.target}${entry.current ? " *" : ""}`);
     }
   }
 
   lines.push(
     "",
-    "Switch with: /model <provider:model>",
-    "Persist: /model <selection> --global (user) or --workspace (project)"
+    `Credential: ${credential.credentialStatus} (${credential.activeCredentialId ?? "-"})`,
+    `Fallback: ${fallback.main.length === 0 ? "(none)" : fallback.main.join(" -> ")}`,
+    `Auxiliary: ${formatAuxiliarySummary(view.auxiliary)}`,
+    "",
+    "Switch with: /model <number> or /model <provider:model>",
+    "Clear session override: /model default",
+    "Details: /model status"
   );
   return lines.join("\n");
 }
 
+export function formatModelStatusMessage(view: ModelSelectionView): string {
+  const credential = resolveCredentialSummary(view);
+  const fallback = resolveFallbackSummary(view);
+  const lines = [
+    `Current model: ${view.current.selection}`,
+    `Source: ${formatModelSource(view.current.source)}${view.current.strict ? " (strict)" : ""}`,
+    `Provider: ${view.current.providerName}`,
+    `Model: ${view.current.model ?? "-"}`,
+    `Base URL: ${view.current.baseUrl ?? "-"}`,
+    `Context Window Tokens: ${view.current.contextWindowTokens ?? "-"}`,
+    `Credential: ${credential.credentialStatus} (${credential.activeCredentialId ?? "-"})`,
+    `Session: ${view.session.sessionId ?? "-"}`,
+    `Session override: ${view.session.modelSelection?.selection ?? "-"}`,
+    `Routing mode: ${view.routing.mode}`,
+    "",
+    "Configured models:"
+  ];
+
+  if (view.configuredModels.length === 0) {
+    lines.push("- (none)");
+  } else {
+    for (const [index, entry] of view.configuredModels.entries()) {
+      const marker = entry.current ? " *" : "";
+      lines.push(`- ${index + 1}. ${entry.selection} (${entry.displayName}) [${entry.configSource}]${marker}`);
+    }
+  }
+
+  if (view.envOnlyProviders.length > 0) {
+    lines.push("", "Environment-only (not persistable):");
+    for (const entry of view.envOnlyProviders) {
+      lines.push(`- ${entry.selection} [env]`);
+    }
+  }
+
+  if (view.aliases.length > 0) {
+    lines.push("", "Aliases:");
+    for (const entry of view.aliases) {
+      lines.push(`- ${entry.alias} -> ${entry.target}${entry.current ? " *" : ""}`);
+    }
+  }
+
+  lines.push("", "Fallback providers:");
+  if (fallback.main.length === 0) {
+    lines.push("- (none)");
+  } else {
+    for (const [index, selection] of fallback.main.entries()) {
+      lines.push(`- ${index + 1}. ${selection}`);
+    }
+  }
+
+  if (Object.keys(fallback.auxiliary).length > 0) {
+    lines.push("", "Auxiliary fallback:");
+    for (const [slot, selections] of Object.entries(fallback.auxiliary)) {
+      lines.push(`- ${slot}: ${selections.join(" -> ")}`);
+    }
+  }
+
+  if (fallback.status.updatedAt !== null) {
+    lines.push("", "Fallback status:");
+    lines.push(`- updatedAt: ${fallback.status.updatedAt}`);
+    if (fallback.status.activeFallback !== null) {
+      lines.push(
+        `- active: ${fallback.status.activeFallback.fromProvider} -> ${fallback.status.activeFallback.providerName} (${fallback.status.activeFallback.reason})`
+      );
+    }
+    if (fallback.status.lastFailure !== null) {
+      lines.push(
+        `- last failure: ${fallback.status.lastFailure.providerName} ${fallback.status.lastFailure.errorCategory}`
+      );
+    }
+  }
+
+  lines.push("", "Auxiliary slots:");
+  const auxiliaryEntries = Object.entries(view.auxiliary);
+  if (auxiliaryEntries.length === 0) {
+    lines.push("- (none)");
+  } else {
+    for (const [slot, selection] of auxiliaryEntries) {
+      lines.push(`- ${slot}: ${selection}`);
+    }
+  }
+
+  return lines.join("\n");
+}
 
 export function formatModelSwitchMessage(input: {
   persist: ProviderSwitchPersistScope;
@@ -166,4 +265,59 @@ export function formatModelSwitchMessage(input: {
     }
   }
   return lines.join("\n");
+}
+
+export function formatModelClearMessage(input: { currentSelection: string; sessionId: string }): string {
+  return [
+    `Session model override cleared: ${input.sessionId}`,
+    `Current model: ${input.currentSelection}`
+  ].join("\n");
+}
+
+function resolveCredentialSummary(view: ModelSelectionView): ModelSelectionView["current"]["credential"] {
+  return (view.current as { credential?: ModelSelectionView["current"]["credential"] }).credential ?? {
+    activeCredentialId: null,
+    availableCredentialIds: [],
+    credentialCount: 0,
+    credentialSource: null,
+    credentialStatus: "missing"
+  };
+}
+
+function resolveFallbackSummary(view: ModelSelectionView): ModelSelectionView["fallback"] {
+  return (view as { fallback?: ModelSelectionView["fallback"] }).fallback ?? {
+    auxiliary: {},
+    main: (view as { fallbackProviders?: string[] }).fallbackProviders ?? [],
+    status: {
+      activeFallback: null,
+      lastFailure: null,
+      updatedAt: null
+    }
+  };
+}
+function formatModelSource(source: string): string {
+  switch (source) {
+    case "session_user":
+      return "session override";
+    case "user":
+      return "user config";
+    case "workspace":
+      return "workspace config";
+    case "routing":
+      return "routing providers";
+    case "env":
+      return "environment";
+    case "runtime":
+      return "runtime";
+    default:
+      return source;
+  }
+}
+
+function formatAuxiliarySummary(auxiliary: Record<string, string>): string {
+  const entries = Object.entries(auxiliary);
+  if (entries.length === 0) {
+    return "(none)";
+  }
+  return entries.map(([slot, selection]) => `${slot}=${selection}`).join(", ");
 }

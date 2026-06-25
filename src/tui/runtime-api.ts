@@ -21,6 +21,7 @@ export type TuiRuntimeService = Pick<
   | "continueSession"
   | "createSchedule"
   | "createSession"
+  | "clearSessionModelSelection"
   | "currentProvider"
   | "ensureRuntimeSession"
   | "explainMemoryRecall"
@@ -33,6 +34,7 @@ export type TuiRuntimeService = Pick<
   | "listGatewayBindingsForRuntimeSession"
   | "listMemories"
   | "listMemorySuggestions"
+  | "modelSelectionView"
   | "listNextActions"
   | "listPendingApprovals"
   | "listPendingClarifyPrompts"
@@ -70,3 +72,5 @@ export type TuiRuntimeService = Pick<
   | "updateSessionTitle"
   | "resolveSessionRef"
 >;
+
+

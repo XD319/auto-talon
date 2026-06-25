@@ -1,4 +1,4 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
@@ -11,11 +11,22 @@ import type {
   ExperiencePromoteResult,
   ExperienceReviewRequest
 } from "../experience/experience-plane.js";
-import type { ProviderCatalogEntry, ResolvedProviderConfig } from "../providers/index.js";
+import {
+  isProviderSwitchable,
+  resolveProviderConfig,
+  type ProviderCatalogEntry,
+  type ResolvedProviderConfig
+} from "../providers/index.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
 import { clearFallbackProviderCache } from "../providers/provider-failover.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
-import type { RuntimeConfig, ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "./runtime-config.js";
+import {
+  resolveRuntimeConfig,
+  type RuntimeConfig,
+  type ShellBackend,
+  type WorkflowCustomShell,
+  type WorkflowTestCommand
+} from "./runtime-config.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type {
   ApprovalRecord,
@@ -99,12 +110,20 @@ import type {
 } from "./commitments/index.js";
 import { FileRollbackService, ProviderStatsService, RuntimeDoctorService } from "./operations/index.js";
 import {
+  formatProviderSelection,
   listConfiguredProviders,
   switchProviderRuntime,
   type ConfiguredProviderEntry,
   type ProviderSwitchPersistScope,
   type SwitchProviderResult
 } from "./operations/provider-switch-service.js";
+import {
+  createModelSelectionView,
+  readSessionModelSelection,
+  withSessionModelSelection,
+  withoutSessionModelSelection,
+  type ModelSelectionView
+} from "./operations/model-selection-service.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
 import { ScheduleFacade, SessionFacade } from "./facades/index.js";
 
@@ -1305,9 +1324,71 @@ export class AgentApplicationService {
     return listConfiguredProviders(this.dependencies.workspaceRoot);
   }
 
+  public modelSelectionView(sessionId?: string): ModelSelectionView {
+    const session = this.resolveOptionalSession(sessionId);
+    return createModelSelectionView({
+      currentProvider: this.dependencies.providerConfig,
+      cwd: this.dependencies.workspaceRoot,
+      runtimeConfig: resolveRuntimeConfig(this.dependencies.workspaceRoot),
+      runtimeOverrideActive: this.dependencies.providerRouter?.hasMainProviderOverride() ?? false,
+      session
+    });
+  }
+
+  public async setSessionModelSelection(input: {
+    selection: string;
+    sessionId: string;
+  }): Promise<{ result: SwitchProviderResult; session: SessionRecord; view: ModelSelectionView }> {
+    const session = this.requireSession(input.sessionId);
+    const result = await this.switchProvider({
+      persist: "session",
+      selection: input.selection,
+      sessionId: session.sessionId
+    });
+    return {
+      result,
+      session: this.requireSession(session.sessionId),
+      view: this.modelSelectionView(session.sessionId)
+    };
+  }
+
+  public async clearSessionModelSelection(
+    sessionId: string
+  ): Promise<{ result: SwitchProviderResult | null; session: SessionRecord; view: ModelSelectionView }> {
+    const session = this.requireSession(sessionId);
+    const priorSelection = readSessionModelSelection(session.metadata);
+    const updated = this.dependencies.sessionService.updateMetadata(
+      session.sessionId,
+      withoutSessionModelSelection(session.metadata)
+    );
+
+    let result: SwitchProviderResult | null = null;
+    const defaultProvider = resolveProviderConfig(this.dependencies.workspaceRoot);
+    if (isProviderSwitchable(defaultProvider)) {
+      result = await switchProviderRuntime({
+        cwd: this.dependencies.workspaceRoot,
+        persist: "session",
+        selection: formatProviderSelection(defaultProvider),
+        tokenBudget: this.dependencies.tokenBudget,
+        tokenBudgetInputLimitExplicit: this.dependencies.tokenBudgetInputLimitExplicit
+      });
+      this.applyProviderSwitchResult(result, { mainProviderOverride: false });
+    } else {
+      this.dependencies.providerRouter?.setMainProvider(null);
+    }
+    this.recordModelSelectionCleared(session.sessionId, priorSelection?.selection ?? null);
+
+    return {
+      result,
+      session: updated,
+      view: this.modelSelectionView(session.sessionId)
+    };
+  }
+
   public async switchProvider(input: {
     persist: ProviderSwitchPersistScope;
     selection: string;
+    sessionId?: string;
   }): Promise<SwitchProviderResult> {
     if (this.switchProviderInFlight !== null) {
       throw new Error("Model switch already in progress.");
@@ -1325,6 +1406,7 @@ export class AgentApplicationService {
   private async switchProviderInternal(input: {
     persist: ProviderSwitchPersistScope;
     selection: string;
+    sessionId?: string;
   }): Promise<SwitchProviderResult> {
     const runningTasks = this.dependencies.listTasks().filter((task) => task.status === "running");
     if (runningTasks.length > 0) {
@@ -1337,6 +1419,10 @@ export class AgentApplicationService {
       throw new Error("Cannot switch model while clarification is pending.");
     }
 
+    if (input.persist === "session" && input.sessionId !== undefined) {
+      this.requireSession(input.sessionId);
+    }
+
     const previousName = this.dependencies.providerConfig.name;
     const result = await switchProviderRuntime({
       cwd: this.dependencies.workspaceRoot,
@@ -1346,15 +1432,30 @@ export class AgentApplicationService {
       tokenBudgetInputLimitExplicit: this.dependencies.tokenBudgetInputLimitExplicit
     });
 
-    this.dependencies.provider = result.provider;
-    this.dependencies.providerConfig = result.providerConfig;
-    this.dependencies.tokenBudget = result.tokenBudget;
-    this.dependencies.executionKernel.setPrimaryProvider(result.provider);
-    this.dependencies.providerRouter?.setMainProvider(result.provider);
-    this.dependencies.providerRouter?.clearProviderCache();
-    this.dependencies.auxiliaryProviderResolver?.setMainProvider(result.provider);
-    this.dependencies.auxiliaryProviderResolver?.clearProviderCache();
-    clearFallbackProviderCache();
+    this.applyProviderSwitchResult(result, { mainProviderOverride: true });
+
+    if (input.persist === "session" && input.sessionId !== undefined) {
+      const session = this.requireSession(input.sessionId);
+      this.dependencies.sessionService.updateMetadata(
+        session.sessionId,
+        withSessionModelSelection(session.metadata, result.selection)
+      );
+      this.recordModelSelectionUpdated({
+        modelName: result.providerConfig.model,
+        providerName: result.providerConfig.name,
+        selection: result.selection,
+        sessionId: session.sessionId,
+        source: "session_user"
+      });
+    } else if (input.persist === "user" || input.persist === "workspace") {
+      this.recordModelSelectionUpdated({
+        modelName: result.providerConfig.model,
+        providerName: result.providerConfig.name,
+        selection: result.selection,
+        sessionId: null,
+        source: input.persist
+      });
+    }
 
     this.dependencies.traceService.record({
       actor: "runtime.application",
@@ -1364,7 +1465,7 @@ export class AgentApplicationService {
         mode: this.dependencies.providerRouter?.getMode() ?? "balanced",
         providerName: result.providerConfig.name,
         reason: `model switched to ${result.selection}`,
-        sessionId: null,
+        sessionId: input.sessionId ?? null,
         taskId: "runtime",
         tier: null
       },
@@ -1384,7 +1485,8 @@ export class AgentApplicationService {
         previousProviderName: previousName,
         providerName: result.providerConfig.name,
         reason: `model switched to ${result.selection}`,
-        selection: result.selection
+        selection: result.selection,
+        sessionId: input.sessionId ?? null
       },
       summary: `Provider switched to ${result.selection}`,
       taskId: null,
@@ -1394,6 +1496,84 @@ export class AgentApplicationService {
     return result;
   }
 
+  private applyProviderSwitchResult(
+    result: SwitchProviderResult,
+    options: { mainProviderOverride: boolean }
+  ): void {
+    this.dependencies.provider = result.provider;
+    this.dependencies.providerConfig = result.providerConfig;
+    this.dependencies.tokenBudget = result.tokenBudget;
+    this.dependencies.executionKernel.setPrimaryProvider(result.provider);
+    this.dependencies.providerRouter?.setMainProvider(options.mainProviderOverride ? result.provider : null);
+    this.dependencies.providerRouter?.clearProviderCache();
+    this.dependencies.auxiliaryProviderResolver?.setMainProvider(result.provider);
+    this.dependencies.auxiliaryProviderResolver?.clearProviderCache();
+    clearFallbackProviderCache();
+  }
+
+  private resolveOptionalSession(sessionId: string | undefined): SessionRecord | null {
+    if (sessionId === undefined) {
+      return null;
+    }
+    return this.requireSession(sessionId);
+  }
+
+  private requireSession(sessionId: string): SessionRecord {
+    const session = this.dependencies.findSession(sessionId);
+    if (session === null) {
+      throw new Error(`Session ${sessionId} was not found.`);
+    }
+    return session;
+  }
+
+  private recordModelSelectionUpdated(input: {
+    modelName: string | null;
+    providerName: string;
+    selection: string;
+    sessionId: string | null;
+    source: "session_user" | "user" | "workspace";
+  }): void {
+    this.dependencies.traceService.record({
+      actor: "runtime.application",
+      eventType: "model_selection_updated",
+      payload: input,
+      stage: "control",
+      summary: `Model selection updated to ${input.selection}`,
+      taskId: input.sessionId === null ? "runtime" : `session:${input.sessionId}`
+    });
+    this.dependencies.auditService.record({
+      action: "model_selection_updated",
+      actor: "runtime.application",
+      approvalId: null,
+      outcome: "succeeded",
+      payload: input,
+      summary: `Model selection updated to ${input.selection}`,
+      taskId: null,
+      toolCallId: null
+    });
+  }
+
+  private recordModelSelectionCleared(sessionId: string, priorSelection: string | null): void {
+    const payload = { priorSelection, sessionId };
+    this.dependencies.traceService.record({
+      actor: "runtime.application",
+      eventType: "model_selection_cleared",
+      payload,
+      stage: "control",
+      summary: `Model selection cleared for session ${sessionId}`,
+      taskId: `session:${sessionId}`
+    });
+    this.dependencies.auditService.record({
+      action: "model_selection_cleared",
+      actor: "runtime.application",
+      approvalId: null,
+      outcome: "succeeded",
+      payload,
+      summary: `Model selection cleared for session ${sessionId}`,
+      taskId: null,
+      toolCallId: null
+    });
+  }
   public providerStats(groupBy: "provider" | "session" | "task" | "mode" = "provider"): ProviderStatsSnapshot | null | JsonObject {
     return new ProviderStatsService({
       listTasks: () => this.dependencies.listTasks(),
@@ -1969,4 +2149,5 @@ function contextFragmentToMemoryRecord(
     updatedAt: timestamp
   };
 }
+
 

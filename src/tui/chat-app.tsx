@@ -1,4 +1,4 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import React from "react";
@@ -59,7 +59,6 @@ import {
 import { resolveMergedModelAliases } from "../providers/config.js";
 import { listModelAliasEntries } from "../providers/model-aliases.js";
 import {
-  currentProviderSelection,
   handleModelCommand,
   restoreSessionProviderSelection
 } from "./model-command-handler.js";
@@ -211,7 +210,7 @@ export function ChatTuiApp({
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
-        providerSelection: currentProviderSelection(liveConfig),
+        providerSelection: null,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title
       });
@@ -294,7 +293,7 @@ export function ChatTuiApp({
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
-        providerSelection: currentProviderSelection(liveConfig),
+        providerSelection: null,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title: sessionTitle
       });
@@ -418,26 +417,6 @@ export function ChatTuiApp({
     [slashSuggestions]
   );
 
-  const persistProviderSelection = React.useCallback(
-    (sessionId: string, selection: string) => {
-      service.saveSessionUiState(sessionId, {
-        entrySource: "tui",
-        interactionMode,
-        messages: controller.messages as never,
-        providerSelection: selection,
-        sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
-        title: sessionTitle
-      });
-    },
-    [
-      controller.messages,
-      controller.sessionApprovalFingerprints,
-      interactionMode,
-      service,
-      sessionTitle
-    ]
-  );
-
   const activateSessionById = React.useCallback(
     async (sessionId: string): Promise<boolean> => {
       if (
@@ -459,7 +438,8 @@ export function ChatTuiApp({
           const restored = await restoreSessionProviderSelection({
             currentProvider: service.currentProvider(),
             providerSelection: uiStateBeforeActivate.providerSelection,
-            service
+            service,
+            sessionId
           });
           if (restored !== null) {
             setLiveConfig((current) => ({
@@ -683,6 +663,7 @@ export function ChatTuiApp({
           controller.addSystemMessage("Switching model...");
         }
         void handleModelCommand({
+          activeSessionId: controller.activeSessionId,
           busy: controller.busy,
           cwd,
           currentProvider: liveConfig.provider,
@@ -696,7 +677,7 @@ export function ChatTuiApp({
           }
           controller.addSystemMessage(result.message);
           if (
-            result.kind === "switched" &&
+            (result.kind === "switched" || result.kind === "cleared") &&
             result.providerConfig !== undefined &&
             result.tokenBudget !== undefined &&
             result.selection !== undefined
@@ -712,9 +693,6 @@ export function ChatTuiApp({
                 usedCostUsd: 0
               }
             }));
-            if (controller.activeSessionId !== null) {
-              persistProviderSelection(controller.activeSessionId, result.selection);
-            }
           }
         });
         return true;
@@ -1027,9 +1005,7 @@ export function ChatTuiApp({
       controller,
       cwd,
       activateSessionById,
-      openSessionPicker,
-      persistProviderSelection,
-      refreshSessionIndex,
+      openSessionPicker,      refreshSessionIndex,
       restoreSession,
       service,
       interactionMode,
@@ -1567,28 +1543,59 @@ function buildDynamicSlashSuggestions(
   const userId = resolveRuntimeUserId();
 
   if (parsed.command === "/model") {
-    const suggestions: SlashSuggestion[] = [];
-    for (const provider of service.listConfiguredProviders()) {
-      const selection =
-        provider.model !== null && provider.model.length > 0
-          ? `${provider.name}:${provider.model}`
-          : provider.name;
-      suggestions.push({
-        description: provider.displayName,
-        insertText: `/model ${selection}`,
-        key: `model:${provider.name}`,
-        label: `/model ${selection}`,
+    const suggestions: SlashSuggestion[] = [
+      {
+        description: "Show configured models and current source",
+        insertText: "/model status",
+        key: "model:status",
+        label: "/model status",
         rank: 1
-      });
-    }
-    for (const entry of listModelAliasEntries(resolveMergedModelAliases(cwd))) {
-      suggestions.push({
-        description: `alias -> ${entry.target}`,
-        insertText: `/model ${entry.alias}`,
-        key: `alias:${entry.alias}`,
-        label: `/model ${entry.alias}`,
-        rank: 2
-      });
+      },
+      {
+        description: "Clear current session model override",
+        insertText: "/model default",
+        key: "model:default",
+        label: "/model default",
+        rank: 1
+      }
+    ];
+    try {
+      const view = service.modelSelectionView(activeSessionId ?? undefined);
+      for (const [index, entry] of view.configuredModels.entries()) {
+        suggestions.push({
+          description: entry.selection,
+          insertText: `/model ${index + 1}`,
+          key: `model-number:${entry.selection}`,
+          label: `/model ${index + 1} ${entry.selection}`,
+          rank: 1
+        });
+        suggestions.push({
+          description: entry.displayName,
+          insertText: `/model ${entry.selection}`,
+          key: `model:${entry.selection}`,
+          label: `/model ${entry.selection}`,
+          rank: 2
+        });
+      }
+      for (const entry of view.aliases) {
+        suggestions.push({
+          description: `alias -> ${entry.target}`,
+          insertText: `/model ${entry.alias}`,
+          key: `alias:${entry.alias}`,
+          label: `/model ${entry.alias}`,
+          rank: 3
+        });
+      }
+    } catch {
+      for (const entry of listModelAliasEntries(resolveMergedModelAliases(cwd))) {
+        suggestions.push({
+          description: `alias -> ${entry.target}`,
+          insertText: `/model ${entry.alias}`,
+          key: `alias:${entry.alias}`,
+          label: `/model ${entry.alias}`,
+          rank: 3
+        });
+      }
     }
     suggestions.push(
       {
@@ -1596,14 +1603,14 @@ function buildDynamicSlashSuggestions(
         insertText: "/model <provider:model> --global",
         key: "model:global",
         label: "/model <selection> --global",
-        rank: 3
+        rank: 4
       },
       {
         description: "Persist selection to workspace config",
         insertText: "/model <provider:model> --workspace",
         key: "model:workspace",
         label: "/model <selection> --workspace",
-        rank: 3
+        rank: 4
       }
     );
     return suggestions.filter((item) => item.insertText.startsWith(value.trim()));
@@ -2358,3 +2365,8 @@ function buildWelcomeHomeFromIndex(
         : "Type a request below to start."
   };
 }
+
+
+
+
+

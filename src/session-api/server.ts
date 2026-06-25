@@ -3,6 +3,7 @@ import { URL } from "node:url";
 
 import { requireHttpAuth } from "../core/http-auth.js";
 import type { AgentApplicationService } from "../runtime/application-service.js";
+import { readSessionModelSelection } from "../runtime/operations/model-selection-service.js";
 
 export interface SessionApiServerOptions {
   cwd?: string;
@@ -54,6 +55,15 @@ async function handleRequest(
     }
 
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "GET" && url.pathname === "/v1/models") {
+      const sessionId = url.searchParams.get("sessionId") ?? undefined;
+      if (sessionId !== undefined && service.findSession(sessionId) === null) {
+        writeJson(response, 404, { error: "session_not_found" });
+        return;
+      }
+      writeJson(response, 200, service.modelSelectionView(sessionId));
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/v1/sessions") {
       const ownerUserId = url.searchParams.get("ownerUserId") ?? undefined;
       const status = url.searchParams.get("status") ?? undefined;
@@ -84,7 +94,45 @@ async function handleRequest(
       writeJson(response, 200, {
         index: service.listSessionIndex().find((entry) => entry.sessionId === sessionId) ?? null,
         session,
+        modelSelection: readSessionModelSelection(session.metadata),
         detail
+      });
+      return;
+    }
+    const modelMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/model$/u);
+    if (request.method === "PATCH" && modelMatch !== null) {
+      const sessionId = decodeURIComponent(modelMatch[1] ?? "");
+      if (service.findSession(sessionId) === null) {
+        writeJson(response, 404, { error: "session_not_found" });
+        return;
+      }
+      const body = await readJsonBody(request);
+      if (body === null) {
+        writeJson(response, 400, { error: "invalid_json" });
+        return;
+      }
+      const selection = body.selection;
+      if (selection === null) {
+        const result = await service.clearSessionModelSelection(sessionId);
+        writeJson(response, 200, {
+          modelSelection: result.view.session.modelSelection,
+          session: result.session,
+          view: result.view
+        });
+        return;
+      }
+      if (typeof selection !== "string" || selection.trim().length === 0) {
+        writeJson(response, 400, { error: "selection_required" });
+        return;
+      }
+      const result = await service.setSessionModelSelection({
+        selection,
+        sessionId
+      });
+      writeJson(response, 200, {
+        modelSelection: result.view.session.modelSelection,
+        session: result.session,
+        view: result.view
       });
       return;
     }
@@ -156,3 +204,4 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
     return null;
   }
 }
+
