@@ -1,4 +1,4 @@
-﻿import type { AuditService } from "../../audit/audit-service.js";
+import type { AuditService } from "../../audit/audit-service.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type { Provider, ProviderTier, RouteKind, RoutingMode } from "../../types/index.js";
 
@@ -62,6 +62,10 @@ export class ProviderRouter {
 
   public setMainProvider(provider: Provider | null): void {
     this.mainProviderOverride = provider;
+  }
+
+  public hasMainProviderOverride(): boolean {
+    return this.mainProviderOverride !== null;
   }
 
   public clearProviderCache(providerName?: string): void {
@@ -226,3 +230,4 @@ export class ProviderRouter {
     return provider;
   }
 }
+

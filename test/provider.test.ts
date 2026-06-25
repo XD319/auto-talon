@@ -790,7 +790,10 @@ describe("Provider integration", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init?: RequestInit) => {
-        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (typeof init?.body !== "string") {
+          throw new Error("Expected JSON request body");
+        }
+        capturedBody = JSON.parse(init.body) as Record<string, unknown>;
         const messages = capturedBody.messages as Array<Record<string, unknown>>;
         const hasToolResult = messages.some((message) => message.role === "tool");
         if (!hasToolResult) {

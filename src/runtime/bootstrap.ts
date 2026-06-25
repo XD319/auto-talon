@@ -1,4 +1,4 @@
-﻿import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -19,7 +19,6 @@ import { loadLocalPolicyConfig, PolicyEngine } from "../policy/policy-engine.js"
 import { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import {
   createAuxiliaryProviderResolver,
-  type AuxiliaryProviderResolver,
   type AuxiliaryRuntimeConfig
 } from "../providers/auxiliary-resolver.js";
 import {
@@ -848,6 +847,7 @@ function buildApplicationRuntime(
   });
 
   const executionKernel = new ExecutionKernel({
+    auditService,
     auxiliaryProviderResolver,
     compact: config.compact,
     contextRetention: config.contextRetention,

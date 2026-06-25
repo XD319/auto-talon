@@ -23,6 +23,11 @@ export const AUDIT_ACTIONS = [
   "skill_promoted",
   "skill_rolled_back",
   "route_decided",
+  "model_selection_updated",
+  "model_selection_cleared",
+  "model_fallback_started",
+  "model_fallback_succeeded",
+  "model_fallback_exhausted",
   "budget_warning",
   "budget_exceeded",
   "worker_dispatched",
@@ -68,3 +73,4 @@ export interface AuditLogDraft {
   payload: JsonObject;
   createdAt: string;
 }
+

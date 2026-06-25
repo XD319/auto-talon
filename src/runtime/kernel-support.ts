@@ -1,4 +1,4 @@
-﻿import { AppError } from "../core/app-error.js";
+import { AppError } from "../core/app-error.js";
 import { ProviderError, toProviderError } from "../providers/index.js";
 import type {
   ContextAssemblyDebugView,
@@ -396,9 +396,10 @@ export function sanitizeToolCallPairing(messages: ConversationMessage[]): ToolCa
   while (index < messages.length) {
     const message = messages[index];
     if (message?.role === "assistant" && message.toolCalls !== undefined && message.toolCalls.length === 0) {
-      const { toolCalls: _toolCalls, ...rest } = message;
+      const rest: ConversationMessage = { ...message };
+      delete rest.toolCalls;
       messages[index] = rest;
-      let scanIndex = index + 1;
+      const scanIndex = index + 1;
       while (scanIndex < messages.length && messages[scanIndex]?.role === "tool") {
         messages.splice(scanIndex, 1);
         insertedCount += 1;

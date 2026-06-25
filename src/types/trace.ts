@@ -1,4 +1,4 @@
-﻿import type { JsonObject } from "./common.js";
+import type { JsonObject } from "./common.js";
 import type { RuntimeErrorCode } from "./error.js";
 import type { PathScope, PrivacyLevel, ToolCapability, ToolRiskLevel } from "./governance.js";
 import type { MemoryScope, MemoryStatus, MemorySourceType } from "./memory.js";
@@ -91,6 +91,12 @@ export const TRACE_EVENT_TYPES = [
   "experience_promoted",
   "skill_promotion_suggested",
   "route_decision",
+  "model_selection_updated",
+  "model_selection_cleared",
+  "model_fallback_started",
+  "model_fallback_succeeded",
+  "model_fallback_exhausted",
+  "credential_rotated",
   "budget_warning",
   "budget_exceeded",
   "cost_report",
@@ -717,6 +723,36 @@ export interface RouteDecisionPayload extends JsonObject {
   reason: string;
 }
 
+export interface ModelSelectionUpdatedPayload extends JsonObject {
+  modelName: string | null;
+  providerName: string;
+  selection: string;
+  sessionId: string | null;
+  source: "session_user" | "user" | "workspace";
+}
+
+export interface ModelSelectionClearedPayload extends JsonObject {
+  priorSelection: string | null;
+  sessionId: string;
+}
+
+export interface ModelFallbackPayload extends JsonObject {
+  credentialId?: string | null;
+  errorCategory?: ProviderErrorCategory | "unknown_error";
+  fromProvider?: string;
+  providerName?: string;
+  reason?: string;
+  selection?: string;
+  slot: string;
+  toProvider?: string;
+}
+
+export interface CredentialRotatedPayload extends JsonObject {
+  credentialId: string | null;
+  providerName: string;
+  slot: string;
+}
+
 export interface BudgetWarningPayload extends JsonObject {
   taskId: string;
   sessionId: string | null;
@@ -995,6 +1031,12 @@ export type TraceEvent =
   | TraceEventBase<"experience_promoted", ExperiencePromotedPayload>
   | TraceEventBase<"skill_promotion_suggested", SkillPromotionSuggestedPayload>
   | TraceEventBase<"route_decision", RouteDecisionPayload>
+  | TraceEventBase<"model_selection_updated", ModelSelectionUpdatedPayload>
+  | TraceEventBase<"model_selection_cleared", ModelSelectionClearedPayload>
+  | TraceEventBase<"model_fallback_started", ModelFallbackPayload>
+  | TraceEventBase<"model_fallback_succeeded", ModelFallbackPayload>
+  | TraceEventBase<"model_fallback_exhausted", ModelFallbackPayload>
+  | TraceEventBase<"credential_rotated", CredentialRotatedPayload>
   | TraceEventBase<"budget_warning", BudgetWarningPayload>
   | TraceEventBase<"budget_exceeded", BudgetExceededPayload>
   | TraceEventBase<"cost_report", CostReportPayload>
@@ -1020,3 +1062,4 @@ export type TraceEvent =
 
 export type TraceEventDraft = Omit<TraceEvent, "eventId" | "sequence" | "timestamp"> &
   Partial<Pick<TraceEvent, "eventId" | "sequence" | "timestamp">>;
+

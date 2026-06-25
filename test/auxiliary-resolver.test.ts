@@ -5,7 +5,7 @@ import {
   createAuxiliaryProviderResolver,
   normalizeAuxiliaryConfig
 } from "../src/providers/auxiliary-resolver.js";
-import type { Provider, ProviderGenerateInput, ProviderGenerateResponse } from "../src/types/index.js";
+import type { Provider, ProviderGenerateResponse } from "../src/types/index.js";
 
 class StubProvider implements Provider {
   public constructor(
@@ -13,8 +13,8 @@ class StubProvider implements Provider {
     public readonly model: string | null
   ) {}
 
-  public async generate(_input: ProviderGenerateInput): Promise<ProviderGenerateResponse> {
-    return { kind: "final", message: "ok" };
+  public generate(): Promise<ProviderGenerateResponse> {
+    return Promise.resolve({ kind: "final", message: "ok" });
   }
 }
 

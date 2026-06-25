@@ -4,6 +4,19 @@ import { dirname, join, resolve } from "node:path";
 
 import type { JsonObject, ProviderConfig } from "../types/index.js";
 import {
+  resolveProviderCredentials,
+  selectActiveCredential,
+  summarizeProviderCredentials,
+  type ProviderCredentialFileEntry,
+  type ProviderCredentialSummary,
+  type ResolvedProviderCredential
+} from "./credential-pool.js";
+import {
+  externalManifestToCatalogEntry,
+  loadExternalProviderManifests,
+  type ExternalProviderManifest
+} from "./external-provider-manifests.js";
+import {
   mergeModelAliases,
   resolveModelAlias,
   type ModelAliasMap
@@ -27,6 +40,7 @@ interface ProviderFileEntry extends JsonObject {
   apiKey?: string | null;
   baseUrl?: string | null;
   contextWindowTokens?: number | null;
+  credentials?: ProviderCredentialFileEntry[];
   maxRetries?: number;
   model?: string | null;
   streamIdleTimeoutMs?: number;
@@ -37,12 +51,20 @@ interface CustomProviderFileEntry extends ProviderFileEntry {
   anthropicVersion?: string | null;
   displayName?: string | null;
   providerLabel?: string | null;
+  supportsStreaming?: boolean;
+  supportsToolCalls?: boolean;
   transport?: Exclude<ProviderTransportKind, "mock">;
+}
+
+interface FallbackFileConfig extends JsonObject {
+  auxiliary?: Record<string, string[]>;
+  main?: string[];
 }
 
 interface ProviderConfigFile extends JsonObject {
   currentProvider?: string;
   customProviders?: Record<string, CustomProviderFileEntry>;
+  fallback?: FallbackFileConfig;
   fallbackProviders?: string[];
   modelAliases?: Record<string, string>;
   providers?: Record<string, ProviderFileEntry>;
@@ -82,6 +104,7 @@ export interface ResolvedProviderConfig extends ProviderConfig {
   configPath: string;
   configSource: "defaults" | "env" | "file" | "user";
   configured?: boolean;
+  credential: ProviderCredentialSummary;
   contextWindowSource:
     | "custom_provider"
     | "explicit_token_budget"
@@ -94,6 +117,8 @@ export interface ResolvedProviderConfig extends ProviderConfig {
   displayName: string;
   family: ProviderTransportKind;
   providerLabel?: string | null;
+  supportsStreaming?: boolean;
+  supportsToolCalls?: boolean;
   timeoutConfigured?: boolean;
   streamIdleTimeoutConfigured?: boolean;
   transport: ProviderTransportKind;
@@ -117,6 +142,18 @@ export function resolveProviderConfigForProvider(
   });
 }
 
+export function resolveProviderConfigForCredential(
+  cwd: string,
+  providerSelection: string,
+  credentialId: string
+): ResolvedProviderConfig {
+  return resolveProviderConfigInternal(cwd, {
+    credentialId,
+    includeProviderSelectionEnv: false,
+    providerSelection
+  });
+}
+
 export function resolveProviderConfigForSwitch(
   cwd: string,
   providerSelection: string
@@ -131,6 +168,7 @@ export function resolveProviderConfigForSwitch(
 function resolveProviderConfigInternal(
   cwd: string,
   options: {
+    credentialId?: string;
     ignoreProviderEnv?: boolean;
     includeProviderSelectionEnv: boolean;
     providerSelection?: string;
@@ -141,7 +179,15 @@ function resolveProviderConfigInternal(
   const userConfig = loadProviderConfigFile(userConfigPath);
   const workspaceConfig = loadProviderConfigFile(workspaceConfigPath);
   const fileConfig = mergeProviderConfigFiles(userConfig, workspaceConfig);
-  const customProviders = normalizeCustomProviders(fileConfig.customProviders);
+  const externalCustomProviders = externalManifestsToCustomProviders(
+    loadExternalProviderManifests({
+      userConfigDir: dirname(userConfigPath),
+      workspaceRoot: cwd
+    })
+  );
+  const customProviders = normalizeCustomProviders(
+    mergeNamedEntries(externalCustomProviders, fileConfig.customProviders)
+  );
   const providerEntries = normalizeProviderEntries(fileConfig.providers, customProviders);
   const providerSelection = resolveConfiguredProviderSelection(
     options.providerSelection ?? workspaceConfig.currentProvider ?? userConfig.currentProvider,
@@ -184,15 +230,17 @@ function resolveProviderConfigInternal(
         defaults.model
       ) ?? null
     );
+    const credentials = resolveEntryCredentials({
+      credentials: fileEntry?.credentials,
+      defaultsApiKey: defaults.apiKey,
+      fileApiKey: fileEntry?.apiKey,
+      ignoreProviderEnv: options.ignoreProviderEnv === true,
+      requestedCredentialId: options.credentialId
+    });
+    const activeCredential = selectActiveCredential(credentials);
 
     return {
-      apiKey: normalizeNullableString(
-        resolveSwitchableEnvString(
-          options.ignoreProviderEnv === true,
-          process.env.AGENT_PROVIDER_API_KEY,
-          fileEntry?.apiKey ?? defaults.apiKey
-        )
-      ),
+      apiKey: activeCredential?.apiKey ?? null,
       baseUrl: normalizeNullableString(
         resolveSwitchableEnvString(
           options.ignoreProviderEnv === true,
@@ -203,6 +251,7 @@ function resolveProviderConfigInternal(
       builtinProviderName,
       configPath,
       configSource,
+      credential: summarizeProviderCredentials(credentials),
       maxRetries: normalizePositiveNumber(
         resolveSwitchableEnvNumber(
           options.ignoreProviderEnv === true,
@@ -218,6 +267,8 @@ function resolveProviderConfigInternal(
       ...resolveBuiltinContextWindow(fileEntry, builtinProviderName, model, manifest),
       displayName: manifest.displayName,
       family: manifest.family,
+      supportsStreaming: manifest.supportsStreaming,
+      supportsToolCalls: manifest.supportsToolCalls,
       streamIdleTimeoutConfigured:
         (options.ignoreProviderEnv !== true &&
           process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS !== undefined) ||
@@ -260,16 +311,18 @@ function resolveProviderConfigInternal(
       customProvider.model
     ) ?? null
   );
+  const credentials = resolveEntryCredentials({
+    credentials: fileEntry?.credentials ?? customProvider.credentials,
+    defaultsApiKey: customProvider.apiKey,
+    fileApiKey: fileEntry?.apiKey,
+    ignoreProviderEnv: options.ignoreProviderEnv === true,
+    requestedCredentialId: options.credentialId
+  });
+  const activeCredential = selectActiveCredential(credentials);
 
   return {
     anthropicVersion: normalizeNullableString(customProvider.anthropicVersion),
-    apiKey: normalizeNullableString(
-      resolveSwitchableEnvString(
-        options.ignoreProviderEnv === true,
-        process.env.AGENT_PROVIDER_API_KEY,
-        fileEntry?.apiKey ?? customProvider.apiKey
-      )
-    ),
+    apiKey: activeCredential?.apiKey ?? null,
     baseUrl: normalizeNullableString(
       resolveSwitchableEnvString(
         options.ignoreProviderEnv === true,
@@ -280,6 +333,7 @@ function resolveProviderConfigInternal(
     builtinProviderName: null,
     configPath,
     configSource,
+    credential: summarizeProviderCredentials(credentials),
     maxRetries: normalizePositiveNumber(
       resolveSwitchableEnvNumber(
         options.ignoreProviderEnv === true,
@@ -299,6 +353,8 @@ function resolveProviderConfigInternal(
       normalizeNullableString(customProvider.providerLabel) ??
       normalizeNullableString(customProvider.displayName) ??
       configuredName,
+    supportsStreaming: customProvider.supportsStreaming ?? true,
+    supportsToolCalls: customProvider.supportsToolCalls ?? true,
     streamIdleTimeoutConfigured:
       (options.ignoreProviderEnv !== true &&
         process.env.AGENT_PROVIDER_STREAM_IDLE_TIMEOUT_MS !== undefined) ||
@@ -328,6 +384,20 @@ function resolveProviderConfigInternal(
     ),
     transport: customProvider.transport
   };
+}
+
+export function resolveProviderCredentialConfigs(
+  cwd: string,
+  providerSelection: string
+): ResolvedProviderConfig[] {
+  const base = resolveProviderConfigForProvider(cwd, providerSelection);
+  const credentialIds = listAvailableCredentialIds(base);
+  if (credentialIds.length <= 1) {
+    return [base];
+  }
+  return credentialIds.map((credentialId) =>
+    resolveProviderConfigForCredential(cwd, providerSelection, credentialId)
+  );
 }
 
 export function resolveMergedModelAliases(cwd = process.cwd()): ModelAliasMap {
@@ -361,8 +431,7 @@ function collectConfiguredProviderNamesFromConfig(config: ProviderConfigFile): S
       names.add(providerName);
       continue;
     }
-    const apiKey = entry.apiKey;
-    if (typeof apiKey === "string" && apiKey.length > 0) {
+    if (hasConfiguredCredential(entry)) {
       names.add(providerName);
     }
   }
@@ -399,6 +468,7 @@ function hasWorkspaceProviderOverride(
   const overrideFields: Array<keyof ProviderFileEntry> = [
     "apiKey",
     "baseUrl",
+    "credentials",
     "model",
     "contextWindowTokens",
     "maxRetries",
@@ -489,22 +559,34 @@ export function resolveProviderCatalog(cwd = process.cwd()): ProviderCatalogEntr
     loadProviderConfigFile(userConfigPath),
     loadProviderConfigFile(workspaceConfigPath)
   );
+  const externalManifests = loadExternalProviderManifests({
+    userConfigDir: dirname(userConfigPath),
+    workspaceRoot: cwd
+  });
   const customProviders = normalizeCustomProviders(fileConfig.customProviders);
-
-  return [
-    ...PROVIDER_CATALOG,
-    ...Object.entries(customProviders).map(([name, provider]) => ({
-      aliases: [],
+  const catalog = new Map<string, ProviderCatalogEntry>();
+  for (const entry of PROVIDER_CATALOG) {
+    catalog.set(entry.name, entry);
+  }
+  for (const manifest of externalManifests) {
+    catalog.set(manifest.name, externalManifestToCatalogEntry(manifest));
+  }
+  for (const [name, provider] of Object.entries(customProviders)) {
+    const existing = catalog.get(name);
+    catalog.set(name, {
+      aliases: existing?.aliases ?? [],
       contextWindowTokens: normalizeOptionalPositiveInteger(provider.contextWindowTokens) ?? null,
       displayName: normalizeNullableString(provider.displayName) ?? name,
       family: provider.transport,
       name,
       supportsConfiguration: true,
-      supportsStreaming: true,
-      supportsToolCalls: true,
+      supportsStreaming: provider.supportsStreaming ?? true,
+      supportsToolCalls: provider.supportsToolCalls ?? true,
       transport: provider.transport
-    }))
-  ];
+    });
+  }
+
+  return [...catalog.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function setupProviderConfig(
@@ -716,22 +798,151 @@ export function removeCustomProviderConfig(
   };
 }
 
+export interface ProviderCredentialConfigWriteResult {
+  configPath: string;
+  credentials: Array<{
+    apiKeyEnv: string | null;
+    cooldownUntil: string | null;
+    disabled: boolean;
+    id: string;
+    lastFailure: string | null;
+    priority: number;
+  }>;
+  providerName: string;
+  scope: ProviderConfigScope;
+}
+
+export function listProviderCredentialConfig(
+  providerSelection: string,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): ProviderCredentialConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const providerName = resolveProviderNameForCredentialWrite(providerSelection, fileConfig, options.cwd);
+  return {
+    configPath,
+    credentials: serializeCredentialEntries(fileConfig.providers?.[providerName]?.credentials ?? []),
+    providerName,
+    scope
+  };
+}
+
+export function addProviderCredentialEnvConfig(
+  providerSelection: string,
+  input: { envName: string; id?: string; priority?: number } & Pick<ProviderConfigWriteOptions, "cwd" | "scope">
+): ProviderCredentialConfigWriteResult {
+  const scope = input.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, input.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const providerName = resolveProviderNameForCredentialWrite(providerSelection, fileConfig, input.cwd);
+  const id = normalizeNullableString(input.id) ?? input.envName.trim();
+  const envName = input.envName.trim();
+  if (envName.length === 0) {
+    throw new Error("Credential env name is required.");
+  }
+  const providers = { ...(fileConfig.providers ?? {}) };
+  const entry = { ...(providers[providerName] ?? {}) };
+  const credentials = [...(entry.credentials ?? [])];
+  if (credentials.some((credential) => credential.id === id)) {
+    throw new Error(`Credential "${id}" is already configured for provider "${providerName}".`);
+  }
+  credentials.push({
+    apiKeyEnv: envName,
+    disabled: false,
+    id,
+    ...(input.priority !== undefined ? { priority: input.priority } : {})
+  });
+  providers[providerName] = { ...entry, credentials };
+  const nextConfig: ProviderConfigFile = { version: 1, ...fileConfig, providers };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return { configPath, credentials: serializeCredentialEntries(credentials), providerName, scope };
+}
+
+export function setProviderCredentialEnabledConfig(
+  providerSelection: string,
+  credentialId: string,
+  enabled: boolean,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): ProviderCredentialConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const providerName = resolveProviderNameForCredentialWrite(providerSelection, fileConfig, options.cwd);
+  const providers = { ...(fileConfig.providers ?? {}) };
+  const entry = { ...(providers[providerName] ?? {}) };
+  const credentials = [...(entry.credentials ?? [])];
+  const index = credentials.findIndex((credential) => credential.id === credentialId);
+  if (index < 0) {
+    throw new Error(`Credential "${credentialId}" is not configured for provider "${providerName}".`);
+  }
+  credentials[index] = { ...credentials[index]!, disabled: !enabled };
+  providers[providerName] = { ...entry, credentials };
+  const nextConfig: ProviderConfigFile = { version: 1, ...fileConfig, providers };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return { configPath, credentials: serializeCredentialEntries(credentials), providerName, scope };
+}
+
+export function removeProviderCredentialConfig(
+  providerSelection: string,
+  credentialId: string,
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+): ProviderCredentialConfigWriteResult {
+  const scope = options.scope ?? "user";
+  const configPath = resolveProviderConfigPath(scope, options.cwd);
+  const fileConfig = loadProviderConfigFile(configPath);
+  const providerName = resolveProviderNameForCredentialWrite(providerSelection, fileConfig, options.cwd);
+  const providers = { ...(fileConfig.providers ?? {}) };
+  const entry = { ...(providers[providerName] ?? {}) };
+  const credentials = [...(entry.credentials ?? [])];
+  const nextCredentials = credentials.filter((credential) => credential.id !== credentialId);
+  if (nextCredentials.length === credentials.length) {
+    throw new Error(`Credential "${credentialId}" is not configured for provider "${providerName}".`);
+  }
+  providers[providerName] = { ...entry, credentials: nextCredentials };
+  const nextConfig: ProviderConfigFile = { version: 1, ...fileConfig, providers };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return { configPath, credentials: serializeCredentialEntries(nextCredentials), providerName, scope };
+}
 export interface FallbackConfigWriteResult {
   configPath: string;
   fallbackProviders: string[];
   scope: ProviderConfigScope;
 }
 
-export function resolveMergedFallbackProviders(cwd = process.cwd()): string[] {
+export interface ResolvedFallbackConfig extends JsonObject {
+  auxiliary: Record<string, string[]>;
+  main: string[];
+}
+
+export function resolveMergedFallbackConfig(cwd = process.cwd()): ResolvedFallbackConfig {
   const workspaceConfigPath = join(resolve(cwd), ".auto-talon", "provider.config.json");
   const userConfig = loadProviderConfigFile(resolveUserProviderConfigPath());
   const workspaceConfig = loadProviderConfigFile(workspaceConfigPath);
-  return mergeFallbackProviderLists(userConfig.fallbackProviders, workspaceConfig.fallbackProviders);
+  return mergeFallbackConfigs(userConfig, workspaceConfig);
+}
+
+export function resolveMergedFallbackProviders(cwd = process.cwd()): string[] {
+  return resolveMergedFallbackConfig(cwd).main;
+}
+
+export function resolveMergedFallbackProvidersForSlot(
+  cwd = process.cwd(),
+  slot: string | null = null
+): string[] {
+  const config = resolveMergedFallbackConfig(cwd);
+  if (slot === null || slot === "main") {
+    return config.main;
+  }
+  return config.auxiliary[slot] ?? config.main;
 }
 
 export function addFallbackProviderConfig(
   selection: string,
-  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> & { slot?: string } = {}
 ): FallbackConfigWriteResult {
   const scope = options.scope ?? "user";
   const configPath = resolveProviderConfigPath(scope, options.cwd);
@@ -748,14 +959,29 @@ export function addFallbackProviderConfig(
       `Fallback provider "${normalizedSelection}" is not configured. Run talon provider setup first.`
     );
   }
-  const existing = fileConfig.fallbackProviders ?? [];
+  const slot = normalizeNullableString(options.slot);
+  const existing = slot === null
+    ? fileConfig.fallbackProviders ?? fileConfig.fallback?.main ?? []
+    : fileConfig.fallback?.auxiliary?.[slot] ?? [];
   if (existing.includes(normalizedSelection)) {
     throw new Error(`Fallback provider "${normalizedSelection}" is already configured.`);
   }
   const fallbackProviders = [...existing, normalizedSelection];
+  const nextFallback: FallbackFileConfig = {
+    ...(fileConfig.fallback ?? {}),
+    ...(slot === null
+      ? { main: fallbackProviders }
+      : {
+          auxiliary: {
+            ...(fileConfig.fallback?.auxiliary ?? {}),
+            [slot]: fallbackProviders
+          }
+        })
+  };
   const nextConfig: ProviderConfigFile = {
     ...fileConfig,
-    fallbackProviders
+    ...(slot === null ? { fallbackProviders } : {}),
+    fallback: nextFallback
   };
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
@@ -764,23 +990,41 @@ export function addFallbackProviderConfig(
 
 export function removeFallbackProviderConfig(
   selection: string,
-  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> & { slot?: string } = {}
 ): FallbackConfigWriteResult {
   const scope = options.scope ?? "user";
   const configPath = resolveProviderConfigPath(scope, options.cwd);
   const fileConfig = loadProviderConfigFile(configPath);
   const normalizedSelection = selection.trim();
-  const existing = fileConfig.fallbackProviders ?? [];
+  const slot = normalizeNullableString(options.slot);
+  const existing = slot === null
+    ? fileConfig.fallbackProviders ?? fileConfig.fallback?.main ?? []
+    : fileConfig.fallback?.auxiliary?.[slot] ?? [];
   const fallbackProviders = existing.filter((entry) => entry !== normalizedSelection);
   if (fallbackProviders.length === existing.length) {
     throw new Error(`Fallback provider "${normalizedSelection}" is not configured.`);
   }
+  const nextFallback: FallbackFileConfig = {
+    ...(fileConfig.fallback ?? {}),
+    ...(slot === null
+      ? fallbackProviders.length > 0 ? { main: fallbackProviders } : {}
+      : {
+          auxiliary: {
+            ...(fileConfig.fallback?.auxiliary ?? {}),
+            ...(fallbackProviders.length > 0 ? { [slot]: fallbackProviders } : {})
+          }
+        })
+  };
+  if (slot !== null && fallbackProviders.length === 0) {
+    delete nextFallback.auxiliary?.[slot];
+  }
   const nextConfig = omitProviderConfigKeys(
     {
       ...fileConfig,
-      ...(fallbackProviders.length > 0 ? { fallbackProviders } : {})
+      ...(slot === null && fallbackProviders.length > 0 ? { fallbackProviders } : {}),
+      fallback: nextFallback
     },
-    fallbackProviders.length > 0 ? [] : ["fallbackProviders"]
+    slot === null && fallbackProviders.length === 0 ? ["fallbackProviders"] : []
   );
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
@@ -788,12 +1032,24 @@ export function removeFallbackProviderConfig(
 }
 
 export function clearFallbackProviderConfig(
-  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> = {}
+  options: Pick<ProviderConfigWriteOptions, "cwd" | "scope"> & { slot?: string } = {}
 ): FallbackConfigWriteResult {
   const scope = options.scope ?? "user";
   const configPath = resolveProviderConfigPath(scope, options.cwd);
   const fileConfig = loadProviderConfigFile(configPath);
-  const nextConfig = omitProviderConfigKeys(fileConfig, ["fallbackProviders"]);
+  const slot = normalizeNullableString(options.slot);
+  let nextConfig: ProviderConfigFile;
+  if (slot === null) {
+    const nextFallback = { ...(fileConfig.fallback ?? {}) };
+    delete nextFallback.main;
+    nextConfig = omitProviderConfigKeys({ ...fileConfig, fallback: nextFallback }, ["fallbackProviders"]);
+  } else {
+    const nextFallback = { ...(fileConfig.fallback ?? {}) };
+    const auxiliary = { ...(nextFallback.auxiliary ?? {}) };
+    delete auxiliary[slot];
+    nextFallback.auxiliary = auxiliary;
+    nextConfig = { ...fileConfig, fallback: nextFallback };
+  }
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
   return { configPath, fallbackProviders: [], scope };
@@ -892,7 +1148,7 @@ function loadProviderConfigFile(configPath: string): ProviderConfigFile {
   }
 
   try {
-    const parsed = JSON.parse(content);
+    const parsed: unknown = JSON.parse(content);
     return parseProviderConfigFile(parsed, configPath) as ProviderConfigFile;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1020,10 +1276,7 @@ function mergeProviderConfigFiles(
   );
   const providers = mergeNamedEntries(userConfig.providers, workspaceConfig.providers);
   const modelAliases = mergeModelAliases(userConfig.modelAliases, workspaceConfig.modelAliases);
-  const fallbackProviders = mergeFallbackProviderLists(
-    userConfig.fallbackProviders,
-    workspaceConfig.fallbackProviders
-  );
+  const fallback = mergeFallbackConfigs(userConfig, workspaceConfig);
 
   return {
     ...userConfig,
@@ -1036,8 +1289,34 @@ function mergeProviderConfigFiles(
     ...(customProviders !== undefined ? { customProviders } : {}),
     ...(Object.keys(modelAliases).length > 0 ? { modelAliases } : {}),
     ...(providers !== undefined ? { providers } : {}),
-    ...(fallbackProviders.length > 0 ? { fallbackProviders } : {})
+    ...(fallback.main.length > 0 ? { fallbackProviders: fallback.main } : {}),
+    ...(fallback.main.length > 0 || Object.keys(fallback.auxiliary).length > 0 ? { fallback } : {})
   };
+}
+
+function mergeFallbackConfigs(
+  userConfig: ProviderConfigFile,
+  workspaceConfig: ProviderConfigFile
+): ResolvedFallbackConfig {
+  const main = mergeFallbackProviderLists(
+    [...(userConfig.fallback?.main ?? []), ...(userConfig.fallbackProviders ?? [])],
+    [...(workspaceConfig.fallback?.main ?? []), ...(workspaceConfig.fallbackProviders ?? [])]
+  );
+  const auxiliary: Record<string, string[]> = {};
+  const slots = new Set([
+    ...Object.keys(userConfig.fallback?.auxiliary ?? {}),
+    ...Object.keys(workspaceConfig.fallback?.auxiliary ?? {})
+  ]);
+  for (const slot of slots) {
+    const merged = mergeFallbackProviderLists(
+      userConfig.fallback?.auxiliary?.[slot],
+      workspaceConfig.fallback?.auxiliary?.[slot]
+    );
+    if (merged.length > 0) {
+      auxiliary[slot] = merged;
+    }
+  }
+  return { auxiliary, main };
 }
 
 function mergeFallbackProviderLists(
@@ -1158,6 +1437,13 @@ function createUnconfiguredProviderConfig(
     configured: false,
     contextWindowSource: null,
     contextWindowTokens: null,
+    credential: {
+      activeCredentialId: null,
+      availableCredentialIds: [],
+      credentialCount: 0,
+      credentialSource: null,
+      credentialStatus: "missing"
+    },
     displayName: "Provider not configured",
     family: "mock",
     maxRetries: 0,
@@ -1165,6 +1451,8 @@ function createUnconfiguredProviderConfig(
     name: "unconfigured",
     streamIdleTimeoutConfigured: false,
     streamIdleTimeoutMs: 5_000,
+    supportsStreaming: false,
+    supportsToolCalls: false,
     timeoutConfigured: false,
     timeoutMs: 5_000,
     transport: "mock"
@@ -1207,6 +1495,108 @@ function resolveCustomContextWindow(
     contextWindowSource: customConfigured === null ? null : "custom_provider",
     contextWindowTokens: customConfigured
   };
+}
+
+function serializeCredentialEntries(credentials: ProviderCredentialFileEntry[]): ProviderCredentialConfigWriteResult["credentials"] {
+  return credentials.map((credential, index) => ({
+    apiKeyEnv: normalizeNullableString(credential.apiKeyEnv),
+    cooldownUntil: normalizeNullableString(credential.cooldownUntil),
+    disabled: credential.disabled === true,
+    id: normalizeNullableString(credential.id) ?? `credential-${index + 1}`,
+    lastFailure: normalizeNullableString(credential.lastFailure),
+    priority: typeof credential.priority === "number" && Number.isFinite(credential.priority) ? credential.priority : index
+  }));
+}
+
+function resolveProviderNameForCredentialWrite(
+  providerSelection: string,
+  fileConfig: ProviderConfigFile,
+  cwd = process.cwd()
+): string {
+  const resolved = resolveProviderSelectionWithAliases(providerSelection, cwd);
+  try {
+    const parsed = parseProviderSelection(resolved);
+    if (parsed.providerName !== null) {
+      return parsed.providerName;
+    }
+  } catch {
+    // Fall through to custom provider parsing.
+  }
+  const customProviders = normalizeCustomProviders(fileConfig.customProviders);
+  const selection = resolveConfiguredProviderSelection(resolved, customProviders);
+  if (selection.providerName !== null) {
+    return selection.providerName;
+  }
+  const separatorIndex = Math.min(
+    ...[":", "/"]
+      .map((separator) => resolved.indexOf(separator))
+      .filter((index) => index > 0)
+  );
+  if (Number.isFinite(separatorIndex)) {
+    return resolved.slice(0, separatorIndex);
+  }
+  const normalized = normalizeNullableString(resolved);
+  if (normalized === null) {
+    throw new Error("Provider name is required.");
+  }
+  return normalized;
+}
+function resolveEntryCredentials(input: {
+  credentials?: ProviderCredentialFileEntry[] | undefined;
+  defaultsApiKey?: string | null | undefined;
+  fileApiKey?: string | null | undefined;
+  ignoreProviderEnv: boolean;
+  requestedCredentialId?: string | undefined;
+}): ResolvedProviderCredential[] {
+  return resolveProviderCredentials({
+    credentials: input.credentials,
+    envApiKey: process.env.AGENT_PROVIDER_API_KEY,
+    ignoreProviderEnv: input.ignoreProviderEnv,
+    legacyApiKey: input.fileApiKey ?? input.defaultsApiKey,
+    requestedCredentialId: input.requestedCredentialId
+  });
+}
+
+function listAvailableCredentialIds(config: ResolvedProviderConfig): string[] {
+  return config.credential.availableCredentialIds;
+}
+
+function hasConfiguredCredential(entry: ProviderFileEntry): boolean {
+  if (normalizeNullableString(entry.apiKey) !== null) {
+    return true;
+  }
+  for (const credential of entry.credentials ?? []) {
+    if (credential.disabled === true) {
+      continue;
+    }
+    if (normalizeNullableString(credential.apiKey) !== null) {
+      return true;
+    }
+    const envName = normalizeNullableString(credential.apiKeyEnv);
+    if (envName !== null && normalizeNullableString(process.env[envName]) !== null) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function externalManifestsToCustomProviders(
+  manifests: ExternalProviderManifest[]
+): Record<string, CustomProviderFileEntry> {
+  return manifests.reduce<Record<string, CustomProviderFileEntry>>((entries, manifest) => {
+    entries[manifest.name] = {
+      anthropicVersion: manifest.anthropicVersion,
+      baseUrl: manifest.baseUrl,
+      contextWindowTokens: manifest.contextWindowTokens,
+      displayName: manifest.displayName,
+      model: manifest.model,
+      providerLabel: manifest.providerLabel,
+      supportsStreaming: manifest.supportsStreaming,
+      supportsToolCalls: manifest.supportsToolCalls,
+      transport: manifest.transport
+    };
+    return entries;
+  }, {});
 }
 
 function normalizeProviderEntries(

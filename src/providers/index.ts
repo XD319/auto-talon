@@ -3,6 +3,8 @@ export * from "./anthropic-compatible-provider.js";
 export * from "./anthropic-provider.js";
 export * from "./config.js";
 export * from "./context-window-enrichment.js";
+export * from "./credential-pool.js";
+export * from "./external-provider-manifests.js";
 export * from "./context-window-query.js";
 export * from "./glm-provider.js";
 export * from "./model-aliases.js";

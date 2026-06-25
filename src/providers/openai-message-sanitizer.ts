@@ -1,7 +1,8 @@
 import type { ConversationMessage } from "../types/index.js";
 
 function stripToolCalls(message: ConversationMessage): ConversationMessage {
-  const { toolCalls: _toolCalls, ...rest } = message;
+  const rest: ConversationMessage = { ...message };
+  delete rest.toolCalls;
   return rest;
 }
 

@@ -1,4 +1,4 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { createManagedAbortController, throwIfAborted } from "./abort-controller.js";
@@ -61,6 +61,7 @@ import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
 import { generateWithProviderFailover } from "../providers/provider-failover.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
+import type { AuditService } from "../audit/audit-service.js";
 import type {
   ConversationMessage,
   ContextAssemblyDebugView,
@@ -108,6 +109,7 @@ import type { SkillContextService } from "../skills/index.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
+  auditService: AuditService;
   auxiliaryProviderResolver?: AuxiliaryProviderResolver;
   compactPolicy: CompactTriggerPolicy;
   executionCheckpointRepository: ExecutionCheckpointRepository;
@@ -924,6 +926,7 @@ export class ExecutionKernel {
         try {
           providerResponse = await generateWithProviderFailover(
             {
+              auditService: this.dependencies.auditService,
               cwd: this.dependencies.workspaceRoot,
               enableFailover: true,
               primaryProvider: activeProvider,
@@ -1453,6 +1456,7 @@ export class ExecutionKernel {
     try {
       providerResponse = await generateWithProviderFailover(
         {
+          auditService: this.dependencies.auditService,
           cwd: this.dependencies.workspaceRoot,
           enableFailover: true,
           primaryProvider: activeProvider,
@@ -1865,6 +1869,35 @@ export class ExecutionKernel {
     };
   }
 
+  private createAuxiliaryFailoverProvider(
+    provider: Provider,
+    input: { sessionId: string | null; slot: string; taskId: string }
+  ): Provider {
+    void input.sessionId;
+    return {
+      capabilities: provider.capabilities,
+      describe: provider.describe?.bind(provider),
+      fetchContextWindow: provider.fetchContextWindow?.bind(provider),
+      generate: (request) =>
+        generateWithProviderFailover(
+          {
+            auditService: this.dependencies.auditService,
+            auxiliarySlot: input.slot,
+            cwd: this.dependencies.workspaceRoot,
+            enableFailover: true,
+            primaryProvider: provider,
+            taskId: input.taskId,
+            traceService: this.dependencies.traceService
+          },
+          request
+        ),
+      getStats: provider.getStats?.bind(provider),
+      model: provider.model,
+      name: provider.name,
+      streamGenerate: provider.streamGenerate?.bind(provider),
+      testConnection: provider.testConnection?.bind(provider)
+    };
+  }
   private selectCompactSummarizer(
     taskId: string,
     sessionId: string | null,
@@ -1886,12 +1919,17 @@ export class ExecutionKernel {
       this.dependencies.provider;
     const helperContextWindow =
       helperProvider.describe?.().contextWindowTokens ?? Math.min(mainContextWindowTokens, 32_000);
+    const failoverHelperProvider = this.createAuxiliaryFailoverProvider(helperProvider, {
+      sessionId,
+      slot: "compression",
+      taskId
+    });
     return new ProviderSubagentSummarizer(
       (context) => {
         if (context.kind !== "summarize") {
           return null;
         }
-        return helperProvider;
+        return failoverHelperProvider;
       },
       { maxInputTokens: helperContextWindow }
     );

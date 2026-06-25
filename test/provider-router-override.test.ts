@@ -5,8 +5,8 @@ import type { Provider } from "../src/types/index.js";
 
 function stubProvider(name: string): Provider {
   return {
-    async generate() {
-      return { kind: "final", message: "ok" };
+    generate() {
+      return Promise.resolve({ kind: "final", message: "ok" });
     },
     model: `${name}-model`,
     name

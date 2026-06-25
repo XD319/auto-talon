@@ -217,6 +217,19 @@ function collectDoctorIssues(
     issues.push("Model is not configured.");
   }
 
+  const credential = (providerConfig as { credential?: ResolvedProviderConfig["credential"] }).credential;
+  if (
+    providerConfig.name !== "mock" &&
+    providerConfig.builtinProviderName !== "ollama" &&
+    credential !== undefined &&
+    credential.credentialCount > 0 &&
+    credential.credentialStatus !== "available"
+  ) {
+    issues.push(
+      `Provider credential pool has no available credentials (status=${credential.credentialStatus}).`
+    );
+  }
+
   if (providerHealth.endpointReachable === false) {
     issues.push("Provider endpoint is not reachable.");
   }

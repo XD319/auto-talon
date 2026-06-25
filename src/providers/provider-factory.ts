@@ -44,7 +44,8 @@ function createProviderInstance(
         defaultBaseUrl: config.baseUrl,
         defaultDisplayName: config.displayName,
         defaultModel: config.model ?? "custom-openai-compatible-model",
-        providerLabel: config.providerLabel ?? config.displayName
+        providerLabel: config.providerLabel ?? config.displayName,
+        ...(config.supportsStreaming !== undefined ? { supportsStreaming: config.supportsStreaming } : {})
       });
     }
 

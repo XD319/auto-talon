@@ -595,6 +595,13 @@ function createSmokeProviderConfig(providerName: SupportedProviderName): Resolve
     builtinProviderName: providerName,
     configPath: "<smoke-harness>",
     configSource: "defaults",
+    credential: {
+      activeCredentialId: defaults.apiKey === null ? null : "default",
+      availableCredentialIds: defaults.apiKey === null ? [] : ["default"],
+      credentialCount: defaults.apiKey === null ? 0 : 1,
+      credentialSource: defaults.apiKey === null ? null : "legacy_api_key",
+      credentialStatus: defaults.apiKey === null ? "missing" : "available"
+    },
     contextWindowSource: manifest.contextWindowTokens === null ? null : "provider_manifest",
     contextWindowTokens: manifest.contextWindowTokens,
     displayName: manifest.displayName,

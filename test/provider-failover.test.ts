@@ -4,7 +4,7 @@ import * as providerConfig from "../src/providers/config.js";
 import * as providerFactory from "../src/providers/provider-factory.js";
 import { ProviderError } from "../src/providers/provider-error.js";
 import { generateWithProviderFailover, clearFallbackProviderCache } from "../src/providers/provider-failover.js";
-import type { Provider, ProviderGenerateInput, ProviderGenerateResponse } from "../src/types/index.js";
+import type { Provider, ProviderGenerateResponse } from "../src/types/index.js";
 
 class StubProvider implements Provider {
   public attempts = 0;
@@ -15,7 +15,7 @@ class StubProvider implements Provider {
     private readonly behavior: () => Promise<ProviderGenerateResponse>
   ) {}
 
-  public async generate(_input: ProviderGenerateInput): Promise<ProviderGenerateResponse> {
+  public generate(): Promise<ProviderGenerateResponse> {
     this.attempts += 1;
     return this.behavior();
   }
@@ -28,18 +28,22 @@ describe("provider failover", () => {
   });
 
   it("retries with fallback provider on retriable errors", async () => {
-    const primary = new StubProvider("primary", "primary-model", async () => {
-      throw new ProviderError({
-        category: "rate_limit",
-        message: "rate limited",
-        modelName: "primary-model",
-        providerName: "primary"
-      });
-    });
-    const fallback = new StubProvider("fallback", "fallback-model", async () => ({
-      kind: "final",
-      message: "ok"
-    }));
+    const primary = new StubProvider("primary", "primary-model", () =>
+      Promise.reject(
+        new ProviderError({
+          category: "rate_limit",
+          message: "rate limited",
+          modelName: "primary-model",
+          providerName: "primary"
+        })
+      )
+    );
+    const fallback = new StubProvider("fallback", "fallback-model", () =>
+      Promise.resolve({
+        kind: "final",
+        message: "ok"
+      })
+    );
 
     vi.spyOn(providerConfig, "resolveMergedFallbackProviders").mockReturnValue([
       "fallback:fallback-model"
@@ -128,22 +132,26 @@ describe("provider failover", () => {
   });
 
   it("throws when all candidates fail", async () => {
-    const primary = new StubProvider("primary", "primary-model", async () => {
-      throw new ProviderError({
-        category: "rate_limit",
-        message: "rate limited",
-        modelName: "primary-model",
-        providerName: "primary"
-      });
-    });
-    const fallback = new StubProvider("fallback", "fallback-model", async () => {
-      throw new ProviderError({
-        category: "server_error",
-        message: "server down",
-        modelName: "fallback-model",
-        providerName: "fallback"
-      });
-    });
+    const primary = new StubProvider("primary", "primary-model", () =>
+      Promise.reject(
+        new ProviderError({
+          category: "rate_limit",
+          message: "rate limited",
+          modelName: "primary-model",
+          providerName: "primary"
+        })
+      )
+    );
+    const fallback = new StubProvider("fallback", "fallback-model", () =>
+      Promise.reject(
+        new ProviderError({
+          category: "server_error",
+          message: "server down",
+          modelName: "fallback-model",
+          providerName: "fallback"
+        })
+      )
+    );
 
     vi.spyOn(providerConfig, "resolveMergedFallbackProviders").mockReturnValue([
       "fallback:fallback-model"
@@ -230,18 +238,22 @@ describe("provider failover", () => {
   });
 
   it("does not retry on non-failover errors", async () => {
-    const primary = new StubProvider("primary", "primary-model", async () => {
-      throw new ProviderError({
-        category: "invalid_request",
-        message: "bad request",
-        modelName: "primary-model",
-        providerName: "primary"
-      });
-    });
-    const fallback = new StubProvider("fallback", "fallback-model", async () => ({
-      kind: "final",
-      message: "ok"
-    }));
+    const primary = new StubProvider("primary", "primary-model", () =>
+      Promise.reject(
+        new ProviderError({
+          category: "invalid_request",
+          message: "bad request",
+          modelName: "primary-model",
+          providerName: "primary"
+        })
+      )
+    );
+    const fallback = new StubProvider("fallback", "fallback-model", () =>
+      Promise.resolve({
+        kind: "final",
+        message: "ok"
+      })
+    );
 
     vi.spyOn(providerConfig, "resolveMergedFallbackProviders").mockReturnValue([
       "fallback:fallback-model"
@@ -329,18 +341,22 @@ describe("provider failover", () => {
   });
 
   it("skips unconfigured fallback providers and duplicate provider names", async () => {
-    const primary = new StubProvider("primary", "primary-model", async () => {
-      throw new ProviderError({
-        category: "rate_limit",
-        message: "rate limited",
-        modelName: "primary-model",
-        providerName: "primary"
-      });
-    });
-    const fallback = new StubProvider("fallback", "fallback-model", async () => ({
-      kind: "final",
-      message: "ok"
-    }));
+    const primary = new StubProvider("primary", "primary-model", () =>
+      Promise.reject(
+        new ProviderError({
+          category: "rate_limit",
+          message: "rate limited",
+          modelName: "primary-model",
+          providerName: "primary"
+        })
+      )
+    );
+    const fallback = new StubProvider("fallback", "fallback-model", () =>
+      Promise.resolve({
+        kind: "final",
+        message: "ok"
+      })
+    );
 
     vi.spyOn(providerConfig, "resolveMergedFallbackProviders").mockReturnValue([
       "primary:other-model",
