@@ -17,6 +17,15 @@ import {
 import { createApplication, resolveAppConfig } from "../runtime/bootstrap.js";
 import type { ModelSelectionView } from "../runtime/operations/model-selection-service.js";
 import { formatEnvProviderOverrideNotice } from "../providers/provider-env.js";
+import {
+  formatAuxiliaryFallbackSection,
+  formatAuxiliarySlotSection,
+  formatConfiguredModelSection,
+  formatEnvironmentOnlyModelSection,
+  formatFallbackProviderSection,
+  formatFallbackStatusSection,
+  formatModelAliasSection
+} from "../presentation/model-formatters.js";
 
 export interface ModelCommandFormatOptions {
   json?: boolean;
@@ -47,76 +56,18 @@ export function formatModelSelectionView(view: ModelSelectionView): string {
     `Context Window Tokens: ${view.current.contextWindowTokens ?? "-"}`,
     `Credential: ${view.current.credential.credentialStatus} (${view.current.credential.activeCredentialId ?? "-"})`,
     "",
-    "Configured models:"
-  ];
-
-  if (view.configuredModels.length === 0) {
-    lines.push("- (none)");
-  } else {
-    for (const [index, entry] of view.configuredModels.entries()) {
-      const marker = entry.current ? " *" : "";
-      lines.push(
-        `- ${index + 1}. ${entry.selection} (${entry.displayName}) [${entry.configSource}]${marker}`
-      );
-    }
-  }
-
-  if (view.envOnlyProviders.length > 0) {
-    lines.push("", "Environment-only (not persistable):");
-    for (const entry of view.envOnlyProviders) {
-      lines.push(`- ${entry.selection} [env]`);
-    }
-  }
-
-  if (view.aliases.length > 0) {
-    lines.push("", "Aliases:");
-    for (const entry of view.aliases) {
-      lines.push(`- ${entry.alias} -> ${entry.target}${entry.current ? " *" : ""}`);
-    }
-  }
-
-  lines.push("", "Fallback providers:");
-  if (view.fallback.main.length === 0) {
-    lines.push("- (none)");
-  } else {
-    for (const [index, selection] of view.fallback.main.entries()) {
-      lines.push(`- ${index + 1}. ${selection}`);
-    }
-  }
-
-  if (Object.keys(view.fallback.auxiliary).length > 0) {
-    lines.push("", "Auxiliary fallback:");
-    for (const [slot, selections] of Object.entries(view.fallback.auxiliary)) {
-      lines.push(`- ${slot}: ${selections.join(" -> ")}`);
-    }
-  }
-
-  if (view.fallback.status.updatedAt !== null) {
-    lines.push("", "Fallback status:");
-    lines.push(`- updatedAt: ${view.fallback.status.updatedAt}`);
-    if (view.fallback.status.activeFallback !== null) {
-      lines.push(
-        `- active: ${view.fallback.status.activeFallback.fromProvider} -> ${view.fallback.status.activeFallback.providerName} (${view.fallback.status.activeFallback.reason})`
-      );
-    }
-    if (view.fallback.status.lastFailure !== null) {
-      lines.push(
-        `- last failure: ${view.fallback.status.lastFailure.providerName} ${view.fallback.status.lastFailure.errorCategory}`
-      );
-    }
-  }
-
-  lines.push("", "Auxiliary slots:");
-  for (const [slot, value] of Object.entries(view.auxiliary)) {
-    lines.push(`- ${slot}: ${value}`);
-  }
-
-  lines.push(
+    ...formatConfiguredModelSection(view),
+    ...formatEnvironmentOnlyModelSection(view),
+    ...formatModelAliasSection(view),
+    ...formatFallbackProviderSection(view.fallback),
+    ...formatAuxiliaryFallbackSection(view.fallback),
+    ...formatFallbackStatusSection(view.fallback),
+    ...formatAuxiliarySlotSection(view.auxiliary),
     "",
     "Switch with: talon model set <provider:model>",
     "Session override: talon model set <selection> --session <id>",
     "Clear session override: talon model clear --session <id>"
-  );
+  ];
   return lines.join("\n");
 }
 

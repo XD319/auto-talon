@@ -3,6 +3,15 @@ import type { ModelSelectionView } from "../runtime/operations/model-selection-s
 import type { ProviderSwitchPersistScope } from "../runtime/operations/provider-switch-service.js";
 import { formatProviderSelection } from "../runtime/operations/provider-switch-service.js";
 import { formatEnvProviderOverrideNotice } from "../providers/provider-env.js";
+import {
+  formatAuxiliaryFallbackSection,
+  formatAuxiliarySlotSection,
+  formatConfiguredModelSection,
+  formatEnvironmentOnlyModelSection,
+  formatFallbackProviderSection,
+  formatFallbackStatusSection,
+  formatModelAliasSection
+} from "../presentation/model-formatters.js";
 
 export interface ModelCommandResult {
   kind: "cleared" | "error" | "list" | "status" | "switched";
@@ -128,26 +137,8 @@ export function formatModelListMessage(view: ModelSelectionView): string {
     `Current model: ${view.current.selection}`,
     `Source: ${formatModelSource(view.current.source)}${view.current.strict ? " (strict)" : ""}`,
     "",
-    "Configured models:"
-  ];
-
-  if (view.configuredModels.length === 0) {
-    lines.push("- (none)");
-  } else {
-    for (const [index, entry] of view.configuredModels.entries()) {
-      const marker = entry.current ? " *" : "";
-      lines.push(`- ${index + 1}. ${entry.selection} (${entry.displayName}) [${entry.configSource}]${marker}`);
-    }
-  }
-
-  if (view.aliases.length > 0) {
-    lines.push("", "Aliases:");
-    for (const entry of view.aliases) {
-      lines.push(`- ${entry.alias} -> ${entry.target}${entry.current ? " *" : ""}`);
-    }
-  }
-
-  lines.push(
+    ...formatConfiguredModelSection(view),
+    ...formatModelAliasSection(view),
     "",
     `Credential: ${credential.credentialStatus} (${credential.activeCredentialId ?? "-"})`,
     `Fallback: ${fallback.main.length === 0 ? "(none)" : fallback.main.join(" -> ")}`,
@@ -156,7 +147,7 @@ export function formatModelListMessage(view: ModelSelectionView): string {
     "Switch with: /model <number> or /model <provider:model>",
     "Clear session override: /model default",
     "Details: /model status"
-  );
+  ];
   return lines.join("\n");
 }
 
@@ -175,72 +166,14 @@ export function formatModelStatusMessage(view: ModelSelectionView): string {
     `Session override: ${view.session.modelSelection?.selection ?? "-"}`,
     `Routing mode: ${view.routing.mode}`,
     "",
-    "Configured models:"
+    ...formatConfiguredModelSection(view),
+    ...formatEnvironmentOnlyModelSection(view),
+    ...formatModelAliasSection(view),
+    ...formatFallbackProviderSection(fallback),
+    ...formatAuxiliaryFallbackSection(fallback),
+    ...formatFallbackStatusSection(fallback),
+    ...formatAuxiliarySlotSection(view.auxiliary, { emptyLabel: "- (none)" })
   ];
-
-  if (view.configuredModels.length === 0) {
-    lines.push("- (none)");
-  } else {
-    for (const [index, entry] of view.configuredModels.entries()) {
-      const marker = entry.current ? " *" : "";
-      lines.push(`- ${index + 1}. ${entry.selection} (${entry.displayName}) [${entry.configSource}]${marker}`);
-    }
-  }
-
-  if (view.envOnlyProviders.length > 0) {
-    lines.push("", "Environment-only (not persistable):");
-    for (const entry of view.envOnlyProviders) {
-      lines.push(`- ${entry.selection} [env]`);
-    }
-  }
-
-  if (view.aliases.length > 0) {
-    lines.push("", "Aliases:");
-    for (const entry of view.aliases) {
-      lines.push(`- ${entry.alias} -> ${entry.target}${entry.current ? " *" : ""}`);
-    }
-  }
-
-  lines.push("", "Fallback providers:");
-  if (fallback.main.length === 0) {
-    lines.push("- (none)");
-  } else {
-    for (const [index, selection] of fallback.main.entries()) {
-      lines.push(`- ${index + 1}. ${selection}`);
-    }
-  }
-
-  if (Object.keys(fallback.auxiliary).length > 0) {
-    lines.push("", "Auxiliary fallback:");
-    for (const [slot, selections] of Object.entries(fallback.auxiliary)) {
-      lines.push(`- ${slot}: ${selections.join(" -> ")}`);
-    }
-  }
-
-  if (fallback.status.updatedAt !== null) {
-    lines.push("", "Fallback status:");
-    lines.push(`- updatedAt: ${fallback.status.updatedAt}`);
-    if (fallback.status.activeFallback !== null) {
-      lines.push(
-        `- active: ${fallback.status.activeFallback.fromProvider} -> ${fallback.status.activeFallback.providerName} (${fallback.status.activeFallback.reason})`
-      );
-    }
-    if (fallback.status.lastFailure !== null) {
-      lines.push(
-        `- last failure: ${fallback.status.lastFailure.providerName} ${fallback.status.lastFailure.errorCategory}`
-      );
-    }
-  }
-
-  lines.push("", "Auxiliary slots:");
-  const auxiliaryEntries = Object.entries(view.auxiliary);
-  if (auxiliaryEntries.length === 0) {
-    lines.push("- (none)");
-  } else {
-    for (const [slot, selection] of auxiliaryEntries) {
-      lines.push(`- ${slot}: ${selection}`);
-    }
-  }
 
   return lines.join("\n");
 }
