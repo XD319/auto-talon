@@ -287,7 +287,7 @@ export function formatRecentlyReadFilesSummary(entries: RecentFileReadEntry[]): 
 export function recordRecentFileReadFromToolCall(
   cache: RecentFileReadCache,
   toolName: string,
-  toolInput: { path?: unknown },
+  _toolInput: { path?: unknown },
   output: unknown,
   toolCallId: string | null = null
 ): void {

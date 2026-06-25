@@ -27,12 +27,10 @@ export class DockerShellExecutor implements ShellCommandExecutor {
   private readonly dockerImage: string;
   private readonly maxOutputBytes: number;
   private readonly mounts: DockerMount[];
-  private readonly workspaceRoot: string;
 
   public constructor(config: DockerShellExecutorConfig) {
     this.dockerImage = config.dockerImage;
     this.maxOutputBytes = config.maxOutputBytes ?? 200_000;
-    this.workspaceRoot = resolve(config.workspaceRoot);
     this.mounts = buildMounts(config);
     assertDockerAvailable();
   }

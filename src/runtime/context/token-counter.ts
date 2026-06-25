@@ -32,7 +32,7 @@ export function computePromptTokens(
 }
 
 export function recordApiUsage(
-  state: HybridTokenCounterState,
+  _state: HybridTokenCounterState,
   inputTokens: number,
   messageCount: number
 ): HybridTokenCounterState {

@@ -34,7 +34,7 @@ export class McpToolAdapter implements ToolDefinition<typeof mcpToolInputSchema,
 
   public constructor(
     private readonly tool: McpToolDescriptor,
-    private readonly config: McpServerConfig,
+    config: McpServerConfig,
     private readonly handle: McpClientHandle
   ) {
     this.name = `mcp__${tool.serverId}__${tool.name}`;
