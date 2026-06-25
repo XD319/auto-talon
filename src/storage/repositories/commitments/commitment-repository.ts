@@ -10,6 +10,7 @@ import type {
   JsonObject
 } from "../../../types/index.js";
 import { parseJsonValue, serializeJsonValue } from "../json.js";
+import { appendLimitClause, buildWhereClause, requirePersisted } from "../sqlite-helpers.js";
 
 interface CommitmentRow {
   commitment_id: string;
@@ -61,11 +62,7 @@ export class SqliteCommitmentRepository implements CommitmentRepository {
         record.completedAt ?? null,
         serializeJsonValue(record.metadata ?? {})
       );
-    const persisted = this.findById(commitmentId);
-    if (persisted === null) {
-      throw new Error(`Commitment ${commitmentId} was not persisted.`);
-    }
-    return persisted;
+    return requirePersisted(this.findById(commitmentId), `Commitment ${commitmentId} was not persisted.`);
   }
 
   public findById(commitmentId: string): CommitmentRecord | null {
@@ -76,32 +73,21 @@ export class SqliteCommitmentRepository implements CommitmentRepository {
   }
 
   public list(query: CommitmentListQuery = {}): CommitmentRecord[] {
-    const clauses: string[] = [];
-    const values: Array<number | string> = [];
-    if (query.sessionId !== undefined) {
-      clauses.push("session_id = ?");
-      values.push(query.sessionId);
-    }
-    if (query.ownerUserId !== undefined) {
-      clauses.push("owner_user_id = ?");
-      values.push(query.ownerUserId);
-    }
-    if (query.status !== undefined) {
-      clauses.push("status = ?");
-      values.push(query.status);
-    }
-    if (query.statuses !== undefined && query.statuses.length > 0) {
-      clauses.push(`status IN (${query.statuses.map(() => "?").join(", ")})`);
-      values.push(...query.statuses);
-    }
-    const whereClause = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
-    const limitClause = query.limit === undefined ? "" : " LIMIT ?";
-    if (query.limit !== undefined) {
-      values.push(query.limit);
-    }
+    const { params: whereParams, whereSql } = buildWhereClause([
+      { sql: "session_id = ?", value: query.sessionId ?? null, when: query.sessionId !== undefined },
+      { sql: "owner_user_id = ?", value: query.ownerUserId ?? null, when: query.ownerUserId !== undefined },
+      { sql: "status = ?", value: query.status ?? null, when: query.status !== undefined },
+      {
+        sql: `status IN (${(query.statuses ?? []).map(() => "?").join(", ")})`,
+        values: query.statuses ?? [],
+        when: query.statuses !== undefined && query.statuses.length > 0
+      }
+    ]);
+    const { limitSql, params } = appendLimitClause(whereParams, query.limit);
+    const whereClause = whereSql.length === 0 ? "" : ` ${whereSql}`;
     const rows = this.database
-      .prepare(`SELECT * FROM commitments${whereClause} ORDER BY updated_at DESC${limitClause}`)
-      .all(...values) as unknown as CommitmentRow[];
+      .prepare(`SELECT * FROM commitments${whereClause} ORDER BY updated_at DESC${limitSql}`)
+      .all(...params) as unknown as CommitmentRow[];
     return rows.map((row) => this.mapRow(row));
   }
 

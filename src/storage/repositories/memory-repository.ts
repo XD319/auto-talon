@@ -12,6 +12,7 @@ import type {
 } from "../../types/index.js";
 
 import { parseJsonValue, serializeJsonValue } from "./json.js";
+import { appendLimitClause, buildWhereClause, requirePersisted } from "./sqlite-helpers.js";
 
 interface MemoryRow {
   memory_id: string;
@@ -92,12 +93,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
         serializeJsonValue(record.metadata ?? {})
       );
 
-    const persisted = this.findById(memoryId);
-    if (persisted === null) {
-      throw new Error(`Memory ${memoryId} was not persisted.`);
-    }
-
-    return persisted;
+    return requirePersisted(this.findById(memoryId), `Memory ${memoryId} was not persisted.`);
   }
 
   public findById(memoryId: string): MemoryRecord | null {
@@ -109,35 +105,21 @@ export class SqliteMemoryRepository implements MemoryRepository {
   }
 
   public list(query: MemoryQuery = {}): MemoryRecord[] {
-    const clauses: string[] = [];
-    const values: Array<number | string> = [];
-
-    if (query.scope !== undefined) {
-      clauses.push("scope = ?");
-      values.push(denormalizeScope(query.scope));
-    }
-
-    if (query.scopeKey !== undefined) {
-      clauses.push("scope_key = ?");
-      values.push(query.scopeKey);
-    }
-
-    if (query.includeRejected !== true) {
-      clauses.push("status <> 'rejected'");
-    }
-
-    if (query.includeExpired !== true) {
-      clauses.push("(expires_at IS NULL OR expires_at > ?)");
-      values.push(new Date().toISOString());
-    }
-
-    const limitClause = query.limit === undefined ? "" : ` LIMIT ${query.limit}`;
-    const whereClause = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
+    const { params: whereParams, whereSql } = buildWhereClause([
+      { sql: "scope = ?", value: query.scope === undefined ? null : denormalizeScope(query.scope), when: query.scope !== undefined },
+      { sql: "scope_key = ?", value: query.scopeKey ?? null, when: query.scopeKey !== undefined },
+      { sql: "status <> 'rejected'", when: query.includeRejected !== true },
+      {
+        sql: "(expires_at IS NULL OR expires_at > ?)",
+        value: new Date().toISOString(),
+        when: query.includeExpired !== true
+      }
+    ]);
+    const { limitSql, params } = appendLimitClause(whereParams, query.limit);
+    const whereClause = whereSql.length === 0 ? "" : ` ${whereSql}`;
     const rows = this.database
-      .prepare(
-        `SELECT * FROM memories${whereClause} ORDER BY updated_at DESC, confidence DESC${limitClause}`
-      )
-      .all(...values) as unknown as MemoryRow[];
+      .prepare(`SELECT * FROM memories${whereClause} ORDER BY updated_at DESC, confidence DESC${limitSql}`)
+      .all(...params) as unknown as MemoryRow[];
 
     return rows.map((row) => this.mapRow(row));
   }

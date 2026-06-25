@@ -11,6 +11,7 @@ import type {
 } from "../../../types/index.js";
 
 import { parseJsonValue, serializeJsonValue } from "../json.js";
+import { appendLimitClause, buildWhereClause, requirePersisted } from "../sqlite-helpers.js";
 
 interface InboxItemRow {
   inbox_id: string;
@@ -73,11 +74,7 @@ export class SqliteInboxRepository implements InboxRepository {
         record.doneAt ?? null,
         serializeJsonValue(record.metadata ?? {})
       );
-    const persisted = this.findById(inboxId);
-    if (persisted === null) {
-      throw new Error(`Inbox item ${inboxId} was not persisted.`);
-    }
-    return persisted;
+    return requirePersisted(this.findById(inboxId), `Inbox item ${inboxId} was not persisted.`);
   }
 
   public findById(inboxId: string): InboxItem | null {
@@ -95,40 +92,23 @@ export class SqliteInboxRepository implements InboxRepository {
   }
 
   public list(query: InboxListQuery = {}): InboxItem[] {
-    const clauses: string[] = [];
-    const values: Array<number | string> = [];
-    if (query.userId !== undefined) {
-      clauses.push("user_id = ?");
-      values.push(query.userId);
-    }
-    if (query.taskId !== undefined) {
-      clauses.push("task_id = ?");
-      values.push(query.taskId);
-    }
-    if (query.sessionId !== undefined) {
-      clauses.push("session_id = ?");
-      values.push(query.sessionId);
-    }
-    if (query.category !== undefined) {
-      clauses.push("category = ?");
-      values.push(query.category);
-    }
-    if (query.status !== undefined) {
-      clauses.push("status = ?");
-      values.push(query.status);
-    }
-    if (query.statuses !== undefined && query.statuses.length > 0) {
-      clauses.push(`status IN (${query.statuses.map(() => "?").join(", ")})`);
-      values.push(...query.statuses);
-    }
-    const whereClause = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
-    const limitClause = query.limit === undefined ? "" : " LIMIT ?";
-    if (query.limit !== undefined) {
-      values.push(query.limit);
-    }
+    const { params: whereParams, whereSql } = buildWhereClause([
+      { sql: "user_id = ?", value: query.userId ?? null, when: query.userId !== undefined },
+      { sql: "task_id = ?", value: query.taskId ?? null, when: query.taskId !== undefined },
+      { sql: "session_id = ?", value: query.sessionId ?? null, when: query.sessionId !== undefined },
+      { sql: "category = ?", value: query.category ?? null, when: query.category !== undefined },
+      { sql: "status = ?", value: query.status ?? null, when: query.status !== undefined },
+      {
+        sql: `status IN (${(query.statuses ?? []).map(() => "?").join(", ")})`,
+        values: query.statuses ?? [],
+        when: query.statuses !== undefined && query.statuses.length > 0
+      }
+    ]);
+    const { limitSql, params } = appendLimitClause(whereParams, query.limit);
+    const whereClause = whereSql.length === 0 ? "" : ` ${whereSql}`;
     const rows = this.database
-      .prepare(`SELECT * FROM inbox_items${whereClause} ORDER BY created_at DESC${limitClause}`)
-      .all(...values) as unknown as InboxItemRow[];
+      .prepare(`SELECT * FROM inbox_items${whereClause} ORDER BY created_at DESC${limitSql}`)
+      .all(...params) as unknown as InboxItemRow[];
     return rows.map((row) => this.mapRow(row));
   }
 

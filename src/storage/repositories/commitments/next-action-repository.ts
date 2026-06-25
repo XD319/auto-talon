@@ -10,6 +10,7 @@ import type {
   NextActionUpdatePatch
 } from "../../../types/index.js";
 import { parseJsonValue, serializeJsonValue } from "../json.js";
+import { appendLimitClause, buildWhereClause, requirePersisted } from "../sqlite-helpers.js";
 
 interface NextActionRow {
   next_action_id: string;
@@ -61,11 +62,7 @@ export class SqliteNextActionRepository implements NextActionRepository {
         record.completedAt ?? null,
         serializeJsonValue(record.metadata ?? {})
       );
-    const persisted = this.findById(nextActionId);
-    if (persisted === null) {
-      throw new Error(`Next action ${nextActionId} was not persisted.`);
-    }
-    return persisted;
+    return requirePersisted(this.findById(nextActionId), `Next action ${nextActionId} was not persisted.`);
   }
 
   public findById(nextActionId: string): NextActionRecord | null {
@@ -76,32 +73,21 @@ export class SqliteNextActionRepository implements NextActionRepository {
   }
 
   public list(query: NextActionListQuery = {}): NextActionRecord[] {
-    const clauses: string[] = [];
-    const values: Array<number | string> = [];
-    if (query.sessionId !== undefined) {
-      clauses.push("session_id = ?");
-      values.push(query.sessionId);
-    }
-    if (query.commitmentId !== undefined) {
-      clauses.push("commitment_id = ?");
-      values.push(query.commitmentId);
-    }
-    if (query.status !== undefined) {
-      clauses.push("status = ?");
-      values.push(query.status);
-    }
-    if (query.statuses !== undefined && query.statuses.length > 0) {
-      clauses.push(`status IN (${query.statuses.map(() => "?").join(", ")})`);
-      values.push(...query.statuses);
-    }
-    const whereClause = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
-    const limitClause = query.limit === undefined ? "" : " LIMIT ?";
-    if (query.limit !== undefined) {
-      values.push(query.limit);
-    }
+    const { params: whereParams, whereSql } = buildWhereClause([
+      { sql: "session_id = ?", value: query.sessionId ?? null, when: query.sessionId !== undefined },
+      { sql: "commitment_id = ?", value: query.commitmentId ?? null, when: query.commitmentId !== undefined },
+      { sql: "status = ?", value: query.status ?? null, when: query.status !== undefined },
+      {
+        sql: `status IN (${(query.statuses ?? []).map(() => "?").join(", ")})`,
+        values: query.statuses ?? [],
+        when: query.statuses !== undefined && query.statuses.length > 0
+      }
+    ]);
+    const { limitSql, params } = appendLimitClause(whereParams, query.limit);
+    const whereClause = whereSql.length === 0 ? "" : ` ${whereSql}`;
     const rows = this.database
-      .prepare(`SELECT * FROM next_actions${whereClause} ORDER BY rank ASC, created_at ASC${limitClause}`)
-      .all(...values) as unknown as NextActionRow[];
+      .prepare(`SELECT * FROM next_actions${whereClause} ORDER BY rank ASC, created_at ASC${limitSql}`)
+      .all(...params) as unknown as NextActionRow[];
     return rows.map((row) => this.mapRow(row));
   }
 

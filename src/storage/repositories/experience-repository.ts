@@ -14,6 +14,7 @@ import type {
 } from "../../types/index.js";
 
 import { parseJsonValue, serializeJsonValue } from "./json.js";
+import { appendLimitClause, buildWhereClause, requirePersisted } from "./sqlite-helpers.js";
 
 interface ExperienceRow {
   experience_id: string;
@@ -109,12 +110,7 @@ export class SqliteExperienceRepository implements ExperienceRepository {
         null
       );
 
-    const persisted = this.findById(experienceId);
-    if (persisted === null) {
-      throw new Error(`Experience ${experienceId} was not persisted.`);
-    }
-
-    return persisted;
+    return requirePersisted(this.findById(experienceId), `Experience ${experienceId} was not persisted.`);
   }
 
   public findById(experienceId: string): ExperienceRecord | null {
@@ -126,61 +122,26 @@ export class SqliteExperienceRepository implements ExperienceRepository {
   }
 
   public list(query: ExperienceQuery = {}): ExperienceRecord[] {
-    const clauses: string[] = [];
-    const values: Array<number | string> = [];
-
-    if (query.type !== undefined) {
-      clauses.push("type = ?");
-      values.push(query.type);
-    }
-
-    if (query.sourceType !== undefined) {
-      clauses.push("source_type = ?");
-      values.push(query.sourceType);
-    }
-
-    if (query.status !== undefined) {
-      clauses.push("status = ?");
-      values.push(query.status);
-    }
-
-    if (query.statuses !== undefined && query.statuses.length > 0) {
-      clauses.push(`status IN (${query.statuses.map(() => "?").join(", ")})`);
-      values.push(...query.statuses);
-    }
-
-    if (query.minValueScore !== undefined) {
-      clauses.push("value_score >= ?");
-      values.push(query.minValueScore);
-    }
-
-    if (query.taskId !== undefined) {
-      clauses.push("task_id = ?");
-      values.push(query.taskId);
-    }
-
-    if (query.reviewerId !== undefined) {
-      clauses.push("reviewer_id = ?");
-      values.push(query.reviewerId);
-    }
-
-    if (query.scope !== undefined) {
-      clauses.push("scope_name = ?");
-      values.push(query.scope);
-    }
-
-    if (query.scopeKey !== undefined) {
-      clauses.push("scope_key = ?");
-      values.push(query.scopeKey);
-    }
-
-    const limitClause = query.limit === undefined ? "" : ` LIMIT ${query.limit}`;
-    const whereClause = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
+    const { params: whereParams, whereSql } = buildWhereClause([
+      { sql: "type = ?", value: query.type ?? null, when: query.type !== undefined },
+      { sql: "source_type = ?", value: query.sourceType ?? null, when: query.sourceType !== undefined },
+      { sql: "status = ?", value: query.status ?? null, when: query.status !== undefined },
+      {
+        sql: `status IN (${(query.statuses ?? []).map(() => "?").join(", ")})`,
+        values: query.statuses ?? [],
+        when: query.statuses !== undefined && query.statuses.length > 0
+      },
+      { sql: "value_score >= ?", value: query.minValueScore ?? null, when: query.minValueScore !== undefined },
+      { sql: "task_id = ?", value: query.taskId ?? null, when: query.taskId !== undefined },
+      { sql: "reviewer_id = ?", value: query.reviewerId ?? null, when: query.reviewerId !== undefined },
+      { sql: "scope_name = ?", value: query.scope ?? null, when: query.scope !== undefined },
+      { sql: "scope_key = ?", value: query.scopeKey ?? null, when: query.scopeKey !== undefined }
+    ]);
+    const { limitSql, params } = appendLimitClause(whereParams, query.limit);
+    const whereClause = whereSql.length === 0 ? "" : ` ${whereSql}`;
     const rows = this.database
-      .prepare(
-        `SELECT * FROM experiences${whereClause} ORDER BY value_score DESC, updated_at DESC${limitClause}`
-      )
-      .all(...values) as unknown as ExperienceRow[];
+      .prepare(`SELECT * FROM experiences${whereClause} ORDER BY value_score DESC, updated_at DESC${limitSql}`)
+      .all(...params) as unknown as ExperienceRow[];
 
     return rows.map((row) => this.mapRow(row));
   }
