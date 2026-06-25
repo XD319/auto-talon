@@ -65,6 +65,8 @@ import {
   resolveAppConfig,
   timingToCreateFields,
   RUNTIME_VERSION,
+  type AppRuntimeHandle,
+  type CreateApplicationOptions,
   type ResolveAppConfigOptions
 } from "../runtime/index.js";
 import { runGitReadOnly } from "../runtime/workspace/git-readonly.js";
@@ -556,17 +558,13 @@ export async function main(argv = process.argv): Promise<void> {
     .command("list")
     .option("--status <status>", "Filter status: active | paused | completed | archived")
     .action((commandOptions: { status?: "active" | "paused" | "completed" | "archived" }) => {
-      const handle = createApplication(process.cwd());
-      try {
+      withApplication(process.cwd(), (handle) => {
         const query = commandOptions.status === undefined ? undefined : { status: commandOptions.status };
         console.log(formatScheduleList(handle.service.listSchedules(query)));
-      } finally {
-        handle.close();
-      }
+      });
     });
   scheduleCommand.command("show").argument("<schedule_id>").action((scheduleId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
+    withApplication(process.cwd(), (handle) => {
       const schedule = handle.service.showSchedule(scheduleId);
       if (schedule === null) {
         console.error(`Schedule ${scheduleId} not found.`);
@@ -574,9 +572,7 @@ export async function main(argv = process.argv): Promise<void> {
         return;
       }
       console.log(formatScheduleDetail(schedule));
-    } finally {
-      handle.close();
-    }
+    });
   });
   scheduleCommand
     .command("edit")
@@ -593,8 +589,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--backoff-base <ms>", "Backoff base milliseconds", parsePositiveIntegerOption("--backoff-base"))
     .option("--backoff-max <ms>", "Backoff max milliseconds", parsePositiveIntegerOption("--backoff-max"))
     .action((scheduleId: string, commandOptions: ScheduleEditOptions) => {
-      const handle = createApplication(process.cwd());
-      try {
+      withApplication(process.cwd(), (handle) => {
         const timingTouched =
           commandOptions.at !== undefined ||
           commandOptions.every !== undefined ||
@@ -629,34 +624,23 @@ export async function main(argv = process.argv): Promise<void> {
           ...(commandOptions.timezone !== undefined ? { timezone: commandOptions.timezone } : {})
         });
         console.log(formatScheduleDetail(updated));
-      } finally {
-        handle.close();
-      }
+      });
     });
   scheduleCommand.command("pause").argument("<schedule_id>").action((scheduleId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
+    withApplication(process.cwd(), (handle) => {
       console.log(formatScheduleDetail(handle.service.pauseSchedule(scheduleId)));
-    } finally {
-      handle.close();
-    }
+    });
   });
   scheduleCommand.command("resume").argument("<schedule_id>").action((scheduleId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
+    withApplication(process.cwd(), (handle) => {
       console.log(formatScheduleDetail(handle.service.resumeSchedule(scheduleId)));
-    } finally {
-      handle.close();
-    }
+    });
   });
   scheduleCommand.command("run-now").argument("<schedule_id>").action((scheduleId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
+    withApplication(process.cwd(), (handle) => {
       const run = handle.service.runScheduleNow(scheduleId);
       console.log(formatScheduleRunList([run]));
-    } finally {
-      handle.close();
-    }
+    });
   });
   scheduleCommand
     .command("runs")
@@ -664,8 +648,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--status <status>", "Filter status")
     .option("--tail <count>", "Number of latest runs", parsePositiveIntegerOption("--tail"), 20)
     .action((scheduleId: string, commandOptions: { status?: string; tail: number }) => {
-      const handle = createApplication(process.cwd());
-      try {
+      withApplication(process.cwd(), (handle) => {
         const parsedStatus = commandOptions.status as
           | "queued"
           | "running"
@@ -681,25 +664,17 @@ export async function main(argv = process.argv): Promise<void> {
             : { status: parsedStatus, tail: commandOptions.tail };
         const runs = handle.service.listScheduleRuns(scheduleId, query);
         console.log(formatScheduleRunList(runs));
-      } finally {
-        handle.close();
-      }
+      });
     });
   scheduleCommand.command("remove").argument("<schedule_id>").description("Archive a schedule").action((scheduleId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
+    withApplication(process.cwd(), (handle) => {
       console.log(formatScheduleDetail(handle.service.archiveSchedule(scheduleId)));
-    } finally {
-      handle.close();
-    }
+    });
   });
   scheduleCommand.command("status").description("Summarize schedules and queued runs").action(() => {
-    const handle = createApplication(process.cwd());
-    try {
+    withApplication(process.cwd(), (handle) => {
       console.log(formatScheduleStatus(handle.service.scheduleStatus()));
-    } finally {
-      handle.close();
-    }
+    });
   });
   scheduleCommand.command("tick").description("Run one scheduler tick and exit").action(async () => {
     const handle = createApplication(process.cwd());
@@ -2895,6 +2870,19 @@ interface ProviderUseCommandOptions {
 
 function collectOption(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function withApplication<T>(
+  cwd: string,
+  action: (handle: AppRuntimeHandle) => T,
+  options: CreateApplicationOptions = {}
+): T {
+  const handle = createApplication(cwd, options);
+  try {
+    return action(handle);
+  } finally {
+    handle.close();
+  }
 }
 
 function parsePositiveIntegerOption(optionName: string): (value: string) => number {

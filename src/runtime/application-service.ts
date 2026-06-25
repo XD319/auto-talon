@@ -125,7 +125,7 @@ import {
   type ModelSelectionView
 } from "./operations/model-selection-service.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
-import { ScheduleFacade, SessionFacade } from "./facades/index.js";
+import { SessionFacade } from "./facades/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
 
@@ -377,7 +377,6 @@ const clarifyAnswerSchema = z
   );
 
 export class AgentApplicationService {
-  private readonly scheduleFacade: ScheduleFacade;
   private readonly sessionFacade: SessionFacade;
   private readonly approvalFailureContinuations = new Map<string, Promise<ApprovalActionResult>>();
   private switchProviderInFlight: Promise<SwitchProviderResult> | null = null;
@@ -387,7 +386,6 @@ export class AgentApplicationService {
       dependencies,
       (sessionId, taskId, output) => this.projectAssistantOutput(sessionId, taskId, output)
     );
-    this.scheduleFacade = new ScheduleFacade(dependencies);
   }
 
   public async runTask(options: RuntimeRunOptions): Promise<RunTaskResult> {
@@ -1257,55 +1255,55 @@ export class AgentApplicationService {
   }
 
   public startScheduler(): void {
-    this.scheduleFacade.startScheduler();
+    this.dependencies.schedulerService.start();
   }
 
   public stopScheduler(): void {
-    this.scheduleFacade.stopScheduler();
+    this.dependencies.schedulerService.stop();
   }
 
   public createSchedule(input: CreateScheduleInput): ScheduleRecord {
-    return this.scheduleFacade.createSchedule(input);
+    return this.dependencies.schedulerService.createSchedule(input);
   }
 
   public updateSchedule(scheduleId: string, input: UpdateScheduleInput): ScheduleRecord {
-    return this.scheduleFacade.updateSchedule(scheduleId, input);
+    return this.dependencies.schedulerService.updateSchedule(scheduleId, input);
   }
 
   public listSchedules(query?: ScheduleListQuery): ScheduleRecord[] {
-    return this.scheduleFacade.listSchedules(query);
+    return this.dependencies.schedulerService.listSchedules(query);
   }
 
   public showSchedule(scheduleId: string): ScheduleRecord | null {
-    return this.scheduleFacade.showSchedule(scheduleId);
+    return this.dependencies.schedulerService.showSchedule(scheduleId);
   }
 
   public listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[] {
-    return this.scheduleFacade.listScheduleRuns(scheduleId, query);
+    return this.dependencies.schedulerService.listScheduleRuns(scheduleId, query);
   }
 
   public scheduleStatus(): ReturnType<SchedulerService["status"]> {
-    return this.scheduleFacade.scheduleStatus();
+    return this.dependencies.schedulerService.status();
   }
 
   public async tickScheduleOnce(): Promise<void> {
-    await this.scheduleFacade.tickScheduleOnce();
+    await this.dependencies.schedulerService.tickOnce();
   }
 
   public archiveSchedule(scheduleId: string): ScheduleRecord {
-    return this.scheduleFacade.archiveSchedule(scheduleId);
+    return this.dependencies.schedulerService.archiveSchedule(scheduleId);
   }
 
   public pauseSchedule(scheduleId: string): ScheduleRecord {
-    return this.scheduleFacade.pauseSchedule(scheduleId);
+    return this.dependencies.schedulerService.pauseSchedule(scheduleId);
   }
 
   public resumeSchedule(scheduleId: string): ScheduleRecord {
-    return this.scheduleFacade.resumeSchedule(scheduleId);
+    return this.dependencies.schedulerService.resumeSchedule(scheduleId);
   }
 
   public runScheduleNow(scheduleId: string): ScheduleRunRecord {
-    return this.scheduleFacade.runScheduleNow(scheduleId);
+    return this.dependencies.schedulerService.runNow(scheduleId);
   }
 
   public listArtifacts(taskId: string): ArtifactRecord[] {
