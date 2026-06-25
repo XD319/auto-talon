@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { hasLegacyShortRemoteTimeout, type ResolvedProviderConfig } from "../../providers/index.js";
+import { configureSqliteConnection } from "../../storage/sqlite-connection.js";
 import type { ExperienceRecord, ProviderHealthCheck } from "../../types/index.js";
 import type { ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "../runtime-config.js";
 import { resolveDefaultShellConfig } from "../../tools/shell/shell-executor.js";
@@ -287,6 +288,7 @@ function canOpenDatabase(databasePath: string): boolean {
   }
   try {
     const db = new DatabaseSync(databasePath);
+    configureSqliteConnection(db);
     db.close();
     return true;
   } catch {
@@ -300,6 +302,7 @@ function readSchemaVersion(databasePath: string): number | null {
   }
   try {
     const db = new DatabaseSync(databasePath);
+    configureSqliteConnection(db);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };
     db.close();
     return row.user_version ?? 0;

@@ -7,6 +7,7 @@ import { runEvalReport } from "./eval.js";
 import { runBetaReadinessCheck } from "./beta-readiness.js";
 import type { SupportedProviderName } from "../providers/index.js";
 import { RUNTIME_SCHEMA_VERSION, runMigrations } from "../storage/migrations.js";
+import { configureSqliteConnection } from "../storage/sqlite-connection.js";
 
 export interface ReleaseChecklistItem {
   id: string;
@@ -414,6 +415,7 @@ function runPackDryRun(cwd: string): { details: string; files: string[]; ok: boo
 
 export function validateMigrationSchemaVersion(): { details: string; ok: boolean } {
   const db = new DatabaseSync(":memory:");
+  configureSqliteConnection(db);
   try {
     runMigrations(db);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };

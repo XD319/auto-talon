@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { runMigrations } from "./migrations.js";
+import { configureSqliteConnection } from "./sqlite-connection.js";
 import { SqliteApprovalRepository } from "./repositories/approval-repository.js";
 import { SqliteArtifactRepository } from "./repositories/artifact-repository.js";
 import { SqliteAuditLogRepository } from "./repositories/audit-log-repository.js";
@@ -67,6 +68,7 @@ export class StorageManager {
     }
 
     this.database = new DatabaseSync(config.databasePath);
+    configureSqliteConnection(this.database);
     runMigrations(this.database);
 
     this.tasks = new SqliteTaskRepository(this.database);

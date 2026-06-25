@@ -38,6 +38,7 @@ import { SkillVersionRegistry } from "../skills/versioning/index.js";
 import { StorageManager } from "../storage/database.js";
 import { migrateConfigFiles, validateConfigVersions } from "../storage/config-migration.js";
 import { RUNTIME_SCHEMA_VERSION } from "../storage/migrations.js";
+import { configureSqliteConnection } from "../storage/sqlite-connection.js";
 import { TraceService } from "../tracing/trace-service.js";
 import type {
   BudgetLimits,
@@ -1187,6 +1188,7 @@ function backupDatabaseIfMigrationNeeded(workspaceRoot: string, databasePath: st
 function readDatabaseSchemaVersion(databasePath: string): number | null {
   try {
     const db = new DatabaseSync(databasePath);
+    configureSqliteConnection(db);
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number };
     db.close();
     return row.user_version ?? 0;
