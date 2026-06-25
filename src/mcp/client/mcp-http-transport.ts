@@ -16,21 +16,16 @@ import type {
   McpToolDescriptor
 } from "../../types/index.js";
 import {
+  asObject,
+  jsonRpcError,
   normalizeContent,
   parsePrompts,
   parseResources,
-  parseTools
-} from "./mcp-stdio-transport.js";
-
-interface JsonRpcResponse {
-  id?: number;
-  result?: unknown;
-  error?: {
-    code?: number;
-    message?: string;
-    data?: unknown;
-  };
-}
+  parseTools,
+  startupTimeoutMs,
+  toolTimeoutMs,
+  type JsonRpcMessage
+} from "./mcp-protocol.js";
 
 export class McpHttpTransport implements McpClientHandle {
   public readonly serverId: string;
@@ -134,7 +129,7 @@ export class McpHttpTransport implements McpClientHandle {
     method: string,
     params: JsonObject,
     context?: McpInvocationContext
-  ): Promise<JsonRpcResponse> {
+  ): Promise<JsonRpcMessage> {
     if (context?.signal?.aborted === true) {
       throw new AppError({
         code: "interrupt",
@@ -150,7 +145,7 @@ export class McpHttpTransport implements McpClientHandle {
     params: JsonObject,
     timeoutMs: number,
     signal?: AbortSignal
-  ): Promise<JsonRpcResponse> {
+  ): Promise<JsonRpcMessage> {
     if (this.config.url === undefined) {
       throw new AppError({
         code: "tool_execution_error",
@@ -183,17 +178,9 @@ export class McpHttpTransport implements McpClientHandle {
           message: `MCP ${this.serverId}/${method} HTTP ${response.status}.`
         });
       }
-      const payload = (await response.json()) as JsonRpcResponse;
+      const payload = (await response.json()) as JsonRpcMessage;
       if (payload.error !== undefined) {
-        throw new AppError({
-          code: "tool_execution_error",
-          details: {
-            error: payload.error,
-            method,
-            serverId: this.serverId
-          },
-          message: `MCP ${this.serverId}/${method} failed: ${payload.error.message ?? "unknown error"}`
-        });
+        throw jsonRpcError(this.serverId, method, payload.error);
       }
       return payload;
     } catch (error) {
@@ -236,19 +223,4 @@ export class McpHttpTransport implements McpClientHandle {
     }
     return headers;
   }
-}
-
-function asObject(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return {};
-  }
-  return value as Record<string, unknown>;
-}
-
-function startupTimeoutMs(config: Pick<McpServerConfig, "startupTimeoutMs">): number {
-  return config.startupTimeoutMs ?? 10_000;
-}
-
-function toolTimeoutMs(config: Pick<McpServerConfig, "toolTimeoutMs">): number {
-  return config.toolTimeoutMs ?? 60_000;
 }
