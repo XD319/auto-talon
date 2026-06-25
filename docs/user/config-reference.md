@@ -57,6 +57,120 @@ that is currently effective in the workspace and writes its provider name,
 model, base URL, key, timeout, stream idle timeout, and retry settings to user
 config.
 
+Model selection is exposed through one shared view in CLI, TUI, and the local
+session API. The view reports the effective model, its source, configured
+selectable provider/model entries, aliases, fallback providers, auxiliary slots,
+and env-only selections that cannot be persisted by model commands.
+
+Useful commands:
+
+```bash
+talon model list --json
+talon model status --json
+talon model set <provider:model>
+talon model set <provider:model> --workspace
+talon model set <provider:model> --session <session-id>
+talon model clear --session <session-id>
+```
+
+In the TUI, `/model` shows the same configured list with numbers. Use
+`/model 1` to switch the active session to an item by number, `/model status`
+for the detailed view, and `/model default` to clear the current session
+override. Session selections are strict: if the selected provider/model is no
+longer configured, the switch fails visibly instead of silently falling back.
+
+Session model overrides are stored in `SessionRecord.metadata.modelSelection`
+with `{ "selection": "provider:model", "source": "session_user", "updatedAt": "..." }`.
+No database migration is required. Clearing the override removes that metadata
+and returns the runtime to the next default source.
+
+The local session API exposes the same behavior:
+
+- `GET /v1/models?sessionId=<id>` returns the model selection view.
+- `PATCH /v1/sessions/:id/model` with `{ "selection": "provider:model" }` sets a session override.
+- `PATCH /v1/sessions/:id/model` with `{ "selection": null }` clears it.
+- `GET /v1/sessions/:id` includes a `modelSelection` summary.
+
+Effective model precedence is: running session override, explicit runtime
+switch, `runtime.config.json` `routing.providers`, environment startup config,
+workspace provider config, then user provider config. Env-only selections are
+used for startup and status visibility, but are not written by `talon model set`
+or `/model`.
+
+Credential pools are optional and keep the legacy `apiKey` field compatible.
+When `credentials` is omitted, a non-empty `apiKey` is treated as the default
+credential. When `credentials` is present, AutoTalon chooses the first available
+entry by `priority`, skips disabled entries, skips entries in future cooldown,
+and reads `apiKeyEnv` values from the environment without persisting the secret.
+
+```json
+{
+  "providers": {
+    "openai-compatible": {
+      "baseUrl": "https://provider.example/v1",
+      "model": "coding-model",
+      "credentials": [
+        { "id": "primary", "apiKeyEnv": "PROVIDER_API_KEY", "priority": 0 },
+        { "id": "backup", "apiKeyEnv": "PROVIDER_API_KEY_BACKUP", "priority": 10 }
+      ]
+    }
+  }
+}
+```
+
+Credential pool commands manage `providers.<name>.credentials` without removing
+legacy `apiKey` compatibility:
+
+```bash
+talon provider credential list <provider>
+talon provider credential add-env <provider> PROVIDER_API_KEY --id primary --priority 0
+talon provider credential disable <provider> primary
+talon provider credential enable <provider> primary
+talon provider credential remove <provider> primary
+```
+
+Fallback config also keeps the legacy `fallbackProviders` list compatible.
+`fallback.main` is the structured main chain; `fallback.auxiliary.<slot>` sets a
+slot-specific chain and falls back to `main` when the slot has no chain.
+
+```json
+{
+  "fallbackProviders": ["backup:backup-model"],
+  "fallback": {
+    "main": ["backup:backup-model"],
+    "auxiliary": {
+      "reviewer": ["reviewer:reviewer-model"]
+    }
+  }
+}
+```
+
+Use `talon provider fallback add <selection> --slot reviewer` to edit an
+auxiliary chain. Runtime failover tries alternate available credentials for the
+same provider/model before trying the configured fallback provider chain. The
+model view includes `fallback.status` with the latest active fallback or failure
+summary, and trace/audit streams record `model_fallback_started`,
+`model_fallback_succeeded`, and `model_fallback_exhausted`.
+
+Provider manifests can be added without code changes under
+`~/.auto-talon/providers/*.json` or `.auto-talon/providers/*.json`. Workspace
+manifests override user manifests with the same `name`; regular
+`customProviders` entries still override manifest defaults when both exist.
+
+```json
+{
+  "name": "vendor-manifest",
+  "displayName": "Vendor Manifest",
+  "transport": "openai-compatible",
+  "openAiCompatible": {
+    "defaultBaseUrl": "https://manifest.example/v1",
+    "defaultDisplayName": "Vendor Manifest",
+    "defaultModel": "manifest-model"
+  },
+  "supportsStreaming": false,
+  "supportsToolCalls": false
+}
+```
 Provider entries can set two provider timeout values. `timeoutMs` is the
 request timeout for non-streaming calls and the connection/initial-response
 timeout before a streaming response starts. `streamIdleTimeoutMs` is the
@@ -248,3 +362,4 @@ Schedule boundaries in v0.1.0:
 Trace stream also includes commitment lifecycle events:
 - `commitment_created|updated|blocked|unblocked|completed|cancelled`
 - `next_action_created|updated|blocked|done`
+

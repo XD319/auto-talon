@@ -35,27 +35,44 @@ Common configuration knobs:
 - Workspace overrides: `.auto-talon/provider.config.json`
 - User config directory override: `AGENT_USER_CONFIG_DIR`
 - Current provider selector: `currentProvider`
-- Provider-specific entries: `providers`
+- Provider-specific entries: `providers` with optional `credentials` pools
 - Custom HTTP-compatible entries: `customProviders`
 - Model aliases for `/model`: `modelAliases`
-- Fallback provider chain: `fallbackProviders`
-- Auxiliary model slots: `.auto-talon/runtime.config.json` → `auxiliary`
+- Fallback provider chain: `fallbackProviders` and structured `fallback.main` / `fallback.auxiliary.<slot>`
+- Auxiliary model slots: `.auto-talon/runtime.config.json` `auxiliary`
 
-In `talon tui`, `/model` switches among already-configured providers without
-restarting the TUI. Provider visibility is global-first: user-level providers in
+In `talon tui`, `/model` shows the active model source and a numbered list of
+already-configured selectable models. Use `/model 1` to switch by number,
+`/model <provider:model>` or `/model <alias>` to switch by selection,
+`/model status` for the detailed view, and `/model default` to clear the active
+session override. Session overrides are strict: if the chosen provider/model is
+not configured, the command reports the error instead of using a hidden
+fallback.
+
+Provider visibility is global-first: user-level providers in
 `~/.auto-talon/provider.config.json` appear in every workspace. Workspace config
-can override fields for the current project or add workspace-only custom providers.
-Use `talon model`, `talon provider setup`, or `talon provider custom add` to add
-providers and credentials outside the session.
+can override fields for the current project or add workspace-only custom
+providers. Use `talon model`, `talon provider setup`, or
+`talon provider custom add` to add providers and credentials outside the
+session.
+
+CLI and API diagnostics use the same model view:
+
+- `talon model list --json`
+- `talon model status --json`
+- `talon model set <selection> --session <session-id>`
+- `talon model clear --session <session-id>`
+- `GET /v1/models?sessionId=<id>`
+- `PATCH /v1/sessions/:id/model`
 
 Model routing notes:
 
-- `runtime.config.json` → `routing.providers` selects tiered main providers when no explicit `/model` or `talon model set` switch is active in the session.
-- After an explicit switch, that provider is used for main turns until you switch again (soft budget downgrade can still move main turns to the cheap tier).
-- Auxiliary slots in `runtime.config.json` → `auxiliary` set to `auto` follow the current main provider.
+- `runtime.config.json` `routing.providers` selects tiered main providers when no explicit session model selection or runtime switch is active.
+- A session override is stored in session metadata and wins over `routing.providers` until `/model default` or `talon model clear --session <id>` clears it.
+- Auxiliary slots in `runtime.config.json` `auxiliary` set to `auto` follow the current main provider.
 - `modelAliases` can be used with `/model`, but persisted config writes the resolved provider name.
-- `AGENT_PROVIDER` is applied at startup and can override a saved `currentProvider`.
-- `talon model list` and `talon model status` currently return the same summary.
+- `AGENT_PROVIDER` is applied at startup before workspace/user defaults; env-only selections are shown in status but are not persistable by `/model`.
+- Effective precedence is: session override, explicit runtime switch, `routing.providers`, environment startup config, workspace config, user config.
 
 New workspaces do not choose `mock` automatically. If diagnostics show
 `Provider: unconfigured`, run `talon provider setup <provider>` to save a user
@@ -65,6 +82,25 @@ If a workspace already has the right endpoint and model, run
 `talon provider promote` there to make that effective provider config the user
 default for new workspaces.
 
+Credential pool notes:
+
+- Existing `apiKey` entries still work and become the `default` credential when no `credentials` array is present.
+- Prefer `credentials[].apiKeyEnv` for additional keys. `talon doctor` checks workspace config for plaintext secrets and reports only field paths.
+- `talon model status --json` shows credential status and available credential ids without printing secret values.
+- Failover rotates through additional available credentials for the active provider/model before moving to fallback providers.
+
+Fallback notes:
+
+- `fallbackProviders` remains supported for existing config files.
+- `fallback.main` is the structured main fallback chain.
+- `fallback.auxiliary.<slot>` overrides fallback order for auxiliary slots such as summarizers or reviewers.
+- Runtime status appears in `talon model status` under `fallback.status` after a fallback attempt.
+
+Provider manifest notes:
+
+- Place JSON manifests in `~/.auto-talon/providers/` for user-wide providers or `.auto-talon/providers/` for workspace providers.
+- Manifests declare provider-owned defaults such as transport, base URL, default model, context window, and streaming/tool-call support.
+- Configure keys separately through `providers.<name>.apiKey` or `providers.<name>.credentials`; manifests should not contain secrets.
 Diagnostics:
 
 - `talon provider status`
@@ -80,3 +116,5 @@ without rewriting it. Update the active config layer with
 `talon provider smoke` to exercise a synthetic post-tool turn. For streaming
 providers, raise `--stream-idle-timeout-ms` only when the response starts but
 then goes silent between chunks.
+
+

@@ -1,4 +1,4 @@
-﻿# Commands
+# Commands
 
 Core:
 
@@ -36,8 +36,9 @@ Subsystems:
 - `talon provider list|current|status|setup|use|promote|test|smoke|stats|route`
 - `talon provider alias list|add|remove`
 - `talon provider custom list|add|remove`
-- `talon provider fallback list|add|remove|clear`
-- `talon model|model list|model status|model set <selection>`
+- `talon provider credential list|add-env|disable|enable|remove`
+- `talon provider fallback list|add|remove|clear [--slot <slot>]`
+- `talon model|model list [--json] [--session <id>]|model status [--json] [--session <id>]|model set <selection> [--workspace|--session <id>]|model clear --session <id>`
 - `talon model auxiliary list|set|reset`
 - `talon budget show --task <id>|--session <id>`
 - `talon memory list|show|search|snapshot|review|guide|add|forget|why|review-queue`
@@ -66,16 +67,17 @@ TUI slash commands (chat mode):
 - `/handoff status`
 - `/sessions` (session picker)
 - `/resume <session-id-prefix|title>`
-- `/model` (show current model and configured providers)
-- `/model list` (same as `/model`)
-- `/model <provider:model>` (switch model for this session without restarting TUI)
+- `/model` or `/model list` (show current model source and numbered configured models)
+- `/model status` (show aliases, fallback chain, auxiliary slots, and env-only selections)
+- `/model 1` (switch the active session by configured model number)
+- `/model <provider:model>` (set a strict model override for this session without restarting TUI)
+- `/model default` (clear the current session model override)
 - `/model <provider:model> --global` (switch and save to user provider config)
 - `/model <provider:model> --workspace` (switch and save to workspace provider config)
 - `/model <alias>` (use `modelAliases` from provider config)
-- Explicit `/model` switches take priority over `routing.providers` tier selection (soft budget downgrade still routes to the cheap tier)
+- Session model overrides take priority over `routing.providers` until cleared
 - Auxiliary slots set to `auto` follow the current main provider after a `/model` switch
 - Alias selections persist as the resolved provider name in `provider.config.json`
-- `talon model list` and `talon model status` currently show the same information
 - `/next list [session-id-prefix]`
 - `/next done <next-action-id-prefix>`
 - `/next block <next-action-id-prefix> <reason...>`
@@ -105,3 +107,4 @@ Search tool notes:
 - The runtime `search_files` tool is a grep-style workspace search tool. It supports literal or regex queries, include/exclude globs, filename matching, and result modes: `matches`, `files`, and `count`.
 - `matches` returns line hits with context, `files` lists matching files, and `count` reports per-file and total match counts.
 - `search_files` uses ripgrep for content matches when available, with a Node implementation as the only compatibility path. It does not add semantic search, vector recall, or LSP/code-intelligence behavior.
+
