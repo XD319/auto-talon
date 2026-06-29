@@ -33,6 +33,8 @@ export const TRACE_EVENT_TYPES = [
   "iteration_budget_pressure",
   "completion_verification_missing",
   "completion_verification_satisfied",
+  "intent_fulfillment_missing",
+  "duplicate_tool_replayed",
   "no_tools_tool_calls_ignored",
   "policy_decision",
   "approval_requested",
@@ -67,6 +69,7 @@ export const TRACE_EVENT_TYPES = [
   "context_assembled",
   "recent_files_refetched",
   "recent_files_pinned",
+  "memory_context_injected",
   "repo_map_created",
   "memory_recalled",
   "recall_explain",
@@ -516,6 +519,12 @@ export interface RecentFilesPinnedPayload extends JsonObject {
     path: string;
     truncated: boolean;
   }>;
+}
+
+export interface MemoryContextInjectedPayload extends JsonObject {
+  fragmentCount: number;
+  iteration: number;
+  tokenEstimate: number;
 }
 
 export interface RepoMapCreatedPayload extends JsonObject {
@@ -973,6 +982,8 @@ export type TraceEvent =
   | TraceEventBase<"iteration_budget_pressure", IterationBudgetPressurePayload>
   | TraceEventBase<"completion_verification_missing">
   | TraceEventBase<"completion_verification_satisfied">
+  | TraceEventBase<"intent_fulfillment_missing">
+  | TraceEventBase<"duplicate_tool_replayed">
   | TraceEventBase<"no_tools_tool_calls_ignored", NoToolsToolCallsIgnoredPayload>
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>
   | TraceEventBase<"approval_requested", ApprovalRequestedPayload>
@@ -1007,6 +1018,7 @@ export type TraceEvent =
   | TraceEventBase<"context_assembled", ContextAssembledPayload>
   | TraceEventBase<"recent_files_refetched", RecentFilesRefetchedPayload>
   | TraceEventBase<"recent_files_pinned", RecentFilesPinnedPayload>
+  | TraceEventBase<"memory_context_injected", MemoryContextInjectedPayload>
   | TraceEventBase<"repo_map_created", RepoMapCreatedPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"recall_explain", RecallExplainPayload>

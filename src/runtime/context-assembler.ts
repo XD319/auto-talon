@@ -12,6 +12,8 @@ import type {
 } from "../types/index.js";
 import { estimateMessagesTokens } from "./context/token-counter.js";
 
+export const MEMORY_CONTEXT_SOURCE_TYPE = "memory_context_recall";
+
 export interface ContextAssemblerInput {
   activeContextFragments?: ContextDebugFragment[];
   availableTools: ProviderToolDescriptor[];
@@ -26,24 +28,38 @@ export interface ContextAssemblerInput {
 
 export interface AssembledProviderContext {
   debug: ContextAssemblyDebugView;
+  memoryContextInjection: MemoryContextInjection | null;
   providerInput: ProviderInput;
+}
+
+export interface MemoryContextInjection {
+  fragmentCount: number;
+  tokenEstimate: number;
 }
 
 export class ExecutionContextAssembler {
   public assemble(input: ContextAssemblerInput): AssembledProviderContext {
+    const { injection, messages } = mergeMemoryContextIntoMessages(
+      input.messages,
+      input.memoryContext
+    );
     const providerInput = {
       availableTools: input.availableTools,
       agentProfileId: input.task.agentProfileId,
       iteration: input.iteration,
       memoryContext: input.memoryContext,
-      messages: input.messages,
+      messages,
       signal: input.signal,
       task: input.task,
       tokenBudget: input.tokenBudget
     };
 
     return {
-      debug: buildContextDebugView(input),
+      debug: buildContextDebugView({
+        ...input,
+        messages
+      }),
+      memoryContextInjection: injection,
       providerInput
     };
   }
@@ -170,7 +186,7 @@ function buildContextDebugView(input: ContextAssemblerInput): ContextAssemblyDeb
       sourceType: "user_input"
     },
     tokenBudget: {
-      estimatedInputTokens: estimateInputTokens(input.messages, input.memoryContext),
+      estimatedInputTokens: estimateInputTokens(input.messages),
       inputLimit: input.tokenBudget.inputLimit,
       outputLimit: input.tokenBudget.outputLimit,
       reservedOutput: input.tokenBudget.reservedOutput,
@@ -195,11 +211,62 @@ function buildContextDebugView(input: ContextAssemblerInput): ContextAssemblyDeb
   };
 }
 
-function estimateInputTokens(messages: ConversationMessage[], memoryContext: ContextFragment[]): number {
-  return estimateMessagesTokens([
-    ...messages,
-    ...memoryContext.map((fragment) => ({ content: fragment.text }))
-  ]);
+function estimateInputTokens(messages: ConversationMessage[]): number {
+  return estimateMessagesTokens(messages);
+}
+
+export function buildRecalledContextContent(fragments: ContextFragment[]): string | null {
+  if (fragments.length === 0) {
+    return null;
+  }
+
+  const lines = fragments.map(
+    (fragment) => `[${fragment.scope}] ${fragment.title}: ${fragment.text}`
+  );
+  return ["Recalled context:", ...lines].join("\n");
+}
+
+export function mergeMemoryContextIntoMessages(
+  messages: ConversationMessage[],
+  memoryContext: ContextFragment[]
+): { injection: MemoryContextInjection | null; messages: ConversationMessage[] } {
+  const withoutExisting = messages.filter(
+    (message) =>
+      !(
+        message.role === "system" &&
+        message.metadata?.sourceType === MEMORY_CONTEXT_SOURCE_TYPE
+      )
+  );
+  const content = buildRecalledContextContent(memoryContext);
+  if (content === null) {
+    return { injection: null, messages: withoutExisting };
+  }
+
+  const recalledMessage: ConversationMessage = {
+    content,
+    metadata: {
+      pinned: true,
+      privacyLevel: "internal",
+      retentionKind: "working",
+      sourceType: MEMORY_CONTEXT_SOURCE_TYPE
+    },
+    role: "system"
+  };
+  const merged = [...withoutExisting];
+  const firstSystemIndex = merged.findIndex((message) => message.role === "system");
+  if (firstSystemIndex >= 0) {
+    merged.splice(firstSystemIndex + 1, 0, recalledMessage);
+  } else {
+    merged.unshift(recalledMessage);
+  }
+
+  return {
+    injection: {
+      fragmentCount: memoryContext.length,
+      tokenEstimate: estimateMessagesTokens([recalledMessage])
+    },
+    messages: merged
+  };
 }
 
 export function buildFilteredContextDebugFragments(

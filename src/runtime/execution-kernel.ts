@@ -89,7 +89,8 @@ import type {
   SessionEntrySource,
   ToolExecutionResult,
   TokenBudget,
-  BudgetPricingEntry
+  BudgetPricingEntry,
+  JsonValue
 } from "../types/index.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
 import { buildCapabilityDeclaration } from "../memory/capability-declaration-builder.js";
@@ -828,6 +829,20 @@ export class ExecutionKernel {
             assembled.debug.filteredOutFragments
           );
         state.managedAbortController.touchActivity("context_assembled");
+        if (assembled.memoryContextInjection !== null) {
+          this.dependencies.traceService.record({
+            actor: "runtime.context",
+            eventType: "memory_context_injected",
+            payload: {
+              fragmentCount: assembled.memoryContextInjection.fragmentCount,
+              iteration,
+              tokenEstimate: assembled.memoryContextInjection.tokenEstimate
+            },
+            stage: "planning",
+            summary: `Injected ${assembled.memoryContextInjection.fragmentCount} recall fragments into provider messages`,
+            taskId: task.taskId
+          });
+        }
         const turnId = randomUUID();
         this.emitOutput({
           eventType: "assistant_turn_started",
@@ -2192,7 +2207,7 @@ export class ExecutionKernel {
       if (paused !== null) {
         for (let priorOffset = 0; priorOffset < batchOffset; priorOffset += 1) {
           const priorInvocation = batchInvocations[priorOffset];
-          if (priorInvocation === undefined) {
+          if (priorInvocation === null || priorInvocation === undefined) {
             continue;
           }
           this.applyCompletedToolCallOutcome(
@@ -2622,7 +2637,7 @@ export class ExecutionKernel {
     return {
       kind: "completed",
       result: {
-        output: parsedOutput as import("../../types/index.js").JsonValue,
+        output: parsedOutput as JsonValue,
         replayed: true,
         success: true,
         summary: `Tool ${toolCall.toolName} replayed from duplicate cache`
@@ -2633,7 +2648,7 @@ export class ExecutionKernel {
         finishedAt: new Date().toISOString(),
         input: toolCall.input,
         iteration: state.task.currentIteration,
-        output: parsedOutput as import("../../types/index.js").JsonValue,
+        output: parsedOutput as JsonValue,
         requestedAt: new Date().toISOString(),
         riskLevel: toolDescriptor?.riskLevel ?? "low",
         startedAt: new Date().toISOString(),
