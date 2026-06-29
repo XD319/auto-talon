@@ -920,7 +920,9 @@ function buildApplicationRuntime(
   });
   const resumePacketBuilder = new ResumePacketBuilder({
     config,
-    stateProjector: sessionStateProjector
+    sessionTaskRepository: storage.sessionTasks,
+    stateProjector: sessionStateProjector,
+    taskRepository: storage.tasks
   });
   let service: AgentApplicationService | null = null;
   const jobRunner = new JobRunner({

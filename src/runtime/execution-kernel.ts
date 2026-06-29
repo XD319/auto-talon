@@ -19,6 +19,7 @@ import {
   providerUsageToJson,
   readSessionResumeMemoryContext,
   readSessionResumeMessages,
+  readSessionResumePriorTaskId,
   rebuildTurnProviderMessages,
   sanitizeToolCallPairing,
   sleepWithAbort,
@@ -46,6 +47,7 @@ import {
   resolveTodoSessionKeyFromTaskMetadata,
   syncSessionTodosMessage
 } from "./context/session-todos.js";
+import { PRIOR_TASK_RESULT_SOURCE_TYPE } from "./sessions/prior-task-context.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
 import {
   computeCompactThreshold,
@@ -453,6 +455,22 @@ export class ExecutionKernel {
       const resumeContextMessages = readSessionResumeMessages(taskMetadata);
       if (resumeContextMessages.length > 0) {
         injectResumeContextMessages(messages, resumeContextMessages);
+        const priorTaskMessage = resumeContextMessages.find(
+          (message) => message.metadata?.sourceType === PRIOR_TASK_RESULT_SOURCE_TYPE
+        );
+        if (priorTaskMessage !== undefined) {
+          this.dependencies.traceService.record({
+            actor: "runtime.context",
+            eventType: "prior_task_context_injected",
+            payload: {
+              priorTaskId: readSessionResumePriorTaskId(taskMetadata) ?? "unknown",
+              truncated: priorTaskMessage.content.includes("...[prior task output truncated]")
+            },
+            stage: "planning",
+            summary: "Injected prior task final output into session continuation context",
+            taskId
+          });
+        }
       }
       const resumeMemoryContext = readSessionResumeMemoryContext(taskMetadata);
       if (repoMap !== null) {

@@ -340,6 +340,18 @@ export function readSessionResumeMessages(metadata: RuntimeRunOptions["metadata"
   );
 }
 
+export function readSessionResumePriorTaskId(metadata: RuntimeRunOptions["metadata"]): string | null {
+  if (metadata === undefined || metadata === null) {
+    return null;
+  }
+  const sessionResume = (metadata as Record<string, unknown>).sessionResume;
+  if (typeof sessionResume !== "object" || sessionResume === null) {
+    return null;
+  }
+  const priorTaskId = (sessionResume as Record<string, unknown>).priorTaskId;
+  return typeof priorTaskId === "string" && priorTaskId.length > 0 ? priorTaskId : null;
+}
+
 export function readSessionResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]): ContextFragment[] {
   if (metadata === undefined || metadata === null) {
     return [];

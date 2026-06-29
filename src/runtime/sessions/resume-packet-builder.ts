@@ -5,14 +5,19 @@ import type {
   ContextFragment,
   JsonObject,
   RuntimeRunOptions,
-  SessionSummaryRecord
+  SessionSummaryRecord,
+  SessionTaskRepository,
+  TaskRepository
 } from "../../types/index.js";
 import type { SessionStateProjector } from "./session-state-projector.js";
+import { buildPriorTaskContextMessage } from "./prior-task-context.js";
 import { similarText } from "./text-similarity.js";
 
 export interface ResumePacketBuilderDependencies {
   stateProjector: SessionStateProjector;
   config: AppConfig;
+  sessionTaskRepository?: SessionTaskRepository;
+  taskRepository?: TaskRepository;
 }
 
 export class ResumePacketBuilder {
@@ -34,6 +39,19 @@ export class ResumePacketBuilder {
         content: `KnownCurrentDirective: The user's NEW request supersedes earlier goals. Current task: ${normalizeSummary(newInput, 220)}`
       });
     }
+    const priorTaskMessage = buildPriorTaskContextMessage({
+      sessionId,
+      sessionTaskRepository: this.dependencies.sessionTaskRepository,
+      taskRepository: this.dependencies.taskRepository,
+      tokenBudget: overrides?.tokenBudget ?? this.dependencies.config.tokenBudget
+    });
+    const priorTaskId =
+      priorTaskMessage === null
+        ? null
+        : this.dependencies.sessionTaskRepository?.findLatestBySessionId(sessionId)?.taskId ?? null;
+    if (priorTaskMessage !== null) {
+      contextMessages.push(priorTaskMessage);
+    }
     const metadata: JsonObject = {
       ...(overrides?.metadata ?? {}),
       sessionResume: {
@@ -43,6 +61,8 @@ export class ResumePacketBuilder {
         memoryContext: buildSessionResumeMemoryContext(projection.sessionSummary),
         nextAction: projection.commitmentState.nextAction,
         pendingDecision: projection.commitmentState.pendingDecision,
+        priorTaskId,
+        priorTaskOutputInjected: priorTaskMessage !== null,
         projectedMessageCount: contextMessages.length,
         sessionSummary: projection.sessionSummary
       } as unknown as JsonObject
