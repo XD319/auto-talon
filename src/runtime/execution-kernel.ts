@@ -57,6 +57,7 @@ import {
   type HybridTokenCounterState
 } from "./context/token-counter.js";
 import { applyToolOutputBudget } from "./context/tool-output-budget.js";
+import { buildSessionHandoffMessageContent, listDiscardedMessages } from "./context/compact-handoff.js";
 import { pruneOldToolResults } from "./context/tool-result-pruner.js";
 import { selectTailMessages } from "./context/tail-selector.js";
 import type { RecallPlanner } from "./retrieval/index.js";
@@ -1957,6 +1958,7 @@ export class ExecutionKernel {
     const preservedMessages = mergeProtectedMessages(protectedHead, preservedTail.messages);
     const protectedHeadCount = Math.min(protectedHead.length, preservedMessages.length);
     const preserved = preservedMessages.map((message) => mapCompactConversationMessage(message));
+    const discardedMessages = listDiscardedMessages(messagesToSummarize, preservedMessages);
 
     return {
       reason:
@@ -1968,11 +1970,10 @@ export class ExecutionKernel {
       replacementMessages: [
         ...preserved.slice(0, protectedHeadCount),
         {
-          content: [
-            "Session handoff:",
-            "Earlier work may already be reflected in pinned files, todos, or workspace state.",
-            summarized.summary
-          ].join("\n"),
+          content: buildSessionHandoffMessageContent({
+            compactedMessages: discardedMessages,
+            summary: summarized.summary
+          }),
           role: "system"
         },
         ...preserved.slice(protectedHeadCount)
