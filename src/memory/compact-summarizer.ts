@@ -90,6 +90,7 @@ function summarizeMessages(input: SessionCompactInput): string {
 export interface StructuredSummaryFields {
   goal: string;
   latestUserRequest: string;
+  allUserMessages: string[];
   completedWork: string;
   evidenceAndVerification: string;
   filesTouched: string[];
@@ -108,26 +109,30 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
   const completedWork = summarize(
     assistantMessages
       .slice(-3)
-      .map((message) => summarize(message.content, 100))
+      .map((message) => summarize(message.content, 200))
       .join(" | "),
-    260
+    500
   );
   const keyToolSignals = summarize(
     toolMessages
       .slice(-3)
-      .map((message) => summarize(message.content, 100))
+      .map((message) => summarize(message.content, 200))
       .join(" | "),
-    260
+    500
   );
   const filesTouched = extractFilesTouched(toolMessages);
   const commandsRun = extractCommands(toolMessages);
   const blockers = extractBlockers(toolMessages, assistantMessages);
   const remainingWork = extractRemainingWork(assistantMessages);
   const evidenceAndVerification = extractEvidence(toolMessages, assistantMessages);
-  const fallbackGoal = summarize(input.originalGoal ?? "", 220);
-  const firstUserGoal = summarize(userMessages.at(0)?.content ?? "", 220);
-  const latestUserGoal = summarize(userMessages.at(-1)?.content ?? "", 220);
+  const fallbackGoal = summarize(input.originalGoal ?? "", 500);
+  const firstUserGoal = summarize(userMessages.at(0)?.content ?? "", 500);
+  const latestUserGoal = summarize(userMessages.at(-1)?.content ?? "", 500);
+  const allUserMessages = uniqueList(
+    userMessages.map((message) => summarize(message.content, 500)).filter((message) => message.length > 0)
+  );
   return {
+    allUserMessages,
     blockers,
     commandsRun,
     completedWork: completedWork || "[n/a]",
@@ -142,18 +147,49 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
 }
 
 export function formatStructuredSummary(fields: StructuredSummaryFields): string {
+  const userMessagesSection =
+    fields.allUserMessages.length > 0
+      ? fields.allUserMessages.map((message, index) => `${index + 1}. ${message}`).join("\n")
+      : "[none]";
+
   return redactSensitiveSummary(
     [
-      `goal=${fields.goal}`,
-      `latest_user_request=${fields.latestUserRequest}`,
-      `completedWork=${fields.completedWork}`,
-      `evidence_and_verification=${fields.evidenceAndVerification}`,
-      `filesTouched=${fields.filesTouched.join("; ") || "[none]"}`,
-      `recentlyReadFiles=${fields.recentlyReadFiles}`,
-      `commandsRun=${fields.commandsRun.join("; ") || "[none]"}`,
-      `blockers=${fields.blockers.join("; ") || "[none]"}`,
-      `remaining_work=${fields.remainingWork.join("; ") || "[none]"}`,
-      `tool_signals=${fields.toolSignals}`
+      "## Goal",
+      fields.goal,
+      "",
+      "## Latest User Request",
+      fields.latestUserRequest,
+      "",
+      "## All User Messages",
+      userMessagesSection,
+      "",
+      "## Progress",
+      "### Done",
+      fields.completedWork,
+      "",
+      "### Remaining Work",
+      fields.remainingWork.length > 0 ? fields.remainingWork.map((item) => `- ${item}`).join("\n") : "[none]",
+      "",
+      "## Key Decisions",
+      "[see session decisions metadata]",
+      "",
+      "## Relevant Files",
+      fields.filesTouched.length > 0 ? fields.filesTouched.map((file) => `- ${file}`).join("\n") : "[none]",
+      "",
+      "## Evidence & Verification",
+      fields.evidenceAndVerification,
+      "",
+      "## Commands Run",
+      fields.commandsRun.length > 0 ? fields.commandsRun.map((command) => `- ${command}`).join("\n") : "[none]",
+      "",
+      "## Blocked",
+      fields.blockers.length > 0 ? fields.blockers.map((blocker) => `- ${blocker}`).join("\n") : "[none]",
+      "",
+      "## Recently Read Files",
+      fields.recentlyReadFiles,
+      "",
+      "## Tool Signals",
+      fields.toolSignals
     ].join("\n")
   );
 }
@@ -231,23 +267,66 @@ function extractRemainingWork(assistantMessages: SessionCompactInput["messages"]
 
 function buildSummarizerPrompt(input: SessionCompactInput): Array<{ content: string; role: "system" | "user" }> {
   const structured = collectStructuredSummaryFields(input);
-  const previousSummary =
-    input.previousSummary !== undefined && input.previousSummary.trim().length > 0
-      ? `Previous handoff summary (update and preserve durable facts):\n${input.previousSummary.trim()}\n\n`
-      : "";
+  const hasPreviousSummary =
+    input.previousSummary !== undefined && input.previousSummary.trim().length > 0;
+  if (hasPreviousSummary) {
+    return buildIterativeUpdatePrompt(input.previousSummary!.trim(), structured);
+  }
+  return buildInitialSummaryPrompt(structured);
+}
+
+function buildInitialSummaryPrompt(
+  structured: StructuredSummaryFields
+): Array<{ content: string; role: "system" | "user" }> {
   return [
     {
       content: [
         "You produce a decision-oriented session handoff for another agent continuing this work.",
         "Compress for continuity, not chronology. Omit lookup chatter unless it is the only evidence.",
-        "Return plain text with exactly these keys, one per line:",
-        "goal, latest_user_request, completedWork, evidence_and_verification, filesTouched, recentlyReadFiles, commandsRun, blockers, remaining_work, tool_signals.",
-        "No markdown."
+        "Return markdown with these sections:",
+        "## Goal",
+        "## Latest User Request",
+        "## All User Messages",
+        "## Progress (### Done, ### In Progress, ### Blocked)",
+        "## Key Decisions",
+        "## Relevant Files",
+        "## Evidence & Verification",
+        "## Remaining Work",
+        "## Critical Context",
+        "Preserve user message substance verbatim where possible."
       ].join(" "),
       role: "system"
     },
     {
-      content: `${previousSummary}Source material:\n${formatStructuredSummary(structured)}`,
+      content: `Source material:\n${formatStructuredSummary(structured)}`,
+      role: "user"
+    }
+  ];
+}
+
+function buildIterativeUpdatePrompt(
+  previousSummary: string,
+  structured: StructuredSummaryFields
+): Array<{ content: string; role: "system" | "user" }> {
+  return [
+    {
+      content: [
+        "You are updating an existing structured session handoff.",
+        "PRESERVE all durable facts from the previous summary.",
+        "Move completed items into Done. ADD new progress. REMOVE obsolete entries.",
+        "Never drop file paths, user requests, or blockers unless clearly resolved.",
+        "Return markdown using the same section headings as the previous summary."
+      ].join(" "),
+      role: "system"
+    },
+    {
+      content: [
+        "Previous handoff summary:",
+        previousSummary,
+        "",
+        "New source material:",
+        formatStructuredSummary(structured)
+      ].join("\n"),
       role: "user"
     }
   ];

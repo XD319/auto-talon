@@ -74,10 +74,10 @@ describe("context compactor", () => {
     expect(sessionSummary.decisions.every((item) => item.length <= 123)).toBe(true);
     expect(sessionSummary.nextActions.every((item) => item.length <= 123)).toBe(true);
     expect(sessionSummary.nextActions.length).toBeLessThanOrEqual(3);
-    expect(sessionSummary.summary).toContain("completedWork=");
-    expect(sessionSummary.summary).toContain("filesTouched=");
-    expect(sessionSummary.summary).toContain("commandsRun=");
-    expect(sessionSummary.summary).toContain("blockers=");
+    expect(sessionSummary.summary).toContain("## Progress");
+    expect(sessionSummary.summary).toContain("## Relevant Files");
+    expect(sessionSummary.summary).toContain("## Commands Run");
+    expect(sessionSummary.summary).toContain("## Blocked");
     expect(sessionSummary.summary).toContain("[REDACTED_EMAIL]");
     expect(sessionSummary.summary).toContain("token=[REDACTED]");
     expect(
@@ -142,10 +142,9 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionSummary.summary).toContain("goal=Complete phase 2 of the snake game development plan");
-    expect(sessionSummary.summary).toContain(
-      "latest_user_request=Complete phase 2 of the snake game development plan"
-    );
+    expect(sessionSummary.summary).toContain("## Goal");
+    expect(sessionSummary.summary).toContain("Complete phase 2 of the snake game development plan");
+    expect(sessionSummary.summary).toContain("## Latest User Request");
     expect(sessionSummary.summary).not.toContain("goal=[n/a]");
     expect(sessionSummary.summary).not.toContain("latest_user_request=[n/a]");
   });
@@ -173,8 +172,9 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionSummary.summary).toContain("goal=newer user instruction");
-    expect(sessionSummary.summary).toContain("latest_user_request=newer user instruction");
+    expect(sessionSummary.summary).toContain("## Goal");
+    expect(sessionSummary.summary).toContain("newer user instruction");
+    expect(sessionSummary.summary).toContain("## Latest User Request");
   });
 });
 
