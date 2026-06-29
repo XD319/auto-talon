@@ -17,6 +17,7 @@ export interface CompletionControllerState {
   completionVerificationSatisfied: boolean;
   completionVerificationSatisfiedEmitted: boolean;
   criticalBudgetPressureEmitted: boolean;
+  intentFulfillmentGuardEmitted: boolean;
   maxIterations: number;
   messages: ConversationMessage[];
   postCompletionVerificationReads: number;
@@ -29,6 +30,7 @@ export interface CompletionControllerState {
 export interface CompletionControllerDependencies {
   describeTool(toolName: string): ProviderToolDescriptor | null;
   recordTrace(event: TraceEventDraft): void;
+  testCommands?: string[];
 }
 
 export class CompletionController {
@@ -115,6 +117,55 @@ export class CompletionController {
     state.silentToolTurns = 0;
   }
 
+  public evaluateIntentFulfillment(
+    state: CompletionControllerState,
+    messages: ConversationMessage[],
+    task: TaskRecord,
+    iteration: number,
+    taskInput: string,
+    finalOutput: string
+  ): "pass" | "guard" {
+    if (state.intentFulfillmentGuardEmitted) {
+      return "pass";
+    }
+    if (!isModificationIntent(taskInput)) {
+      return "pass";
+    }
+    if (state.writeToolSucceeded) {
+      return "pass";
+    }
+
+    const guardMessage =
+      "Intent fulfillment guard: the user requested modifications but no files were changed. " +
+      "You must use write/patch/shell tools to implement the requested changes before finalizing. " +
+      "If modifications are genuinely impossible, explain why explicitly in your final answer.";
+
+    messages.push({
+      content: guardMessage,
+      metadata: {
+        privacyLevel: "internal",
+        retentionKind: "session",
+        sourceType: "system_prompt"
+      },
+      role: "system"
+    });
+    state.turnProviderMessages = messages;
+    state.intentFulfillmentGuardEmitted = true;
+    this.dependencies.recordTrace({
+      actor: "runtime.kernel",
+      eventType: "intent_fulfillment_missing",
+      payload: {
+        iteration,
+        taskInput: taskInput.slice(0, 200)
+      },
+      stage: "completion",
+      summary: "Modification intent task finalized without workspace changes",
+      taskId: task.taskId
+    });
+    void finalOutput;
+    return "guard";
+  }
+
   public evaluatePostCompletionToolCalls(
     state: CompletionControllerState,
     iteration: number,
@@ -161,9 +212,13 @@ export class CompletionController {
     }
 
     if (!state.completionVerificationGuardEmitted) {
+      const testCommands = this.dependencies.testCommands ?? [];
+      const cmdHint =
+        testCommands.length > 0 ? ` Suggested commands: ${testCommands.join(", ")}.` : "";
       messages.push({
         content:
-          "Completion verification required: workspace files were changed after the last successful verification. Before finalizing, run an appropriate configured test/build/lint/typecheck command, or clearly state the unverified items and why verification could not be run.",
+          "Completion verification required: workspace files were changed after the last successful verification. Before finalizing, run an appropriate configured test/build/lint/typecheck command, or clearly state the unverified items and why verification could not be run." +
+          cmdHint,
         metadata: {
           privacyLevel: "internal",
           retentionKind: "session",
@@ -246,6 +301,66 @@ export function mentionsUnverifiedWork(message: string): boolean {
     compact.includes("couldn't verify") ||
     compact.includes("unable to verify")
   );
+}
+
+export function isModificationIntent(taskInput: string): boolean {
+  const compact = taskInput.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (compact.length === 0) {
+    return false;
+  }
+  const modificationSignals = [
+    /\bfix\b/u,
+    /\brepair\b/u,
+    /\bimplement\b/u,
+    /\bcreate\b/u,
+    /\badd\b/u,
+    /\brefactor\b/u,
+    /\bupdate\b/u,
+    /\bdelete\b/u,
+    /\bwrite\b/u,
+    /\bchange\b/u,
+    /\bmove\b/u,
+    /\brename\b/u,
+    /\bremove\b/u,
+    /\breplace\b/u,
+    /修复/u,
+    /实现/u,
+    /创建/u,
+    /添加/u,
+    /重构/u,
+    /更新/u,
+    /删除/u,
+    /编写/u,
+    /修改/u,
+    /改动/u
+  ];
+  const analysisOnlySignals = [
+    /\bwhat\b.*\bbug/u,
+    /\blist\b.*\bbug/u,
+    /\bfind\b.*\bbug/u,
+    /\bwhich\b.*\bbug/u,
+    /有哪些.*bug/u,
+    /有什么.*bug/u,
+    /列出.*bug/u,
+    /\breview\b/u,
+    /\banalyze\b/u,
+    /\baudit\b/u,
+    /审查/u,
+    /分析/u,
+    /检查.*问题/u,
+    /还有哪些/u,
+    /还有什么/u,
+    /哪些.*没/u,
+    /没实现完/u,
+    /未完成/u,
+    /\bremaining\b/u,
+    /\bunfinished\b/u,
+    /\bnot\b.*\bimplement/u
+  ];
+  if (analysisOnlySignals.some((pattern) => pattern.test(compact))) {
+    return false;
+  }
+  return modificationSignals.some((pattern) => pattern.test(compact));
 }
 
 export function hasCompletionIntent(message: string): boolean {

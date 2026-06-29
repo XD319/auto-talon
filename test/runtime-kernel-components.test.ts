@@ -4,6 +4,7 @@ import {
   CheckpointManager,
   CompletionController,
   hasCompletionIntent,
+  isModificationIntent,
   mentionsUnverifiedWork
 } from "../src/runtime/kernel/index.js";
 import type { ToolOrchestrator } from "../src/tools/index.js";
@@ -98,6 +99,99 @@ describe("CompletionController", () => {
     expect(hasCompletionIntent("Implementation is complete and functional.")).toBe(true);
     expect(hasCompletionIntent("Let me inspect one more file.")).toBe(false);
     expect(mentionsUnverifiedWork("Could not verify because tests are unavailable.")).toBe(true);
+  });
+
+  it("recognizes modification intent and excludes analysis-only requests", () => {
+    expect(isModificationIntent("修复严重 Bug")).toBe(true);
+    expect(isModificationIntent("implement the requested feature")).toBe(true);
+    expect(isModificationIntent("目前这个项目还有哪些bug")).toBe(false);
+    expect(isModificationIntent("review the auth module")).toBe(false);
+  });
+
+  it("guards modification finals that make no workspace changes", () => {
+    const recordTrace = vi.fn();
+    const controller = new CompletionController({
+      describeTool: () => descriptor("read_file", "filesystem.read"),
+      recordTrace
+    });
+    const messages: ConversationMessage[] = [];
+    const state = {
+      completionIntentSeenAt: null,
+      completionVerificationGuardEmitted: false,
+      completionVerificationSatisfied: false,
+      completionVerificationSatisfiedEmitted: false,
+      criticalBudgetPressureEmitted: false,
+      intentFulfillmentGuardEmitted: false,
+      maxIterations: 4,
+      messages,
+      postCompletionVerificationReads: 0,
+      silentToolTurns: 0,
+      turnProviderMessages: messages,
+      warningBudgetPressureEmitted: false,
+      writeToolSucceeded: false
+    };
+
+    expect(
+      controller.evaluateIntentFulfillment(
+        state,
+        messages,
+        { ...task(), input: "修复严重 Bug" },
+        2,
+        "修复严重 Bug",
+        "Here is another bug list."
+      )
+    ).toBe("guard");
+    expect(messages.some((message) => message.content.includes("Intent fulfillment guard"))).toBe(
+      true
+    );
+    expect(recordTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "intent_fulfillment_missing" })
+    );
+
+    expect(
+      controller.evaluateIntentFulfillment(
+        state,
+        messages,
+        { ...task(), input: "修复严重 Bug" },
+        3,
+        "修复严重 Bug",
+        "Still no changes."
+      )
+    ).toBe("pass");
+  });
+
+  it("includes configured test commands in completion verification guard", () => {
+    const controller = new CompletionController({
+      describeTool: () => descriptor("patch", "filesystem.write"),
+      recordTrace: vi.fn(),
+      testCommands: ["node check.js", "npm test"]
+    });
+    const messages: ConversationMessage[] = [];
+    const state = {
+      completionIntentSeenAt: null,
+      completionVerificationGuardEmitted: false,
+      completionVerificationSatisfied: false,
+      completionVerificationSatisfiedEmitted: false,
+      criticalBudgetPressureEmitted: false,
+      intentFulfillmentGuardEmitted: false,
+      maxIterations: 4,
+      messages,
+      postCompletionVerificationReads: 0,
+      silentToolTurns: 0,
+      turnProviderMessages: messages,
+      warningBudgetPressureEmitted: false,
+      writeToolSucceeded: true
+    };
+
+    const decision = controller.evaluateFinalVerification(
+      state,
+      messages,
+      task(),
+      2,
+      "Implementation complete."
+    );
+    expect(decision.kind).toBe("guard");
+    expect(messages.at(-1)?.content).toContain("Suggested commands: node check.js, npm test");
   });
 });
 

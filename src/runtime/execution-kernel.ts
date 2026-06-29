@@ -165,11 +165,15 @@ interface ExecutionLoopState {
   completionVerificationSatisfied: boolean;
   completionVerificationSatisfiedEmitted: boolean;
   criticalBudgetPressureEmitted: boolean;
+  intentFulfillmentGuardEmitted: boolean;
   interactionMode?: RuntimeRunOptions["interactionMode"];
   postCompletionVerificationReads: number;
   selectedSkillContext: ContextFragment[];
   silentToolTurns: number;
-  toolCallSignatures: Map<string, { iteration: number; toolCallId: string }>;
+  toolCallSignatures: Map<
+    string,
+    { iteration: number; toolCallId: string; cachedToolOutput?: string }
+  >;
   turnFilteredFragments: ContextAssemblyDebugView["filteredOutFragments"];
   turnProviderMessages: ConversationMessage[];
   recentFileReadCache: RecentFileReadCache | null;
@@ -206,7 +210,8 @@ export class ExecutionKernel {
     });
     this.completionController = new CompletionController({
       describeTool: (toolName) => dependencies.toolOrchestrator.describeTool(toolName),
-      recordTrace: (event) => dependencies.traceService.record(event)
+      recordTrace: (event) => dependencies.traceService.record(event),
+      testCommands: formatWorkflowTestCommandHints(dependencies.workflow.testCommands)
     });
   }
 
@@ -447,6 +452,7 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
+        intentFulfillmentGuardEmitted: false,
         interactionMode: options.interactionMode,
         managedAbortController,
         maxIterations: options.maxIterations,
@@ -533,6 +539,7 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
+        intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
@@ -625,6 +632,7 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
+        intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
@@ -1107,6 +1115,17 @@ export class ExecutionKernel {
         }
 
         if (providerResponse.kind === "final") {
+          const intentDecision = this.completionController.evaluateIntentFulfillment(
+            state,
+            messages,
+            task,
+            iteration,
+            task.input,
+            providerResponse.message
+          );
+          if (intentDecision === "guard") {
+            continue;
+          }
           const verificationDecision = this.completionController.evaluateFinalVerification(
             state,
             messages,

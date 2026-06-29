@@ -302,14 +302,14 @@ describe("coding workflow loop", () => {
     }
   });
 
-  it("accepts a code-change final even when no file writes were made", async () => {
+  it("defers code-change finals until workspace changes are made", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
     const handle = createApplication(workspaceRoot, {
       config: { databasePath: join(workspaceRoot, "runtime.db") },
       policyConfig: WORKFLOW_POLICY_CONFIG,
       provider: new ScriptedProvider((input) => {
         const sawImplementationGuard = input.messages.some((message) =>
-          message.content.includes("Stop verifier")
+          message.content.includes("Intent fulfillment guard")
         );
         const toolMessages = input.messages.filter((message) => message.role === "tool");
 
@@ -337,8 +337,8 @@ describe("coding workflow loop", () => {
       const details = handle.service.showTask(result.task.taskId);
 
       expect(result.task.status).toBe("succeeded");
-      await expect(fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).rejects.toThrow();
-      expect(details.toolCalls.some((toolCall) => toolCall.toolCallId === "write-feature")).toBe(false);
+      expect(await fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).toBe("feature complete\n");
+      expect(details.toolCalls.some((toolCall) => toolCall.toolCallId === "write-feature")).toBe(true);
     } finally {
       handle.close();
     }
@@ -360,6 +360,48 @@ describe("coding workflow loop", () => {
       expect(result.task.status).toBe("succeeded");
       expect(result.error).toBeUndefined();
       await expect(fs.readFile(join(workspaceRoot, "feature.txt"), "utf8")).rejects.toThrow();
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("guards modification finals that make no workspace changes", async () => {
+    const workspaceRoot = await createWorkflowWorkspace();
+    let sawIntentGuard = false;
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      policyConfig: WORKFLOW_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        sawIntentGuard =
+          sawIntentGuard ||
+          input.messages.some((message) => message.content.includes("Intent fulfillment guard"));
+        if (!sawIntentGuard) {
+          return finalResponse("Here is another bug list without changing files.");
+        }
+        return toolCallResponse("Apply the fix.", [
+          {
+            input: {
+              action: "update_file",
+              newText: "process.exit(0);\n",
+              path: "check.js",
+              targetText: "process.exit(1);\n"
+            },
+            reason: "Fix the failing check.",
+            toolCallId: "intent-fix",
+            toolName: "patch"
+          }
+        ]);
+      })
+    });
+
+    try {
+      const runOptions = createDefaultRunOptions("修复严重 Bug", workspaceRoot, handle.config);
+      runOptions.maxIterations = 4;
+      const result = await handle.service.runTask(runOptions);
+
+      expect(sawIntentGuard).toBe(true);
+      expect(result.task.status).toBe("succeeded");
+      expect(await fs.readFile(join(workspaceRoot, "check.js"), "utf8")).toBe("process.exit(0);\n");
     } finally {
       handle.close();
     }
