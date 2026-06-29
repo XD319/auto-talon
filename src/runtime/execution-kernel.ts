@@ -72,6 +72,7 @@ import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-expos
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
 import type { ProviderError } from "../providers/provider-error.js";
+import { resolveProviderFinalText } from "../providers/reasoning-content.js";
 import { generateWithProviderFailover } from "../providers/provider-failover.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type { AuditService } from "../audit/audit-service.js";
@@ -186,6 +187,7 @@ interface ExecutionLoopState {
   intentFulfillmentGuardEmitted: boolean;
   interactionMode?: RuntimeRunOptions["interactionMode"];
   postCompletionVerificationReads: number;
+  readOnlyTurns: number;
   selectedSkillContext: ContextFragment[];
   silentToolTurns: number;
   toolCallSignatures: Map<
@@ -523,6 +525,7 @@ export class ExecutionKernel {
         pendingToolCalls: [],
         postCompletionVerificationReads: 0,
         ...(repoMap?.summary !== undefined ? { repoMapSummary: repoMap.summary } : {}),
+        readOnlyTurns: 0,
         selectedSkillContext: recallPlan.fragments.filter((fragment) => fragment.scope === "skill_ref"),
         silentToolTurns: 0,
         task,
@@ -605,6 +608,7 @@ export class ExecutionKernel {
         ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         pendingToolCalls: checkpoint.pendingToolCalls,
         postCompletionVerificationReads: 0,
+        readOnlyTurns: 0,
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
@@ -698,6 +702,7 @@ export class ExecutionKernel {
         ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         pendingToolCalls: [rejectedToolCall],
         postCompletionVerificationReads: 0,
+        readOnlyTurns: 0,
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
@@ -1235,13 +1240,35 @@ export class ExecutionKernel {
         }
 
         if (providerResponse.kind === "final") {
+          const resolvedFinalText = resolveProviderFinalText(providerResponse) ?? "";
+          if (resolvedFinalText.trim().length === 0) {
+            this.dependencies.traceService.record({
+              actor: "runtime.kernel",
+              eventType: "empty_final_guarded",
+              payload: {
+                iteration,
+                providerName: activeProvider.name
+              },
+              stage: "completion",
+              summary: "Empty final response redirected to no-tools summary",
+              taskId: task.taskId
+            });
+            return this.requestFinalSummaryWithoutTools(
+              state,
+              messages,
+              availableTools,
+              task,
+              iteration,
+              "empty_final_output"
+            );
+          }
           const intentDecision = this.completionController.evaluateIntentFulfillment(
             state,
             messages,
             task,
             iteration,
             task.input,
-            providerResponse.message
+            resolvedFinalText
           );
           if (intentDecision === "guard") {
             continue;
@@ -1251,7 +1278,7 @@ export class ExecutionKernel {
             messages,
             task,
             iteration,
-            providerResponse.message
+            resolvedFinalText
           );
           if (verificationDecision.kind === "guard") {
             continue;
@@ -1377,7 +1404,7 @@ export class ExecutionKernel {
         const toolTurnResponse =
           lastToolCallsResponse ?? findLastAssistantToolCallsResponse(messages);
         if (toolTurnResponse !== null) {
-          this.completionController.observeProviderToolTurn(state, messages, iteration, toolTurnResponse);
+          this.completionController.observeProviderToolTurn(state, messages, task, iteration, toolTurnResponse);
         }
         lastToolCallsResponse = null;
       }
@@ -1540,6 +1567,8 @@ export class ExecutionKernel {
           messages.find((message) => message.role === "system") ?? null;
         messages.length = 0;
         state.silentToolTurns = 0;
+        state.readOnlyTurns = 0;
+        state.cumulativeToolCallCount = 0;
         if (initialSystemPrompt !== null) {
           messages.push(initialSystemPrompt);
         }
@@ -1611,13 +1640,18 @@ export class ExecutionKernel {
     availableTools: ProviderToolDescriptor[],
     task: TaskRecord,
     iteration: number,
-    reason: "max_iterations_exhausted" | "post_completion_verification_exhausted"
+    reason:
+      | "max_iterations_exhausted"
+      | "post_completion_verification_exhausted"
+      | "empty_final_output"
   ): Promise<RuntimeRunResult> {
     const activeProvider = this.resolveActiveMainProvider(task);
     const summaryPrompt =
       reason === "max_iterations_exhausted"
         ? `The loop reached its iteration budget (${state.maxIterations}). Do not call tools. Summarize the completed work, files changed or inspected, and any remaining work.`
-        : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
+        : reason === "empty_final_output"
+          ? "The model attempted to finalize with an empty response. Do not call tools. Provide the final answer now based on everything you have learned so far."
+          : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
     const finalMessages: ConversationMessage[] = [
       ...state.turnProviderMessages,
       {
@@ -1707,7 +1741,7 @@ export class ExecutionKernel {
       });
     }
 
-    const finalMessage = providerResponse.message.trim();
+    const finalMessage = resolveProviderFinalText(providerResponse)?.trim() ?? "";
     if (finalMessage.length === 0) {
       throw new AppError({
         code: "max_rounds_exceeded",
