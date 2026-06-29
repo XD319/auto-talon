@@ -42,6 +42,10 @@ import {
   syncPinnedRecentFilesMessage
 } from "./context/recent-file-reads.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
+import {
+  resolveTodoSessionKeyFromTaskMetadata,
+  syncSessionTodosMessage
+} from "./context/session-todos.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
 import {
   computeCompactThreshold,
@@ -107,6 +111,7 @@ import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { SessionMessageProjector } from "./sessions/session-message-projector.js";
 import type { SkillContextService } from "../skills/index.js";
+import type { TodoSessionStore } from "../tools/todo-session-store.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -142,6 +147,7 @@ export interface ExecutionKernelDependencies {
   routingMode?: "cheap_first" | "balanced" | "quality_first";
   toolExposurePlanner?: ToolExposurePlanner;
   skillContextService?: SkillContextService;
+  todoSessionStore?: TodoSessionStore;
   workspaceRoot: string;
 }
 
@@ -230,6 +236,28 @@ export class ExecutionKernel {
         : {})
     });
     return routed?.provider ?? this.dependencies.provider;
+  }
+
+  private syncSessionTodosContext(input: {
+    iteration?: number;
+    messages: ConversationMessage[];
+    task: TaskRecord;
+  }): { todoCount: number } | null {
+    const store = this.dependencies.todoSessionStore;
+    if (store === undefined) {
+      return null;
+    }
+    const sessionKey = resolveTodoSessionKeyFromTaskMetadata({
+      sessionId: input.task.sessionId,
+      taskId: input.task.taskId,
+      taskMetadata: input.task.metadata
+    });
+    const injected = syncSessionTodosMessage(input.messages, store, sessionKey);
+    if (injected === null) {
+      return null;
+    }
+    const todoCount = store.get(sessionKey).length;
+    return { todoCount };
   }
 
   private async planRecall(
@@ -812,6 +840,24 @@ export class ExecutionKernel {
           });
         }
         syncPinnedRecentFilesMessage(state.turnProviderMessages, state.recentFileReadCache);
+        const injectedTodos = this.syncSessionTodosContext({
+          iteration,
+          messages: state.turnProviderMessages,
+          task
+        });
+        if (injectedTodos !== null) {
+          this.dependencies.traceService.record({
+            actor: "runtime.context",
+            eventType: "session_todos_injected",
+            payload: {
+              iteration,
+              todoCount: injectedTodos.todoCount
+            },
+            stage: "planning",
+            summary: `Injected ${injectedTodos.todoCount} session todo item(s) into provider messages`,
+            taskId: task.taskId
+          });
+        }
         const assembled = this.contextAssembler.assemble({
           availableTools,
           filteredOutFragments: state.turnFilteredFragments,
@@ -1440,6 +1486,10 @@ export class ExecutionKernel {
         });
         messages.push(...compacted.replacementMessages);
         syncPinnedRecentFilesMessage(messages, state.recentFileReadCache);
+        this.syncSessionTodosContext({
+          messages,
+          task
+        });
         state.compactedCount += 1;
         state.tokenCounter = createHybridTokenCounterState();
         const refreshSessionId = task.sessionId ?? null;

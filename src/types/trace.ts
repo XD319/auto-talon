@@ -70,6 +70,7 @@ export const TRACE_EVENT_TYPES = [
   "recent_files_refetched",
   "recent_files_pinned",
   "memory_context_injected",
+  "session_todos_injected",
   "repo_map_created",
   "memory_recalled",
   "recall_explain",
@@ -525,6 +526,11 @@ export interface MemoryContextInjectedPayload extends JsonObject {
   fragmentCount: number;
   iteration: number;
   tokenEstimate: number;
+}
+
+export interface SessionTodosInjectedPayload extends JsonObject {
+  iteration?: number;
+  todoCount: number;
 }
 
 export interface RepoMapCreatedPayload extends JsonObject {
@@ -1019,6 +1025,7 @@ export type TraceEvent =
   | TraceEventBase<"recent_files_refetched", RecentFilesRefetchedPayload>
   | TraceEventBase<"recent_files_pinned", RecentFilesPinnedPayload>
   | TraceEventBase<"memory_context_injected", MemoryContextInjectedPayload>
+  | TraceEventBase<"session_todos_injected", SessionTodosInjectedPayload>
   | TraceEventBase<"repo_map_created", RepoMapCreatedPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"recall_explain", RecallExplainPayload>

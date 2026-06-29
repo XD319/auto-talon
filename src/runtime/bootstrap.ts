@@ -878,6 +878,7 @@ function buildApplicationRuntime(
     skillContextService,
     toolExposurePlanner,
     toolOrchestrator,
+    todoSessionStore,
     traceService,
     outputService,
     workflow: config.workflow,
