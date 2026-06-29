@@ -5,7 +5,8 @@ import {
   CompletionController,
   hasCompletionIntent,
   isModificationIntent,
-  mentionsUnverifiedWork
+  mentionsUnverifiedWork,
+  READ_ONLY_GUARD_THRESHOLD
 } from "../src/runtime/kernel/index.js";
 import type { ToolOrchestrator } from "../src/tools/index.js";
 import type {
@@ -125,6 +126,7 @@ describe("CompletionController", () => {
       maxIterations: 4,
       messages,
       postCompletionVerificationReads: 0,
+      readOnlyTurns: 0,
       silentToolTurns: 0,
       turnProviderMessages: messages,
       warningBudgetPressureEmitted: false,
@@ -177,6 +179,7 @@ describe("CompletionController", () => {
       maxIterations: 4,
       messages,
       postCompletionVerificationReads: 0,
+      readOnlyTurns: 0,
       silentToolTurns: 0,
       turnProviderMessages: messages,
       warningBudgetPressureEmitted: false,
@@ -192,6 +195,53 @@ describe("CompletionController", () => {
     );
     expect(decision.kind).toBe("guard");
     expect(messages.at(-1)?.content).toContain("Suggested commands: node check.js, npm test");
+  });
+
+  it("injects read-only analysis guard after many consecutive read-only tool turns", () => {
+    const recordTrace = vi.fn();
+    const controller = new CompletionController({
+      describeTool: () => descriptor("read_file", "filesystem.read"),
+      recordTrace
+    });
+    const messages: ConversationMessage[] = [];
+    const state = {
+      completionIntentSeenAt: null,
+      completionVerificationGuardEmitted: false,
+      completionVerificationSatisfied: false,
+      completionVerificationSatisfiedEmitted: false,
+      criticalBudgetPressureEmitted: false,
+      intentFulfillmentGuardEmitted: false,
+      maxIterations: 20,
+      messages,
+      postCompletionVerificationReads: 0,
+      readOnlyTurns: 0,
+      silentToolTurns: 0,
+      turnProviderMessages: messages,
+      warningBudgetPressureEmitted: false,
+      writeToolSucceeded: false
+    };
+    const toolTurn = {
+      kind: "tool_calls" as const,
+      message: "让我继续读取剩余部分",
+      toolCalls: [{ arguments: { path: "game.js" }, toolCallId: "tc-1", toolName: "read_file" }]
+    };
+
+    for (let iteration = 1; iteration < READ_ONLY_GUARD_THRESHOLD; iteration += 1) {
+      controller.observeProviderToolTurn(state, messages, task(), iteration, toolTurn);
+    }
+    expect(messages.some((message) => message.content.includes("synthesis guard"))).toBe(false);
+
+    controller.observeProviderToolTurn(
+      state,
+      messages,
+      task(),
+      READ_ONLY_GUARD_THRESHOLD,
+      toolTurn
+    );
+    expect(messages.some((message) => message.content.includes("synthesis guard"))).toBe(true);
+    expect(recordTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "read_only_analysis_guard" })
+    );
   });
 });
 

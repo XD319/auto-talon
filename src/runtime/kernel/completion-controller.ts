@@ -9,6 +9,7 @@ import type {
 } from "../../types/index.js";
 
 export const PROGRESS_GUARD_THRESHOLD = 3;
+export const READ_ONLY_GUARD_THRESHOLD = 8;
 export const POST_COMPLETION_VERIFICATION_READ_LIMIT = 1;
 
 export interface CompletionControllerState {
@@ -21,6 +22,7 @@ export interface CompletionControllerState {
   maxIterations: number;
   messages: ConversationMessage[];
   postCompletionVerificationReads: number;
+  readOnlyTurns: number;
   silentToolTurns: number;
   turnProviderMessages: ConversationMessage[];
   warningBudgetPressureEmitted: boolean;
@@ -92,6 +94,7 @@ export class CompletionController {
   public observeProviderToolTurn(
     state: CompletionControllerState,
     messages: ConversationMessage[],
+    task: TaskRecord,
     iteration: number,
     providerResponse: Extract<ProviderResponse, { kind: "tool_calls" }>
   ): void {
@@ -101,20 +104,51 @@ export class CompletionController {
     } else {
       state.silentToolTurns = 0;
     }
-    if (state.silentToolTurns < PROGRESS_GUARD_THRESHOLD) {
-      return;
+    if (state.silentToolTurns >= PROGRESS_GUARD_THRESHOLD) {
+      messages.push({
+        content:
+          `progress guard: you have made ${state.silentToolTurns} consecutive tool-call rounds at iterations ${iteration - state.silentToolTurns + 1}-${iteration} without writing any visible reasoning text. Stop calling tools and answer the user's request based on what you already know. If the original question was conceptual or general-knowledge, answer directly without further tool use.`,
+        metadata: {
+          privacyLevel: "internal",
+          retentionKind: "session",
+          sourceType: "system_prompt"
+        },
+        role: "system"
+      });
+      state.silentToolTurns = 0;
     }
-    messages.push({
-      content:
-        `progress guard: you have made ${state.silentToolTurns} consecutive tool-call rounds at iterations ${iteration - state.silentToolTurns + 1}-${iteration} without writing any visible reasoning text. Stop calling tools and answer the user's request based on what you already know. If the original question was conceptual or general-knowledge, answer directly without further tool use.`,
-      metadata: {
-        privacyLevel: "internal",
-        retentionKind: "session",
-        sourceType: "system_prompt"
-      },
-      role: "system"
-    });
-    state.silentToolTurns = 0;
+
+    if (this.allToolCallsAreReads(providerResponse.toolCalls)) {
+      state.readOnlyTurns += 1;
+    } else {
+      state.readOnlyTurns = 0;
+    }
+    if (state.readOnlyTurns >= READ_ONLY_GUARD_THRESHOLD) {
+      messages.push({
+        content:
+          "synthesis guard: you have spent many consecutive turns reading files without producing a user-facing answer. " +
+          "Stop reading and synthesize your findings into a concrete response now. " +
+          "If you need to record intermediate findings, use the todo tool.",
+        metadata: {
+          privacyLevel: "internal",
+          retentionKind: "session",
+          sourceType: "system_prompt"
+        },
+        role: "system"
+      });
+      this.dependencies.recordTrace({
+        actor: "runtime.kernel",
+        eventType: "read_only_analysis_guard",
+        payload: {
+          iteration,
+          readOnlyTurns: state.readOnlyTurns
+        },
+        stage: "control",
+        summary: "Read-only analysis guard triggered",
+        taskId: task.taskId
+      });
+      state.readOnlyTurns = 0;
+    }
   }
 
   public evaluateIntentFulfillment(
