@@ -442,7 +442,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     targetRatio: 0.2,
     tailMinMessages: 10,
     tailTokenBudget: null,
-    thresholdRatio: 0.5,
+    thresholdRatio: 0.75,
     tokenThreshold: null,
     toolCallThreshold: 40
   },

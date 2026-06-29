@@ -3,7 +3,7 @@ import type { ConversationMessage } from "../../types/index.js";
 import { estimateMessageTokens } from "./token-counter.js";
 
 export const CLEARED_TOOL_RESULT_MARKER =
-  "[prior tool result cleared — re-invoke tool if needed]";
+  "[prior tool result cleared — use conversation context or re-invoke only if needed]";
 
 export const DEFAULT_TOOL_RESULT_KEEP_GROUPS = 5;
 
