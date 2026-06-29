@@ -896,6 +896,7 @@ function buildApplicationRuntime(
       interactionMode: "agent",
       maxIterations: request.maxIterations ?? config.defaultMaxIterations,
       metadata: {
+        delegateIsolation: request.isolation === true,
         delegatedFromTaskId: request.parentTaskId
       },
       ...(parentTask?.sessionId !== null && parentTask?.sessionId !== undefined

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { summarizeText } from "../runtime/kernel-support.js";
+
 import type { AgentProfileId } from "../types/profile.js";
 import type {
   ToolDefinition,
@@ -9,6 +11,7 @@ import type {
 } from "../types/index.js";
 
 const delegateTaskSchema = z.object({
+  isolation: z.boolean().optional(),
   maxIterations: z.number().int().positive().optional(),
   profile: z.enum(["planner", "executor", "reviewer"]).optional(),
   prompt: z.string().min(1)
@@ -16,6 +19,7 @@ const delegateTaskSchema = z.object({
 
 export interface DelegateTaskRequest {
   cwd: string;
+  isolation?: boolean;
   maxIterations?: number;
   parentTaskId: string;
   profile?: AgentProfileId;
@@ -33,6 +37,7 @@ export interface DelegateTaskResult {
 export type DelegateTaskExecutor = (request: DelegateTaskRequest) => Promise<DelegateTaskResult>;
 
 export interface PreparedDelegateTaskInput {
+  isolation?: boolean;
   maxIterations?: number;
   profile?: AgentProfileId;
   prompt: string;
@@ -62,6 +67,7 @@ export class DelegateTaskTool
     const parsed = this.inputSchema.parse(input);
     const preparedInput: PreparedDelegateTaskInput = {
       prompt: parsed.prompt,
+      ...(parsed.isolation !== undefined ? { isolation: parsed.isolation } : {}),
       ...(parsed.maxIterations !== undefined ? { maxIterations: parsed.maxIterations } : {}),
       ...(parsed.profile !== undefined ? { profile: parsed.profile } : {})
     };
@@ -97,15 +103,22 @@ export class DelegateTaskTool
       prompt: preparedInput.prompt,
       signal: context.signal,
       userId: context.userId,
+      ...(preparedInput.isolation !== undefined ? { isolation: preparedInput.isolation } : {}),
       ...(preparedInput.maxIterations !== undefined
         ? { maxIterations: preparedInput.maxIterations }
         : {}),
       ...(preparedInput.profile !== undefined ? { profile: preparedInput.profile } : {})
     });
 
+    const isolatedOutput =
+      preparedInput.isolation === true
+        ? summarizeIsolatedDelegateOutput(result.output)
+        : result.output;
+
     return {
       output: {
-        output: result.output,
+        isolation: preparedInput.isolation === true,
+        output: isolatedOutput,
         parentTaskId: context.taskId,
         status: result.status,
         taskId: result.taskId
@@ -114,4 +127,11 @@ export class DelegateTaskTool
       summary: `Delegated task ${result.taskId} finished with status ${result.status}`
     };
   }
+}
+
+export function summarizeIsolatedDelegateOutput(output: string | null): string | null {
+  if (output === null || output.trim().length === 0) {
+    return output;
+  }
+  return `[Delegated task summary]\n${summarizeText(output, 1_200)}`;
 }
