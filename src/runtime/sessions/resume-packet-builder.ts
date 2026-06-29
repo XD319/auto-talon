@@ -8,6 +8,7 @@ import type {
   SessionSummaryRecord
 } from "../../types/index.js";
 import type { SessionStateProjector } from "./session-state-projector.js";
+import { similarText } from "./text-similarity.js";
 
 export interface ResumePacketBuilderDependencies {
   stateProjector: SessionStateProjector;
@@ -23,16 +24,26 @@ export class ResumePacketBuilder {
     overrides?: Partial<RuntimeRunOptions>
   ): RuntimeRunOptions & { sessionId: string } {
     const projection = this.dependencies.stateProjector.projectState(sessionId);
+    const contextMessages = [...projection.messages];
+    const goalText = projection.sessionSummary?.goal ?? "";
+    const intentChanged =
+      newInput.trim().length > 0 && goalText.trim().length > 0 && !similarText(goalText, newInput);
+    if (intentChanged) {
+      contextMessages.push({
+        role: "system",
+        content: `KnownCurrentDirective: The user's NEW request supersedes earlier goals. Current task: ${normalizeSummary(newInput, 220)}`
+      });
+    }
     const metadata: JsonObject = {
       ...(overrides?.metadata ?? {}),
       sessionResume: {
         blockedReason: projection.commitmentState.blockedReason,
         commitments: projection.commitmentState.openCommitments,
-        contextMessages: projection.messages,
+        contextMessages,
         memoryContext: buildSessionResumeMemoryContext(projection.sessionSummary),
         nextAction: projection.commitmentState.nextAction,
         pendingDecision: projection.commitmentState.pendingDecision,
-        projectedMessageCount: projection.messages.length,
+        projectedMessageCount: contextMessages.length,
         sessionSummary: projection.sessionSummary
       } as unknown as JsonObject
     };
