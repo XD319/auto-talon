@@ -269,14 +269,19 @@ function buildSummarizerPrompt(input: SessionCompactInput): Array<{ content: str
   const structured = collectStructuredSummaryFields(input);
   const hasPreviousSummary =
     input.previousSummary !== undefined && input.previousSummary.trim().length > 0;
+  const focusPrefix =
+    input.focusTopic !== undefined && input.focusTopic.trim().length > 0
+      ? `User focus for this compaction: ${input.focusTopic.trim()}\n\n`
+      : "";
   if (hasPreviousSummary) {
-    return buildIterativeUpdatePrompt(input.previousSummary!.trim(), structured);
+    return buildIterativeUpdatePrompt(input.previousSummary!.trim(), structured, focusPrefix);
   }
-  return buildInitialSummaryPrompt(structured);
+  return buildInitialSummaryPrompt(structured, focusPrefix);
 }
 
 function buildInitialSummaryPrompt(
-  structured: StructuredSummaryFields
+  structured: StructuredSummaryFields,
+  focusPrefix = ""
 ): Array<{ content: string; role: "system" | "user" }> {
   return [
     {
@@ -298,7 +303,7 @@ function buildInitialSummaryPrompt(
       role: "system"
     },
     {
-      content: `Source material:\n${formatStructuredSummary(structured)}`,
+      content: `${focusPrefix}Source material:\n${formatStructuredSummary(structured)}`,
       role: "user"
     }
   ];
@@ -306,7 +311,8 @@ function buildInitialSummaryPrompt(
 
 function buildIterativeUpdatePrompt(
   previousSummary: string,
-  structured: StructuredSummaryFields
+  structured: StructuredSummaryFields,
+  focusPrefix = ""
 ): Array<{ content: string; role: "system" | "user" }> {
   return [
     {
@@ -321,6 +327,7 @@ function buildIterativeUpdatePrompt(
     },
     {
       content: [
+        focusPrefix,
         "Previous handoff summary:",
         previousSummary,
         "",

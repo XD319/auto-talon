@@ -80,6 +80,7 @@ import type { ToolsetName } from "../types/index.js";
 import { AgentApplicationService } from "./application-service.js";
 import { ContextCompactor, SessionSearchService, SessionSummaryService } from "./context/index.js";
 import { BudgetService } from "./budget/index.js";
+import { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
 import { ExecutionKernel } from "./execution-kernel.js";
 import { RuntimeOutputService } from "./runtime-output-service.js";
 import { RecallBudgetPolicy, RecallPlanner } from "./retrieval/index.js";
@@ -847,6 +848,8 @@ function buildApplicationRuntime(
     sessionRepository: storage.sessions
   });
 
+  const manualCompactCoordinator = new ManualCompactCoordinator();
+
   const executionKernel = new ExecutionKernel({
     auditService,
     auxiliaryProviderResolver,
@@ -859,6 +862,7 @@ function buildApplicationRuntime(
     executionCheckpointRepository: storage.checkpoints,
     contextCompactor,
     getSessionCommitmentState: (sessionId) => sessionCommitmentProjector.project(sessionId),
+    manualCompactCoordinator,
     memoryPlane,
     recallPlanner,
     provider,
@@ -1117,6 +1121,7 @@ function buildApplicationRuntime(
     outputService,
     auditService,
     memoryPlane,
+    manualCompactCoordinator,
     maxShellTimeoutMs: config.workflow.maxShellTimeoutMs,
     experiencePlane,
     skillDraftManager,

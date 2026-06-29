@@ -27,6 +27,7 @@ export type TuiRuntimeService = Pick<
   | "explainMemoryRecall"
   | "forgetMemory"
   | "getSessionTodos"
+  | "requestManualCompact"
   | "handoffSession"
   | "listCommitments"
   | "listConfiguredProviders"

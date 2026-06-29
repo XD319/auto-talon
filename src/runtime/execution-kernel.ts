@@ -58,6 +58,7 @@ import {
 } from "./context/token-counter.js";
 import { applyToolOutputBudget } from "./context/tool-output-budget.js";
 import { buildSessionHandoffMessageContent, listDiscardedMessages } from "./context/compact-handoff.js";
+import type { ManualCompactRequest } from "./context/manual-compact-coordinator.js";
 import {
   dropOldestNonSystemMessages,
   isContextOverflowProviderError
@@ -119,7 +120,7 @@ import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { SessionMessageProjector } from "./sessions/session-message-projector.js";
 import type { SkillContextService } from "../skills/index.js";
-import type { TodoSessionStore } from "../tools/todo-session-store.js";
+import type { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -128,6 +129,7 @@ export interface ExecutionKernelDependencies {
   compactPolicy: CompactTriggerPolicy;
   executionCheckpointRepository: ExecutionCheckpointRepository;
   getSessionCommitmentState?: (sessionId: string) => SessionCommitmentState | null;
+  manualCompactCoordinator?: ManualCompactCoordinator;
   memoryPlane: MemoryPlane;
   recallPlanner: RecallPlanner;
   provider: Provider;
@@ -1429,7 +1431,32 @@ export class ExecutionKernel {
         state,
         task
       });
-      const compacted = await this.compactMessages(compactInputBase);
+      const manualCompactRequest =
+        this.dependencies.manualCompactCoordinator?.consume(task.taskId) ?? null;
+      if (manualCompactRequest !== null) {
+        this.dependencies.traceService.record({
+          actor: "runtime.context",
+          eventType: "manual_compact_triggered",
+          payload: {
+            iteration,
+            ...(manualCompactRequest.focusTopic !== undefined
+              ? { focusTopic: manualCompactRequest.focusTopic }
+              : {})
+          },
+          stage: "memory",
+          summary: "Manual compaction requested",
+          taskId: task.taskId
+        });
+      }
+      const compacted = await this.compactMessages(
+        {
+          ...compactInputBase,
+          ...(manualCompactRequest?.focusTopic !== undefined
+            ? { focusTopic: manualCompactRequest.focusTopic }
+            : {})
+        },
+        manualCompactRequest
+      );
       if (compacted.triggered) {
         const compactReason = compacted.reason ?? "message_count";
         const preCompactMessages = [...messages];
@@ -1897,9 +1924,13 @@ export class ExecutionKernel {
   }
 
   private async compactMessages(
-    input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0]
+    input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0],
+    manualRequest: ManualCompactRequest | null = null
   ): Promise<SessionCompactResult> {
-    const decision = this.dependencies.compactPolicy.shouldCompact(input);
+    const decision =
+      manualRequest !== null
+        ? { reason: "token_budget" as const, triggered: true }
+        : this.dependencies.compactPolicy.shouldCompact(input);
     this.dependencies.traceService.record({
       actor: "runtime.context",
       eventType: "compact_evaluated",
@@ -1942,6 +1973,7 @@ export class ExecutionKernel {
         messages: messagesToSummarize,
         ...(input.originalGoal !== undefined ? { originalGoal: input.originalGoal } : {}),
         ...(input.previousSummary !== undefined ? { previousSummary: input.previousSummary } : {}),
+        ...(input.focusTopic !== undefined ? { focusTopic: input.focusTopic } : {}),
         ...(input.recentlyReadFilesSummary !== undefined
           ? { recentlyReadFilesSummary: input.recentlyReadFilesSummary }
           : {}),

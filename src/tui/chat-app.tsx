@@ -887,6 +887,25 @@ export function ChatTuiApp({
         return true;
       }
 
+      if (text === "/compact" || text.startsWith("/compact ")) {
+        const taskId = controller.activeTaskId;
+        if (taskId === null) {
+          controller.addSystemMessage("No active task to compact.");
+          return true;
+        }
+        const focusTopic = text.startsWith("/compact ") ? text.slice("/compact ".length).trim() : undefined;
+        service.requestManualCompact(
+          taskId,
+          focusTopic !== undefined && focusTopic.length > 0 ? focusTopic : undefined
+        );
+        controller.addSystemMessage(
+          focusTopic !== undefined && focusTopic.length > 0
+            ? `Manual compaction queued with focus: ${focusTopic}`
+            : "Manual compaction queued for the next safe breakpoint."
+        );
+        return true;
+      }
+
       if (text === "/diff") {
         controller.addSystemMessage(controller.formatDiffSummary());
         return true;

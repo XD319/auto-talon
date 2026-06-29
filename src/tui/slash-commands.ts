@@ -43,6 +43,8 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/stop", "stop", "Interrupt the current task"),
   suggestion("/history", "history", "Show recent prompts"),
   suggestion("/context", "context", "Show context budget summary"),
+  suggestion("/compact", "compact", "Trigger manual compaction at next safe breakpoint"),
+  suggestion("/compact ", "compact-focus", "Trigger manual compaction with focus instructions"),
   suggestion("/memory", "memory", "Memory commands"),
   suggestion("/memory review", "memory-review", "Review queued memory suggestions"),
   suggestion("/memory add ", "memory-add", "Add memory to profile or project scope"),

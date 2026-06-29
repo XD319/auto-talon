@@ -87,7 +87,7 @@ import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import type { TodoItem, TodoSessionStore } from "../tools/todo-session-store.js";
 import type { ToolOverrideStore } from "../tools/tool-overrides.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import type { ExecutionKernel } from "./execution-kernel.js";
+import type { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
 import type { ResumePacketBuilder, SessionService } from "./sessions/index.js";
 import type {
   SessionUiStateService,
@@ -328,6 +328,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   sessionBranchService: SessionBranchService;
   sessionHandoffService: SessionHandoffService;
   gatewaySessionRepository: GatewaySessionRepository;
+  manualCompactCoordinator: ManualCompactCoordinator;
   providerRouter?: ProviderRouter;
   auxiliaryProviderResolver?: AuxiliaryProviderResolver;
   budgetService?: BudgetService;
@@ -413,6 +414,10 @@ export class AgentApplicationService {
 
   public getSessionTodos(sessionId: string): TodoItem[] {
     return this.dependencies.todoSessionStore.get(sessionId);
+  }
+
+  public requestManualCompact(taskId: string, focusTopic?: string): void {
+    this.dependencies.manualCompactCoordinator.request(taskId, focusTopic);
   }
 
   public saveSessionUiState(sessionId: string, input: SaveSessionUiStateInput): void {

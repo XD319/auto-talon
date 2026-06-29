@@ -204,6 +204,8 @@ export interface SessionCompactInput {
   recentlyReadFilesSummary?: string;
   /** Prior session handoff summary for iterative compaction updates. */
   previousSummary?: string;
+  /** Optional user focus instructions for manual compaction. */
+  focusTopic?: string;
 }
 
 export interface SessionCompactResult {
