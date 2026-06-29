@@ -72,6 +72,7 @@ export const TRACE_EVENT_TYPES = [
   "memory_context_injected",
   "session_todos_injected",
   "prior_task_context_injected",
+  "reactive_compact_triggered",
   "repo_map_created",
   "memory_recalled",
   "recall_explain",
@@ -537,6 +538,11 @@ export interface SessionTodosInjectedPayload extends JsonObject {
 export interface PriorTaskContextInjectedPayload extends JsonObject {
   priorTaskId: string;
   truncated: boolean;
+}
+
+export interface ReactiveCompactTriggeredPayload extends JsonObject {
+  droppedMessageCount: number;
+  iteration: number;
 }
 
 export interface RepoMapCreatedPayload extends JsonObject {
@@ -1033,6 +1039,7 @@ export type TraceEvent =
   | TraceEventBase<"memory_context_injected", MemoryContextInjectedPayload>
   | TraceEventBase<"session_todos_injected", SessionTodosInjectedPayload>
   | TraceEventBase<"prior_task_context_injected", PriorTaskContextInjectedPayload>
+  | TraceEventBase<"reactive_compact_triggered", ReactiveCompactTriggeredPayload>
   | TraceEventBase<"repo_map_created", RepoMapCreatedPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"recall_explain", RecallExplainPayload>

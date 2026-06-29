@@ -58,6 +58,10 @@ import {
 } from "./context/token-counter.js";
 import { applyToolOutputBudget } from "./context/tool-output-budget.js";
 import { buildSessionHandoffMessageContent, listDiscardedMessages } from "./context/compact-handoff.js";
+import {
+  dropOldestNonSystemMessages,
+  isContextOverflowProviderError
+} from "./context/reactive-compact.js";
 import { pruneOldToolResults } from "./context/tool-result-pruner.js";
 import { selectTailMessages } from "./context/tail-selector.js";
 import type { RecallPlanner } from "./retrieval/index.js";
@@ -66,6 +70,7 @@ import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
 import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-exposure-planner.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
+import type { ProviderError } from "../providers/provider-error.js";
 import { generateWithProviderFailover } from "../providers/provider-failover.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type { AuditService } from "../audit/audit-service.js";
@@ -1011,54 +1016,86 @@ export class ExecutionKernel {
 
         const startedAt = Date.now();
         let providerResponse;
-        try {
-          providerResponse = await generateWithProviderFailover(
-            {
-              auditService: this.dependencies.auditService,
-              cwd: this.dependencies.workspaceRoot,
-              enableFailover: true,
-              primaryProvider: activeProvider,
-              taskId: task.taskId,
-              traceService: this.dependencies.traceService
-            },
-            providerInput
-          );
-        } catch (error) {
-          const providerError = normalizeProviderFailure(error, activeProvider);
-          const abortReason = state.managedAbortController.getReason();
-          const signalAborted = state.managedAbortController.abortController.signal.aborted;
-          const timeoutSource =
-            signalAborted && abortReason === "timeout"
-              ? state.managedAbortController.timeoutMode
-              : providerError.category === "timeout_error"
-                ? "provider"
-                : undefined;
-          this.dependencies.traceService.record({
-            actor: `provider.${activeProvider.name}`,
-            eventType: "provider_request_failed",
-            payload: {
-              errorCategory:
-                signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category,
-              errorMessage: providerError.message,
-              iteration,
-              lastActivityReason: state.managedAbortController.getLastActivityReason(),
-              latencyMs: Date.now() - startedAt,
-              modelName: providerError.modelName ?? activeProvider.model ?? null,
-              providerName: activeProvider.name,
-              retryCount: providerError.retryCount,
-              timeoutMs: state.managedAbortController.timeoutMs,
-              ...(timeoutSource !== undefined ? { timeoutSource } : {})
-            },
-            stage: "planning",
-            summary: `Provider request failed with ${
-              signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category
-            }`,
-            taskId: task.taskId
-          });
-          if (signalAborted) {
-            throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
+        let reactiveCompactUsed = false;
+        for (let providerAttempt = 0; providerAttempt < 2; providerAttempt += 1) {
+          try {
+            providerResponse = await generateWithProviderFailover(
+              {
+                auditService: this.dependencies.auditService,
+                cwd: this.dependencies.workspaceRoot,
+                enableFailover: true,
+                primaryProvider: activeProvider,
+                taskId: task.taskId,
+                traceService: this.dependencies.traceService
+              },
+              providerInput
+            );
+            break;
+          } catch (error) {
+            const providerError = normalizeProviderFailure(error, activeProvider);
+            if (
+              !reactiveCompactUsed &&
+              isContextOverflowProviderError(providerError as ProviderError)
+            ) {
+              const droppedFromTurn = dropOldestNonSystemMessages(state.turnProviderMessages);
+              const droppedFromMessages = dropOldestNonSystemMessages(messages);
+              if (droppedFromTurn > 0 || droppedFromMessages > 0) {
+                reactiveCompactUsed = true;
+                this.dependencies.traceService.record({
+                  actor: "runtime.context",
+                  eventType: "reactive_compact_triggered",
+                  payload: {
+                    droppedMessageCount: Math.max(droppedFromTurn, droppedFromMessages),
+                    iteration
+                  },
+                  stage: "planning",
+                  summary: "Dropped oldest messages after provider context overflow",
+                  taskId: task.taskId
+                });
+                continue;
+              }
+            }
+            const abortReason = state.managedAbortController.getReason();
+            const signalAborted = state.managedAbortController.abortController.signal.aborted;
+            const timeoutSource =
+              signalAborted && abortReason === "timeout"
+                ? state.managedAbortController.timeoutMode
+                : providerError.category === "timeout_error"
+                  ? "provider"
+                  : undefined;
+            this.dependencies.traceService.record({
+              actor: `provider.${activeProvider.name}`,
+              eventType: "provider_request_failed",
+              payload: {
+                errorCategory:
+                  signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category,
+                errorMessage: providerError.message,
+                iteration,
+                lastActivityReason: state.managedAbortController.getLastActivityReason(),
+                latencyMs: Date.now() - startedAt,
+                modelName: providerError.modelName ?? activeProvider.model ?? null,
+                providerName: activeProvider.name,
+                retryCount: providerError.retryCount,
+                timeoutMs: state.managedAbortController.timeoutMs,
+                ...(timeoutSource !== undefined ? { timeoutSource } : {})
+              },
+              stage: "planning",
+              summary: `Provider request failed with ${
+                signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category
+              }`,
+              taskId: task.taskId
+            });
+            if (signalAborted) {
+              throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
+            }
+            throw providerError;
           }
-          throw providerError;
+        }
+        if (providerResponse === undefined) {
+          throw new AppError({
+            code: "provider_request_failed",
+            message: "Provider request failed after reactive compaction retry."
+          });
         }
         state.managedAbortController.touchActivity("provider_request_succeeded");
         const assistantDisplay = providerResponse.kind === "final" ? "final" : "intermediate";
