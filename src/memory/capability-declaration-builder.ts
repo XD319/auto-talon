@@ -25,6 +25,8 @@ export function buildCapabilityDeclaration(input: {
     "",
     "loop discipline (read before every tool call):",
     "- State briefly in plain text: what you already know, what is missing, and what THIS next tool call will add.",
+    "- Before re-running diagnostic, scan, search, or read tools, check conversation context, todo items, pinned file excerpts, and recalled memory for existing results.",
+    "- Prefer acting on information already in context instead of repeating the same discovery work from scratch.",
     "- Never call a tool with the same name AND identical arguments as a prior call in this task. If you already received that result, synthesize from it instead.",
     "- After 3 consecutive tool-call rounds without producing visible reasoning text, stop calling tools and answer with the best you have."
   ].join("\n");
