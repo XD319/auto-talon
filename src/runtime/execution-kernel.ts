@@ -1409,7 +1409,6 @@ export class ExecutionKernel {
         const initialSystemPrompt =
           messages.find((message) => message.role === "system") ?? null;
         messages.length = 0;
-        state.toolCallSignatures.clear();
         state.silentToolTurns = 0;
         if (initialSystemPrompt !== null) {
           messages.push(initialSystemPrompt);
