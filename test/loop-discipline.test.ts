@@ -186,6 +186,76 @@ describe("loop discipline", () => {
     }
   });
 
+  it("replays duplicate read_file tool results from cache", async () => {
+    const workspace = await fs.mkdtemp(join(tmpdir(), "talon-loop-replay-"));
+    tempPaths.push(workspace);
+    await fs.writeFile(join(workspace, "target.txt"), "payload", "utf8");
+
+    const handle = createApplication(workspace, {
+      config: { databasePath: join(workspace, "runtime.db") },
+      provider: new ScriptedProvider((input) => {
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+
+        if (toolMessages.length === 0) {
+          return {
+            kind: "tool_calls",
+            message: "",
+            toolCalls: [
+              {
+                input: { path: join(workspace, "target.txt") },
+                reason: "Read target file.",
+                toolCallId: "read-1",
+                toolName: "read_file"
+              }
+            ],
+            usage: { inputTokens: 2, outputTokens: 1 }
+          };
+        }
+
+        if (toolMessages.length === 1) {
+          return {
+            kind: "tool_calls",
+            message: "",
+            toolCalls: [
+              {
+                input: { path: join(workspace, "target.txt") },
+                reason: "Read target file again.",
+                toolCallId: "read-2",
+                toolName: "read_file"
+              }
+            ],
+            usage: { inputTokens: 2, outputTokens: 1 }
+          };
+        }
+
+        return {
+          kind: "final",
+          message: "done",
+          usage: { inputTokens: 2, outputTokens: 1 }
+        };
+      })
+    });
+
+    try {
+      const result = await handle.service.runTask(
+        createDefaultRunOptions("read twice", workspace, handle.config)
+      );
+      const details = handle.service.showTask(result.task.taskId);
+      const readCalls = details.toolCalls.filter((toolCall) => toolCall.toolName === "read_file");
+
+      expect(result.output).toBe("done");
+      expect(
+        details.trace.some((event) => event.eventType === "duplicate_tool_replayed")
+      ).toBe(true);
+      const executedReads = readCalls.filter(
+        (toolCall) => !toolCall.summary?.includes("replayed from duplicate cache")
+      );
+      expect(executedReads).toHaveLength(1);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("does not annotate duplicate shell tool results", async () => {
     const workspace = await fs.mkdtemp(join(tmpdir(), "talon-loop-shell-"));
     tempPaths.push(workspace);

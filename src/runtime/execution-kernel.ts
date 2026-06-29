@@ -1189,6 +1189,18 @@ export class ExecutionKernel {
         }
 
         if (!isParallelSafe(currentToolCall.toolName)) {
+          const replayed = this.tryApplyDuplicateToolReplay(
+            state,
+            messages,
+            task,
+            iteration,
+            currentToolCall
+          );
+          if (replayed) {
+            toolCallCount += 1;
+            toolCallIndex += 1;
+            continue;
+          }
           const invocation = await this.invokeToolCall(state, task, iteration, currentToolCall);
           const paused = this.tryPauseToolExecution(
             state,
@@ -2150,13 +2162,22 @@ export class ExecutionKernel {
     }
 
     const batchInvocations = await Promise.all(
-      clearedCalls.map((toolCall) => this.invokeToolCall(state, task, iteration, toolCall))
+      clearedCalls.map(async (toolCall) => {
+        const replayed = this.tryApplyDuplicateToolReplay(state, messages, task, iteration, toolCall);
+        if (replayed) {
+          return null;
+        }
+        return this.invokeToolCall(state, task, iteration, toolCall);
+      })
     );
 
     let toolCallCount = preflightOutcomes.length;
     for (let batchOffset = 0; batchOffset < batchInvocations.length; batchOffset += 1) {
       const invocation = batchInvocations[batchOffset];
-      if (invocation === undefined) {
+      if (invocation === null || invocation === undefined) {
+        if (invocation === null) {
+          toolCallCount += 1;
+        }
         continue;
       }
       const paused = this.tryPauseToolExecution(
@@ -2206,6 +2227,20 @@ export class ExecutionKernel {
     iteration: number,
     toolCall: ProviderToolCall
   ): Promise<{ outcome: ToolExecutionOutcome; toolCall: ProviderToolCall }> {
+    const replayOutcome = this.resolveDuplicateToolReplay(state, toolCall);
+    if (replayOutcome !== null) {
+      emitTaskEvent(state.onTaskEvent, {
+        iteration,
+        kind: "tool",
+        status: "started",
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      });
+      this.recordDuplicateToolReplayTrace(state, task, iteration, toolCall, replayOutcome);
+      return { outcome: replayOutcome, toolCall };
+    }
+
     emitTaskEvent(state.onTaskEvent, {
       iteration,
       kind: "tool",
@@ -2248,6 +2283,20 @@ export class ExecutionKernel {
     iteration: number,
     toolCall: ProviderToolCall
   ): Promise<{ outcome: ToolExecutionOutcome; toolCall: ProviderToolCall }> {
+    const replayOutcome = this.resolveDuplicateToolReplay(state, toolCall);
+    if (replayOutcome !== null) {
+      emitTaskEvent(state.onTaskEvent, {
+        iteration,
+        kind: "tool",
+        status: "started",
+        taskId: task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      });
+      this.recordDuplicateToolReplayTrace(state, task, iteration, toolCall, replayOutcome);
+      return { outcome: replayOutcome, toolCall };
+    }
+
     emitTaskEvent(state.onTaskEvent, {
       iteration,
       kind: "tool",
@@ -2452,18 +2501,24 @@ export class ExecutionKernel {
 
     if (toolDescriptor !== null) {
       if (toolDescriptor.capability !== "interaction.ask_user") {
-        messages.push(
-          this.buildToolFeedbackMessage(
-            state,
-            task,
-            toolCall,
-            toolResultOutput,
-            privacyLevel,
-            duplicateNotice
-          )
+        const feedbackMessage = this.buildToolFeedbackMessage(
+          state,
+          task,
+          toolCall,
+          toolResultOutput,
+          privacyLevel,
+          duplicateNotice
         );
+        messages.push(feedbackMessage);
+        if (signature !== null && priorCall === null) {
+          state.toolCallSignatures.set(signature, {
+            cachedToolOutput: safeSerializeToolOutputForBudget(toolResultOutput),
+            iteration,
+            toolCallId: toolCall.toolCallId
+          });
+        }
       }
-      if (signature !== null && priorCall === null) {
+      if (signature !== null && priorCall === null && toolDescriptor.capability === "interaction.ask_user") {
         state.toolCallSignatures.set(signature, {
           iteration,
           toolCallId: toolCall.toolCallId
@@ -2480,18 +2535,18 @@ export class ExecutionKernel {
       });
       return;
     }
-    messages.push(
-      this.buildToolFeedbackMessage(
-        state,
-        task,
-        toolCall,
-        toolResultOutput,
-        privacyLevel,
-        duplicateNotice
-      )
+    const feedbackMessage = this.buildToolFeedbackMessage(
+      state,
+      task,
+      toolCall,
+      toolResultOutput,
+      privacyLevel,
+      duplicateNotice
     );
+    messages.push(feedbackMessage);
     if (signature !== null && priorCall === null) {
       state.toolCallSignatures.set(signature, {
+        cachedToolOutput: safeSerializeToolOutputForBudget(toolResultOutput),
         iteration,
         toolCallId: toolCall.toolCallId
       });
@@ -2505,6 +2560,117 @@ export class ExecutionKernel {
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName
     });
+  }
+
+  private tryApplyDuplicateToolReplay(
+    state: ExecutionLoopState,
+    messages: ConversationMessage[],
+    task: TaskRecord,
+    iteration: number,
+    toolCall: ProviderToolCall
+  ): boolean {
+    const replayOutcome = this.resolveDuplicateToolReplay(state, toolCall);
+    if (replayOutcome === null) {
+      return false;
+    }
+
+    emitTaskEvent(state.onTaskEvent, {
+      iteration,
+      kind: "tool",
+      status: "started",
+      taskId: task.taskId,
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName
+    });
+    this.applyCompletedToolCallOutcome(
+      state,
+      messages,
+      task,
+      iteration,
+      toolCall,
+      replayOutcome
+    );
+    this.recordDuplicateToolReplayTrace(state, task, iteration, toolCall, replayOutcome);
+    return true;
+  }
+
+  private resolveDuplicateToolReplay(
+    state: ExecutionLoopState,
+    toolCall: ProviderToolCall
+  ): Extract<ToolExecutionOutcome, { kind: "completed" }> | null {
+    const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
+    const isDeduplicatable =
+      toolDescriptor !== null &&
+      (toolDescriptor.capability === "filesystem.read" ||
+        toolDescriptor.capability === "network.fetch_public_readonly");
+    if (!isDeduplicatable) {
+      return null;
+    }
+    const signature = toolCallSignature(toolCall.toolName, toolCall.input);
+    const priorCall = state.toolCallSignatures.get(signature);
+    if (priorCall === undefined || priorCall.cachedToolOutput === undefined) {
+      return null;
+    }
+
+    let parsedOutput: unknown = priorCall.cachedToolOutput;
+    try {
+      parsedOutput = JSON.parse(priorCall.cachedToolOutput);
+    } catch {
+      parsedOutput = priorCall.cachedToolOutput;
+    }
+
+    return {
+      kind: "completed",
+      result: {
+        output: parsedOutput as import("../../types/index.js").JsonValue,
+        replayed: true,
+        success: true,
+        summary: `Tool ${toolCall.toolName} replayed from duplicate cache`
+      },
+      toolCall: {
+        errorCode: null,
+        errorMessage: null,
+        finishedAt: new Date().toISOString(),
+        input: toolCall.input,
+        iteration: state.task.currentIteration,
+        output: parsedOutput as import("../../types/index.js").JsonValue,
+        requestedAt: new Date().toISOString(),
+        riskLevel: toolDescriptor?.riskLevel ?? "low",
+        startedAt: new Date().toISOString(),
+        status: "finished",
+        summary: `Tool ${toolCall.toolName} replayed from duplicate cache`,
+        taskId: state.task.taskId,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      }
+    };
+  }
+
+  private recordDuplicateToolReplayTrace(
+    state: ExecutionLoopState,
+    task: TaskRecord,
+    iteration: number,
+    toolCall: ProviderToolCall,
+    replayOutcome: Extract<ToolExecutionOutcome, { kind: "completed" }>
+  ): void {
+    const signature = toolCallSignature(toolCall.toolName, toolCall.input);
+    const priorCall = state.toolCallSignatures.get(signature);
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel",
+      eventType: "duplicate_tool_replayed",
+      payload: {
+        iteration,
+        priorIteration: priorCall?.iteration ?? null,
+        priorToolCallId: priorCall?.toolCallId ?? null,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName
+      },
+      stage: "tooling",
+      summary: `Replayed duplicate ${toolCall.toolName} from iteration ${priorCall?.iteration ?? "unknown"}`,
+      taskId: task.taskId
+    });
+    void replayOutcome;
+    void state;
   }
 
   private buildToolFeedbackMessage(
@@ -2620,6 +2786,12 @@ function uniqueStringsFromArrays(groups: string[][]): string[] {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function formatWorkflowTestCommandHints(
+  commands: WorkflowRuntimeConfig["testCommands"]
+): string[] {
+  return commands.map((command) => (typeof command === "string" ? command : command.command));
 }
 
 function toolResultOutputForModel(result: ToolExecutionResult): unknown {
