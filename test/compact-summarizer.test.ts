@@ -1,6 +1,7 @@
 ﻿import { describe, expect, it } from "vitest";
 
 import {
+  collectStructuredSummaryFields,
   DeterministicCompactSummarizer,
   ProviderSubagentSummarizer
 } from "../src/memory/compact-summarizer.js";
@@ -94,6 +95,21 @@ describe("compact summarizer", () => {
     expect(result.summary).toContain("### Remaining Work");
     expect(result.summary).toContain("apiKey=[REDACTED]");
     expect(result.summary).toContain("[REDACTED_EMAIL]");
+  });
+
+  it("preserves assistant reasoning in findings section", () => {
+    const fields = collectStructuredSummaryFields({
+      ...compactInput,
+      messages: [
+        ...compactInput.messages,
+        {
+          content:
+            "Bug 1: score can go negative when addScore receives invalid input without guarding downstream UI updates.",
+          role: "assistant" as const
+        }
+      ]
+    });
+    expect(fields.findings).toContain("Bug 1");
   });
 
   it("uses provider_subagent output when provider succeeds", async () => {

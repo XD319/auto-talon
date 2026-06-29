@@ -94,6 +94,7 @@ export interface StructuredSummaryFields {
   completedWork: string;
   evidenceAndVerification: string;
   filesTouched: string[];
+  findings: string;
   recentlyReadFiles: string;
   commandsRun: string[];
   blockers: string[];
@@ -131,6 +132,11 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
   const allUserMessages = uniqueList(
     userMessages.map((message) => summarize(message.content, 500)).filter((message) => message.length > 0)
   );
+  const assistantFindings = assistantMessages
+    .filter((message) => message.content.trim().length > 30)
+    .map((message) => summarize(message.content, 200));
+  const findings =
+    assistantFindings.length > 0 ? assistantFindings.slice(-5).join("\n") : "[none yet]";
   return {
     allUserMessages,
     blockers,
@@ -138,6 +144,7 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
     completedWork: completedWork || "[n/a]",
     evidenceAndVerification: evidenceAndVerification || "[n/a]",
     filesTouched,
+    findings,
     goal: firstUserGoal || fallbackGoal || "[n/a]",
     latestUserRequest: latestUserGoal || fallbackGoal || "[n/a]",
     recentlyReadFiles: input.recentlyReadFilesSummary ?? "[none]",
@@ -169,6 +176,9 @@ export function formatStructuredSummary(fields: StructuredSummaryFields): string
       "",
       "### Remaining Work",
       fields.remainingWork.length > 0 ? fields.remainingWork.map((item) => `- ${item}`).join("\n") : "[none]",
+      "",
+      "## Findings So Far",
+      fields.findings,
       "",
       "## Key Decisions",
       "[see session decisions metadata]",
