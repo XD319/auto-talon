@@ -35,6 +35,7 @@ export const TRACE_EVENT_TYPES = [
   "completion_verification_satisfied",
   "intent_fulfillment_missing",
   "empty_final_guarded",
+  "unpolished_final_guarded",
   "read_only_analysis_guard",
   "duplicate_tool_replayed",
   "no_tools_tool_calls_ignored",
@@ -1010,6 +1011,7 @@ export type TraceEvent =
   | TraceEventBase<"completion_verification_satisfied">
   | TraceEventBase<"intent_fulfillment_missing">
   | TraceEventBase<"empty_final_guarded">
+  | TraceEventBase<"unpolished_final_guarded">
   | TraceEventBase<"read_only_analysis_guard">
   | TraceEventBase<"duplicate_tool_replayed">
   | TraceEventBase<"no_tools_tool_calls_ignored", NoToolsToolCallsIgnoredPayload>

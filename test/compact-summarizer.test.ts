@@ -112,6 +112,22 @@ describe("compact summarizer", () => {
     expect(fields.findings).toContain("Bug 1");
   });
 
+  it("preserves reasoningContent-only assistant text in findings section", () => {
+    const fields = collectStructuredSummaryFields({
+      ...compactInput,
+      messages: [
+        ...compactInput.messages,
+        {
+          content: "",
+          reasoningContent:
+            "Bug 1: updateFPS() in game.js never accumulates fpsTime, so displayed FPS is wrong.",
+          role: "assistant" as const
+        }
+      ]
+    });
+    expect(fields.findings).toContain("updateFPS()");
+  });
+
   it("uses provider_subagent output when provider succeeds", async () => {
     const summarizer = new ProviderSubagentSummarizer(() => new FinalSummaryProvider());
     const result = await summarizer.summarize(compactInput);

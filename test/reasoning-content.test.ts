@@ -103,3 +103,52 @@ describe("resolveProviderFinalText", () => {
     ).toBe("summary body");
   });
 });
+
+describe("final output polish detection", () => {
+  it("flags reasoning-only finals for polish", async () => {
+    const { isReasoningOnlyFinal, shouldPolishFinalOutput } = await import(
+      "../src/providers/reasoning-content.js"
+    );
+    const response = {
+      kind: "final" as const,
+      message: "",
+      reasoningContent: "Bug Candidate #1: broken fps"
+    };
+    expect(isReasoningOnlyFinal(response)).toBe(true);
+    expect(shouldPolishFinalOutput(response, "Bug Candidate #1: broken fps")).toEqual({
+      polish: true,
+      trigger: "reasoning_only_final"
+    });
+  });
+
+  it("flags long internal reasoning drafts for polish", async () => {
+    const { shouldPolishFinalOutput } = await import("../src/providers/reasoning-content.js");
+    const draft =
+      "Let me think about bug candidate #1. Wait, let me re-read game.js. " +
+      "Actually wait, there is another issue.";
+    const response = {
+      kind: "final" as const,
+      message: draft,
+      reasoningContent: undefined
+    };
+    expect(shouldPolishFinalOutput(response, draft)).toEqual({
+      polish: true,
+      trigger: "internal_reasoning_detected"
+    });
+  });
+
+  it("accepts concise user-facing finals", async () => {
+    const { shouldPolishFinalOutput } = await import("../src/providers/reasoning-content.js");
+    const answer =
+      "1. `js/game.js` updateFPS() never accumulates fpsTime.\n2. `js/snake.js` hash collision check is a no-op.";
+    const response = {
+      kind: "final" as const,
+      message: answer,
+      reasoningContent: undefined
+    };
+    expect(shouldPolishFinalOutput(response, answer)).toEqual({
+      polish: false,
+      trigger: null
+    });
+  });
+});

@@ -128,7 +128,8 @@ export class CompletionController {
         content:
           "synthesis guard: you have spent many consecutive turns reading files without producing a user-facing answer. " +
           "Stop reading and synthesize your findings into a concrete response now. " +
-          "If you need to record intermediate findings, use the todo tool.",
+          "If you need to record intermediate findings, use the todo tool. " +
+          "When you finalize, answer the user's request directly in a concise numbered list without chain-of-thought.",
         metadata: {
           privacyLevel: "internal",
           retentionKind: "session",

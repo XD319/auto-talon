@@ -133,8 +133,9 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
     userMessages.map((message) => summarize(message.content, 500)).filter((message) => message.length > 0)
   );
   const assistantFindings = assistantMessages
-    .filter((message) => message.content.trim().length > 30)
-    .map((message) => summarize(message.content, 200));
+    .map((message) => assistantVisibleText(message))
+    .filter((text) => text.length > 30)
+    .map((text) => summarize(text, 200));
   const findings =
     assistantFindings.length > 0 ? assistantFindings.slice(-5).join("\n") : "[none yet]";
   return {
@@ -210,6 +211,14 @@ export function redactSensitiveSummary(value: string): string {
     .replace(/\b(Bearer\s+)?[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/gu, "[REDACTED_TOKEN]")
     .replace(/\b(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/gu, "[REDACTED_TOKEN]")
     .replace(/\b(password|secret|token|api[_-]?key)\s*[:=]\s*['"]?[^'"\s;]+/giu, "$1=[REDACTED]");
+}
+
+function assistantVisibleText(message: SessionCompactInput["messages"][number]): string {
+  const content = message.content.trim();
+  if (content.length > 0) {
+    return content;
+  }
+  return message.reasoningContent?.trim() ?? "";
 }
 
 function extractFilesTouched(toolMessages: SessionCompactInput["messages"]): string[] {

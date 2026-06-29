@@ -172,6 +172,7 @@ export interface SessionCompactInput {
   messages: Array<{
     role: string;
     content: string;
+    reasoningContent?: string;
     toolCallId?: string;
     toolName?: string;
     toolCalls?: Array<{

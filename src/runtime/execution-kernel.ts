@@ -72,7 +72,7 @@ import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-expos
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
 import type { ProviderError } from "../providers/provider-error.js";
-import { resolveProviderFinalText } from "../providers/reasoning-content.js";
+import { resolveProviderFinalText, shouldPolishFinalOutput } from "../providers/reasoning-content.js";
 import { generateWithProviderFailover } from "../providers/provider-failover.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type { AuditService } from "../audit/audit-service.js";
@@ -1241,16 +1241,21 @@ export class ExecutionKernel {
 
         if (providerResponse.kind === "final") {
           const resolvedFinalText = resolveProviderFinalText(providerResponse) ?? "";
-          if (resolvedFinalText.trim().length === 0) {
+          const polishDecision = shouldPolishFinalOutput(providerResponse, resolvedFinalText);
+          if (resolvedFinalText.trim().length === 0 || polishDecision.polish) {
             this.dependencies.traceService.record({
               actor: "runtime.kernel",
-              eventType: "empty_final_guarded",
+              eventType: polishDecision.polish ? "unpolished_final_guarded" : "empty_final_guarded",
               payload: {
                 iteration,
-                providerName: activeProvider.name
+                providerName: activeProvider.name,
+                ...(polishDecision.trigger !== null ? { trigger: polishDecision.trigger } : {}),
+                ...(resolvedFinalText.length > 0 ? { resolvedLength: resolvedFinalText.length } : {})
               },
               stage: "completion",
-              summary: "Empty final response redirected to no-tools summary",
+              summary: polishDecision.polish
+                ? `Unpolished final response redirected (${polishDecision.trigger ?? "unknown"})`
+                : "Empty final response redirected to no-tools summary",
               taskId: task.taskId
             });
             return this.requestFinalSummaryWithoutTools(
@@ -1259,7 +1264,7 @@ export class ExecutionKernel {
               availableTools,
               task,
               iteration,
-              "empty_final_output"
+              polishDecision.polish ? "unpolished_final_output" : "empty_final_output"
             );
           }
           const intentDecision = this.completionController.evaluateIntentFulfillment(
@@ -1644,6 +1649,7 @@ export class ExecutionKernel {
       | "max_iterations_exhausted"
       | "post_completion_verification_exhausted"
       | "empty_final_output"
+      | "unpolished_final_output"
   ): Promise<RuntimeRunResult> {
     const activeProvider = this.resolveActiveMainProvider(task);
     const summaryPrompt =
@@ -1651,7 +1657,9 @@ export class ExecutionKernel {
         ? `The loop reached its iteration budget (${state.maxIterations}). Do not call tools. Summarize the completed work, files changed or inspected, and any remaining work.`
         : reason === "empty_final_output"
           ? "The model attempted to finalize with an empty response. Do not call tools. Provide the final answer now based on everything you have learned so far."
-          : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
+          : reason === "unpolished_final_output"
+            ? `Your previous response was internal reasoning or too long, not a polished user-facing answer. Do not call tools. Answer the user's request directly: "${task.input}". Be concise. Use a numbered list when the user asked for a specific count. Do not include chain-of-thought, self-dialogue, or draft candidate lists. Give final conclusions only with file paths and brief descriptions.`
+            : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
     const finalMessages: ConversationMessage[] = [
       ...state.turnProviderMessages,
       {
@@ -1687,7 +1695,17 @@ export class ExecutionKernel {
             : {}),
           signal: state.managedAbortController.abortController.signal,
           task,
-          tokenBudget: state.tokenBudget
+          tokenBudget: {
+            ...state.tokenBudget,
+            outputLimit:
+              reason === "unpolished_final_output" || reason === "empty_final_output"
+                ? Math.min(state.tokenBudget.outputLimit, 2_000)
+                : state.tokenBudget.outputLimit,
+            reservedOutput:
+              reason === "unpolished_final_output" || reason === "empty_final_output"
+                ? Math.min(state.tokenBudget.reservedOutput, 200)
+                : state.tokenBudget.reservedOutput
+          }
         }
       );
     } catch (error) {
