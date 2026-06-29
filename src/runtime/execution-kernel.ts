@@ -121,6 +121,7 @@ import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { SessionMessageProjector } from "./sessions/session-message-projector.js";
 import type { SkillContextService } from "../skills/index.js";
 import type { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
+import type { TodoSessionStore } from "../tools/todo-session-store.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -258,7 +259,7 @@ export class ExecutionKernel {
       return null;
     }
     const sessionKey = resolveTodoSessionKeyFromTaskMetadata({
-      sessionId: input.task.sessionId,
+      ...(input.task.sessionId !== undefined ? { sessionId: input.task.sessionId } : {}),
       taskId: input.task.taskId,
       taskMetadata: input.task.metadata
     });
@@ -1095,7 +1096,7 @@ export class ExecutionKernel {
         }
         if (providerResponse === undefined) {
           throw new AppError({
-            code: "provider_request_failed",
+            code: "provider_error",
             message: "Provider request failed after reactive compaction retry."
           });
         }

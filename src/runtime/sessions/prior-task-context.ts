@@ -60,7 +60,7 @@ export function truncatePriorTaskOutput(output: string, tokenBudget: TokenBudget
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidate = compact.slice(0, mid);
-    const tokens = estimateMessagesTokens([{ content: candidate, role: "system" }]);
+    const tokens = estimateMessagesTokens([{ content: candidate }]);
     if (tokens <= tokenLimit) {
       best = candidate;
       low = mid + 1;

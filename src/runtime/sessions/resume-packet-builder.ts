@@ -41,9 +41,13 @@ export class ResumePacketBuilder {
     }
     const priorTaskMessage = buildPriorTaskContextMessage({
       sessionId,
-      sessionTaskRepository: this.dependencies.sessionTaskRepository,
-      taskRepository: this.dependencies.taskRepository,
-      tokenBudget: overrides?.tokenBudget ?? this.dependencies.config.tokenBudget
+      tokenBudget: overrides?.tokenBudget ?? this.dependencies.config.tokenBudget,
+      ...(this.dependencies.sessionTaskRepository !== undefined
+        ? { sessionTaskRepository: this.dependencies.sessionTaskRepository }
+        : {}),
+      ...(this.dependencies.taskRepository !== undefined
+        ? { taskRepository: this.dependencies.taskRepository }
+        : {})
     });
     const priorTaskId =
       priorTaskMessage === null

@@ -88,6 +88,7 @@ import type { TodoItem, TodoSessionStore } from "../tools/todo-session-store.js"
 import type { ToolOverrideStore } from "../tools/tool-overrides.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
+import type { ExecutionKernel } from "./execution-kernel.js";
 import type { ResumePacketBuilder, SessionService } from "./sessions/index.js";
 import type {
   SessionUiStateService,
