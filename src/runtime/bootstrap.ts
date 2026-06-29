@@ -636,7 +636,7 @@ function buildApplicationRuntime(
     registry: skillRegistry
   });
   const terminalSessionManager = new TerminalSessionManager();
-  const todoSessionStore = new TodoSessionStore();
+  const todoSessionStore = new TodoSessionStore(storage.sessionTodos);
   const delegateTaskTool = new DelegateTaskTool();
   const cronjobTool = new CronjobTool();
   const auxiliaryProviderResolver = createAuxiliaryProviderResolver({

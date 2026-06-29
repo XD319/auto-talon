@@ -101,6 +101,11 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "scope session message ids per session",
     up: migrateV19,
     version: 19
+  },
+  {
+    description: "add session todos table",
+    up: migrateV20,
+    version: 20
   }
 ];
 
@@ -922,6 +927,16 @@ function migrateV18(database: DatabaseSync): void {
 function migrateV19(database: DatabaseSync): void {
   rebuildSessionMessagesCompositeKey(database);
   rebuildSessionMessagesFts(database);
+}
+
+function migrateV20(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_todos (
+      session_id TEXT PRIMARY KEY,
+      todos_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
 }
 
 function rebuildSessionMessagesCompositeKey(database: DatabaseSync): void {

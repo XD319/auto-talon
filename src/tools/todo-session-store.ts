@@ -1,3 +1,5 @@
+import type { SqliteSessionTodoRepository } from "../storage/repositories/session-todo-repository.js";
+
 export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 export interface TodoItem {
@@ -10,7 +12,10 @@ export interface TodoItem {
 export class TodoSessionStore {
   private readonly todosBySession = new Map<string, TodoItem[]>();
 
+  public constructor(private readonly repository?: SqliteSessionTodoRepository) {}
+
   public get(sessionKey: string): TodoItem[] {
+    this.ensureLoaded(sessionKey);
     return [...(this.todosBySession.get(sessionKey) ?? [])];
   }
 
@@ -23,10 +28,11 @@ export class TodoSessionStore {
         ...todo,
         statusUpdatedAt: now
       }));
-      this.todosBySession.set(sessionKey, next);
+      this.persist(sessionKey, next);
       return this.get(sessionKey);
     }
 
+    this.ensureLoaded(sessionKey);
     const existing = this.get(sessionKey);
     const byId = new Map(existing.map((todo) => [todo.id, todo]));
     const order = existing.map((todo) => todo.id);
@@ -49,8 +55,24 @@ export class TodoSessionStore {
     const next = order
       .map((id) => byId.get(id))
       .filter((todo): todo is TodoItem => todo !== undefined);
-    this.todosBySession.set(sessionKey, next);
+    this.persist(sessionKey, next);
     return this.get(sessionKey);
+  }
+
+  public preload(sessionKey: string): void {
+    this.ensureLoaded(sessionKey);
+  }
+
+  private ensureLoaded(sessionKey: string): void {
+    if (this.todosBySession.has(sessionKey) || this.repository === undefined) {
+      return;
+    }
+    this.todosBySession.set(sessionKey, this.repository.list(sessionKey));
+  }
+
+  private persist(sessionKey: string, todos: TodoItem[]): void {
+    this.todosBySession.set(sessionKey, todos);
+    this.repository?.replace(sessionKey, todos);
   }
 }
 
