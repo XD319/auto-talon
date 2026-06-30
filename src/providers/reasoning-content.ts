@@ -124,3 +124,48 @@ export function shouldPolishFinalOutput(
   }
   return { polish: false, trigger: null };
 }
+
+export const FINAL_OUTPUT_MIN_LENGTH = 20;
+
+export function looksLikeToolMarkup(text: string): boolean {
+  const sample = text.trim();
+  if (sample.length === 0) {
+    return false;
+  }
+  return (
+    /<\|[^|>]*\|>/u.test(sample) ||
+    /<\uFF5C\uFF5C[^>]*\uFF5C\uFF5C>/u.test(sample) ||
+    sample.includes("tool_calls>") ||
+    sample.includes("<invoke") ||
+    /\binvoke\s+name=/u.test(sample) ||
+    (sample.includes('"toolName"') && sample.includes("toolCallId"))
+  );
+}
+
+export function isAcceptableUserFinalText(
+  response: {
+    kind: string;
+    message: string;
+    reasoningContent?: string;
+  },
+  resolvedText: string
+): { acceptable: boolean; reason: "empty" | "too_short" | "tool_markup" | "reasoning_only_final" | "final_output_too_long" | "internal_reasoning_detected" | null } {
+  const text = resolvedText.trim();
+  if (text.length === 0) {
+    return { acceptable: false, reason: "empty" };
+  }
+  if (text.length < FINAL_OUTPUT_MIN_LENGTH) {
+    return { acceptable: false, reason: "too_short" };
+  }
+  if (looksLikeToolMarkup(text)) {
+    return { acceptable: false, reason: "tool_markup" };
+  }
+  const polishDecision = shouldPolishFinalOutput(response, text);
+  if (polishDecision.polish) {
+    return {
+      acceptable: false,
+      reason: polishDecision.trigger
+    };
+  }
+  return { acceptable: true, reason: null };
+}

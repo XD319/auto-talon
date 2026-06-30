@@ -71,8 +71,10 @@ import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
 import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-exposure-planner.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
-import type { ProviderError } from "../providers/provider-error.js";
-import { resolveProviderFinalText, shouldPolishFinalOutput } from "../providers/reasoning-content.js";
+import {
+  isAcceptableUserFinalText,
+  resolveProviderFinalText
+} from "../providers/reasoning-content.js";
 import { generateWithProviderFailover } from "../providers/provider-failover.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type { AuditService } from "../audit/audit-service.js";
@@ -168,6 +170,7 @@ interface ExecutionLoopState {
   costWarnedToolNames: string[];
   cumulativeToolCallCount: number;
   cwd: string;
+  iterationsSinceLastCompact: number;
   managedAbortController: ReturnType<typeof createManagedAbortController>;
   maxIterations: number;
   microPrunedCount: number;
@@ -512,6 +515,7 @@ export class ExecutionKernel {
         cumulativeToolCallCount: 0,
         intentFulfillmentGuardEmitted: false,
         interactionMode: options.interactionMode,
+        iterationsSinceLastCompact: 0,
         managedAbortController,
         maxIterations: options.maxIterations,
         memoryContext: [...recallPlan.fragments, ...resumeMemoryContext],
@@ -600,6 +604,7 @@ export class ExecutionKernel {
         cumulativeToolCallCount: 0,
         intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
+        iterationsSinceLastCompact: 0,
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
@@ -694,6 +699,7 @@ export class ExecutionKernel {
         cumulativeToolCallCount: 0,
         intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
+        iterationsSinceLastCompact: 0,
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
@@ -815,6 +821,7 @@ export class ExecutionKernel {
         task.taskId,
         iteration
       );
+      state.iterationsSinceLastCompact += 1;
       throwIfAborted(
         state.managedAbortController.abortController.signal,
         state.managedAbortController.getReason()
@@ -933,7 +940,7 @@ export class ExecutionKernel {
           stage: "planning",
           taskId: task.taskId
         });
-        const providerInput = {
+        let providerInput = {
           ...assembled.providerInput,
           onTextDelta: (delta: string) => {
             state.managedAbortController.touchActivity("assistant_turn_delta");
@@ -1043,12 +1050,31 @@ export class ExecutionKernel {
             const providerError = normalizeProviderFailure(error, activeProvider);
             if (
               !reactiveCompactUsed &&
-              isContextOverflowProviderError(providerError as ProviderError)
+              isContextOverflowProviderError(providerError)
             ) {
               const droppedFromTurn = dropOldestNonSystemMessages(state.turnProviderMessages);
-              const droppedFromMessages = dropOldestNonSystemMessages(messages);
+              const droppedFromMessages =
+                state.turnProviderMessages === messages
+                  ? 0
+                  : dropOldestNonSystemMessages(messages);
               if (droppedFromTurn > 0 || droppedFromMessages > 0) {
                 reactiveCompactUsed = true;
+                providerInput = {
+                  ...providerInput,
+                  ...this.contextAssembler.assemble({
+                    availableTools,
+                    filteredOutFragments: state.turnFilteredFragments,
+                    iteration,
+                    memoryContext: state.memoryContext,
+                    messages: state.turnProviderMessages,
+                    signal: state.managedAbortController.abortController.signal,
+                    task,
+                    tokenBudget: state.tokenBudget
+                  }).providerInput,
+                  onProviderStatus: providerInput.onProviderStatus,
+                  onRetry: providerInput.onRetry,
+                  onTextDelta: providerInput.onTextDelta
+                };
                 this.dependencies.traceService.record({
                   actor: "runtime.context",
                   eventType: "reactive_compact_triggered",
@@ -1241,21 +1267,25 @@ export class ExecutionKernel {
 
         if (providerResponse.kind === "final") {
           const resolvedFinalText = resolveProviderFinalText(providerResponse) ?? "";
-          const polishDecision = shouldPolishFinalOutput(providerResponse, resolvedFinalText);
-          if (resolvedFinalText.trim().length === 0 || polishDecision.polish) {
+          const acceptance = isAcceptableUserFinalText(providerResponse, resolvedFinalText);
+          if (!acceptance.acceptable) {
             this.dependencies.traceService.record({
               actor: "runtime.kernel",
-              eventType: polishDecision.polish ? "unpolished_final_guarded" : "empty_final_guarded",
+              eventType:
+                acceptance.reason === "empty" ? "empty_final_guarded" : "unpolished_final_guarded",
               payload: {
                 iteration,
                 providerName: activeProvider.name,
-                ...(polishDecision.trigger !== null ? { trigger: polishDecision.trigger } : {}),
+                ...(acceptance.reason !== null && acceptance.reason !== "empty"
+                  ? { trigger: acceptance.reason }
+                  : {}),
                 ...(resolvedFinalText.length > 0 ? { resolvedLength: resolvedFinalText.length } : {})
               },
               stage: "completion",
-              summary: polishDecision.polish
-                ? `Unpolished final response redirected (${polishDecision.trigger ?? "unknown"})`
-                : "Empty final response redirected to no-tools summary",
+              summary:
+                acceptance.reason === "empty"
+                  ? "Empty final response redirected to no-tools summary"
+                  : `Unpolished final response redirected (${acceptance.reason ?? "unknown"})`,
               taskId: task.taskId
             });
             return this.requestFinalSummaryWithoutTools(
@@ -1264,7 +1294,7 @@ export class ExecutionKernel {
               availableTools,
               task,
               iteration,
-              polishDecision.polish ? "unpolished_final_output" : "empty_final_output"
+              acceptance.reason === "empty" ? "empty_final_output" : "unpolished_final_output"
             );
           }
           const intentDecision = this.completionController.evaluateIntentFulfillment(
@@ -1523,6 +1553,7 @@ export class ExecutionKernel {
             const sessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
               availableTools,
               compact: compactInput,
+              previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(sessionId),
               task
             });
             this.dependencies.sessionSummaryService.create({
@@ -1574,6 +1605,7 @@ export class ExecutionKernel {
         state.silentToolTurns = 0;
         state.readOnlyTurns = 0;
         state.cumulativeToolCallCount = 0;
+        state.iterationsSinceLastCompact = 0;
         if (initialSystemPrompt !== null) {
           messages.push(initialSystemPrompt);
         }
@@ -1652,7 +1684,7 @@ export class ExecutionKernel {
       | "unpolished_final_output"
   ): Promise<RuntimeRunResult> {
     const activeProvider = this.resolveActiveMainProvider(task);
-    const summaryPrompt =
+    const baseSummaryPrompt =
       reason === "max_iterations_exhausted"
         ? `The loop reached its iteration budget (${state.maxIterations}). Do not call tools. Summarize the completed work, files changed or inspected, and any remaining work.`
         : reason === "empty_final_output"
@@ -1660,118 +1692,164 @@ export class ExecutionKernel {
           : reason === "unpolished_final_output"
             ? `Your previous response was internal reasoning or too long, not a polished user-facing answer. Do not call tools. Answer the user's request directly: "${task.input}". Be concise. Use a numbered list when the user asked for a specific count. Do not include chain-of-thought, self-dialogue, or draft candidate lists. Give final conclusions only with file paths and brief descriptions.`
             : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
-    const finalMessages: ConversationMessage[] = [
-      ...state.turnProviderMessages,
-      {
-        content: summaryPrompt,
-        metadata: {
-          privacyLevel: "internal",
-          retentionKind: "session",
-          sourceType: "system_prompt"
-        },
-        role: "system"
-      }
-    ];
-    const startedAt = Date.now();
-    let providerResponse: ProviderResponse;
-    try {
-      providerResponse = await generateWithProviderFailover(
+    const strictSuffix =
+      " Respond with plain natural language only. Never output tool-call markup, DSML, XML tags, JSON tool schemas, or pseudo tool invocations.";
+    const polishReason =
+      reason === "unpolished_final_output" || reason === "empty_final_output";
+
+    let finalMessage = "";
+    let lastRejectionReason: string | null = null;
+    let lastProviderResponse: ProviderResponse | undefined;
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const summaryPrompt = attempt === 1 ? baseSummaryPrompt : `${baseSummaryPrompt}${strictSuffix}`;
+      const finalMessages: ConversationMessage[] = [
+        ...state.turnProviderMessages,
         {
-          auditService: this.dependencies.auditService,
-          cwd: this.dependencies.workspaceRoot,
-          enableFailover: true,
-          primaryProvider: activeProvider,
-          taskId: task.taskId,
-          traceService: this.dependencies.traceService
-        },
-        {
-          agentProfileId: task.agentProfileId,
-          availableTools: [],
-          iteration: iteration + 1,
-          memoryContext: state.memoryContext,
-          messages: finalMessages,
-          ...(state.onAssistantTextDelta !== undefined
-            ? { onTextDelta: state.onAssistantTextDelta }
-            : {}),
-          signal: state.managedAbortController.abortController.signal,
-          task,
-          tokenBudget: {
-            ...state.tokenBudget,
-            outputLimit:
-              reason === "unpolished_final_output" || reason === "empty_final_output"
+          content: summaryPrompt,
+          metadata: {
+            privacyLevel: "internal",
+            retentionKind: "session",
+            sourceType: "system_prompt"
+          },
+          role: "system"
+        }
+      ];
+      const startedAt = Date.now();
+      let providerResponse: ProviderResponse;
+      try {
+        providerResponse = await generateWithProviderFailover(
+          {
+            auditService: this.dependencies.auditService,
+            cwd: this.dependencies.workspaceRoot,
+            enableFailover: true,
+            primaryProvider: activeProvider,
+            taskId: task.taskId,
+            traceService: this.dependencies.traceService
+          },
+          {
+            agentProfileId: task.agentProfileId,
+            availableTools: [],
+            iteration: iteration + attempt,
+            memoryContext: state.memoryContext,
+            messages: finalMessages,
+            ...(state.onAssistantTextDelta !== undefined
+              ? { onTextDelta: state.onAssistantTextDelta }
+              : {}),
+            signal: state.managedAbortController.abortController.signal,
+            task,
+            tokenBudget: {
+              ...state.tokenBudget,
+              outputLimit: polishReason
                 ? Math.min(state.tokenBudget.outputLimit, 2_000)
                 : state.tokenBudget.outputLimit,
-            reservedOutput:
-              reason === "unpolished_final_output" || reason === "empty_final_output"
+              reservedOutput: polishReason
                 ? Math.min(state.tokenBudget.reservedOutput, 200)
                 : state.tokenBudget.reservedOutput
+            }
           }
+        );
+      } catch (error) {
+        if (error instanceof AppError) {
+          throw error;
         }
-      );
-    } catch (error) {
-      if (error instanceof AppError) {
-        throw error;
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new AppError({
+            code: "interrupt",
+            message: error.message
+          });
+        }
+        throw toAppError(error);
       }
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new AppError({
-          code: "interrupt",
-          message: error.message
-        });
-      }
-      throw toAppError(error);
-    }
-    state.managedAbortController.touchActivity("no_tools_final_summary");
+      lastProviderResponse = providerResponse;
+      state.managedAbortController.touchActivity("no_tools_final_summary");
 
-    this.dependencies.traceService.record({
-      actor: `provider.${activeProvider.name}`,
-      eventType: "provider_request_succeeded",
-      payload: {
-        iteration: iteration + 1,
-        kind: providerResponse.kind,
-        latencyMs: Date.now() - startedAt,
-        modelName:
-          providerResponse.metadata?.modelName ??
-          activeProvider.model ??
-          activeProvider.describe?.().model ??
-          null,
-        providerName: providerResponse.metadata?.providerName ?? activeProvider.name,
-        retryCount: providerResponse.metadata?.retryCount ?? 0,
-        usage: providerUsageToJson(providerResponse.usage)
-      },
-      stage: "completion",
-      summary: `No-tools final summary completed with ${providerResponse.kind}`,
-      taskId: task.taskId
-    });
-
-    if (providerResponse.kind === "tool_calls") {
       this.dependencies.traceService.record({
         actor: `provider.${activeProvider.name}`,
-        eventType: "no_tools_tool_calls_ignored",
+        eventType: "provider_request_succeeded",
         payload: {
-          iteration: iteration + 1,
-          message: providerResponse.message,
-          reason,
-          toolNames: providerResponse.toolCalls.map((call) => call.toolName)
+          attempt,
+          iteration: iteration + attempt,
+          kind: providerResponse.kind,
+          latencyMs: Date.now() - startedAt,
+          modelName:
+            providerResponse.metadata?.modelName ??
+            activeProvider.model ??
+            activeProvider.describe?.().model ??
+            null,
+          providerName: providerResponse.metadata?.providerName ?? activeProvider.name,
+          retryCount: providerResponse.metadata?.retryCount ?? 0,
+          usage: providerUsageToJson(providerResponse.usage)
         },
         stage: "completion",
-        summary: "Ignored tool calls from no-tools final summary",
+        summary: `No-tools final summary attempt ${attempt} completed with ${providerResponse.kind}`,
+        taskId: task.taskId
+      });
+
+      if (providerResponse.kind === "tool_calls") {
+        this.dependencies.traceService.record({
+          actor: `provider.${activeProvider.name}`,
+          eventType: "no_tools_tool_calls_ignored",
+          payload: {
+            attempt,
+            iteration: iteration + attempt,
+            message: providerResponse.message,
+            reason,
+            toolNames: providerResponse.toolCalls.map((call) => call.toolName)
+          },
+          stage: "completion",
+          summary: "Ignored tool calls from no-tools final summary",
+          taskId: task.taskId
+        });
+      }
+
+      const responseForValidation =
+        providerResponse.kind === "final"
+          ? providerResponse
+          : {
+              kind: "final" as const,
+              message: providerResponse.message
+            };
+      const resolvedText = (resolveProviderFinalText(responseForValidation) ?? "").trim();
+      const acceptance = isAcceptableUserFinalText(responseForValidation, resolvedText);
+      if (acceptance.acceptable) {
+        finalMessage = resolvedText;
+        break;
+      }
+
+      lastRejectionReason = acceptance.reason;
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "invalid_final_output_rejected",
+        payload: {
+          attempt,
+          reason: acceptance.reason,
+          resolvedLength: resolvedText.length,
+          summaryReason: reason
+        },
+        stage: "completion",
+        summary: `No-tools final summary rejected (${acceptance.reason ?? "unknown"})`,
         taskId: task.taskId
       });
     }
 
-    const finalMessage = resolveProviderFinalText(providerResponse)?.trim() ?? "";
     if (finalMessage.length === 0) {
       throw new AppError({
-        code: "max_rounds_exceeded",
-        message: `Task exceeded ${state.maxIterations} iterations.`
+        code: lastRejectionReason === "empty" ? "max_rounds_exceeded" : "provider_error",
+        message:
+          lastRejectionReason === "tool_markup"
+            ? "No-tools final summary returned tool-call markup instead of a user-facing answer."
+            : lastRejectionReason === "empty"
+              ? `Task exceeded ${state.maxIterations} iterations.`
+              : "No-tools final summary did not produce an acceptable user-facing answer."
       });
     }
 
     messages.push({
       content: finalMessage,
       role: "assistant",
-      ...(providerResponse.metadata?.raw !== undefined
-        ? { metadata: providerResponse.metadata.raw }
+      ...(lastProviderResponse?.metadata?.raw !== undefined
+        ? { metadata: lastProviderResponse.metadata.raw }
         : {})
     });
     return this.completeTaskSuccess(state, messages, availableTools, task, finalMessage);
@@ -1864,6 +1942,7 @@ export class ExecutionKernel {
       const finalSessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
         availableTools,
         compact: buildFinalSessionCompactInput(messages, completedTask),
+        previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(completedTask.sessionId),
         task: completedTask,
         trigger: "final"
       });
@@ -1916,7 +1995,7 @@ export class ExecutionKernel {
         : this.dependencies.sessionSummaryService.findLatestBySession(input.task.sessionId)?.summary;
     return {
       contextWindowTokens: input.state.tokenBudget.inputLimit,
-      iteration: input.iteration,
+      iteration: input.state.iterationsSinceLastCompact,
       iterationThreshold: this.dependencies.compact.iterationThreshold,
       maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
       messages: input.messages,

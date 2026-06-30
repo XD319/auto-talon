@@ -152,3 +152,43 @@ describe("final output polish detection", () => {
     });
   });
 });
+
+describe("final output acceptance", () => {
+  it("rejects DSML tool markup masquerading as a final answer", async () => {
+    const { isAcceptableUserFinalText, looksLikeToolMarkup } = await import(
+      "../src/providers/reasoning-content.js"
+    );
+    const dsml =
+      "<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name=\"read_file\">\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>";
+    expect(looksLikeToolMarkup(dsml)).toBe(true);
+    expect(
+      isAcceptableUserFinalText(
+        {
+          kind: "final",
+          message: dsml
+        },
+        dsml
+      )
+    ).toEqual({
+      acceptable: false,
+      reason: "tool_markup"
+    });
+  });
+
+  it("accepts polished bug-fix summaries", async () => {
+    const { isAcceptableUserFinalText } = await import("../src/providers/reasoning-content.js");
+    const answer = "修复已验证。Bug 在 `js/snake.js` 的 positionHash 更新顺序错误。";
+    expect(
+      isAcceptableUserFinalText(
+        {
+          kind: "final",
+          message: answer
+        },
+        answer
+      )
+    ).toEqual({
+      acceptable: true,
+      reason: null
+    });
+  });
+});
