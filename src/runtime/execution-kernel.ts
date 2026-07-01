@@ -2175,6 +2175,11 @@ export class ExecutionKernel {
             compactedMessages: discardedMessages,
             summary: summarized.summary
           }),
+          metadata: {
+            privacyLevel: "internal",
+            retentionKind: "session",
+            sourceType: "compact_handoff"
+          },
           role: "system"
         },
         ...preserved.slice(protectedHeadCount)

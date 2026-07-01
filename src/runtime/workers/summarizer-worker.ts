@@ -40,9 +40,12 @@ export class SummarizerWorker {
       });
     }
 
+    const previousSessionSummary =
+      this.dependencies.sessionSummaryService.findLatestBySession(input.task.sessionId);
     const draft = this.dependencies.contextCompactor.buildSessionSummary({
       availableTools: input.availableTools,
       compact: input.compactInput,
+      previousSessionSummary,
       task: input.task
     });
     const sessionSummary = this.dependencies.sessionSummaryService.create({
