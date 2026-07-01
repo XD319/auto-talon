@@ -90,3 +90,21 @@ function createContext(sessionId: string): ToolExecutionContext {
     workspaceRoot: process.cwd()
   };
 }
+
+describe("TodoTool clearing", () => {
+  it("accepts an empty replacement to clear session todos", async () => {
+    const store = new TodoSessionStore();
+    const tool = new TodoTool(store);
+    const context = createContext("session-clear");
+    await tool.execute(
+      tool.prepare({ todos: [{ content: "remove me", id: "todo-1", status: "pending" }] }).preparedInput,
+      context
+    );
+    const result = await tool.execute(
+      tool.prepare({ merge: false, todos: [] }).preparedInput,
+      context
+    );
+    expect(result.success).toBe(true);
+    expect(store.get("session-clear")).toEqual([]);
+  });
+});
