@@ -13,6 +13,7 @@ import type {
   ToolCapability
 } from "../types/index.js";
 import { estimateMessagesTokens } from "./context/token-counter.js";
+import { isDelegateIsolationEnabled } from "./delegate-isolation.js";
 
 export const DEDUPLICATABLE_CAPABILITIES = new Set<ToolCapability>([
   "filesystem.read",
@@ -323,6 +324,9 @@ export function readSessionResumeMessages(metadata: RuntimeRunOptions["metadata"
   if (metadata === undefined || metadata === null) {
     return [];
   }
+  if (isDelegateIsolationEnabled(metadata as Record<string, unknown>)) {
+    return [];
+  }
   const sessionResume = (metadata as Record<string, unknown>).sessionResume;
   if (typeof sessionResume !== "object" || sessionResume === null) {
     return [];
@@ -344,6 +348,9 @@ export function readSessionResumePriorTaskId(metadata: RuntimeRunOptions["metada
   if (metadata === undefined || metadata === null) {
     return null;
   }
+  if (isDelegateIsolationEnabled(metadata as Record<string, unknown>)) {
+    return null;
+  }
   const sessionResume = (metadata as Record<string, unknown>).sessionResume;
   if (typeof sessionResume !== "object" || sessionResume === null) {
     return null;
@@ -354,6 +361,9 @@ export function readSessionResumePriorTaskId(metadata: RuntimeRunOptions["metada
 
 export function readSessionResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]): ContextFragment[] {
   if (metadata === undefined || metadata === null) {
+    return [];
+  }
+  if (isDelegateIsolationEnabled(metadata as Record<string, unknown>)) {
     return [];
   }
   const sessionResume = (metadata as Record<string, unknown>).sessionResume;

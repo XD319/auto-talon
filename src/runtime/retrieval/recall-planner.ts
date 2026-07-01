@@ -14,6 +14,7 @@ import type {
   TokenBudget
 } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
+import { isDelegateIsolationEnabled } from "../delegate-isolation.js";
 import { MemorySelector, type ScoredRecallCandidate } from "./memory-selector.js";
 import type { RecallBudgetPolicy } from "./recall-budget-policy.js";
 
@@ -476,6 +477,9 @@ function buildEnrichedQuery(
 }
 
 function readSessionSummary(metadata: TaskRecord["metadata"]): SessionSummaryRecord | null {
+  if (isDelegateIsolationEnabled(metadata)) {
+    return null;
+  }
   const sessionResume = metadata.sessionResume;
   if (typeof sessionResume !== "object" || sessionResume === null) {
     return null;
@@ -495,6 +499,9 @@ function readSessionSummary(metadata: TaskRecord["metadata"]): SessionSummaryRec
 }
 
 function readLegacySessionResumeGoal(metadata: TaskRecord["metadata"]): string {
+  if (isDelegateIsolationEnabled(metadata)) {
+    return "";
+  }
   const sessionResume = metadata.sessionResume;
   if (typeof sessionResume !== "object" || sessionResume === null) {
     return "";
