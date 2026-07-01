@@ -125,8 +125,6 @@ export function shouldPolishFinalOutput(
   return { polish: false, trigger: null };
 }
 
-export const FINAL_OUTPUT_MIN_LENGTH = 20;
-
 export function looksLikeToolMarkup(text: string): boolean {
   const sample = text.trim();
   if (sample.length === 0) {
@@ -153,9 +151,6 @@ export function isAcceptableUserFinalText(
   const text = resolvedText.trim();
   if (text.length === 0) {
     return { acceptable: false, reason: "empty" };
-  }
-  if (text.length < FINAL_OUTPUT_MIN_LENGTH) {
-    return { acceptable: false, reason: "too_short" };
   }
   if (looksLikeToolMarkup(text)) {
     return { acceptable: false, reason: "tool_markup" };
