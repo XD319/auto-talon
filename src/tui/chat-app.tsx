@@ -21,6 +21,11 @@ import { StatusBar, StatusLineRow } from "./components/status-bar.js";
 import { useSessionTodos } from "./hooks/use-session-todos.js";
 import { useStatusLine } from "./hooks/use-status-line.js";
 import type { TodoItem } from "../tools/todo-session-store.js";
+import {
+  resolveActiveClarifyQuestion,
+  resolveClarifyOptionSubmit,
+  shouldStartClarifyInCustomMode
+} from "./view-models/clarify-prompt-actions.js";
 import { estimateTodoPanelRows, toTodoTracePayload } from "./view-models/todo-format.js";
 import { resolveStatusLineFields } from "../runtime/tui-status-line-config.js";
 import { formatGitBranchLabel, readGitBranchStatus } from "./workspace-git-status.js";
@@ -324,11 +329,12 @@ export function ChatTuiApp({
 
   React.useEffect(() => {
     if (controller.pendingClarifyPrompt !== null) {
+      const firstQuestion = resolveActiveClarifyQuestion(controller.pendingClarifyPrompt, 0);
       setClarifySelectionIndex(0);
       setClarifyQuestionIndex(0);
       setClarifyAnswers({});
       setClarifyMultiSelections({});
-      setClarifyCustomActive(false);
+      setClarifyCustomActive(shouldStartClarifyInCustomMode(firstQuestion));
     }
   }, [controller.pendingClarifyPrompt?.promptId]);
 
@@ -1035,16 +1041,9 @@ export function ChatTuiApp({
   );
 
   const activeClarifyQuestion =
-    controller.pendingClarifyPrompt?.questions[clarifyQuestionIndex] ??
-    (controller.pendingClarifyPrompt === null
+    controller.pendingClarifyPrompt === null
       ? null
-      : {
-          allowCustomAnswer: controller.pendingClarifyPrompt.allowCustomAnswer,
-          multiSelect: false,
-          options: controller.pendingClarifyPrompt.options,
-          placeholder: controller.pendingClarifyPrompt.placeholder,
-          question: controller.pendingClarifyPrompt.question
-        });
+      : resolveActiveClarifyQuestion(controller.pendingClarifyPrompt, clarifyQuestionIndex);
   const activeClarifyPrompt =
     controller.pendingClarifyPrompt === null || activeClarifyQuestion === null
       ? null
@@ -1085,10 +1084,11 @@ export function ChatTuiApp({
         return;
       }
       if (clarifyQuestionIndex + 1 < prompt.questions.length) {
+        const nextQuestion = resolveActiveClarifyQuestion(prompt, clarifyQuestionIndex + 1);
         setClarifyAnswers(nextAnswers);
         setClarifyQuestionIndex((current) => current + 1);
         setClarifySelectionIndex(0);
-        setClarifyCustomActive(false);
+        setClarifyCustomActive(shouldStartClarifyInCustomMode(nextQuestion));
         return;
       }
       void controller.answerPendingClarifyPrompt({ answers: nextAnswers, response });
@@ -1127,23 +1127,25 @@ export function ChatTuiApp({
     if (question === null) {
       return;
     }
-    if (question.multiSelect) {
-      const selectedLabels = question.options
-        .filter((option) => activeClarifySelectedOptionIds.includes(option.id))
-        .map((option) => option.label);
-      if (selectedLabels.length > 0) {
-        submitClarifyAnswer(selectedLabels);
-      }
+    const result = resolveClarifyOptionSubmit({
+      question,
+      selectedOptionIds: activeClarifySelectedOptionIds,
+      selectionIndex: clarifySelectionIndex
+    });
+    if (result.kind === "enter_custom") {
+      setClarifyCustomActive(true);
       return;
     }
-    const option = question.options[clarifySelectionIndex];
-    if (option !== undefined) {
-      submitClarifyAnswer(option.label, option.id);
+    if (result.kind === "blocked") {
+      controller.addSystemMessage(result.message);
+      return;
     }
+    submitClarifyAnswer(result.answer, result.optionId);
   }, [
     activeClarifyQuestion,
     activeClarifySelectedOptionIds,
     clarifySelectionIndex,
+    controller,
     submitClarifyAnswer
   ]);
 
@@ -1271,6 +1273,8 @@ export function ChatTuiApp({
           const answerText = value.trim();
           if (answerText.length > 0) {
             submitClarifyAnswer(answerText);
+          } else {
+            controller.addSystemMessage("Type your answer, then press Enter.");
           }
           return;
         }

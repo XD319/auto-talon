@@ -4,6 +4,7 @@ import { Box, Text } from "ink";
 import { APPROVAL_SCOPE_ACTIONS } from "../../approvals/approval-actions.js";
 import { buildApprovalPromptContext } from "../../approvals/approval-prompt-view-model.js";
 import type { ApprovalRecord, ClarifyPromptRecord, ToolCallRecord } from "../../types/index.js";
+import { clarifyPromptHint } from "../view-models/clarify-prompt-actions.js";
 import { theme } from "../theme.js";
 
 export interface ApprovalPromptViewModel {
@@ -80,7 +81,15 @@ function ClarifyPromptCard({
   selectedIndex
 }: ClarifyPromptViewModel): React.ReactElement {
   const currentQuestion = questionIndex === undefined ? null : (prompt.questions[questionIndex] ?? null);
-  const multiSelect = currentQuestion?.multiSelect === true;
+  const hintQuestion =
+    currentQuestion ??
+    ({
+      allowCustomAnswer: prompt.allowCustomAnswer,
+      multiSelect: false,
+      options: prompt.options,
+      placeholder: prompt.placeholder,
+      question: prompt.question
+    } as const);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={1}>
       <Text color={theme.warn}>
@@ -91,11 +100,7 @@ function ClarifyPromptCard({
       </Text>
       <Text color={theme.fg}>{prompt.question}</Text>
       {prompt.reason !== null ? <Text color={theme.muted}>reason {prompt.reason}</Text> : null}
-      <Text color={theme.muted}>
-        {multiSelect
-          ? "arrows choose, Space toggle, Tab custom, Enter submit, Ctrl+C cancel"
-          : "arrows choose, Tab custom, Enter submit, Ctrl+C cancel"}
-      </Text>
+      <Text color={theme.muted}>{clarifyPromptHint(hintQuestion)}</Text>
       <Box marginTop={1} flexDirection="column">
         {prompt.options.map((option, index) => (
           <Box key={option.id} flexDirection="column">
