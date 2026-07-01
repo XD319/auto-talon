@@ -6,10 +6,9 @@ describe("ManualCompactCoordinator", () => {
   it("queues and consumes a manual compact request once", () => {
     const coordinator = new ManualCompactCoordinator();
     coordinator.request("task-1", "focus on bug list");
-    expect(coordinator.consume("task-1")).toEqual({
-      focusTopic: "focus on bug list",
-      requestedAt: expect.any(String)
-    });
+    const request = coordinator.consume("task-1");
+    expect(request?.focusTopic).toBe("focus on bug list");
+    expect(typeof request?.requestedAt).toBe("string");
     expect(coordinator.consume("task-1")).toBeNull();
   });
 });

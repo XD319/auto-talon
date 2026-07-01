@@ -238,10 +238,14 @@ describe("session compact resume e2e", () => {
       const sessionMemories = handle.service.listSessionSummaries(sessionId);
       expect(sessionMemories.length).toBeGreaterThan(0);
       expect(sessionMemories.some((memory) => memory.trigger === "final")).toBe(true);
+      expect(handle.service.showSession(sessionId).state.pendingDecision).toBeNull();
 
       const secondRun = await handle.service.continueSession(sessionId, "continue with remembered goal", {
         cwd: workspace
       });
+      expect(handle.service.listSessionSummaries(sessionId)[0]?.goal).toBe(
+        "Remember this session goal from final branch"
+      );
       const contextDebug = handle.service.traceTaskContext(secondRun.task.taskId);
       const systemPreviews = contextDebug.contextAssembly?.systemPromptFragments.map((fragment) => fragment.preview) ?? [];
       expect(

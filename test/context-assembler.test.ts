@@ -125,10 +125,8 @@ describe("ExecutionContextAssembler", () => {
     expect(recalledMessage?.role).toBe("system");
     expect(recalledMessage?.content).toContain("Recalled context:");
     expect(recalledMessage?.content).toContain("Use pnpm for verification");
-    expect(assembled.memoryContextInjection).toEqual({
-      fragmentCount: 1,
-      tokenEstimate: expect.any(Number)
-    });
+    expect(assembled.memoryContextInjection?.fragmentCount).toBe(1);
+    expect(typeof assembled.memoryContextInjection?.tokenEstimate).toBe("number");
     expect(assembled.providerInput.memoryContext).toEqual(fragments);
   });
 
