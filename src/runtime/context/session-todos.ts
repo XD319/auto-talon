@@ -1,8 +1,13 @@
 import type { ConversationMessage } from "../../types/index.js";
-import type { TodoItem, TodoSessionStore } from "../../tools/todo-session-store.js";
-import { resolveTodoSessionKey } from "../../tools/todo-session-store.js";
+import {
+  MAX_TODO_ITEMS,
+  resolveTodoSessionKey,
+  type TodoItem,
+  type TodoSessionStore
+} from "../../tools/todo-session-store.js";
 
 export const SESSION_TODOS_SOURCE_TYPE = "session_todos";
+const MAX_CONTEXT_TODOS = MAX_TODO_ITEMS;
 
 const STATUS_LABELS: Record<TodoItem["status"], string> = {
   cancelled: "cancelled",
@@ -20,18 +25,25 @@ export function isSessionTodosMessage(message: ConversationMessage): boolean {
 }
 
 export function buildSessionTodosMessage(todos: TodoItem[]): ConversationMessage | null {
-  if (todos.length === 0) {
+  const activeTodos = todos.filter(
+    (todo) => todo.status === "pending" || todo.status === "in_progress"
+  );
+  if (activeTodos.length === 0) {
     return null;
   }
 
-  const lines = todos.map(
+  const visibleTodos = activeTodos.slice(0, MAX_CONTEXT_TODOS);
+  const lines = visibleTodos.map(
     (todo) => `- [${STATUS_LABELS[todo.status]}] ${todo.id}: ${todo.content}`
   );
 
   return {
     content: [
       "Session todo list (authoritative working checklist). Continue unfinished items before rediscovering work.",
-      ...lines
+      ...lines,
+      ...(activeTodos.length > visibleTodos.length
+        ? [`- ... ${activeTodos.length - visibleTodos.length} additional unfinished item(s) omitted`]
+        : []),
     ].join("\n"),
     metadata: {
       pinned: true,

@@ -10,22 +10,25 @@ import type {
 
 import {
   resolveTodoSessionKey,
+  MAX_TODO_ITEMS,
   type TodoItem,
   type TodoSessionStore,
   type TodoStatus
 } from "./todo-session-store.js";
 
 const todoStatusSchema = z.enum(["pending", "in_progress", "completed", "cancelled"]);
+const MAX_TODO_CONTENT_LENGTH = 500;
+const MAX_TODO_ID_LENGTH = 100;
 
 const todoItemSchema = z.object({
-  content: z.string().min(1),
-  id: z.string().min(1),
+  content: z.string().min(1).max(MAX_TODO_CONTENT_LENGTH),
+  id: z.string().min(1).max(MAX_TODO_ID_LENGTH),
   status: todoStatusSchema
 });
 
 const todoSchema = z.object({
   merge: z.boolean().default(true),
-  todos: z.array(todoItemSchema).min(1)
+  todos: z.array(todoItemSchema).max(MAX_TODO_ITEMS)
 });
 
 export interface PreparedTodoInput {
@@ -36,7 +39,7 @@ export interface PreparedTodoInput {
 export class TodoTool implements ToolDefinition<typeof todoSchema, PreparedTodoInput> {
   public readonly name = "todo";
   public readonly description =
-    "Create or update the session todo list. Use merge=true to upsert items by id.";
+    "Create or update the session todo list. Use merge=true to upsert items by id, or merge=false with an empty list to clear it.";
   public readonly capability = "filesystem.read" as const;
   public readonly riskLevel = "low" as const;
   public readonly privacyLevel = "internal" as const;

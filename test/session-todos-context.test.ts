@@ -57,3 +57,25 @@ describe("session todos context", () => {
     expect(todoMessages[0]?.content).toContain("Updated item");
   });
 });
+
+describe("session todos active context", () => {
+  it("does not pin completed or cancelled items", () => {
+    expect(
+      buildSessionTodosMessage([
+        { content: "done", id: "done", status: "completed" },
+        { content: "cancelled", id: "cancelled", status: "cancelled" }
+      ])
+    ).toBeNull();
+  });
+
+  it("includes active todos up to the shared store limit", () => {
+    const todos = Array.from({ length: 60 }, (_, index) => ({
+      content: `task-${index + 1}`,
+      id: `todo-${index + 1}`,
+      status: "pending" as const
+    }));
+    const message = buildSessionTodosMessage(todos);
+    expect(message?.content).toContain("todo-60: task-60");
+    expect(message?.content).not.toContain("additional unfinished item(s) omitted");
+  });
+});
