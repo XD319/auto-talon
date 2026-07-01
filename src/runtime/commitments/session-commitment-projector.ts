@@ -41,7 +41,7 @@ export class SessionCommitmentProjector {
       currentObjective,
       nextAction,
       openCommitments: commitments,
-      pendingDecision: currentObjective?.pendingDecision ?? latestSessionSummary?.decisions[0] ?? null
+      pendingDecision: currentObjective?.pendingDecision ?? null
     };
   }
 }
