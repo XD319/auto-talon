@@ -25,6 +25,7 @@ export interface SwitchProviderInput {
 }
 
 export interface SwitchProviderResult {
+  persistedConfigPath: string | null;
   persistedScope: ProviderSwitchPersistScope | null;
   provider: Provider;
   providerConfig: ResolvedProviderConfig;
@@ -88,10 +89,12 @@ export async function switchProviderRuntime(
   }
 
   let persistedScope: ProviderSwitchPersistScope | null = null;
+  let persistedConfigPath: string | null = null;
   if (input.persist === "user" || input.persist === "workspace") {
     const scope: ProviderConfigScope = input.persist;
-    useProviderConfig(resolvedSelection, { cwd, scope });
+    const writeResult = useProviderConfig(resolvedSelection, { cwd, scope });
     persistedScope = input.persist;
+    persistedConfigPath = writeResult.configPath;
   }
 
   const probeProvider = createProvider(providerConfig);
@@ -109,6 +112,7 @@ export async function switchProviderRuntime(
   };
 
   return {
+    persistedConfigPath,
     persistedScope,
     provider,
     providerConfig: effective.provider,
