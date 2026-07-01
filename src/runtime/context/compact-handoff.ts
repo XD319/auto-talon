@@ -28,12 +28,28 @@ export function listDiscardedMessages(
   allMessages: ConversationMessage[],
   preservedMessages: ConversationMessage[]
 ): ConversationMessage[] {
-  return allMessages.filter(
-    (message) =>
-      !preservedMessages.some(
-        (preserved) => preserved.role === message.role && preserved.content === message.content
-      )
-  );
+  const preservedIndices = collectPreservedIndices(allMessages, preservedMessages);
+  return allMessages.filter((_, index) => !preservedIndices.has(index));
+}
+
+export function collectPreservedIndices(
+  allMessages: ConversationMessage[],
+  preservedMessages: ConversationMessage[]
+): Set<number> {
+  const preservedIndices = new Set<number>();
+  for (const preserved of preservedMessages) {
+    for (let index = 0; index < allMessages.length; index += 1) {
+      if (preservedIndices.has(index)) {
+        continue;
+      }
+      const message = allMessages[index];
+      if (message?.role === preserved.role && message.content === preserved.content) {
+        preservedIndices.add(index);
+        break;
+      }
+    }
+  }
+  return preservedIndices;
 }
 
 export function buildSessionHandoffMessageContent(input: {
