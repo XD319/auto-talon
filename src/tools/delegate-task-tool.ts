@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import { summarizeText } from "../runtime/kernel-support.js";
-
 import type { AgentProfileId } from "../types/profile.js";
 import type {
   ToolDefinition,
@@ -127,6 +125,11 @@ export class DelegateTaskTool
       summary: `Delegated task ${result.taskId} finished with status ${result.status}`
     };
   }
+}
+
+function summarizeText(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
 }
 
 export function summarizeIsolatedDelegateOutput(output: string | null): string | null {
