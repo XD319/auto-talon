@@ -67,6 +67,7 @@ import type {
   SessionLineageRepository,
   TaskRecord,
   SessionLineageRecord,
+  SessionTranscriptRepository,
   SessionRecord,
   SessionTaskRecord,
   SessionSummaryRecord,
@@ -325,6 +326,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   sessionIndexService: SessionIndexService;
   sessionMessageSearchService: SessionMessageSearchService;
   sessionMessageRepository: SessionMessageRepository;
+  sessionTranscriptRepository: SessionTranscriptRepository;
   sessionLineageRepository: SessionLineageRepository;
   sessionBranchService: SessionBranchService;
   sessionHandoffService: SessionHandoffService;

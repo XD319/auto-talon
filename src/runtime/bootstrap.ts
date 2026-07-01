@@ -899,7 +899,9 @@ function buildApplicationRuntime(
         delegateIsolation: request.isolation === true,
         delegatedFromTaskId: request.parentTaskId
       },
-      ...(parentTask?.sessionId !== null && parentTask?.sessionId !== undefined
+      ...(request.isolation !== true &&
+      parentTask?.sessionId !== null &&
+      parentTask?.sessionId !== undefined
         ? { sessionId: parentTask.sessionId }
         : {}),
       signal: request.signal,
@@ -1106,6 +1108,7 @@ function buildApplicationRuntime(
     sessionService,
     sessionLineageRepository: storage.sessionLineage,
     sessionMessageRepository: storage.sessionMessages,
+    sessionTranscriptRepository: storage.sessionTranscripts,
     shellBackend: config.workflow.shellBackend,
     tokenBudget: {
       inputLimit: config.tokenBudget.inputLimit,

@@ -7,7 +7,6 @@ import type {
 } from "../application-service.js";
 import type {
   CommitmentRecord,
-  ConversationMessage,
   InboxItem,
   NextActionRecord,
   RuntimeRunOptions,
@@ -15,13 +14,13 @@ import type {
   TaskRecord,
   SessionCommitmentState,
   SessionLineageRecord,
-  SessionMessageRecord,
   SessionRecord,
   SessionTaskRecord,
   SessionSummaryRecord,
   JsonObject
 } from "../../types/index.js";
-import { estimateMessagesTokens } from "../context/token-counter.js";
+import { estimateConversationMessageTokens } from "../context/token-counter.js";
+import { buildHygieneConversationMessages } from "../sessions/build-hygiene-conversation-messages.js";
 
 export class SessionFacade {
   public constructor(
@@ -225,9 +224,15 @@ export class SessionFacade {
   }
 
   private applyContinuationHygiene(session: SessionRecord): void {
-    const records = this.dependencies.sessionMessageRepository.listBySessionId(session.sessionId);
-    const messages = records.map(toConversationMessage).filter((message): message is ConversationMessage => message !== null);
-    const tokenEstimate = estimateMessagesTokens(messages);
+    const messages = buildHygieneConversationMessages({
+      sessionId: session.sessionId,
+      sessionMessageRepository: this.dependencies.sessionMessageRepository,
+      sessionTranscriptRepository: this.dependencies.sessionTranscriptRepository
+    });
+    const tokenEstimate = messages.reduce(
+      (total, message) => total + estimateConversationMessageTokens(message),
+      0
+    );
     const threshold = Math.floor(
       this.dependencies.tokenBudget.inputLimit * this.dependencies.compact.hygieneThresholdRatio
     );
@@ -235,6 +240,7 @@ export class SessionFacade {
       return;
     }
 
+    const records = this.dependencies.sessionMessageRepository.listBySessionId(session.sessionId);
     const latestRun = this.dependencies.listSessionTasks(session.sessionId).at(-1) ?? null;
     const task = buildHygieneTask(session, latestRun?.taskId ?? `session-hygiene:${randomUUID()}`, this.dependencies.tokenBudget);
     const summaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
@@ -250,6 +256,7 @@ export class SessionFacade {
         tokenEstimate,
         tokenThreshold: threshold
       },
+      previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(session.sessionId),
       task,
       trigger: "resume"
     });
@@ -265,6 +272,7 @@ export class SessionFacade {
       },
       runId: latestRun?.runId ?? null,
       sessionId: session.sessionId,
+      taskId: latestRun?.taskId ?? null,
       trigger: "resume"
     });
     this.dependencies.sessionLineageRepository.append({
@@ -283,20 +291,6 @@ export class SessionFacade {
       sessionId: session.sessionId
     });
   }
-}
-
-function toConversationMessage(record: SessionMessageRecord): ConversationMessage | null {
-  const text = typeof record.payload.text === "string" ? record.payload.text.trim() : "";
-  if (text.length === 0) {
-    return null;
-  }
-  if (record.kind === "agent") {
-    return { content: text, role: "assistant" };
-  }
-  if (record.kind === "user") {
-    return { content: text, role: "user" };
-  }
-  return { content: text, role: "system" };
 }
 
 function buildHygieneTask(
