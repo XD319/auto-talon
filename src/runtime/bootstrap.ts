@@ -833,7 +833,9 @@ function buildApplicationRuntime(
   const sessionBranchService = new SessionBranchService({
     sessionLineageRepository: storage.sessionLineage,
     sessionRepository: storage.sessions,
-    sessionUiStateService
+    sessionSummaryService,
+    sessionUiStateService,
+    todoSessionStore
   });
   const sessionHandoffService = new SessionHandoffService({
     gatewaySessionRepository: storage.gatewaySessions,

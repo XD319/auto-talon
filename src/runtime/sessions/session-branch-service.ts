@@ -7,11 +7,15 @@ import type {
   SessionRepository
 } from "../../types/index.js";
 import type { SessionUiStateService } from "./session-ui-state-service.js";
+import type { TodoSessionStore } from "../../tools/todo-session-store.js";
+import type { SessionSummaryService } from "../context/session-summary-service.js";
 
 export interface SessionBranchServiceDependencies {
   sessionLineageRepository: SessionLineageRepository;
   sessionRepository: SessionRepository;
+  sessionSummaryService: SessionSummaryService;
   sessionUiStateService: SessionUiStateService;
+  todoSessionStore: TodoSessionStore;
 }
 
 export interface BranchSessionInput {
@@ -57,6 +61,30 @@ export class SessionBranchService {
         title: branchTitle
       });
     }
+    const sourceSummary = this.dependencies.sessionSummaryService.findLatestBySession(
+      input.sourceSessionId
+    );
+    if (sourceSummary !== null) {
+      this.dependencies.sessionSummaryService.create({
+        decisions: sourceSummary.decisions,
+        goal: sourceSummary.goal,
+        metadata: {
+          ...sourceSummary.metadata,
+          branchedFromSessionId: input.sourceSessionId,
+          branchedFromSummaryId: sourceSummary.sessionSummaryId
+        },
+        nextActions: sourceSummary.nextActions,
+        openLoops: sourceSummary.openLoops,
+        runId: null,
+        summary: sourceSummary.summary,
+        taskId: null,
+        sessionId: created.sessionId,
+        trigger: "manual"
+      });
+    }
+    const sourceTodos = this.dependencies.todoSessionStore.get(input.sourceSessionId);
+    this.dependencies.todoSessionStore.update(created.sessionId, sourceTodos, false);
+
     this.dependencies.sessionLineageRepository.append({
       lineageId: randomUUID(),
       sessionId: created.sessionId,
