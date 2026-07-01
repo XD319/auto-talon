@@ -19,6 +19,27 @@ export function estimateMessageTokens(content: string): number {
   return Math.ceil((content.length / 4) * ESTIMATE_PADDING);
 }
 
+export function estimateConversationMessageTokens(message: ConversationMessage): number {
+  let total = estimateMessageTokens(message.content ?? "");
+  if (Array.isArray(message.toolCalls)) {
+    for (const call of message.toolCalls) {
+      total += estimateMessageTokens(JSON.stringify(call.input ?? {}));
+      if (typeof call.reason === "string") {
+        total += estimateMessageTokens(call.reason);
+      }
+      total += estimateMessageTokens(call.toolCallId);
+      total += estimateMessageTokens(call.toolName);
+    }
+  }
+  if (typeof message.toolCallId === "string") {
+    total += estimateMessageTokens(message.toolCallId);
+  }
+  if (typeof message.toolName === "string") {
+    total += estimateMessageTokens(message.toolName);
+  }
+  return total;
+}
+
 export function estimateMessagesTokens(messages: Array<{ content: string }>): number {
   return messages.reduce((sum, message) => sum + estimateMessageTokens(message.content), 0);
 }

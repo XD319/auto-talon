@@ -36,6 +36,19 @@ describe("tail-selector", () => {
     expect(tail.messages.at(-1)?.content).toBe("latest assistant");
   });
 
+  it("honors tailMinMessages when protectLastN is smaller", () => {
+    const messages: ConversationMessage[] = Array.from({ length: 12 }, (_, index) => ({
+      content: `message-${index}`,
+      role: index % 2 === 0 ? "user" : "assistant"
+    }));
+    const tail = selectTailMessages(messages, {
+      protectLastN: 2,
+      tailMinMessages: 10,
+      tailTokenBudget: 100_000
+    });
+    expect(tail.messages.length).toBeGreaterThanOrEqual(10);
+  });
+
   it("reports budget overflow when protected tail exceeds tailTokenBudget", () => {
     const messages: ConversationMessage[] = Array.from({ length: 6 }, (_, index) => ({
       content: `message-${index}-${"z".repeat(4_000)}`,
@@ -49,5 +62,26 @@ describe("tail-selector", () => {
     expect(tail.budgetExceeded).toBe(true);
     expect(tail.usedTokens).toBeGreaterThan(1_000);
     expect(tail.messages.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("tail selector tool-call boundaries", () => {
+  it("keeps the assistant call when the protected tail starts with a tool result", () => {
+    const messages: ConversationMessage[] = [
+      { content: "old", role: "user" },
+      {
+        content: "x".repeat(5_000),
+        role: "assistant",
+        toolCalls: [{ input: {}, reason: "read", toolCallId: "tc-tight", toolName: "read_file" }]
+      },
+      { content: "ok", role: "tool", toolCallId: "tc-tight", toolName: "read_file" }
+    ];
+    const tail = selectTailMessages(messages, {
+      protectLastN: 1,
+      tailMinMessages: 1,
+      tailTokenBudget: 20
+    });
+    expect(tail.messages.map((message) => message.role)).toEqual(["assistant", "tool"]);
+    expect(tail.budgetExceeded).toBe(true);
   });
 });

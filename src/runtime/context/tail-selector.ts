@@ -1,6 +1,6 @@
 import type { ConversationMessage } from "../../types/index.js";
 
-import { estimateMessageTokens } from "./token-counter.js";
+import { estimateConversationMessageTokens } from "./token-counter.js";
 
 export interface TailSelectionConfig {
   tailMinMessages: number;
@@ -26,8 +26,9 @@ export function selectTailMessages(
     };
   }
 
-  const minKeep = Math.min(config.protectLastN ?? config.tailMinMessages, messages.length);
-  let startIndex = messages.length - minKeep;
+  const floor = Math.max(config.protectLastN ?? config.tailMinMessages, config.tailMinMessages);
+  const minKeep = Math.min(floor, messages.length);
+  let startIndex = rewindToToolCallBoundary(messages, messages.length - minKeep);
   let usedTokens = estimateMessagesSlice(messages, startIndex);
 
   while (startIndex > 0) {
@@ -56,7 +57,10 @@ export function selectTailMessages(
 function estimateMessagesSlice(messages: ConversationMessage[], startIndex: number): number {
   let total = 0;
   for (let index = startIndex; index < messages.length; index += 1) {
-    total += estimateMessageTokens(messages[index]?.content ?? "");
+    const message = messages[index];
+    if (message !== undefined) {
+      total += estimateConversationMessageTokens(message);
+    }
   }
   return total;
 }
@@ -73,4 +77,22 @@ function findPreviousSafeBoundary(messages: ConversationMessage[], startIndex: n
     return index;
   }
   return index;
+}
+
+function rewindToToolCallBoundary(
+  messages: ConversationMessage[],
+  startIndex: number
+): number {
+  if (messages[startIndex]?.role !== "tool") {
+    return startIndex;
+  }
+
+  let index = startIndex - 1;
+  while (index >= 0 && messages[index]?.role === "tool") {
+    index -= 1;
+  }
+  return messages[index]?.role === "assistant" &&
+    (messages[index]?.toolCalls?.length ?? 0) > 0
+    ? index
+    : startIndex;
 }
