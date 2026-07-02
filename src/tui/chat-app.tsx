@@ -67,6 +67,11 @@ import {
   handleModelCommand,
   restoreSessionProviderSelection
 } from "./model-command-handler.js";
+import {
+  cycleInteractionMode,
+  formatAgentWriteApprovalHelp,
+  formatModeChangeMessage
+} from "./interaction-mode.js";
 
 export interface ChatTuiAppProps {
   config: TuiAppConfig;
@@ -112,7 +117,7 @@ export function ChatTuiApp({
   const resolvedSessionId = React.useMemo(() => initialSessionId ?? randomUUID(), [initialSessionId]);
   const [sessionTitle, setSessionTitle] = React.useState(initialSessionTitle ?? "assistant");
   const [interactionMode, setInteractionMode] = React.useState<TuiInteractionMode>(
-    initialInteractionMode ?? "agent"
+    initialInteractionMode ?? config.defaultInteractionMode ?? "agent"
   );
   const [sessionPickerOpen, setSessionPickerOpen] = React.useState(false);
   const [sessionIndexEntries, setSessionIndexEntries] = React.useState<SessionIndexEntry[]>([]);
@@ -142,6 +147,7 @@ export function ChatTuiApp({
       : {}),
     ...(initialRuntimeSessionId !== undefined ? { initialSessionId: initialRuntimeSessionId } : {}),
     interactionMode,
+    onInteractionModeChange: setInteractionMode,
     onOutputEvent: (event) => scrollbackRef.current?.onOutputEvent(event),
     onTraceEvent: (event) => scrollbackRef.current?.onTraceEvent(event),
     reviewerId,
@@ -215,7 +221,6 @@ export function ChatTuiApp({
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
-        providerSelection: null,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title
       });
@@ -230,11 +235,19 @@ export function ChatTuiApp({
       controller.messages,
       controller.sessionApprovalFingerprints,
       interactionMode,
-      liveConfig,
       refreshSessionIndex,
       service,
       sessionTitle
     ]
+  );
+
+  const applyInteractionModeChange = React.useCallback(
+    (nextMode: TuiInteractionMode) => {
+      setInteractionMode(nextMode);
+      controller.addSystemMessage(formatModeChangeMessage(nextMode));
+      flushActiveSessionState();
+    },
+    [controller.addSystemMessage, flushActiveSessionState]
   );
 
   const dismissRecap = React.useCallback(() => {
@@ -293,12 +306,15 @@ export function ChatTuiApp({
     if (controller.busy || controller.activeSessionId === null) {
       return;
     }
+    const sessionIdAtSchedule = controller.activeSessionId;
     saveTimerRef.current = setTimeout(() => {
-      service.saveSessionUiState(controller.activeSessionId!, {
+      if (controller.activeSessionId !== sessionIdAtSchedule) {
+        return;
+      }
+      service.saveSessionUiState(sessionIdAtSchedule, {
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
-        providerSelection: null,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title: sessionTitle
       });
@@ -315,7 +331,6 @@ export function ChatTuiApp({
     controller.messages,
     controller.sessionApprovalFingerprints,
     interactionMode,
-    liveConfig,
     refreshSessionIndex,
     service,
     sessionTitle
@@ -438,12 +453,12 @@ export function ChatTuiApp({
       if (controller.activeSessionId !== null && controller.activeSessionId !== sessionId) {
         flushActiveSessionState();
       }
-      const uiStateBeforeActivate = service.loadSessionUiState(sessionId);
-      if (uiStateBeforeActivate?.providerSelection !== null && uiStateBeforeActivate?.providerSelection !== undefined) {
+      const uiState = service.loadSessionUiState(sessionId);
+      if (uiState?.providerSelection !== null && uiState?.providerSelection !== undefined) {
         try {
           const restored = await restoreSessionProviderSelection({
             currentProvider: service.currentProvider(),
-            providerSelection: uiStateBeforeActivate.providerSelection,
+            providerSelection: uiState.providerSelection,
             service,
             sessionId
           });
@@ -462,11 +477,18 @@ export function ChatTuiApp({
           controller.addSystemMessage(`Could not restore session model: ${message}`);
         }
       }
-      const activated = controller.activateSession(sessionId);
+      const activated = controller.activateSession(sessionId, {
+        ...(uiState !== null
+          ? {
+              interactionMode: uiState.interactionMode,
+              messages: uiState.messages as ChatMessage[],
+              sessionApprovalFingerprints: uiState.sessionApprovalFingerprints
+            }
+          : {})
+      });
       if (!activated) {
         return false;
       }
-      const uiState = service.loadSessionUiState(sessionId);
       scrollbackRef.current?.replayMessages(
         uiState !== null && uiState.messages.length > 0
           ? (uiState.messages as ChatMessage[])
@@ -541,11 +563,13 @@ export function ChatTuiApp({
           [
             "Most used: /resume <session> /sessions /today /inbox /new <title> /schedule create <when> | <prompt>",
             "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
-            "Session: /mode [agent|plan] /model [provider:model] [--global|--workspace] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
+            "Session: /mode [agent|plan|acceptEdits] or Shift+Tab to cycle (plan = read-only suggestions)",
+            formatAgentWriteApprovalHelp(liveConfig.interactionModes.agentWriteApproval),
+            "Session: /model [provider:model] [--global|--workspace] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
             "File edits: scrollback shows +added/-removed line counts with a folded diff preview; use /diff for more detail.",
             `Diff display: ${liveConfig.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
-            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | Ctrl+T tasks panel",
+            "Shortcuts: Shift+Tab cycle mode | Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | Ctrl+T tasks panel",
             "Saved sessions: use `talon tui --resume <id>` to restore UI state and messages from SQLite.",
             "Transcript is written to terminal scrollback; use your terminal scrollbar or mouse wheel to review history."
           ].join("\n")
@@ -641,7 +665,7 @@ export function ChatTuiApp({
 
       if (text === "/mode") {
         controller.addSystemMessage(
-          `Current mode: ${interactionMode}. Use /mode plan, /mode acceptEdits, or /mode agent.`
+          `Current mode: ${interactionMode}. Use Shift+Tab to cycle, or /mode plan, /mode acceptEdits, or /mode agent.`
         );
         return true;
       }
@@ -652,14 +676,7 @@ export function ChatTuiApp({
           : text.endsWith("acceptEdits")
             ? "acceptEdits"
             : "agent";
-        setInteractionMode(nextMode);
-        controller.addSystemMessage(
-          nextMode === "plan"
-            ? "Mode set to plan. Future prompts are read-only until you switch back with /mode agent."
-            : nextMode === "acceptEdits"
-              ? "Mode set to acceptEdits. Workspace file edits stay allowed; shell and other high-risk tools still require approval."
-              : "Mode set to agent. Future prompts can edit files when the request clearly asks for changes."
-        );
+        applyInteractionModeChange(nextMode);
         return true;
       }
 
@@ -1030,6 +1047,7 @@ export function ChatTuiApp({
       controller,
       cwd,
       activateSessionById,
+      applyInteractionModeChange,
       openSessionPicker,      refreshSessionIndex,
       restoreSession,
       service,
@@ -1163,6 +1181,15 @@ export function ChatTuiApp({
   useInput((_input, key) => {
     if (key.ctrl && _input === "t") {
       controller.toggleTodoPanel();
+    }
+    if (
+      key.shift &&
+      key.tab &&
+      !controller.busy &&
+      controller.pendingApproval === null &&
+      controller.pendingClarifyPrompt === null
+    ) {
+      applyInteractionModeChange(cycleInteractionMode(interactionMode));
     }
   });
 

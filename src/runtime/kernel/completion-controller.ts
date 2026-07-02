@@ -5,7 +5,8 @@ import type {
   ProviderToolDescriptor,
   TaskRecord,
   ToolExecutionResult,
-  TraceEventDraft
+  TraceEventDraft,
+  TuiInteractionMode
 } from "../../types/index.js";
 
 export const PROGRESS_GUARD_THRESHOLD = 3;
@@ -18,7 +19,6 @@ export interface CompletionControllerState {
   completionVerificationSatisfied: boolean;
   completionVerificationSatisfiedEmitted: boolean;
   criticalBudgetPressureEmitted: boolean;
-  intentFulfillmentGuardEmitted: boolean;
   maxIterations: number;
   messages: ConversationMessage[];
   postCompletionVerificationReads: number;
@@ -96,7 +96,8 @@ export class CompletionController {
     messages: ConversationMessage[],
     task: TaskRecord,
     iteration: number,
-    providerResponse: Extract<ProviderResponse, { kind: "tool_calls" }>
+    providerResponse: Extract<ProviderResponse, { kind: "tool_calls" }>,
+    interactionMode: TuiInteractionMode = "agent"
   ): void {
     const visibleReasoningText = providerResponse.message.trim();
     if (visibleReasoningText.length === 0) {
@@ -125,11 +126,7 @@ export class CompletionController {
     }
     if (state.readOnlyTurns >= READ_ONLY_GUARD_THRESHOLD) {
       messages.push({
-        content:
-          "synthesis guard: you have spent many consecutive turns reading files without producing a user-facing answer. " +
-          "Stop reading and synthesize your findings into a concrete response now. " +
-          "If you need to record intermediate findings, use the todo tool. " +
-          "When you finalize, answer the user's request directly in a concise numbered list without chain-of-thought.",
+        content: buildReadOnlyAnalysisGuardMessage(interactionMode),
         metadata: {
           privacyLevel: "internal",
           retentionKind: "session",
@@ -150,55 +147,6 @@ export class CompletionController {
       });
       state.readOnlyTurns = 0;
     }
-  }
-
-  public evaluateIntentFulfillment(
-    state: CompletionControllerState,
-    messages: ConversationMessage[],
-    task: TaskRecord,
-    iteration: number,
-    taskInput: string,
-    finalOutput: string
-  ): "pass" | "guard" {
-    if (state.intentFulfillmentGuardEmitted) {
-      return "pass";
-    }
-    if (!isModificationIntent(taskInput)) {
-      return "pass";
-    }
-    if (state.writeToolSucceeded) {
-      return "pass";
-    }
-
-    const guardMessage =
-      "Intent fulfillment guard: the user requested modifications but no files were changed. " +
-      "You must use write/patch/shell tools to implement the requested changes before finalizing. " +
-      "If modifications are genuinely impossible, explain why explicitly in your final answer.";
-
-    messages.push({
-      content: guardMessage,
-      metadata: {
-        privacyLevel: "internal",
-        retentionKind: "session",
-        sourceType: "system_prompt"
-      },
-      role: "system"
-    });
-    state.turnProviderMessages = messages;
-    state.intentFulfillmentGuardEmitted = true;
-    this.dependencies.recordTrace({
-      actor: "runtime.kernel",
-      eventType: "intent_fulfillment_missing",
-      payload: {
-        iteration,
-        taskInput: taskInput.slice(0, 200)
-      },
-      stage: "completion",
-      summary: "Modification intent task finalized without workspace changes",
-      taskId: task.taskId
-    });
-    void finalOutput;
-    return "guard";
   }
 
   public evaluatePostCompletionToolCalls(
@@ -338,64 +286,20 @@ export function mentionsUnverifiedWork(message: string): boolean {
   );
 }
 
-export function isModificationIntent(taskInput: string): boolean {
-  const compact = taskInput.replace(/\s+/gu, " ").trim().toLowerCase();
-  if (compact.length === 0) {
-    return false;
+export function buildReadOnlyAnalysisGuardMessage(interactionMode: TuiInteractionMode = "agent"): string {
+  if (interactionMode === "plan") {
+    return (
+      "synthesis guard: you have spent many consecutive turns reading files without producing a user-facing answer. " +
+      "Stop reading and synthesize your findings into a concrete analysis or plan now. " +
+      "Do not call write, patch, shell, or todo tools in plan mode. " +
+      "Answer the user's request directly in a concise numbered list without chain-of-thought."
+    );
   }
-  const modificationSignals = [
-    /\bfix\b/u,
-    /\brepair\b/u,
-    /\bimplement\b/u,
-    /\bcreate\b/u,
-    /\badd\b/u,
-    /\brefactor\b/u,
-    /\bupdate\b/u,
-    /\bdelete\b/u,
-    /\bwrite\b/u,
-    /\bchange\b/u,
-    /\bmove\b/u,
-    /\brename\b/u,
-    /\bremove\b/u,
-    /\breplace\b/u,
-    /修复/u,
-    /实现/u,
-    /创建/u,
-    /添加/u,
-    /重构/u,
-    /更新/u,
-    /删除/u,
-    /编写/u,
-    /修改/u,
-    /改动/u
-  ];
-  const analysisOnlySignals = [
-    /\bwhat\b.*\bbug/u,
-    /\blist\b.*\bbug/u,
-    /\bfind\b.*\bbug/u,
-    /\bwhich\b.*\bbug/u,
-    /有哪些.*bug/u,
-    /有什么.*bug/u,
-    /列出.*bug/u,
-    /\breview\b/u,
-    /\banalyze\b/u,
-    /\baudit\b/u,
-    /审查/u,
-    /分析/u,
-    /检查.*问题/u,
-    /还有哪些/u,
-    /还有什么/u,
-    /哪些.*没/u,
-    /没实现完/u,
-    /未完成/u,
-    /\bremaining\b/u,
-    /\bunfinished\b/u,
-    /\bnot\b.*\bimplement/u
-  ];
-  if (analysisOnlySignals.some((pattern) => pattern.test(compact))) {
-    return false;
-  }
-  return modificationSignals.some((pattern) => pattern.test(compact));
+  return (
+    "synthesis guard: you have spent many consecutive turns reading files without producing a user-facing answer. " +
+    "Stop reading and synthesize your findings into a concrete response now. " +
+    "Answer the user's request directly in a concise numbered list without chain-of-thought."
+  );
 }
 
 export function hasCompletionIntent(message: string): boolean {

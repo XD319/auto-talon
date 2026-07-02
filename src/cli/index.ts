@@ -169,7 +169,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--profile <profile>", "Agent profile", "executor")
-    .option("--mode <mode>", "Interaction mode: agent | plan", "agent")
+    .option("--mode <mode>", "Interaction mode: agent | plan | acceptEdits", "agent")
     .option("--session <sessionId>", "Reuse an existing session id")
     .option("--max-iterations <number>", "Maximum loop iterations", parsePositiveIntegerOption("--max-iterations"))
     .option("--timeout-ms <number>", "Task timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
@@ -184,6 +184,8 @@ export async function main(argv = process.argv): Promise<void> {
         if (commandOptions.mode === "plan") {
           runOptions.interactionMode = "plan";
           runOptions.agentProfileId = "planner";
+        } else if (commandOptions.mode === "acceptEdits") {
+          runOptions.interactionMode = "acceptEdits";
         }
         if (commandOptions.session !== undefined) {
           runOptions.sessionId = commandOptions.session;

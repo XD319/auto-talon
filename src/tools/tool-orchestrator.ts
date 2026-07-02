@@ -301,13 +301,49 @@ export class ToolOrchestrator {
       );
     }
 
-    if (policyDecision.effect === "allow_with_approval") {
+    const interactionMode = readInteractionMode(context.taskMetadata);
+    const agentWriteApproval = readAgentWriteApproval(context.taskMetadata);
+    let effectiveEffect = policyDecision.effect;
+    if (
+      tool.capability === "filesystem.write" &&
+      prepared.governance.pathScope === "workspace" &&
+      effectiveEffect === "allow"
+    ) {
+      const mode = interactionMode ?? "agent";
+      if (
+        (agentWriteApproval === "on" || agentWriteApproval === "acceptEditsOnly") &&
+        mode === "agent"
+      ) {
+        effectiveEffect = "allow_with_approval";
+      }
+    }
+
+    if (effectiveEffect === "allow_with_approval") {
       const fingerprint = buildApprovalFingerprint(tool.name, prepared.sandbox);
       const sessionApprovalFingerprints = readSessionApprovalFingerprints(context.taskMetadata);
+      const acceptEditsAutoAllow =
+        interactionMode === "acceptEdits" && tool.capability === "filesystem.write";
       const autoApproved =
+        acceptEditsAutoAllow ||
         sessionApprovalFingerprints.includes(fingerprint.fingerprint) ||
         this.dependencies.approvalRuleStore.hasFingerprint(fingerprint.fingerprint) ||
         this.dependencies.approvalRuleStore.matches(prepared.sandbox, tool.name);
+
+      if (acceptEditsAutoAllow) {
+        this.dependencies.traceService.record({
+          actor: "policy.engine",
+          eventType: "accept_edits_auto_allowed",
+          payload: {
+            capability: tool.capability,
+            interactionMode,
+            toolCallId: toolCall.toolCallId,
+            toolName: tool.name
+          },
+          stage: "governance",
+          summary: `Auto-allowed ${tool.name} in acceptEdits mode`,
+          taskId: request.taskId
+        });
+      }
 
       if (!autoApproved) {
         const approvalRequest = this.dependencies.approvalService.ensureApprovalRequest({
@@ -1054,6 +1090,28 @@ function readSessionApprovalFingerprints(metadata: ToolExecutionContext["taskMet
     return [];
   }
   return fingerprints.filter((value): value is string => typeof value === "string");
+}
+
+function readInteractionMode(
+  metadata: ToolExecutionContext["taskMetadata"]
+): "agent" | "plan" | "acceptEdits" {
+  if (metadata?.interactionMode === "plan") {
+    return "plan";
+  }
+  if (metadata?.interactionMode === "acceptEdits") {
+    return "acceptEdits";
+  }
+  return "agent";
+}
+
+function readAgentWriteApproval(
+  metadata: ToolExecutionContext["taskMetadata"]
+): "off" | "on" | "acceptEditsOnly" {
+  const value = metadata?.agentWriteApproval;
+  if (value === "on" || value === "acceptEditsOnly") {
+    return value;
+  }
+  return "off";
 }
 
 function sanitizePersistedOutput(

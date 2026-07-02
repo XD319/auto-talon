@@ -78,6 +78,8 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
           timestamp: new Date().toISOString()
         }
       ];
+    } else {
+      initialInteractionMode = handle.config.defaultInteractionMode;
     }
 
     let app: ReturnType<typeof render> | null = null;
