@@ -24,7 +24,22 @@ describe("todo session store persistence", () => {
     storage.close();
   });
 
-  it("drops stale ids during merge", () => {
+  it("drops stale ids on full replace", () => {
+    const store = new TodoSessionStore();
+    store.update(
+      "session-1",
+      [{ content: "old", id: "todo-1", status: "pending" }],
+      false
+    );
+    const replaced = store.update(
+      "session-1",
+      [{ content: "new", id: "todo-2", status: "pending" }],
+      false
+    );
+    expect(replaced.map((todo) => todo.id)).toEqual(["todo-2"]);
+  });
+
+  it("preserves existing ids during merge", () => {
     const store = new TodoSessionStore();
     store.update(
       "session-1",
@@ -38,6 +53,16 @@ describe("todo session store persistence", () => {
     );
     expect(merged.every((todo) => todo !== undefined)).toBe(true);
     expect(merged.map((todo) => todo.id)).toEqual(["todo-1", "todo-2"]);
+  });
+
+  it("clears the list when no active todos remain", () => {
+    const store = new TodoSessionStore();
+    store.update(
+      "session-1",
+      [{ content: "done", id: "todo-1", status: "completed" }],
+      false
+    );
+    expect(store.get("session-1")).toEqual([]);
   });
 });
 
@@ -70,12 +95,12 @@ describe("todo session store consistency", () => {
       "session-duplicates",
       [
         { content: "old", id: "same", status: "pending" },
-        { content: "new", id: "same", status: "completed" }
+        { content: "new", id: "same", status: "in_progress" }
       ],
       false
     );
     expect(replaced).toHaveLength(1);
-    expect(replaced[0]).toMatchObject({ content: "new", id: "same", status: "completed" });
+    expect(replaced[0]).toMatchObject({ content: "new", id: "same", status: "in_progress" });
     expect(store.update("session-duplicates", [], false)).toEqual([]);
   });
 });

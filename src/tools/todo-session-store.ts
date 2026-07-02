@@ -11,6 +11,14 @@ export interface TodoItem {
   statusUpdatedAt?: string;
 }
 
+export function isActiveTodoStatus(status: TodoStatus): boolean {
+  return status === "pending" || status === "in_progress";
+}
+
+export function filterActiveTodos(todos: TodoItem[]): TodoItem[] {
+  return todos.filter((todo) => isActiveTodoStatus(todo.status));
+}
+
 export class TodoSessionStore {
   private readonly todosBySession = new Map<string, TodoItem[]>();
 
@@ -28,12 +36,14 @@ export class TodoSessionStore {
     const now = new Date().toISOString();
     const normalized = dedupeTodos(todos);
     const existing = merge ? this.get(sessionKey) : [];
-    const next = merge
-      ? mergeTodos(existing, normalized, now)
-      : normalized.map((todo) => ({
-          ...todo,
-          statusUpdatedAt: now
-        }));
+    const next = finalizeSessionTodos(
+      merge
+        ? mergeTodos(existing, normalized, now)
+        : normalized.map((todo) => ({
+            ...todo,
+            statusUpdatedAt: now
+          }))
+    );
     this.persist(sessionKey, next);
     return cloneTodos(next);
   }
@@ -63,6 +73,10 @@ function dedupeTodos(todos: TodoItem[]): TodoItem[] {
     byId.set(todo.id, { ...todo });
   }
   return order.map((id) => byId.get(id)!).filter(Boolean);
+}
+
+function finalizeSessionTodos(todos: TodoItem[]): TodoItem[] {
+  return filterActiveTodos(todos).length > 0 ? todos : [];
 }
 
 function mergeTodos(

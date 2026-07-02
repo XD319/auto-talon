@@ -27,7 +27,7 @@ const todoItemSchema = z.object({
 });
 
 const todoSchema = z.object({
-  merge: z.boolean().default(true),
+  merge: z.boolean().default(false),
   todos: z.array(todoItemSchema).max(MAX_TODO_ITEMS)
 });
 
@@ -39,7 +39,7 @@ export interface PreparedTodoInput {
 export class TodoTool implements ToolDefinition<typeof todoSchema, PreparedTodoInput> {
   public readonly name = "todo";
   public readonly description =
-    "Create or update the session todo list. Use merge=true to upsert items by id, or merge=false with an empty list to clear it.";
+    "Replace the session todo list with the provided todos (full snapshot). Include every item on each call; omitted ids are removed. Keep at most one item in_progress. Pass merge=true to upsert by id instead. An empty list or all completed/cancelled items clears the list.";
   public readonly capability = "filesystem.read" as const;
   public readonly riskLevel = "low" as const;
   public readonly privacyLevel = "internal" as const;
