@@ -91,6 +91,8 @@ export interface StructuredSummaryFields {
   goal: string;
   latestUserRequest: string;
   allUserMessages: string[];
+  sessionTheme: string;
+  featureBacklogSection: string;
   completedWork: string;
   evidenceAndVerification: string;
   filesTouched: string[];
@@ -102,7 +104,14 @@ export interface StructuredSummaryFields {
   toolSignals: string;
 }
 
-export function collectStructuredSummaryFields(input: SessionCompactInput): StructuredSummaryFields {
+export function collectStructuredSummaryFields(
+  input: SessionCompactInput,
+  options: {
+    featureBacklogSection?: string;
+    pinnedUserMessages?: string[];
+    sessionTheme?: string;
+  } = {}
+): StructuredSummaryFields {
   const userMessages = input.messages.filter((message) => message.role === "user");
   const assistantMessages = input.messages.filter((message) => message.role === "assistant");
   const toolMessages = input.messages.filter((message) => message.role === "tool");
@@ -129,9 +138,13 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
   const fallbackGoal = summarize(input.originalGoal ?? "", 500);
   const firstUserGoal = summarize(userMessages.at(0)?.content ?? "", 500);
   const latestUserGoal = summarize(userMessages.at(-1)?.content ?? "", 500);
-  const allUserMessages = uniqueList(
-    userMessages.map((message) => summarize(message.content, 500)).filter((message) => message.length > 0)
-  );
+  const windowUserMessages = userMessages
+    .map((message) => summarize(message.content, 500))
+    .filter((message) => message.length > 0);
+  const allUserMessages = uniqueList([
+    ...(options.pinnedUserMessages ?? []).map((message) => summarize(message, 500)),
+    ...windowUserMessages
+  ]).slice(-20);
   const assistantFindings = assistantMessages
     .map((message) => assistantVisibleText(message))
     .filter((text) => text.length > 30)
@@ -144,12 +157,14 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
     commandsRun,
     completedWork: completedWork || "[n/a]",
     evidenceAndVerification: evidenceAndVerification || "[n/a]",
+    featureBacklogSection: options.featureBacklogSection ?? "",
     filesTouched,
     findings,
-    goal: firstUserGoal || fallbackGoal || "[n/a]",
+    goal: latestUserGoal || firstUserGoal || fallbackGoal || "[n/a]",
     latestUserRequest: latestUserGoal || fallbackGoal || "[n/a]",
     recentlyReadFiles: input.recentlyReadFilesSummary ?? "[none]",
     remainingWork,
+    sessionTheme: options.sessionTheme ?? "",
     toolSignals: keyToolSignals || "[n/a]"
   };
 }
@@ -160,17 +175,28 @@ export function formatStructuredSummary(fields: StructuredSummaryFields): string
       ? fields.allUserMessages.map((message, index) => `${index + 1}. ${message}`).join("\n")
       : "[none]";
 
+  const themeSection =
+    fields.sessionTheme.trim().length > 0
+      ? ["## Session Theme", fields.sessionTheme, ""]
+      : [];
+  const featureBacklogSection =
+    fields.featureBacklogSection.trim().length > 0
+      ? ["## Feature Backlog", fields.featureBacklogSection, ""]
+      : [];
+
   return redactSensitiveSummary(
     [
-      "## Goal",
+      "## Active Goal",
       fields.goal,
       "",
+      ...themeSection,
       "## Latest User Request",
       fields.latestUserRequest,
       "",
       "## All User Messages",
       userMessagesSection,
       "",
+      ...featureBacklogSection,
       "## Progress",
       "### Done",
       fields.completedWork,
@@ -308,7 +334,7 @@ function buildInitialSummaryPrompt(
         "You produce a decision-oriented session handoff for another agent continuing this work.",
         "Compress for continuity, not chronology. Omit lookup chatter unless it is the only evidence.",
         "Return markdown with these sections:",
-        "## Goal",
+        "## Active Goal",
         "## Latest User Request",
         "## All User Messages",
         "## Progress (### Done, ### In Progress, ### Blocked)",

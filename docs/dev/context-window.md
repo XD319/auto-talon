@@ -53,6 +53,7 @@ Context usage percentage in the TUI is computed against the **usable** window:
     "hygieneThresholdRatio": 0.85,
     "tailTokenBudget": 20000,
     "tailMinMessages": 10,
+    "resumeUserTailMessages": 6,
     "messageThreshold": 100,
     "iterationThreshold": 24,
     "toolCallThreshold": 40,

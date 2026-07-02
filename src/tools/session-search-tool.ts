@@ -11,12 +11,14 @@ import type {
 const sessionSearchSchema = z.object({
   limit: z.number().int().positive().max(50).default(20),
   query: z.string().min(1),
+  scope: z.enum(["session", "global"]).default("global"),
   sessionIdPrefix: z.string().min(1).optional()
 });
 
 export interface PreparedSessionSearchInput {
   limit: number;
   query: string;
+  scope: "session" | "global";
   sessionIdPrefix?: string;
 }
 
@@ -33,7 +35,7 @@ export class SessionSearchTool
 {
   public readonly name = "session_search";
   public readonly description =
-    "Search prior session messages across the workspace using SQLite FTS. Returns matching snippets without calling the model.";
+    "Search prior session conversation messages (user/agent text) via SQLite FTS. Use this to recall earlier suggestions or instructions from chat history, not README or source files. Use scope=session for the active session only, or scope=global across sessions. Optional sessionIdPrefix narrows to sessions whose id starts with the prefix.";
   public readonly capability = "filesystem.read" as const;
   public readonly riskLevel = "low" as const;
   public readonly privacyLevel = "internal" as const;
@@ -44,9 +46,13 @@ export class SessionSearchTool
 
   public constructor(private readonly options: SessionSearchToolOptions) {}
 
-  public prepare(input: unknown, _context: ToolExecutionContext): ToolPreparation<PreparedSessionSearchInput> {
-    void _context;
+  public prepare(input: unknown, context: ToolExecutionContext): ToolPreparation<PreparedSessionSearchInput> {
     const parsedInput = this.inputSchema.parse(input);
+    const sessionIdFromMetadata =
+      typeof context.taskMetadata?.sessionId === "string" ? context.taskMetadata.sessionId : undefined;
+    const sessionIdPrefix =
+      parsedInput.sessionIdPrefix ??
+      (parsedInput.scope === "session" ? sessionIdFromMetadata : undefined);
     return {
       governance: {
         pathScope: "workspace",
@@ -55,7 +61,8 @@ export class SessionSearchTool
       preparedInput: {
         limit: parsedInput.limit,
         query: parsedInput.query,
-        ...(parsedInput.sessionIdPrefix !== undefined ? { sessionIdPrefix: parsedInput.sessionIdPrefix } : {})
+        scope: parsedInput.scope,
+        ...(sessionIdPrefix !== undefined ? { sessionIdPrefix } : {})
       },
       sandbox: {
         kind: "prompt",

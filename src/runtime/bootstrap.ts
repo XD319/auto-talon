@@ -221,9 +221,11 @@ export interface AppConfig {
   approvalTtlMs: number;
   allowedFetchHosts: string[];
   databasePath: string;
+  defaultInteractionMode: "agent" | "plan" | "acceptEdits";
   defaultMaxIterations: number;
   defaultProfileId: "executor" | "planner" | "reviewer";
   defaultTimeoutMs: number;
+  interactionModes: RuntimeConfig["interactionModes"];
   compact: {
     bufferTokens: number;
     hygieneThresholdRatio: number;
@@ -231,6 +233,7 @@ export interface AppConfig {
     messageThreshold: number;
     protectFirstN: number;
     protectLastN: number;
+    resumeUserTailMessages: number;
     summarizer: "deterministic" | "provider_subagent";
     targetRatio: number;
     tailMinMessages: number;
@@ -317,9 +320,11 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     databasePath:
       process.env.AGENT_RUNTIME_DB_PATH ??
       join(workspaceRoot, ".auto-talon", "agent-runtime.db"),
+    defaultInteractionMode: runtimeConfig.defaultInteractionMode,
     defaultMaxIterations: runtimeConfig.defaultMaxIterations,
     defaultProfileId: "executor",
     defaultTimeoutMs: runtimeConfig.defaultTimeoutMs,
+    interactionModes: runtimeConfig.interactionModes,
     compact: runtimeConfig.compact,
     context: runtimeConfig.context,
     contextRetention: runtimeConfig.contextRetention,
@@ -745,6 +750,7 @@ function buildApplicationRuntime(
   });
   const summarizerWorker = new SummarizerWorker({
     contextCompactor,
+    sessionMessageRepository: storage.sessionMessages,
     sessionSummaryService
   });
   const retrievalWorker = new RetrievalWorker({
@@ -878,6 +884,7 @@ function buildApplicationRuntime(
     retrievalWorker,
     taskRepository: storage.tasks,
     sessionLineageRepository: storage.sessionLineage,
+    sessionMessageRepository: storage.sessionMessages,
     sessionTaskRepository: storage.sessionTasks,
     sessionTranscriptRepository: storage.sessionTranscripts,
     sessionMessageProjector,
@@ -888,6 +895,7 @@ function buildApplicationRuntime(
     traceService,
     outputService,
     workflow: config.workflow,
+    interactionModes: config.interactionModes,
     workspaceRoot: config.workspaceRoot
   });
   delegateTaskTool.bindExecutor(async (request) => {
@@ -925,7 +933,12 @@ function buildApplicationRuntime(
   });
   const sessionStateProjector = new SessionStateProjector({
     commitmentProjector: sessionCommitmentProjector,
-    sessionSummaryService
+    sessionMessageRepository: storage.sessionMessages,
+    sessionSummaryService,
+    sessionTranscriptRepository: storage.sessionTranscripts,
+    resumeUserTailMessages: config.compact.resumeUserTailMessages,
+    tailMinMessages: config.compact.tailMinMessages,
+    tailTokenBudget: config.compact.tailTokenBudget
   });
   const resumePacketBuilder = new ResumePacketBuilder({
     config,

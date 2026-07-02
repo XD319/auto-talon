@@ -201,11 +201,11 @@ describe("session compact resume e2e", () => {
       });
       const contextDebug = handle.service.traceTaskContext(secondRun.task.taskId);
       const systemPreviews = contextDebug.contextAssembly?.systemPromptFragments.map((fragment) => fragment.preview) ?? [];
-      expect(systemPreviews.some((preview) => preview.includes("KnownSessionGoal: Preserve this goal"))).toBe(true);
+      expect(systemPreviews.some((preview) => preview.includes("KnownActiveGoal: Preserve this goal"))).toBe(true);
       expect(systemPreviews.some((preview) => preview.includes("KnownOpenLoops: pending read_file"))).toBe(true);
       expect(systemPreviews.some((preview) => preview.includes("KnownDecisions: use existing context"))).toBe(true);
       const memoryRecall = contextDebug.contextAssembly?.memoryRecallFragments ?? [];
-      expect(memoryRecall.some((fragment) => fragment.label === "Session goal")).toBe(true);
+      expect(memoryRecall.some((fragment) => fragment.label === "Active goal")).toBe(true);
       expect(memoryRecall.some((fragment) => fragment.label === "Session decisions")).toBe(true);
     } finally {
       handle.close();
@@ -243,14 +243,14 @@ describe("session compact resume e2e", () => {
       const secondRun = await handle.service.continueSession(sessionId, "continue with remembered goal", {
         cwd: workspace
       });
-      expect(handle.service.listSessionSummaries(sessionId)[0]?.goal).toBe(
-        "Remember this session goal from final branch"
-      );
+      expect(handle.service.listSessionSummaries(sessionId)[0]?.goal).toBe("continue with remembered goal");
       const contextDebug = handle.service.traceTaskContext(secondRun.task.taskId);
       const systemPreviews = contextDebug.contextAssembly?.systemPromptFragments.map((fragment) => fragment.preview) ?? [];
       expect(
-        systemPreviews.some((preview) =>
-          preview.includes("KnownSessionGoal: Remember this session goal from final branch")
+        systemPreviews.some(
+          (preview) =>
+            preview.includes("KnownActiveGoal: continue with remembered goal") ||
+            preview.includes("KnownCurrentDirective:")
         )
       ).toBe(true);
     } finally {
@@ -311,7 +311,7 @@ describe("session compact resume e2e", () => {
       expect(lineage.some((event) => event.eventType === "compress" && event.payload.hygiene === true)).toBe(true);
       expect(
         handle.service.traceTaskContext(run.task.taskId).contextAssembly?.systemPromptFragments.some((fragment) =>
-          fragment.preview.includes("KnownSessionGoal")
+          fragment.preview.includes("KnownActiveGoal")
         )
       ).toBe(true);
     } finally {

@@ -87,6 +87,30 @@ describe("ExecutionContextAssembler", () => {
     expect(messages[0]?.content).toContain("cannot discover search results");
   });
 
+  it("injects plan mode guidance into the initial system prompt", () => {
+    const assembler = new ExecutionContextAssembler();
+    const messages = assembler.buildInitialMessages(
+      createTask(),
+      [
+        {
+          capability: "filesystem.read",
+          description: "Read a local file",
+          inputSchema: { type: "object" },
+          name: "read_file",
+          privacyLevel: "internal",
+          riskLevel: "low"
+        }
+      ],
+      createProfile(),
+      undefined,
+      [],
+      "plan"
+    );
+
+    expect(messages[0]?.content).toContain("You are in plan mode");
+    expect(messages[0]?.content).toContain("/mode agent");
+  });
+
   it("merges memoryContext recall fragments into provider messages", () => {
     const assembler = new ExecutionContextAssembler();
     const fragments = [createMemoryFragment()];

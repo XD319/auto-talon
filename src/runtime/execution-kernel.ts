@@ -67,7 +67,7 @@ import { pruneOldToolResults } from "./context/tool-result-pruner.js";
 import { selectTailMessages } from "./context/tail-selector.js";
 import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
-import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
+import type { RuntimeConfig, WorkflowRuntimeConfig, InteractionModesRuntimeConfig } from "./runtime-config.js";
 import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-exposure-planner.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
@@ -101,6 +101,7 @@ import type {
   TaskRepository,
   SessionCommitmentState,
   SessionLineageRepository,
+  SessionMessageRepository,
   SessionTaskRepository,
   SessionEntrySource,
   ToolExecutionResult,
@@ -122,9 +123,10 @@ import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { SessionMessageProjector } from "./sessions/session-message-projector.js";
+import { pinUserMessagesFromRecords } from "./sessions/session-user-message-pin.js";
 import type { SkillContextService } from "../skills/index.js";
 import type { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
-import type { TodoSessionStore } from "../tools/todo-session-store.js";
+import type { TodoItem, TodoSessionStore } from "../tools/todo-session-store.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -142,6 +144,7 @@ export interface ExecutionKernelDependencies {
   taskRepository: TaskRepository;
   sessionTaskRepository: SessionTaskRepository;
   sessionLineageRepository: SessionLineageRepository;
+  sessionMessageRepository?: SessionMessageRepository;
   sessionTranscriptRepository: SessionTranscriptRepository;
   sessionMessageProjector?: SessionMessageProjector;
   contextCompactor: ContextCompactor;
@@ -162,6 +165,7 @@ export interface ExecutionKernelDependencies {
   toolExposurePlanner?: ToolExposurePlanner;
   skillContextService?: SkillContextService;
   todoSessionStore?: TodoSessionStore;
+  interactionModes: InteractionModesRuntimeConfig;
   workspaceRoot: string;
 }
 
@@ -187,7 +191,6 @@ interface ExecutionLoopState {
   completionVerificationSatisfied: boolean;
   completionVerificationSatisfiedEmitted: boolean;
   criticalBudgetPressureEmitted: boolean;
-  intentFulfillmentGuardEmitted: boolean;
   interactionMode?: RuntimeRunOptions["interactionMode"];
   postCompletionVerificationReads: number;
   readOnlyTurns: number;
@@ -310,7 +313,8 @@ export class ExecutionKernel {
     const taskMetadata = {
       ...(options.metadata ?? {}),
       ...explicitSkillMetadata,
-      ...(options.interactionMode !== undefined ? { interactionMode: options.interactionMode } : {})
+      ...(options.interactionMode !== undefined ? { interactionMode: options.interactionMode } : {}),
+      agentWriteApproval: this.dependencies.interactionModes.agentWriteApproval
     };
     let task = this.dependencies.taskRepository.create({
       agentProfileId: options.agentProfileId,
@@ -324,6 +328,9 @@ export class ExecutionKernel {
       sessionId: options.sessionId ?? null,
       tokenBudget: options.tokenBudget
     });
+    if (options.sessionId !== undefined && options.sessionId !== null) {
+      this.supersedeStaleSessionTasks(options.sessionId, taskId);
+    }
     const stopOutputSubscription =
       options.onOutputEvent === undefined
         ? null
@@ -464,7 +471,8 @@ export class ExecutionKernel {
         availableTools,
         profile,
         repoMap?.summary,
-        initialToolExposure?.decisions ?? []
+        initialToolExposure?.decisions ?? [],
+        options.interactionMode
       );
       const resumeContextMessages = readSessionResumeMessages(taskMetadata);
       if (resumeContextMessages.length > 0) {
@@ -513,7 +521,6 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
-        intentFulfillmentGuardEmitted: false,
         interactionMode: options.interactionMode,
         iterationsSinceLastCompact: 0,
         managedAbortController,
@@ -602,7 +609,6 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
-        intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
         iterationsSinceLastCompact: 0,
         managedAbortController,
@@ -697,7 +703,6 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
-        intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
         iterationsSinceLastCompact: 0,
         managedAbortController,
@@ -1297,17 +1302,6 @@ export class ExecutionKernel {
               acceptance.reason === "empty" ? "empty_final_output" : "unpolished_final_output"
             );
           }
-          const intentDecision = this.completionController.evaluateIntentFulfillment(
-            state,
-            messages,
-            task,
-            iteration,
-            task.input,
-            resolvedFinalText
-          );
-          if (intentDecision === "guard") {
-            continue;
-          }
           const verificationDecision = this.completionController.evaluateFinalVerification(
             state,
             messages,
@@ -1439,7 +1433,14 @@ export class ExecutionKernel {
         const toolTurnResponse =
           lastToolCallsResponse ?? findLastAssistantToolCallsResponse(messages);
         if (toolTurnResponse !== null) {
-          this.completionController.observeProviderToolTurn(state, messages, task, iteration, toolTurnResponse);
+          this.completionController.observeProviderToolTurn(
+            state,
+            messages,
+            task,
+            iteration,
+            toolTurnResponse,
+            state.interactionMode ?? "agent"
+          );
         }
         lastToolCallsResponse = null;
       }
@@ -1550,12 +1551,100 @@ export class ExecutionKernel {
           const workerDispatcher = this.dependencies.workerDispatcher;
           const summarizerWorker = this.dependencies.summarizerWorker;
           const persistCompactSummary = (): void => {
+            const previousSessionSummary =
+              this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
+            const pinnedUserMessages = this.resolvePinnedUserMessages(sessionId);
+            const sessionTodos = this.resolveSessionTodos(sessionId);
             const sessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
               availableTools,
               compact: compactInput,
-              previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(sessionId),
+              pinnedUserMessages,
+              previousSessionSummary,
+              sessionTodos,
               task
             });
+            if (
+              previousSessionSummary !== null &&
+              sessionSummaryDraft.goal !== previousSessionSummary.goal
+            ) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "session_goal_updated",
+                payload: {
+                  previousGoal: previousSessionSummary.goal,
+                  sessionId,
+                  updatedGoal: sessionSummaryDraft.goal
+                },
+                stage: "memory",
+                summary: "Session goal updated during compaction",
+                taskId: task.taskId
+              });
+            }
+            if (pinnedUserMessages.length > 0) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "user_messages_pinned",
+                payload: {
+                  count: pinnedUserMessages.length,
+                  sessionId
+                },
+                stage: "memory",
+                summary: `Pinned ${pinnedUserMessages.length} user messages into session summary`,
+                taskId: task.taskId
+              });
+            }
+            const capturedConstraints = sessionSummaryDraft.decisions.filter((item) =>
+              item.startsWith("Constraint:")
+            );
+            if (capturedConstraints.length > 0) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "constraint_captured",
+                payload: {
+                  constraints: capturedConstraints,
+                  sessionId
+                },
+                stage: "memory",
+                summary: "User constraints captured into session summary",
+                taskId: task.taskId
+              });
+            }
+            if (Array.isArray(sessionSummaryDraft.metadata?.featureBacklog)) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "feature_backlog_updated",
+                payload: {
+                  itemCount: sessionSummaryDraft.metadata.featureBacklog.length,
+                  sessionId
+                },
+                stage: "memory",
+                summary: "Feature backlog updated in session summary",
+                taskId: task.taskId
+              });
+            }
+            const rawCount = sessionSummaryDraft.metadata?.featureBacklogRawCount;
+            const droppedCount = sessionSummaryDraft.metadata?.featureBacklogDroppedCount;
+            const featureBacklog = sessionSummaryDraft.metadata?.featureBacklog;
+            const filteredCount = Array.isArray(featureBacklog) ? featureBacklog.length : 0;
+            if (
+              typeof rawCount === "number" &&
+              typeof droppedCount === "number" &&
+              droppedCount > 0
+            ) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "feature_backlog_filtered",
+                payload: {
+                  droppedCount,
+                  filteredCount,
+                  rawCount,
+                  sessionId
+                },
+                stage: "memory",
+                summary: `Filtered ${droppedCount} noisy feature backlog item(s)`,
+                taskId: task.taskId
+              });
+            }
             this.dependencies.sessionSummaryService.create({
               ...sessionSummaryDraft,
               metadata: {
@@ -1581,6 +1670,7 @@ export class ExecutionKernel {
                   compactInput,
                   compactResult: compacted,
                   runId: latestRun?.runId ?? null,
+                  sessionTodos: this.resolveSessionTodos(sessionId),
                   task
                 },
                 maxAttempts: 2,
@@ -1942,7 +2032,9 @@ export class ExecutionKernel {
       const finalSessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
         availableTools,
         compact: buildFinalSessionCompactInput(messages, completedTask),
+        pinnedUserMessages: this.resolvePinnedUserMessages(completedTask.sessionId),
         previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(completedTask.sessionId),
+        sessionTodos: this.resolveSessionTodos(completedTask.sessionId),
         task: completedTask,
         trigger: "final"
       });
@@ -2226,6 +2318,9 @@ export class ExecutionKernel {
     if (this.dependencies.compact.summarizer !== "provider_subagent") {
       return new DeterministicCompactSummarizer();
     }
+    if (sessionId !== null && this.hasStructuredSessionMemory(sessionId)) {
+      return new DeterministicCompactSummarizer();
+    }
     const helperProvider =
       this.dependencies.auxiliaryProviderResolver?.resolve("compression", {
         sessionId,
@@ -2253,6 +2348,65 @@ export class ExecutionKernel {
       },
       { maxInputTokens: helperContextWindow }
     );
+  }
+
+  private hasStructuredSessionMemory(sessionId: string): boolean {
+    const summary = this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
+    if (summary === null) {
+      return false;
+    }
+    const pinned = summary.metadata?.userMessagePin;
+    const featureBacklog = summary.metadata?.featureBacklog;
+    return (
+      Array.isArray(pinned) &&
+      pinned.length > 0 &&
+      Array.isArray(featureBacklog) &&
+      featureBacklog.length > 0 &&
+      summary.decisions.length > 0
+    );
+  }
+
+  private resolvePinnedUserMessages(sessionId: string): string[] {
+    if (this.dependencies.sessionMessageRepository === undefined) {
+      return [];
+    }
+    return pinUserMessagesFromRecords(
+      this.dependencies.sessionMessageRepository.listBySessionId(sessionId)
+    );
+  }
+
+  private resolveSessionTodos(sessionId: string): TodoItem[] {
+    return this.dependencies.todoSessionStore?.get(sessionId) ?? [];
+  }
+
+  private supersedeStaleSessionTasks(sessionId: string, activeTaskId: string): void {
+    for (const sessionTask of this.dependencies.sessionTaskRepository.listBySessionId(sessionId)) {
+      if (sessionTask.taskId === activeTaskId) {
+        continue;
+      }
+      const staleTask = this.dependencies.taskRepository.findById(sessionTask.taskId);
+      if (staleTask === null || staleTask.status !== "running") {
+        continue;
+      }
+      this.dependencies.taskRepository.update(staleTask.taskId, {
+        errorCode: "cancelled",
+        errorMessage: "Superseded by a newer session task.",
+        finishedAt: new Date().toISOString(),
+        status: "cancelled"
+      });
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "task_superseded",
+        payload: {
+          activeTaskId,
+          sessionId,
+          supersededTaskId: staleTask.taskId
+        },
+        stage: "lifecycle",
+        summary: "Stale running task cancelled for session continuation",
+        taskId: activeTaskId
+      });
+    }
   }
 
   private finalizeTaskFailure(

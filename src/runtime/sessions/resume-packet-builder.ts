@@ -105,7 +105,7 @@ function buildSessionResumeMemoryContext(
   const trimmedGoal = normalizeSummary(sessionSummary.goal, 220);
   if (trimmedGoal.length > 0) {
     fragments.push(
-      createResumeFragment("Session goal", "session_resume_goal", trimmedGoal, sessionSummary.createdAt)
+      createResumeFragment("Active goal", "session_resume_goal", trimmedGoal, sessionSummary.createdAt)
     );
   }
 

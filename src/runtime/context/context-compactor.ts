@@ -10,6 +10,12 @@ import {
   formatStructuredSummary,
   redactSensitiveSummary
 } from "../../memory/compact-summarizer.js";
+import type { TodoItem } from "../../tools/todo-session-store.js";
+import {
+  collectFeatureBacklog,
+  formatFeatureBacklogSection,
+  serializeFeatureBacklog
+} from "../sessions/session-feature-backlog.js";
 
 export interface BuildSessionSummaryInput {
   task: TaskRecord;
@@ -18,6 +24,8 @@ export interface BuildSessionSummaryInput {
   };
   availableTools: ProviderToolDescriptor[];
   previousSessionSummary?: SessionSummaryRecord | null;
+  pinnedUserMessages?: string[];
+  sessionTodos?: TodoItem[];
   trigger?: SessionSummaryDraft["trigger"];
 }
 
@@ -33,12 +41,19 @@ export class ContextCompactor {
       )
     );
     const previousSessionSummary = input.previousSessionSummary ?? null;
-    const goal =
-      previousSessionSummary !== null && previousSessionSummary.goal.trim().length > 0
-        ? previousSessionSummary.goal
-        : currentGoal;
+    const goal = currentGoal;
+    const sessionTheme = resolveSessionTheme({
+      compactMessages: input.compact.messages,
+      currentGoal,
+      previousSessionSummary
+    });
+    const userConstraintDecisions = collectUserConstraints(
+      input.compact.messages,
+      input.pinnedUserMessages ?? []
+    );
     const decisions = uniqueList([
       ...(previousSessionSummary?.decisions ?? []),
+      ...userConstraintDecisions,
       ...collectDecisions(input.compact.messages)
     ])
       .map((item) => redactSensitiveSummary(item))
@@ -65,14 +80,35 @@ export class ContextCompactor {
     )
       .map((item) => redactSensitiveSummary(item))
       .slice(-12);
-    const nextActions = uniqueList([
-      ...(previousSessionSummary?.nextActions ?? []),
-      ...collectNextActions(input.compact.messages)
-    ])
-      .map((item) => redactSensitiveSummary(item))
-      .slice(-3);
-    const structured = collectStructuredSummaryFields(input.compact);
+    const hasUnresolvedToolCalls = currentOpenLoops.length > 0;
+    const carriedNextActions =
+      hasUnresolvedToolCalls && previousSessionSummary !== null ? previousSessionSummary.nextActions : [];
+    const nextActions =
+      input.trigger === "final"
+        ? []
+        : uniqueList([...carriedNextActions, ...collectNextActions(input.compact.messages)])
+            .map((item) => redactSensitiveSummary(item))
+            .slice(-3);
+    const featureBacklogResult = collectFeatureBacklog({
+      assistantMessages: input.compact.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.content),
+      decisions,
+      ...(previousSessionSummary?.metadata !== undefined
+        ? { previousMetadata: previousSessionSummary.metadata }
+        : {}),
+      ...(input.sessionTodos !== undefined ? { sessionTodos: input.sessionTodos } : {})
+    });
+    const featureBacklog = featureBacklogResult.items;
+    const featureBacklogSection =
+      featureBacklog.length >= 2 ? formatFeatureBacklogSection(featureBacklog) : "";
+    const structured = collectStructuredSummaryFields(input.compact, {
+      featureBacklogSection,
+      pinnedUserMessages: input.pinnedUserMessages ?? [],
+      sessionTheme
+    });
     structured.goal = goal;
+    structured.latestUserRequest = currentGoal;
     const summary = redactSensitiveSummary(
       [
         formatStructuredSummary(structured),
@@ -90,6 +126,17 @@ export class ContextCompactor {
         compactTaskId: input.compact.taskId,
         ...(previousSessionSummary !== null
           ? { previousSessionSummaryId: previousSessionSummary.sessionSummaryId }
+          : {}),
+        ...(sessionTheme.length > 0 ? { sessionTheme } : {}),
+        ...(input.pinnedUserMessages !== undefined && input.pinnedUserMessages.length > 0
+          ? { userMessagePin: input.pinnedUserMessages }
+          : {}),
+        ...(featureBacklog.length > 0
+          ? {
+              featureBacklog: serializeFeatureBacklog(featureBacklog),
+              featureBacklogDroppedCount: featureBacklogResult.droppedCount,
+              featureBacklogRawCount: featureBacklogResult.rawCount
+            }
           : {}),
         toolCapabilitySummary: uniqueList([
           ...collectUsedTools(input.compact.messages),
@@ -215,6 +262,56 @@ function extractExplicitDecisions(value: string): string[] {
   }
   return decisions.filter((item) => item.length > 0);
 }
+
+function collectUserConstraints(
+  messages: SessionCompactInput["messages"],
+  pinnedUserMessages: string[]
+): string[] {
+  const sources = [
+    ...messages.filter((message) => message.role === "user").map((message) => message.content),
+    ...pinnedUserMessages
+  ];
+  const constraints: string[] = [];
+  for (const source of sources) {
+    for (const match of source.matchAll(
+      /(?:不要|别|禁止|不得|请勿)\s*[^。！？\n]{1,80}/gu
+    )) {
+      const normalized = normalizeMemoryLine(match[0], 120);
+      if (normalized.length > 0) {
+        constraints.push(`Constraint: ${normalized}`);
+      }
+    }
+    const clarifyMatch = source.match(/^Answer:\s*(.+)$/imu);
+    if (clarifyMatch?.[1] !== undefined) {
+      const answer = normalizeMemoryLine(clarifyMatch[1], 120);
+      if (answer.length > 0) {
+        constraints.push(`Clarify: ${answer}`);
+      }
+    }
+  }
+  return uniqueList(constraints);
+}
+
+function resolveSessionTheme(input: {
+  compactMessages: SessionCompactInput["messages"];
+  currentGoal: string;
+  previousSessionSummary: SessionSummaryRecord | null;
+}): string {
+  const previousTheme =
+    typeof input.previousSessionSummary?.metadata?.sessionTheme === "string"
+      ? input.previousSessionSummary.metadata.sessionTheme.trim()
+      : "";
+  if (previousTheme.length > 0) {
+    return previousTheme;
+  }
+  const firstUser = input.compactMessages.find((message) => message.role === "user")?.content ?? "";
+  const theme = summarize(firstUser, 500);
+  if (theme.length === 0 || theme === input.currentGoal) {
+    return "";
+  }
+  return theme;
+}
+
 function uniqueList(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
 }

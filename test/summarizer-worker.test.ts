@@ -102,10 +102,10 @@ describe("SummarizerWorker", () => {
       task: createTask()
     });
 
-    expect(capturedDraft?.goal).toBe("Design persistence layer");
+    expect(capturedDraft?.goal).toBe("What is the current status?");
     expect(capturedDraft?.decisions).toEqual(["use PostgreSQL", "keep the migration reversible"]);
     expect(capturedDraft?.openLoops.join(" ")).toContain("tc-prev");
-    expect(capturedDraft?.nextActions).toContain("verify follow-up output");
+    expect(capturedDraft?.nextActions).toEqual([]);
     expect(capturedDraft?.metadata?.previousSessionSummaryId).toBe("summary-before-compact");
   });
 });

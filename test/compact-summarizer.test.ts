@@ -88,7 +88,7 @@ describe("compact summarizer", () => {
     const summarizer = new DeterministicCompactSummarizer();
     const result = await summarizer.summarize(compactInput);
     expect(result.summarizerId).toBe("deterministic");
-    expect(result.summary).toContain("## Goal");
+    expect(result.summary).toContain("## Active Goal");
     expect(result.summary).toContain("## All User Messages");
     expect(result.summary).toContain("## Relevant Files");
     expect(result.summary).toContain("## Blocked");

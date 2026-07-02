@@ -21,6 +21,7 @@ import type {
 } from "../../types/index.js";
 import { estimateConversationMessageTokens } from "../context/token-counter.js";
 import { buildHygieneConversationMessages } from "../sessions/build-hygiene-conversation-messages.js";
+import { pinUserMessagesFromRecords } from "../sessions/session-user-message-pin.js";
 
 export class SessionFacade {
   public constructor(
@@ -241,6 +242,7 @@ export class SessionFacade {
     }
 
     const records = this.dependencies.sessionMessageRepository.listBySessionId(session.sessionId);
+    const pinnedUserMessages = pinUserMessagesFromRecords(records);
     const latestRun = this.dependencies.listSessionTasks(session.sessionId).at(-1) ?? null;
     const task = buildHygieneTask(session, latestRun?.taskId ?? `session-hygiene:${randomUUID()}`, this.dependencies.tokenBudget);
     const summaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
@@ -256,7 +258,9 @@ export class SessionFacade {
         tokenEstimate,
         tokenThreshold: threshold
       },
+      pinnedUserMessages,
       previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(session.sessionId),
+      sessionTodos: this.dependencies.todoSessionStore.get(session.sessionId),
       task,
       trigger: "resume"
     });

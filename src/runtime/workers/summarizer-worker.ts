@@ -3,12 +3,16 @@ import type {
   ProviderToolDescriptor,
   SessionCompactInput,
   SessionCompactResult,
+  SessionMessageRepository,
   TaskRecord,
   SessionSummaryRecord
 } from "../../types/index.js";
+import type { TodoItem } from "../../tools/todo-session-store.js";
+import { pinUserMessagesFromRecords } from "../sessions/session-user-message-pin.js";
 
 export interface SummarizerWorkerDependencies {
   contextCompactor: ContextCompactor;
+  sessionMessageRepository?: SessionMessageRepository;
   sessionSummaryService: SessionSummaryService;
 }
 
@@ -17,6 +21,7 @@ export interface SummarizerWorkerInput {
   compactInput: SessionCompactInput & {
     reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" | "iteration_count";
   };
+  sessionTodos?: TodoItem[];
   task: TaskRecord;
   availableTools: ProviderToolDescriptor[];
   runId: string | null;
@@ -42,10 +47,18 @@ export class SummarizerWorker {
 
     const previousSessionSummary =
       this.dependencies.sessionSummaryService.findLatestBySession(input.task.sessionId);
+    const pinnedUserMessages =
+      this.dependencies.sessionMessageRepository === undefined
+        ? []
+        : pinUserMessagesFromRecords(
+            this.dependencies.sessionMessageRepository.listBySessionId(input.task.sessionId)
+          );
     const draft = this.dependencies.contextCompactor.buildSessionSummary({
       availableTools: input.availableTools,
       compact: input.compactInput,
+      pinnedUserMessages,
       previousSessionSummary,
+      ...(input.sessionTodos !== undefined ? { sessionTodos: input.sessionTodos } : {}),
       task: input.task
     });
     const sessionSummary = this.dependencies.sessionSummaryService.create({

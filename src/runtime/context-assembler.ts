@@ -8,7 +8,8 @@ import type {
   ProviderToolDescriptor,
   TaskRecord,
   TokenBudget,
-  ToolExposureDecision
+  ToolExposureDecision,
+  TuiInteractionMode
 } from "../types/index.js";
 import { estimateMessagesTokens } from "./context/token-counter.js";
 
@@ -69,15 +70,21 @@ export class ExecutionContextAssembler {
     availableTools: ProviderToolDescriptor[],
     profile: AgentProfile,
     repoMapSummary?: string,
-    toolExposureDecisions: ToolExposureDecision[] = []
+    toolExposureDecisions: ToolExposureDecision[] = [],
+    interactionMode?: TuiInteractionMode
   ): ConversationMessage[] {
     const toolNames = availableTools.map((tool) => tool.name).join(", ");
     const publicWebFetchAvailable = availableTools.some(
       (tool) => tool.capability === "network.fetch_public_readonly"
     );
     const unavailableWebSearchNote = buildUnavailableWebSearchNote(toolExposureDecisions);
+    const planModeNote =
+      interactionMode === "plan"
+        ? "You are in plan mode. Do not modify files. Produce analysis and a structured plan. Tell the user to switch to /mode agent when they want execution."
+        : null;
     const systemMessage = [
       profile.systemPrompt,
+      planModeNote,
       "Use tools only when needed.",
       "Visible tools may still be denied by policy, sandbox checks, or approval requirements at execution time.",
       unavailableWebSearchNote,

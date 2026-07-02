@@ -81,10 +81,18 @@ const workflowLongRunningCommandSchema = z.object({
 const shellBackendSchema = z.enum(["default", "powershell", "cmd", "git-bash", "wsl", "docker-sh", "custom"]);
 
 const diffDisplaySchema = z.enum(["summary", "collapsed", "full"]);
+const interactionModeSchema = z.enum(["agent", "plan", "acceptEdits"]);
+const agentWriteApprovalSchema = z.enum(["off", "on", "acceptEditsOnly"]);
 
 const runtimeConfigFileSchema = z.object({
   allowedFetchHosts: z.array(z.string().min(1)).optional(),
   approvalTtlMs: z.number().int().positive().optional(),
+  defaultInteractionMode: interactionModeSchema.optional(),
+  interactionModes: z
+    .object({
+      agentWriteApproval: agentWriteApprovalSchema.optional()
+    })
+    .optional(),
   defaultMaxIterations: z.number().int().positive().optional(),
   defaultTimeoutMs: z.number().int().positive().optional(),
   webSearch: z
@@ -128,6 +136,7 @@ const runtimeConfigFileSchema = z.object({
       messageThreshold: z.number().int().positive().optional(),
       protectFirstN: z.number().int().nonnegative().optional(),
       protectLastN: z.number().int().positive().optional(),
+      resumeUserTailMessages: z.number().int().positive().optional(),
       summarizer: z.enum(["deterministic", "provider_subagent"]).optional(),
       targetRatio: z.number().positive().max(1).optional(),
       tailMinMessages: z.number().int().positive().optional(),
@@ -304,13 +313,21 @@ export interface WorkflowLongRunningCommand {
 
 export type { DiffDisplayMode } from "../presentation/diff-display.js";
 
+export type AgentWriteApprovalMode = "off" | "on" | "acceptEditsOnly";
+
+export interface InteractionModesRuntimeConfig {
+  agentWriteApproval: AgentWriteApprovalMode;
+}
+
 export interface RuntimeConfig {
   allowedFetchHosts: string[];
   approvalTtlMs: number;
   configPath: string;
   configSource: "defaults" | "env" | "file";
+  defaultInteractionMode: "agent" | "plan" | "acceptEdits";
   defaultMaxIterations: number;
   defaultTimeoutMs: number;
+  interactionModes: InteractionModesRuntimeConfig;
   compact: {
     bufferTokens: number;
     hygieneThresholdRatio: number;
@@ -318,6 +335,7 @@ export interface RuntimeConfig {
     messageThreshold: number;
     protectFirstN: number;
     protectLastN: number;
+    resumeUserTailMessages: number;
     summarizer: "deterministic" | "provider_subagent";
     targetRatio: number;
     tailMinMessages: number;
@@ -379,8 +397,12 @@ export interface RuntimeConfig {
 const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource"> = {
   allowedFetchHosts: ["*"],
   approvalTtlMs: 300_000,
+  defaultInteractionMode: "agent",
   defaultMaxIterations: 12,
   defaultTimeoutMs: 120_000,
+  interactionModes: {
+    agentWriteApproval: "off"
+  },
   scheduler: {
     pollIntervalMs: 2_000
   },
@@ -438,6 +460,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     messageThreshold: 100,
     protectFirstN: 3,
     protectLastN: 20,
+    resumeUserTailMessages: 6,
     summarizer: "provider_subagent",
     targetRatio: 0.2,
     tailMinMessages: 10,
@@ -611,6 +634,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       envConfig.approvalTtlMs ??
       fileConfig?.approvalTtlMs ??
       DEFAULT_RUNTIME_CONFIG.approvalTtlMs,
+    defaultInteractionMode:
+      envConfig.defaultInteractionMode ??
+      fileConfig?.defaultInteractionMode ??
+      DEFAULT_RUNTIME_CONFIG.defaultInteractionMode,
     defaultMaxIterations:
       envConfig.defaultMaxIterations ??
       fileConfig?.defaultMaxIterations ??
@@ -619,6 +646,12 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
       envConfig.defaultTimeoutMs ??
       fileConfig?.defaultTimeoutMs ??
       DEFAULT_RUNTIME_CONFIG.defaultTimeoutMs,
+    interactionModes: {
+      agentWriteApproval:
+        envConfig.interactionModes?.agentWriteApproval ??
+        fileConfig?.interactionModes?.agentWriteApproval ??
+        DEFAULT_RUNTIME_CONFIG.interactionModes.agentWriteApproval
+    },
     compact: {
       bufferTokens:
         envConfig.compact?.bufferTokens ??
@@ -644,6 +677,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         envConfig.compact?.protectLastN ??
         fileConfig?.compact?.protectLastN ??
         DEFAULT_RUNTIME_CONFIG.compact.protectLastN,
+      resumeUserTailMessages:
+        envConfig.compact?.resumeUserTailMessages ??
+        fileConfig?.compact?.resumeUserTailMessages ??
+        DEFAULT_RUNTIME_CONFIG.compact.resumeUserTailMessages,
       summarizer:
         envConfig.compact?.summarizer ??
         fileConfig?.compact?.summarizer ??

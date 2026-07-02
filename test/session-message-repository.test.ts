@@ -160,6 +160,38 @@ describe("session message repository", () => {
     }
   });
 
+  it("searches Chinese session messages with OR-style FTS tokens", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    try {
+      storage.sessions.create({
+        agentProfileId: "executor",
+        cwd: process.cwd(),
+        metadata: { source: "tui" },
+        ownerUserId: "local-user",
+        providerName: "test",
+        sessionId: "session-zh",
+        title: "Chinese"
+      });
+      storage.sessionMessages.append({
+        kind: "agent",
+        messageId: "agent-zh-1",
+        payload: {
+          id: "agent-zh-1",
+          kind: "agent",
+          text: "后续可添加的功能建议：排行榜、皮肤选择、音效系统",
+          timestamp: "2026-01-01T00:00:00.000Z"
+        },
+        sessionId: "session-zh"
+      });
+
+      const hits = storage.sessionMessages.search({ limit: 5, query: "功能建议" });
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits[0]?.preview).toMatch(/功能|建议|排行榜/u);
+    } finally {
+      storage.close();
+    }
+  });
+
   it("persists gateway runtime_session_id on bindings", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {

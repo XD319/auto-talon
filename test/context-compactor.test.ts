@@ -142,7 +142,7 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionSummary.summary).toContain("## Goal");
+    expect(sessionSummary.summary).toContain("## Active Goal");
     expect(sessionSummary.summary).toContain("Complete phase 2 of the snake game development plan");
     expect(sessionSummary.summary).toContain("## Latest User Request");
     expect(sessionSummary.summary).not.toContain("goal=[n/a]");
@@ -172,7 +172,7 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionSummary.summary).toContain("## Goal");
+    expect(sessionSummary.summary).toContain("## Active Goal");
     expect(sessionSummary.summary).toContain("newer user instruction");
     expect(sessionSummary.summary).toContain("## Latest User Request");
   });
@@ -204,7 +204,7 @@ function createTask(taskId: string): TaskRecord {
 
 
 describe("context compactor continuity", () => {
-  it("preserves the session goal and durable decisions across final snapshots", () => {
+  it("updates goal while preserving durable decisions across final snapshots", () => {
     const compactor = new ContextCompactor();
     const summary = compactor.buildSessionSummary({
       availableTools: [],
@@ -222,7 +222,7 @@ describe("context compactor continuity", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
         decisions: ["use PostgreSQL"],
         goal: "Design persistence layer",
-        metadata: {},
+        metadata: { sessionTheme: "Design persistence layer" },
         nextActions: [],
         openLoops: [],
         runId: null,
@@ -235,9 +235,30 @@ describe("context compactor continuity", () => {
       task: { ...createTask("task-follow-up"), input: "What is the current status?" },
       trigger: "final"
     });
-    expect(summary.goal).toBe("Design persistence layer");
+    expect(summary.goal).toBe("What is the current status?");
     expect(summary.decisions).toEqual(["use PostgreSQL", "keep the migration reversible"]);
     expect(summary.metadata.previousSessionSummaryId).toBe("summary-before-follow-up");
+    expect(summary.metadata.sessionTheme).toBe("Design persistence layer");
+  });
+
+  it("captures user constraints and clarify answers as decisions", () => {
+    const compactor = new ContextCompactor();
+    const summary = compactor.buildSessionSummary({
+      availableTools: [],
+      compact: {
+        maxMessagesBeforeCompact: 4,
+        messages: [
+          { content: "Answer: 皮肤选择", role: "user" },
+          { content: "我让你不要看readme文件，要从之前建议里再选一个", role: "user" }
+        ],
+        reason: "context_budget",
+        sessionScopeKey: "session-constraints",
+        taskId: "task-constraints"
+      },
+      task: createTask("task-constraints")
+    });
+    expect(summary.decisions.some((item) => item.startsWith("Constraint:"))).toBe(true);
+    expect(summary.decisions.some((item) => item.startsWith("Clarify:"))).toBe(true);
   });
 
   it("does not classify ordinary conversation as decisions", () => {
@@ -290,7 +311,7 @@ describe("context compactor continuity", () => {
       task: { ...createTask("task-follow-up"), input: "What is the current status?" }
     });
     expect(summary.openLoops.join(" ")).toContain("tc-manual-open-loop");
-    expect(summary.nextActions).toContain("verify follow-up output");
+    expect(summary.nextActions).toEqual([]);
   });
 
   it("uses the latest user message as goal when no previous summary exists", () => {

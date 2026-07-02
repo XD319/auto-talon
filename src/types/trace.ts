@@ -41,6 +41,7 @@ export const TRACE_EVENT_TYPES = [
   "duplicate_tool_replayed",
   "no_tools_tool_calls_ignored",
   "policy_decision",
+  "accept_edits_auto_allowed",
   "approval_requested",
   "approval_resolved",
   "clarify_requested",
@@ -85,6 +86,12 @@ export const TRACE_EVENT_TYPES = [
   "memory_write_rejected",
   "session_compacted",
   "session_summary_written",
+  "session_goal_updated",
+  "user_messages_pinned",
+  "constraint_captured",
+  "feature_backlog_updated",
+  "feature_backlog_filtered",
+  "task_superseded",
   "schedule_created",
   "schedule_updated",
   "schedule_archived",
@@ -286,6 +293,13 @@ export interface PolicyDecisionPayload extends JsonObject {
   pathScope: PathScope;
   privacyLevel: PrivacyLevel;
   riskLevel: ToolRiskLevel;
+}
+
+export interface AcceptEditsAutoAllowedPayload extends JsonObject {
+  capability: ToolCapability;
+  interactionMode: "acceptEdits";
+  toolCallId: string;
+  toolName: string;
 }
 
 export interface ApprovalRequestedPayload extends JsonObject {
@@ -626,6 +640,40 @@ export interface SessionSummaryWrittenPayload extends JsonObject {
   sessionId: string;
   trigger: "compact" | "manual" | "resume" | "final";
   goal: string;
+}
+
+export interface SessionGoalUpdatedPayload extends JsonObject {
+  previousGoal: string;
+  sessionId: string;
+  updatedGoal: string;
+}
+
+export interface UserMessagesPinnedPayload extends JsonObject {
+  count: number;
+  sessionId: string;
+}
+
+export interface ConstraintCapturedPayload extends JsonObject {
+  constraints: string[];
+  sessionId: string;
+}
+
+export interface FeatureBacklogUpdatedPayload extends JsonObject {
+  itemCount: number;
+  sessionId: string;
+}
+
+export interface FeatureBacklogFilteredPayload extends JsonObject {
+  droppedCount: number;
+  filteredCount: number;
+  rawCount: number;
+  sessionId: string;
+}
+
+export interface TaskSupersededPayload extends JsonObject {
+  activeTaskId: string;
+  sessionId: string;
+  supersededTaskId: string;
 }
 
 export interface ScheduleCreatedPayload extends JsonObject {
@@ -1018,6 +1066,7 @@ export type TraceEvent =
   | TraceEventBase<"duplicate_tool_replayed">
   | TraceEventBase<"no_tools_tool_calls_ignored", NoToolsToolCallsIgnoredPayload>
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>
+  | TraceEventBase<"accept_edits_auto_allowed", AcceptEditsAutoAllowedPayload>
   | TraceEventBase<"approval_requested", ApprovalRequestedPayload>
   | TraceEventBase<"approval_resolved", ApprovalResolvedPayload>
   | TraceEventBase<"clarify_requested", ClarifyRequestedPayload>
@@ -1062,6 +1111,12 @@ export type TraceEvent =
   | TraceEventBase<"memory_write_rejected", MemoryWriteRejectedPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
   | TraceEventBase<"session_summary_written", SessionSummaryWrittenPayload>
+  | TraceEventBase<"session_goal_updated", SessionGoalUpdatedPayload>
+  | TraceEventBase<"user_messages_pinned", UserMessagesPinnedPayload>
+  | TraceEventBase<"constraint_captured", ConstraintCapturedPayload>
+  | TraceEventBase<"feature_backlog_updated", FeatureBacklogUpdatedPayload>
+  | TraceEventBase<"feature_backlog_filtered", FeatureBacklogFilteredPayload>
+  | TraceEventBase<"task_superseded", TaskSupersededPayload>
   | TraceEventBase<"schedule_created", ScheduleCreatedPayload>
   | TraceEventBase<"schedule_updated", ScheduleUpdatedPayload>
   | TraceEventBase<"schedule_archived", ScheduleArchivedPayload>
