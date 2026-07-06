@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { GatewayTaskRequest } from "../types/index.js";
+import type { GatewayRateLimitStore } from "../storage/repositories/gateway-rate-limit-repository.js";
 
 const gatewayConfigSchema = z.object({
   allowlist: z.array(z.string().min(1)).optional(),
@@ -23,6 +24,7 @@ export interface GatewayGuardDependencies {
   authHook?: (input: { adapterId: string; request: GatewayTaskRequest }) => Promise<boolean> | boolean;
   cwd: string;
   now?: () => number;
+  rateLimitStore?: GatewayRateLimitStore;
 }
 
 interface BucketState {
@@ -37,6 +39,7 @@ export class GatewayGuard {
   private readonly refillPerSecond: number;
   private readonly authHook: GatewayGuardDependencies["authHook"];
   private readonly now: () => number;
+  private readonly rateLimitStore: GatewayRateLimitStore | undefined;
   private readonly buckets = new Map<string, BucketState>();
   private readonly bucketTtlMs = 3_600_000;
 
@@ -51,6 +54,7 @@ export class GatewayGuard {
     this.refillPerSecond = config.rateLimit.refillPerSecond;
     this.authHook = dependencies.authHook;
     this.now = dependencies.now ?? (() => Date.now());
+    this.rateLimitStore = dependencies.rateLimitStore;
   }
 
   public async evaluate(adapterId: string, request: GatewayTaskRequest): Promise<GatewayGuardDecision> {
@@ -95,30 +99,54 @@ export class GatewayGuard {
   private consume(key: string): boolean {
     this.pruneBuckets();
     const now = this.now();
-    const existing = this.buckets.get(key);
+    const existing = this.loadBucket(key);
     if (existing === undefined) {
-      this.buckets.set(key, { tokens: this.burst - 1, updatedAtMs: now });
+      this.saveBucket(key, { tokens: this.burst - 1, updatedAtMs: now });
       return true;
     }
 
     const elapsedSeconds = Math.max(0, (now - existing.updatedAtMs) / 1000);
     const replenished = Math.min(this.burst, existing.tokens + elapsedSeconds * this.refillPerSecond);
     if (replenished < 1) {
-      this.buckets.set(key, { tokens: replenished, updatedAtMs: now });
+      this.saveBucket(key, { tokens: replenished, updatedAtMs: now });
       return false;
     }
 
-    this.buckets.set(key, { tokens: replenished - 1, updatedAtMs: now });
+    this.saveBucket(key, { tokens: replenished - 1, updatedAtMs: now });
     return true;
+  }
+
+  private loadBucket(key: string): BucketState | undefined {
+    const cached = this.buckets.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (this.rateLimitStore === undefined) {
+      return undefined;
+    }
+    const persisted = this.rateLimitStore.load(key);
+    if (persisted === null) {
+      return undefined;
+    }
+    const bucket = { tokens: persisted.tokens, updatedAtMs: persisted.updatedAtMs };
+    this.buckets.set(key, bucket);
+    return bucket;
+  }
+
+  private saveBucket(key: string, state: BucketState): void {
+    this.buckets.set(key, state);
+    this.rateLimitStore?.save(key, state);
   }
 
   private pruneBuckets(): void {
     const now = this.now();
+    const cutoff = now - this.bucketTtlMs;
     for (const [key, bucket] of this.buckets.entries()) {
       if (now - bucket.updatedAtMs > this.bucketTtlMs) {
         this.buckets.delete(key);
       }
     }
+    this.rateLimitStore?.prune(cutoff);
   }
 }
 

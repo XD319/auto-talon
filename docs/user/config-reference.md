@@ -279,6 +279,7 @@ Web search controls:
 - `web_extract` accepts an optional `prompt` string up to 2000 characters. Without `prompt`, extraction keeps the normal full/summarized behavior. With `prompt`, extraction returns a page-grounded answer with `extractionMode: "prompt_extract"` and `citations[]`.
 - Successful `web_extract` results are cached in-process for 15 minutes by backend, URL, prompt, `maxBytes`, and `summaryTargetBytes`. Tool output includes `cached: false` on the first read and `cached: true` on cache hits.
 - Web search v1 does not include browser rendering, Playwright-backed extraction, or dynamic code filtering.
+- `web.searchBackend: auto` and `ddgs` are **best-effort**: they use public scrapers without API keys. Empty or partial results are normal when providers block automated access; use `firecrawl`, `tavily`, `exa`, `brave`, or `searxng` when you need reliable search.
 
 Extract-only configuration:
 

@@ -10,6 +10,7 @@ import { SqliteAuditLogRepository } from "./repositories/audit-log-repository.js
 import { SqliteClarifyPromptRepository } from "./repositories/clarify-prompt-repository.js";
 import { SqliteExecutionCheckpointRepository } from "./repositories/execution-checkpoint-repository.js";
 import { SqliteExperienceRepository } from "./repositories/experience-repository.js";
+import { SqliteGatewayRateLimitRepository } from "./repositories/gateway-rate-limit-repository.js";
 import { SqliteGatewaySessionRepository } from "./repositories/gateway-session-repository.js";
 import { SqliteInboxRepository } from "./repositories/inbox/inbox-repository.js";
 import { SqliteCommitmentRepository } from "./repositories/commitments/commitment-repository.js";
@@ -60,6 +61,7 @@ export class StorageManager {
   public readonly memories: SqliteMemoryRepository;
   public readonly memorySnapshots: SqliteMemorySnapshotRepository;
   public readonly gatewaySessions: SqliteGatewaySessionRepository;
+  public readonly gatewayRateLimits: SqliteGatewayRateLimitRepository;
   public readonly inbox: SqliteInboxRepository;
   public readonly commitments: SqliteCommitmentRepository;
   public readonly nextActions: SqliteNextActionRepository;
@@ -96,6 +98,7 @@ export class StorageManager {
     this.memories = new SqliteMemoryRepository(this.database);
     this.memorySnapshots = new SqliteMemorySnapshotRepository(this.database);
     this.gatewaySessions = new SqliteGatewaySessionRepository(this.database);
+    this.gatewayRateLimits = new SqliteGatewayRateLimitRepository(this.database);
     this.inbox = new SqliteInboxRepository(this.database);
     this.commitments = new SqliteCommitmentRepository(this.database);
     this.nextActions = new SqliteNextActionRepository(this.database);

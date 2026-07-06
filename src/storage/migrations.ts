@@ -116,6 +116,11 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "finalize thread to session migration and drop legacy tables",
     up: migrateV22,
     version: 22
+  },
+  {
+    description: "add gateway rate limit persistence table",
+    up: migrateV23,
+    version: 23
   }
 ];
 
@@ -1084,6 +1089,18 @@ function readPrimaryKeyColumns(database: DatabaseSync, tableName: string): strin
 
 function migrateV22(database: DatabaseSync): void {
   finalizeLegacyThreadMigration(database);
+}
+
+function migrateV23(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS gateway_rate_limits (
+      rate_limit_key TEXT PRIMARY KEY,
+      tokens REAL NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_gateway_rate_limits_updated_at
+      ON gateway_rate_limits(updated_at_ms);
+  `);
 }
 
 export function finalizeLegacyThreadMigration(database: DatabaseSync): void {

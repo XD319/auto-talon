@@ -19,7 +19,8 @@ export function createGatewayRuntime(runtimeHandle: AppRuntimeHandle): GatewayRu
     defaultCwd: runtimeHandle.config.workspaceRoot,
     guard: new GatewayGuard({
       authHook: createGatewayAuthHook(runtimeHandle.config.workspaceRoot),
-      cwd: runtimeHandle.config.workspaceRoot
+      cwd: runtimeHandle.config.workspaceRoot,
+      rateLimitStore: runtimeHandle.infrastructure.storage.gatewayRateLimits
     }),
     identityMapper: new DefaultGatewayIdentityMapper(),
     providerName: runtimeHandle.config.provider.name,

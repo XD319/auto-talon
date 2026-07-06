@@ -63,6 +63,7 @@ export class RuntimeDoctorService {
       this.dependencies.maxShellTimeoutMs
     );
     const webConfigIssues = collectWebConfigIssues(this.dependencies.workspaceRoot);
+    const platformIssues = collectPlatformToolIssues();
     const httpAuthIssues = collectHttpAuthDoctorIssues(this.dependencies.workspaceRoot);
     const deprecatedConfigIssues = collectDeprecatedConfigIssues(
       this.dependencies.deprecatedCompactBufferTokens
@@ -92,6 +93,7 @@ export class RuntimeDoctorService {
         ...shellIssues,
         ...testTimeoutIssues,
         ...webConfigIssues,
+        ...platformIssues,
         ...httpAuthIssues,
         ...deprecatedConfigIssues
       ],
@@ -164,10 +166,29 @@ function collectWebConfigIssues(workspaceRoot: string): string[] {
         "Legacy webSearch.backend is disabled and no web config is present. Add web.searchBackend (for example firecrawl/tavily/exa/brave/searxng) to enable web_search, or keep web.searchBackend=disabled when only web_extract is intended."
       ];
     }
+    const web = record.web;
+    if (web !== null && typeof web === "object" && !Array.isArray(web)) {
+      const searchBackend = (web as Record<string, unknown>).searchBackend;
+      if (searchBackend === "auto" || searchBackend === "ddgs" || searchBackend === undefined) {
+        return [
+          "web.searchBackend is auto/ddgs (best-effort). Results depend on public scrapers and may be empty when blocked; configure a paid search backend for reliable web_search."
+        ];
+      }
+    }
   } catch {
     return [];
   }
   return [];
+}
+
+function collectPlatformToolIssues(): string[] {
+  const issues: string[] = [];
+  if (process.platform === "win32" && !isCommandAvailable("rg")) {
+    issues.push(
+      "ripgrep (rg) is not on PATH. Code search falls back to a slower Node walker; install rg for faster search (see docs/user/windows-troubleshooting.md)."
+    );
+  }
+  return issues;
 }
 
 function scanWorkspaceConfigSecrets(
