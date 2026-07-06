@@ -65,3 +65,43 @@ export function resolveSandboxCliOptions(options: SandboxCommandOptions): Resolv
     ...(options.writeRoot !== undefined ? { writeRoots: options.writeRoot } : {})
   };
 }
+
+export function parseNonNegativeIntegerOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new InvalidArgumentError(`${optionName} must be a non-negative integer.`);
+    }
+    return parsed;
+  };
+}
+
+export function parseNonNegativeNumberOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new InvalidArgumentError(`${optionName} must be a non-negative number.`);
+    }
+    return parsed;
+  };
+}
+
+export function parseRatioOption(optionName: string): (value: string) => number {
+  return (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      throw new InvalidArgumentError(`${optionName} must be a number between 0 and 1.`);
+    }
+    return parsed;
+  };
+}
+
+export function parseApprovalAllowScope(value: string | undefined): "once" | "session" | "always" {
+  if (value === undefined || value === "once") {
+    return "once";
+  }
+  if (value === "session" || value === "always") {
+    return value;
+  }
+  throw new InvalidArgumentError("Scope must be once, session, or always.");
+}
