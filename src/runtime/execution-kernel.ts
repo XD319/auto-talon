@@ -34,6 +34,7 @@ import {
   CompletionController,
   isSuccessfulVerificationToolCall as isSuccessfulVerificationToolExecution
 } from "./kernel/index.js";
+import { toolResultOutputForModel } from "./kernel/tool-result-model.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
 import {
@@ -3235,18 +3236,6 @@ function formatWorkflowTestCommandHints(
   commands: WorkflowRuntimeConfig["testCommands"]
 ): string[] {
   return commands.map((command) => (typeof command === "string" ? command : command.command));
-}
-
-function toolResultOutputForModel(result: ToolExecutionResult): unknown {
-  if (result.success) {
-    return result.output;
-  }
-  return {
-    error: result.errorMessage,
-    errorCode: result.errorCode,
-    recoverable: true,
-    ...(result.details === undefined ? {} : { details: result.details })
-  };
 }
 
 function toolResultSummary(result: ToolExecutionResult, toolName: string): string {

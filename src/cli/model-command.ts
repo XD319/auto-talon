@@ -48,7 +48,7 @@ export function resolveModelCommandCwd(
   command?: Command
 ): string {
   const parent = command?.parent;
-  const parentCwd = parent?.opts()?.cwd;
+  const parentCwd = parent?.opts()?.cwd as unknown;
   if (
     typeof parentCwd === "string" &&
     parentCwd.length > 0 &&

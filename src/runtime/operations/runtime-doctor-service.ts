@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { hasLegacyShortRemoteTimeout, type ResolvedProviderConfig } from "../../providers/index.js";
 import { configureSqliteConnection } from "../../storage/sqlite-connection.js";
+import { collectHttpAuthDoctorIssues } from "../../core/http-auth.js";
 import type { ExperienceRecord, ProviderHealthCheck } from "../../types/index.js";
 import type { ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "../runtime-config.js";
 import { resolveDefaultShellConfig } from "../../tools/shell/shell-executor.js";
@@ -61,6 +62,7 @@ export class RuntimeDoctorService {
       this.dependencies.maxShellTimeoutMs
     );
     const webConfigIssues = collectWebConfigIssues(this.dependencies.workspaceRoot);
+    const httpAuthIssues = collectHttpAuthDoctorIssues(this.dependencies.workspaceRoot);
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
@@ -85,7 +87,8 @@ export class RuntimeDoctorService {
         ),
         ...shellIssues,
         ...testTimeoutIssues,
-        ...webConfigIssues
+        ...webConfigIssues,
+        ...httpAuthIssues
       ],
       maxRetries: this.dependencies.providerConfig.maxRetries,
       modelAvailable: providerHealth.modelAvailable,
@@ -242,6 +245,16 @@ function collectDoctorIssues(
   if (hasLegacyShortRemoteTimeout(providerConfig)) {
     issues.push(
       `Provider request timeout is explicitly ${providerConfig.timeoutMs}ms; remote tool turns may need talon provider setup ${providerConfig.name} --timeout-ms 120000.`
+    );
+  }
+
+  if (
+    providerConfig.name !== "mock" &&
+    providerConfig.configured !== false &&
+    providerConfig.contextWindowTokens === null
+  ) {
+    issues.push(
+      `Provider ${providerConfig.name} has no contextWindowTokens configured. Set providers.${providerConfig.name}.contextWindowTokens or tokenBudget.inputLimit in runtime.config.json.`
     );
   }
 

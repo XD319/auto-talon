@@ -78,7 +78,8 @@ import type {
   SessionUiState,
   TokenBudget,
   TraceEvent,
-  ToolCallRecord
+  ToolCallRecord,
+  TaskUpdatePatch
 } from "../types/index.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
@@ -102,7 +103,9 @@ import type { SessionHandoffService, SessionHandoffRequest } from "./sessions/se
 import { resolveSessionRef, type ResolveSessionRefResult } from "./sessions/session-resolver.js";
 import type { TranscriptMigrationResult } from "./sessions/transcript-migrator.js";
 import { migrateLegacyTranscriptFiles } from "./sessions/transcript-migrator.js";
-import type { CreateScheduleInput, SchedulerService, UpdateScheduleInput } from "./scheduler/index.js";
+import type { CreateScheduleInput, ScheduleRunLifecycle, SchedulerService, UpdateScheduleInput } from "./scheduler/index.js";
+import type { SessionExecutionLock } from "./sessions/session-execution-lock.js";
+import { isTerminalTaskStatus } from "./sessions/session-execution-lock.js";
 import type { InboxService } from "./inbox/index.js";
 import type {
   AssistantSessionProjectionService,
@@ -130,6 +133,10 @@ import type { ContextCompactor, SessionSummaryService } from "./context/index.js
 import { SessionFacade } from "./facades/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
+import {
+  mergeSessionApprovalFingerprintLists,
+  readSessionApprovalFingerprints
+} from "../approvals/session-approval-fingerprints.js";
 
 export interface RunTaskResult {
   error?: AppError;
@@ -268,6 +275,7 @@ export interface RuntimeReadModel {
   listTrace(taskId: string): TraceEvent[];
   findExecutionCheckpoint(taskId: string): ExecutionCheckpointRecord | null;
   saveExecutionCheckpoint(record: ExecutionCheckpointRecord): ExecutionCheckpointRecord;
+  updateTask(taskId: string, patch: TaskUpdatePatch): TaskRecord;
   updateToolCall(toolCallId: string, patch: Partial<ToolCallRecord>): ToolCallRecord;
 }
 
@@ -293,6 +301,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   contextCompactor: ContextCompactor;
   compact: RuntimeConfig["compact"];
   schedulerService: SchedulerService;
+  scheduleRunLifecycle: ScheduleRunLifecycle;
   resumePacketBuilder: ResumePacketBuilder;
   sessionSummaryService: SessionSummaryService;
   sessionService: SessionService;
@@ -330,6 +339,7 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   sessionLineageRepository: SessionLineageRepository;
   sessionBranchService: SessionBranchService;
   sessionHandoffService: SessionHandoffService;
+  sessionExecutionLock: SessionExecutionLock;
   gatewaySessionRepository: GatewaySessionRepository;
   manualCompactCoordinator: ManualCompactCoordinator;
   providerRouter?: ProviderRouter;
@@ -1001,7 +1011,28 @@ export class AgentApplicationService {
 
     if (approval.status === "approved") {
       try {
+        const taskBeforeResume = this.dependencies.findTask(approval.taskId);
+        if (taskBeforeResume !== null) {
+          this.dependencies.scheduleRunLifecycle.markResuming(taskBeforeResume);
+        }
+        if (approval.allowScope === "session" && approval.fingerprint !== null) {
+          if (taskBeforeResume !== null) {
+            this.dependencies.updateTask(approval.taskId, {
+              metadata: {
+                sessionApprovalFingerprints: mergeSessionApprovalFingerprintLists(
+                  readSessionApprovalFingerprints(taskBeforeResume.metadata),
+                  [approval.fingerprint]
+                )
+              }
+            });
+          }
+          if (taskBeforeResume?.sessionId !== null && taskBeforeResume?.sessionId !== undefined) {
+            this.persistSessionApprovalFingerprint(taskBeforeResume.sessionId, approval.fingerprint);
+          }
+        }
         const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
+        this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
+        this.releaseSessionLockIfTerminal(result.task);
         this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
         return {
           approval,
@@ -1025,6 +1056,22 @@ export class AgentApplicationService {
     }
 
     return this.resumeApprovalFailureOnce(approval);
+  }
+
+  private persistSessionApprovalFingerprint(sessionId: string, fingerprint: string): void {
+    const uiState = this.dependencies.sessionUiStateService.load(sessionId);
+    if (uiState === null) {
+      return;
+    }
+    if (uiState.sessionApprovalFingerprints.includes(fingerprint)) {
+      return;
+    }
+    this.dependencies.sessionUiStateService.save(sessionId, {
+      sessionApprovalFingerprints: [...uiState.sessionApprovalFingerprints, fingerprint],
+      messages: uiState.messages,
+      interactionMode: uiState.interactionMode,
+      ...(uiState.providerSelection !== null ? { providerSelection: uiState.providerSelection } : {})
+    });
   }
 
   private resumeApprovalFailureOnce(approval: ApprovalRecord): Promise<ApprovalActionResult> {
@@ -1051,6 +1098,8 @@ export class AgentApplicationService {
         approval.taskId,
         approval.toolCallId
       );
+      this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
+      this.releaseSessionLockIfTerminal(result.task);
       this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
       return {
         approval,
@@ -1163,7 +1212,13 @@ export class AgentApplicationService {
     this.dependencies.saveExecutionCheckpoint(updatedCheckpoint);
 
     try {
+      const taskBeforeResume = this.dependencies.findTask(prompt.taskId);
+      if (taskBeforeResume !== null) {
+        this.dependencies.scheduleRunLifecycle.markResuming(taskBeforeResume);
+      }
       const result = await this.dependencies.executionKernel.resumeTask(prompt.taskId);
+      this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
+      this.releaseSessionLockIfTerminal(result.task);
       this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
       return {
         output: result.output,
@@ -1679,6 +1734,13 @@ export class AgentApplicationService {
         listener(event);
       }
     });
+  }
+
+  private releaseSessionLockIfTerminal(task: TaskRecord): void {
+    if (task.sessionId === null || task.sessionId === undefined || !isTerminalTaskStatus(task.status)) {
+      return;
+    }
+    this.dependencies.sessionExecutionLock.release(task.sessionId, task.taskId);
   }
 
   private projectAssistantOutput(

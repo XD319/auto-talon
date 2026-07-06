@@ -91,6 +91,11 @@ export class SchedulerService {
         const nowIso = now.toISOString();
         const dueSchedules = this.dependencies.scheduleRepository.findDue({ now: nowIso, limit: 25 });
         for (const schedule of dueSchedules) {
+          const activeRun = this.dependencies.scheduleRunRepository.findActiveByScheduleId(schedule.scheduleId);
+          if (activeRun !== null) {
+            this.recordRunSkippedOverlap(schedule.scheduleId, activeRun.runId, "scheduled");
+            continue;
+          }
           this.enqueueScheduledRun(schedule, now);
         }
         await this.dependencies.jobRunner.drain(nowIso);
@@ -296,6 +301,10 @@ export class SchedulerService {
     if (schedule.status === "archived") {
       throw new Error(`Schedule ${scheduleId} is archived and cannot be run.`);
     }
+    const activeRun = this.dependencies.scheduleRunRepository.findActiveByScheduleId(scheduleId);
+    if (activeRun !== null) {
+      throw new Error(`Schedule already has an active run: ${activeRun.runId}`);
+    }
     const latest = this.dependencies.scheduleRunRepository.listByScheduleId(scheduleId, { tail: 1 });
     const run = this.dependencies.scheduleRunRepository.create({
       attemptNumber: (latest[0]?.attemptNumber ?? 0) + 1,
@@ -348,6 +357,25 @@ export class SchedulerService {
       stage: "control",
       summary: `Schedule run ${run.runId} enqueued`,
       taskId: `schedule:${run.scheduleId}`
+    });
+  }
+
+  private recordRunSkippedOverlap(
+    scheduleId: string,
+    activeRunId: string,
+    reason: "scheduled" | "manual"
+  ): void {
+    this.dependencies.traceService.record({
+      actor: "scheduler",
+      eventType: "schedule_run_skipped_overlap",
+      payload: {
+        activeRunId,
+        reason,
+        scheduleId
+      },
+      stage: "control",
+      summary: `Skipped schedule ${scheduleId} enqueue because run ${activeRunId} is still active`,
+      taskId: `schedule:${scheduleId}`
     });
   }
 

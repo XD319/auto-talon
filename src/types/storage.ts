@@ -72,7 +72,7 @@ import type {
   NextActionRecord,
   NextActionUpdatePatch
 } from "./commitment.js";
-import type { TokenBudget } from "./common.js";
+import type { TokenBudget, JsonObject } from "./common.js";
 
 export interface TaskUpdatePatch {
   status?: TaskStatus;
@@ -83,6 +83,7 @@ export interface TaskUpdatePatch {
   errorCode?: RuntimeErrorCode | null;
   errorMessage?: string | null;
   tokenBudget?: TokenBudget;
+  metadata?: JsonObject;
 }
 
 export interface TaskRepository {
@@ -152,6 +153,7 @@ export interface ScheduleRunRepository {
   listByScheduleId(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[];
   listByTaskId(taskId: string): ScheduleRunRecord[];
   listBySessionId(sessionId: string): ScheduleRunRecord[];
+  findActiveByScheduleId(scheduleId: string): ScheduleRunRecord | null;
   claimDue(now: string, limit: number): ScheduleRunRecord[];
   update(runId: string, patch: ScheduleRunUpdatePatch): ScheduleRunRecord;
 }

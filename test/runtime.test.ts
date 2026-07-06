@@ -1030,6 +1030,99 @@ describe("Phase 2 governance runtime", () => {
     }
   });
 
+  it("skips a repeated approval within the same task after session-scoped allow", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    let providerCallCount = 0;
+    const handle = createApplication(workspaceRoot, {
+      config: {
+        databasePath: join(workspaceRoot, "runtime.db")
+      },
+      policyConfig: APPROVAL_REQUIRED_POLICY_CONFIG,
+      provider: new ScriptedProvider((input) => {
+        providerCallCount += 1;
+        const toolMessages = input.messages.filter((message) => message.role === "tool");
+
+        if (toolMessages.length === 0) {
+          return {
+            kind: "tool_calls",
+            message: "Create the governed file.",
+            toolCalls: [
+              {
+                input: {
+                  content: "first-pass",
+                  path: "governed.txt"
+                },
+                reason: "First governed write.",
+                toolCallId: "governed-write-1",
+                toolName: "write_file"
+              }
+            ],
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5
+            }
+          };
+        }
+
+        if (toolMessages.length === 1) {
+          return {
+            kind: "tool_calls",
+            message: "Rewrite the governed file.",
+            toolCalls: [
+              {
+                input: {
+                  content: "second-pass",
+                  path: "governed.txt"
+                },
+                reason: "Second governed write with the same fingerprint.",
+                toolCallId: "governed-write-2",
+                toolName: "write_file"
+              }
+            ],
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5
+            }
+          };
+        }
+
+        return {
+          kind: "final",
+          message: "governed.txt written twice after one session approval",
+          usage: {
+            inputTokens: 4,
+            outputTokens: 4
+          }
+        };
+      })
+    });
+
+    try {
+      const options = createDefaultRunOptions("create governed file twice", workspaceRoot, handle.config);
+      options.metadata = { interactivePromptMode: "tui", sessionApprovalFingerprints: [] };
+      const initial = await handle.service.runTask(options);
+      expect(initial.task.status).toBe("waiting_approval");
+      expect(providerCallCount).toBe(1);
+
+      const approval = handle.service.listPendingApprovals()[0];
+      expect(approval?.fingerprint).toBeTruthy();
+
+      const resumed = await handle.service.resolveApproval(
+        approval?.approvalId ?? "",
+        "allow",
+        "reviewer-session",
+        "session"
+      );
+
+      expect(resumed.task.status).toBe("succeeded");
+      expect(providerCallCount).toBeGreaterThanOrEqual(3);
+      expect(handle.service.listPendingApprovals()).toHaveLength(0);
+      expect(handle.service.showTask(initial.task.taskId).approvals).toHaveLength(1);
+    } finally {
+      handle.close();
+    }
+  });
+
   it("applies policy denies for the reviewer profile", async () => {
     const workspaceRoot = await createTempWorkspace();
     const handle = createApprovalWriteApplication(workspaceRoot);

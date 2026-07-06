@@ -11,6 +11,7 @@ export const RUNTIME_ERROR_CODES = [
   "policy_denied",
   "provider_error",
   "sandbox_denied",
+  "session_busy",
   "storage_error",
   "task_not_found",
   "task_incomplete",

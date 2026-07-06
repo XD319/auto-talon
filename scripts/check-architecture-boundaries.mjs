@@ -17,6 +17,16 @@ const rules = [
     description: "TUI presentation must not import CLI presentation helpers",
     from: new Set(["tui"]),
     to: new Set(["cli"])
+  },
+  {
+    description: "gateway must not import storage modules",
+    from: new Set(["gateway"]),
+    to: new Set(["storage"])
+  },
+  {
+    description: "TUI presentation must not import storage modules",
+    from: new Set(["tui"]),
+    to: new Set(["storage"])
   }
 ];
 

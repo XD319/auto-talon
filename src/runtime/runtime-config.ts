@@ -54,7 +54,8 @@ const webExtractBackendSchema = webBackendSchema.exclude(["brave", "ddgs", "sear
 const tokenBudgetConfigSchema = z.object({
   inputLimit: z.number().int().positive().optional(),
   outputLimit: z.number().int().positive().optional(),
-  reservedOutput: z.number().int().nonnegative().optional()
+  reservedOutput: z.number().int().nonnegative().optional(),
+  unknownContextWindowFallback: z.number().int().positive().optional()
 });
 
 const contextConfigSchema = z.object({
@@ -126,6 +127,11 @@ const runtimeConfigFileSchema = z.object({
   scheduler: z
     .object({
       pollIntervalMs: z.number().int().positive().optional()
+    })
+    .optional(),
+  concurrency: z
+    .object({
+      allowParallelSessions: z.boolean().optional()
     })
     .optional(),
   compact: z
@@ -382,6 +388,7 @@ export interface RuntimeConfig {
   };
   tokenBudget: TokenBudget;
   tokenBudgetInputLimitExplicit: boolean;
+  unknownContextWindowFallback: number;
   tui: {
     diffDisplay: DiffDisplayMode;
     statusLine: TuiStatusLineConfig;
@@ -391,6 +398,9 @@ export interface RuntimeConfig {
   workflow: WorkflowRuntimeConfig;
   scheduler: {
     pollIntervalMs: number;
+  };
+  concurrency: {
+    allowParallelSessions: boolean;
   };
 }
 
@@ -405,6 +415,9 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
   },
   scheduler: {
     pollIntervalMs: 2_000
+  },
+  concurrency: {
+    allowParallelSessions: false
   },
   webSearch: {
     apiKey: null,
@@ -502,6 +515,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     usedCostUsd: 0
   },
   tokenBudgetInputLimitExplicit: false,
+  unknownContextWindowFallback: 32_000,
   routing: {
     mode: "balanced",
     providers: {},
@@ -567,6 +581,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
   };
   const tokenBudgetInputLimitExplicit =
     envConfig.tokenBudget?.inputLimit !== undefined || fileConfig?.tokenBudget?.inputLimit !== undefined;
+  const unknownContextWindowFallback =
+    envConfig.tokenBudget?.unknownContextWindowFallback ??
+    fileConfig?.tokenBudget?.unknownContextWindowFallback ??
+    DEFAULT_RUNTIME_CONFIG.unknownContextWindowFallback;
   const workflow: WorkflowRuntimeConfig = {
     failureGuidedRetry: {
       enabled:
@@ -828,6 +846,7 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     },
     tokenBudget,
     tokenBudgetInputLimitExplicit,
+    unknownContextWindowFallback,
     tui: {
       diffDisplay:
         envConfig.tui?.diffDisplay ??
@@ -840,6 +859,12 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         envConfig.scheduler?.pollIntervalMs ??
         fileConfig?.scheduler?.pollIntervalMs ??
         DEFAULT_RUNTIME_CONFIG.scheduler.pollIntervalMs
+    },
+    concurrency: {
+      allowParallelSessions:
+        envConfig.concurrency?.allowParallelSessions ??
+        fileConfig?.concurrency?.allowParallelSessions ??
+        DEFAULT_RUNTIME_CONFIG.concurrency.allowParallelSessions
     },
     webSearch,
     web,

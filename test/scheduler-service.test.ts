@@ -16,7 +16,16 @@ describe("scheduler service", () => {
     const traceService = new TraceService(storage.traces);
     const scheduler = new SchedulerService({
       jobRunner: {
-        drain: () => Promise.resolve([])
+        drain: (now) => {
+          const claimed = storage.scheduleRuns.claimDue(now, 10);
+          for (const run of claimed) {
+            storage.scheduleRuns.update(run.runId, {
+              finishedAt: now,
+              status: "completed"
+            });
+          }
+          return Promise.resolve(claimed);
+        }
       },
       scheduleRepository: storage.schedules,
       scheduleRunRepository: storage.scheduleRuns,
@@ -43,6 +52,10 @@ describe("scheduler service", () => {
       const manual = scheduler.runNow(schedule.scheduleId);
       expect(manual.status).toBe("queued");
       expect(manual.trigger).toBe("manual");
+      storage.scheduleRuns.update(manual.runId, {
+        finishedAt: new Date().toISOString(),
+        status: "completed"
+      });
 
       await scheduler.tick(new Date(Date.now() + 70_000));
       const runs = scheduler.listScheduleRuns(schedule.scheduleId, { tail: 10 });
@@ -253,6 +266,73 @@ describe("scheduler service", () => {
           providerName: "mock"
         }).status
       ).toBe("active");
+    } finally {
+      scheduler.stop();
+      storage.close();
+    }
+  });
+
+  it("rejects runNow when an active run already exists", () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    const traceService = new TraceService(storage.traces);
+    const scheduler = new SchedulerService({
+      jobRunner: {
+        drain: () => Promise.resolve([])
+      },
+      scheduleRepository: storage.schedules,
+      scheduleRunRepository: storage.scheduleRuns,
+      traceService
+    });
+
+    try {
+      const schedule = scheduler.createSchedule({
+        agentProfileId: "executor",
+        cwd: "/tmp/ws",
+        every: "1m",
+        input: "hello",
+        name: "overlap",
+        ownerUserId: "u1",
+        providerName: "mock"
+      });
+      const first = scheduler.runNow(schedule.scheduleId);
+      expect(() => scheduler.runNow(schedule.scheduleId)).toThrow(
+        `Schedule already has an active run: ${first.runId}`
+      );
+    } finally {
+      scheduler.stop();
+      storage.close();
+    }
+  });
+
+  it("skips scheduled enqueue when an active run already exists", async () => {
+    const storage = new StorageManager({ databasePath: ":memory:" });
+    const traceService = new TraceService(storage.traces);
+    const scheduler = new SchedulerService({
+      jobRunner: {
+        drain: () => Promise.resolve([])
+      },
+      scheduleRepository: storage.schedules,
+      scheduleRunRepository: storage.scheduleRuns,
+      traceService
+    });
+
+    try {
+      const schedule = scheduler.createSchedule({
+        agentProfileId: "executor",
+        cwd: "/tmp/ws",
+        every: "1m",
+        input: "hello",
+        name: "overlap-cron",
+        ownerUserId: "u1",
+        providerName: "mock"
+      });
+      scheduler.runNow(schedule.scheduleId);
+      await scheduler.tick(new Date(Date.now() + 70_000));
+      const runs = scheduler.listScheduleRuns(schedule.scheduleId, { tail: 10 });
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.trigger).toBe("manual");
+      const trace = traceService.listByTaskId(`schedule:${schedule.scheduleId}`);
+      expect(trace.some((event) => event.eventType === "schedule_run_skipped_overlap")).toBe(true);
     } finally {
       scheduler.stop();
       storage.close();

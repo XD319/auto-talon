@@ -1662,6 +1662,7 @@ function createRuntimeApi(overrides: Partial<GatewayRuntimeApi> = {}): GatewayRu
     createSchedule: vi.fn(() => createScheduleRecord()),
     getTaskSnapshot: () => null,
     listInbox: vi.fn(() => []),
+    listTaskPendingApprovals: vi.fn(() => []),
     listScheduleRuns: vi.fn(() => []),
     listSchedules: vi.fn(() => []),
     markInboxDone: vi.fn(),

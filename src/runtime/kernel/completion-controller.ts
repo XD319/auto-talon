@@ -263,7 +263,7 @@ export function isSuccessfulVerificationToolCall(
   if (!result.success) {
     return false;
   }
-  const output = result.output;
+  const output = result.runtimeOutput ?? result.output;
   if (toolName !== "shell") {
     return false;
   }

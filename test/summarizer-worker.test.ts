@@ -73,7 +73,7 @@ describe("SummarizerWorker", () => {
     const worker = new SummarizerWorker({
       contextCompactor: new ContextCompactor(),
       sessionSummaryService: {
-        ...createSessionSummaryService((draft) => {
+        ...createSessionSummaryService((draft: SessionSummaryDraft) => {
           capturedDraft = draft;
         }),
         findLatestBySession: () => previousSummary
@@ -102,11 +102,15 @@ describe("SummarizerWorker", () => {
       task: createTask()
     });
 
-    expect(capturedDraft?.goal).toBe("What is the current status?");
-    expect(capturedDraft?.decisions).toEqual(["use PostgreSQL", "keep the migration reversible"]);
-    expect(capturedDraft?.openLoops.join(" ")).toContain("tc-prev");
-    expect(capturedDraft?.nextActions).toEqual([]);
-    expect(capturedDraft?.metadata?.previousSessionSummaryId).toBe("summary-before-compact");
+    expect(capturedDraft).not.toBeNull();
+    const draft = capturedDraft as SessionSummaryDraft;
+    expect(draft.goal).toBe("What is the current status?");
+    expect(draft.decisions).toEqual(["use PostgreSQL", "keep the migration reversible"]);
+    expect(draft.openLoops.join(" ")).toContain("tc-prev");
+    expect(draft.nextActions).toEqual([]);
+    expect(
+      (draft.metadata as { previousSessionSummaryId?: string }).previousSessionSummaryId
+    ).toBe("summary-before-compact");
   });
 });
 

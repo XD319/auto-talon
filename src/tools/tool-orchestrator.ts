@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { buildApprovalFingerprint } from "../approvals/approval-fingerprint.js";
+import { readSessionApprovalFingerprints } from "../approvals/session-approval-fingerprints.js";
 import type { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
 import type { ClarifyService } from "../approvals/clarify-service.js";
 import { AppError, toAppError } from "../core/app-error.js";
@@ -540,7 +541,11 @@ export class ToolOrchestrator {
 
       return {
         kind: "completed",
-        result,
+        result: {
+          ...result,
+          output: persistedOutput,
+          ...(persistedOutput !== result.output ? { runtimeOutput: result.output } : {})
+        },
         toolCall: finishedCall
       };
     } catch (error) {
@@ -1084,14 +1089,6 @@ function extractSandboxTarget(sandboxDetails: Record<string, unknown>): string {
   return "unknown";
 }
 
-function readSessionApprovalFingerprints(metadata: ToolExecutionContext["taskMetadata"]): string[] {
-  const fingerprints = metadata?.["sessionApprovalFingerprints"];
-  if (!Array.isArray(fingerprints)) {
-    return [];
-  }
-  return fingerprints.filter((value): value is string => typeof value === "string");
-}
-
 function readInteractionMode(
   metadata: ToolExecutionContext["taskMetadata"]
 ): "agent" | "plan" | "acceptEdits" {
@@ -1127,7 +1124,43 @@ function sanitizePersistedOutput(
     return contextPolicy.redactText(value, privacyLevel);
   }
 
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return sanitizeRestrictedStructuredOutput(value as Record<string, unknown>, contextPolicy);
+  }
+
   return {
     redacted: contextPolicy.redactText(JSON.stringify(value), privacyLevel)
   };
+}
+
+function sanitizeRestrictedStructuredOutput(
+  value: Record<string, unknown>,
+  contextPolicy: ContextPolicy
+): ToolExecutionSuccess["output"] {
+  const command = typeof value.command === "string" ? value.command : undefined;
+  const exitCode = typeof value.exitCode === "number" ? value.exitCode : undefined;
+  if (command === undefined && exitCode === undefined) {
+    return {
+      redacted: contextPolicy.redactText(JSON.stringify(value), "restricted")
+    };
+  }
+
+  const sanitized: JsonObject = {
+    ...(command !== undefined ? { command } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(typeof value.cwd === "string" ? { cwd: value.cwd } : {}),
+    ...(typeof value.durationMs === "number" ? { durationMs: value.durationMs } : {}),
+    ...(typeof value.timedOut === "boolean" ? { timedOut: value.timedOut } : {}),
+    ...(typeof value.summary === "string" ? { summary: value.summary } : {}),
+    ...(value.passed === true ? { passed: true } : {})
+  };
+  if (
+    value.stdout !== undefined ||
+    value.stderr !== undefined ||
+    value.stderrPreview !== undefined ||
+    value.failureHint !== undefined
+  ) {
+    sanitized.output = "[REDACTED: restricted content]";
+  }
+  return sanitized;
 }

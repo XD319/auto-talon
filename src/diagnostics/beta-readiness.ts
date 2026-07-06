@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { startLocalWebhookGateway } from "../gateway/index.js";
+import { resolveHttpAuthToken } from "../core/http-auth.js";
 import { hasFeishuGatewayConfig, resolveFeishuGatewayConfig } from "../gateway/feishu/feishu-config.js";
 import { ProviderError } from "../providers/index.js";
 import { createApplication, createDefaultRunOptions } from "../runtime/index.js";
@@ -318,6 +319,7 @@ async function verifyGatewayAdapterPath(): Promise<{
   });
 
   try {
+    const authToken = resolveHttpAuthToken(workspaceRoot);
     const response = await fetch(`http://127.0.0.1:${port}/tasks`, {
       body: JSON.stringify({
         requester: {
@@ -328,21 +330,22 @@ async function verifyGatewayAdapterPath(): Promise<{
         taskInput: "beta gateway run"
       }),
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...(authToken === null ? {} : { Authorization: `Bearer ${authToken}` })
       },
       method: "POST"
     });
     const payload = (await response.json()) as {
-      result: {
+      result?: {
         output: string | null;
         status: string;
       };
     };
 
     return {
-      ok: response.ok && payload.result.status === "succeeded",
-      output: payload.result.output,
-      status: payload.result.status
+      ok: response.ok && payload.result?.status === "succeeded",
+      output: payload.result?.output ?? null,
+      status: payload.result?.status ?? "unknown"
     };
   } finally {
     await gatewayHandle.manager.stopAll();

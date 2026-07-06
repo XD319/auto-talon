@@ -17,6 +17,15 @@ export const SCHEDULE_RUN_STATUSES = [
 
 export type ScheduleRunStatus = (typeof SCHEDULE_RUN_STATUSES)[number];
 
+export const ACTIVE_SCHEDULE_RUN_STATUSES = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "blocked"
+] as const satisfies readonly ScheduleRunStatus[];
+
+export type ActiveScheduleRunStatus = (typeof ACTIVE_SCHEDULE_RUN_STATUSES)[number];
+
 export const SCHEDULE_RUN_TRIGGERS = ["scheduled", "manual", "retry"] as const;
 
 export type ScheduleRunTrigger = (typeof SCHEDULE_RUN_TRIGGERS)[number];
@@ -142,6 +151,7 @@ export interface ScheduleRunDraft {
 
 export interface ScheduleRunUpdatePatch {
   status?: ScheduleRunStatus;
+  scheduledAt?: string;
   startedAt?: string | null;
   finishedAt?: string | null;
   taskId?: string | null;

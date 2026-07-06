@@ -22,6 +22,8 @@ import type {
 import { estimateConversationMessageTokens } from "../context/token-counter.js";
 import { buildHygieneConversationMessages } from "../sessions/build-hygiene-conversation-messages.js";
 import { pinUserMessagesFromRecords } from "../sessions/session-user-message-pin.js";
+import { isTerminalTaskStatus } from "../sessions/session-execution-lock.js";
+import { withMergedSessionApprovalFingerprints } from "../../approvals/session-approval-fingerprints.js";
 
 export class SessionFacade {
   public constructor(
@@ -34,25 +36,32 @@ export class SessionFacade {
   ) {}
 
   public async runTask(options: RuntimeRunOptions): Promise<RunTaskResult> {
+    const taskId = options.taskId ?? randomUUID();
+    const resolvedSession = this.dependencies.sessionService.getOrCreateSession({
+      agentProfileId: options.agentProfileId,
+      cwd: options.cwd,
+      ownerUserId: options.userId,
+      providerName: this.dependencies.provider.name,
+      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      title: options.taskInput.slice(0, 80)
+    });
+    this.dependencies.sessionExecutionLock.acquire(resolvedSession.sessionId, taskId);
     try {
-      const resolvedSession = this.dependencies.sessionService.getOrCreateSession({
-        agentProfileId: options.agentProfileId,
-        cwd: options.cwd,
-        ownerUserId: options.userId,
-        providerName: this.dependencies.provider.name,
-        ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-        title: options.taskInput.slice(0, 80)
-      });
       const result = await this.dependencies.executionKernel.run({
         ...options,
-        sessionId: resolvedSession.sessionId
+        sessionId: resolvedSession.sessionId,
+        taskId
       });
+      if (isTerminalTaskStatus(result.task.status)) {
+        this.dependencies.sessionExecutionLock.release(resolvedSession.sessionId, result.task.taskId);
+      }
       this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
       return {
         output: result.output,
         task: result.task
       };
     } catch (error) {
+      this.dependencies.sessionExecutionLock.release(resolvedSession.sessionId, taskId);
       const appError =
         error instanceof AppError
           ? error
@@ -61,9 +70,9 @@ export class SessionFacade {
               message: error instanceof Error ? error.message : "Unknown runtime error"
             });
 
-      const taskId =
+      const failedTaskId =
         typeof appError.details?.taskId === "string" ? appError.details.taskId : null;
-      const task = taskId === null ? null : this.dependencies.findTask(taskId);
+      const task = failedTaskId === null ? null : this.dependencies.findTask(failedTaskId);
       if (task === null) {
         throw appError;
       }
@@ -201,7 +210,14 @@ export class SessionFacade {
       title: input.slice(0, 80)
     });
     this.applyContinuationHygiene(session);
-    const options = this.dependencies.resumePacketBuilder.buildResumePacket(sessionId, input, overrides);
+    const persistedUiState = this.dependencies.sessionUiStateService.load(sessionId);
+    const options = this.dependencies.resumePacketBuilder.buildResumePacket(sessionId, input, {
+      ...overrides,
+      metadata: withMergedSessionApprovalFingerprints(
+        overrides?.metadata,
+        persistedUiState?.sessionApprovalFingerprints
+      )
+    });
     return this.runTask(options);
   }
 

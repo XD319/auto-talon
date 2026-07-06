@@ -404,8 +404,8 @@ describe("Provider integration", () => {
       }
     });
     try {
-      expect(handle.config.tokenBudget.inputLimit).toBe(128_000);
-      expect(handle.config.provider.contextWindowTokens).toBe(128_000);
+      expect(handle.config.tokenBudget.inputLimit).toBe(32_000);
+      expect(handle.config.provider.contextWindowTokens).toBe(32_000);
     } finally {
       handle.close();
     }

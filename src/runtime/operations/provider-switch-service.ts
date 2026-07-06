@@ -12,7 +12,7 @@ import {
 import { createProvider } from "../../providers/provider-factory.js";
 import { enrichProviderContextFromApi } from "../../providers/context-window-enrichment.js";
 import { isProviderSwitchable } from "../../providers/provider-switchable.js";
-import { resolveEffectiveContextWindow } from "../bootstrap.js";
+import { resolveEffectiveContextWindow, DEFAULT_UNKNOWN_CONTEXT_WINDOW_FALLBACK_TOKENS } from "../bootstrap.js";
 
 export type ProviderSwitchPersistScope = "session" | "user" | "workspace";
 
@@ -22,6 +22,7 @@ export interface SwitchProviderInput {
   selection: string;
   tokenBudget: TokenBudget;
   tokenBudgetInputLimitExplicit: boolean;
+  unknownContextWindowFallback?: number;
 }
 
 export interface SwitchProviderResult {
@@ -103,7 +104,9 @@ export async function switchProviderRuntime(
   });
   const effective = resolveEffectiveContextWindow(enrichedConfig, {
     tokenBudget: input.tokenBudget,
-    tokenBudgetInputLimitExplicit: input.tokenBudgetInputLimitExplicit
+    tokenBudgetInputLimitExplicit: input.tokenBudgetInputLimitExplicit,
+    unknownContextWindowFallback:
+      input.unknownContextWindowFallback ?? DEFAULT_UNKNOWN_CONTEXT_WINDOW_FALLBACK_TOKENS
   });
   const provider = createProvider(effective.provider);
   const tokenBudget: TokenBudget = {

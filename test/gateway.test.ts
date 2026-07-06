@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createGatewayRuntime, GatewayManager, startLocalWebhookGateway } from "../src/gateway/index.js";
 import { createApplication } from "../src/runtime/index.js";
+import { withWorkspaceAuthHeaders } from "./helpers/http-auth-headers.js";
 import type { LocalPolicyConfig, Provider, ProviderInput, ProviderResponse } from "../src/types/index.js";
 
 class ScriptedProvider implements Provider {
@@ -122,9 +123,9 @@ describe("Phase 5 gateway adapters", () => {
           },
           taskInput: "say hi from gateway"
         }),
-        headers: {
+        headers: withWorkspaceAuthHeaders(workspaceRoot, {
           "Content-Type": "application/json"
-        },
+        }),
         method: "POST"
       });
 
@@ -269,6 +270,71 @@ describe("Phase 5 gateway adapters", () => {
     }
   });
 
+  it("lists and resolves pending approvals through webhook endpoints", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const handle = createWaitingApprovalApplication(workspaceRoot);
+    const port = await getFreePort();
+    const gatewayHandle = await startLocalWebhookGateway(handle, {
+      host: "127.0.0.1",
+      port
+    });
+
+    try {
+      const createResponse = await fetch(`http://127.0.0.1:${port}/tasks`, {
+        body: JSON.stringify({
+          requester: {
+            externalSessionId: "approval-session",
+            externalUserId: "approval-user",
+            externalUserLabel: null
+          },
+          taskInput: "create governed file"
+        }),
+        headers: withWorkspaceAuthHeaders(workspaceRoot, {
+          "Content-Type": "application/json"
+        }),
+        method: "POST"
+      });
+      expect(createResponse.ok).toBe(true);
+      const created = (await createResponse.json()) as {
+        result: { status: string; taskId: string };
+      };
+      expect(created.result.status).toBe("waiting_approval");
+
+      const approvalsResponse = await fetch(
+        `http://127.0.0.1:${port}/tasks/${created.result.taskId}/approvals`,
+        { headers: withWorkspaceAuthHeaders(workspaceRoot) }
+      );
+      expect(approvalsResponse.ok).toBe(true);
+      const approvalsBody = (await approvalsResponse.json()) as {
+        approvals: Array<{ approvalId: string; toolName: string }>;
+      };
+      expect(approvalsBody.approvals.length).toBeGreaterThan(0);
+
+      const resolveResponse = await fetch(
+        `http://127.0.0.1:${port}/approvals/${approvalsBody.approvals[0]!.approvalId}/resolve`,
+        {
+          body: JSON.stringify({
+            action: "allow",
+            reviewerId: "reviewer-1"
+          }),
+          headers: withWorkspaceAuthHeaders(workspaceRoot, {
+            "Content-Type": "application/json"
+          }),
+          method: "POST"
+        }
+      );
+      expect(resolveResponse.ok).toBe(true);
+      const resolved = (await resolveResponse.json()) as {
+        result: { status: string; output: string | null };
+      };
+      expect(resolved.result.status).toBe("succeeded");
+      expect(resolved.result.output).toContain("governed.txt");
+    } finally {
+      await gatewayHandle.manager.stopAll();
+      handle.close();
+    }
+  });
+
   it("keeps runtime free of adapter imports", async () => {
     const runtimeSources = [
       "../src/runtime/application-service.ts",
@@ -319,15 +385,16 @@ describe("Phase 5 gateway adapters", () => {
           },
           taskInput: "stream event history"
         }),
-        headers: {
+        headers: withWorkspaceAuthHeaders(workspaceRoot, {
           "Content-Type": "application/json"
-        },
+        }),
         method: "POST"
       });
       const created = (await createResponse.json()) as { result: { taskId: string } };
 
       const eventsResponse = await fetch(
-        `http://127.0.0.1:${port}/tasks/${created.result.taskId}/events`
+        `http://127.0.0.1:${port}/tasks/${created.result.taskId}/events`,
+        { headers: withWorkspaceAuthHeaders(workspaceRoot) }
       );
       const body = await eventsResponse.text();
 
@@ -365,9 +432,9 @@ describe("Phase 5 gateway adapters", () => {
           },
           taskInput: "stream live answer"
         }),
-        headers: {
+        headers: withWorkspaceAuthHeaders(workspaceRoot, {
           "Content-Type": "application/json"
-        },
+        }),
         method: "POST"
       });
       const body = await response.text();
@@ -466,9 +533,9 @@ describe("Phase 5 gateway adapters", () => {
             externalUserLabel: "Local User"
           }
         }),
-        headers: {
+        headers: withWorkspaceAuthHeaders(workspaceRoot, {
           "Content-Type": "application/json"
-        },
+        }),
         method: "POST"
       });
 
@@ -507,9 +574,9 @@ describe("Phase 5 gateway adapters", () => {
       const largeBody = "x".repeat(300_000);
       const response = await fetch(`http://127.0.0.1:${port}/tasks`, {
         body: largeBody,
-        headers: {
+        headers: withWorkspaceAuthHeaders(workspaceRoot, {
           "Content-Type": "application/json"
-        },
+        }),
         method: "POST"
       });
 

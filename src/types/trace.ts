@@ -98,6 +98,7 @@ export const TRACE_EVENT_TYPES = [
   "schedule_paused",
   "schedule_resumed",
   "schedule_run_enqueued",
+  "schedule_run_skipped_overlap",
   "schedule_run_started",
   "schedule_run_finished",
   "schedule_run_failed",
@@ -712,6 +713,12 @@ export interface ScheduleRunEnqueuedPayload extends JsonObject {
   scheduledAt: string;
 }
 
+export interface ScheduleRunSkippedOverlapPayload extends JsonObject {
+  activeRunId: string;
+  reason: "scheduled" | "manual";
+  scheduleId: string;
+}
+
 export interface ScheduleRunStartedPayload extends JsonObject {
   runId: string;
   scheduleId: string;
@@ -1123,6 +1130,7 @@ export type TraceEvent =
   | TraceEventBase<"schedule_paused", SchedulePausedPayload>
   | TraceEventBase<"schedule_resumed", ScheduleResumedPayload>
   | TraceEventBase<"schedule_run_enqueued", ScheduleRunEnqueuedPayload>
+  | TraceEventBase<"schedule_run_skipped_overlap", ScheduleRunSkippedOverlapPayload>
   | TraceEventBase<"schedule_run_started", ScheduleRunStartedPayload>
   | TraceEventBase<"schedule_run_finished", ScheduleRunFinishedPayload>
   | TraceEventBase<"schedule_run_failed", ScheduleRunFailedPayload>

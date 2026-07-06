@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   assertSafeHttpBind,
@@ -27,11 +30,16 @@ describe("http auth", () => {
   });
 
   it("rejects non-loopback bind without token", () => {
-    expect(() =>
-      assertSafeHttpBind({
-        cwd: process.cwd(),
-        host: "0.0.0.0"
-      })
-    ).toThrow(AppError);
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "auto-talon-http-auth-"));
+    try {
+      expect(() =>
+        assertSafeHttpBind({
+          cwd: workspaceRoot,
+          host: "0.0.0.0"
+        })
+      ).toThrow(AppError);
+    } finally {
+      rmSync(workspaceRoot, { force: true, recursive: true });
+    }
   });
 });
