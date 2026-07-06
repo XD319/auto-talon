@@ -593,7 +593,7 @@ export async function main(argv = process.argv): Promise<void> {
 
   registerEvalCommands(program);
 
-  registerMemoryCommands(program);  registerMemoryCommands(program);
+  registerMemoryCommands(program);
 
   const experienceCommand = program.command("experience").description("Inspect and review experience assets");
 
