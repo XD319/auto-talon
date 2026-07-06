@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { z } from "zod";
-
 import type { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
 import type { ApprovalService } from "../approvals/approval-service.js";
 import type { ClarifyService } from "../approvals/clarify-service.js";
@@ -12,16 +10,12 @@ import type {
   ExperienceReviewRequest
 } from "../experience/experience-plane.js";
 import {
-  isProviderSwitchable,
-  resolveProviderConfig,
   type ProviderCatalogEntry,
   type ResolvedProviderConfig
 } from "../providers/index.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
-import { clearFallbackProviderCache } from "../providers/provider-failover.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import {
-  resolveRuntimeConfig,
   type RuntimeConfig,
   type ShellBackend,
   type WorkflowCustomShell,
@@ -115,24 +109,22 @@ import type {
 } from "./commitments/index.js";
 import { FileRollbackService, ProviderStatsService, RuntimeDoctorService } from "./operations/index.js";
 import {
-  formatProviderSelection,
   listConfiguredProviders,
-  switchProviderRuntime,
   type ConfiguredProviderEntry,
   type ProviderSwitchPersistScope,
   type SwitchProviderResult
 } from "./operations/provider-switch-service.js";
-import {
-  createModelSelectionView,
-  readSessionModelSelection,
-  withSessionModelSelection,
-  withoutSessionModelSelection,
-  type ModelSelectionView
-} from "./operations/model-selection-service.js";
+import type { ModelSelectionView } from "./operations/model-selection-service.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
-import { SessionFacade, ScheduleFacade, ApprovalResolutionFacade } from "./facades/index.js";
+import {
+  ApprovalResolutionFacade,
+  ClarifyResolutionFacade,
+  ProviderSwitchFacade,
+  ScheduleFacade,
+  SessionFacade
+} from "./facades/index.js";
 
-import { AppError, toAppError } from "./app-error.js";
+import { AppError } from "./app-error.js";
 
 export interface RunTaskResult {
   error?: AppError;
@@ -361,31 +353,12 @@ export interface TaskTimelineReport {
   task: TaskRecord | null;
 }
 
-const clarifyAnswerSchema = z
-  .object({
-    answerOptionId: z.string().min(1).optional(),
-    answerText: z.string().min(1).optional(),
-    answers: z.record(z.string().min(1), z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])).optional(),
-    response: z.string().min(1).optional(),
-    promptId: z.string().min(1),
-    reviewerId: z.string().min(1)
-  })
-  .refine(
-    (value) =>
-      value.answerOptionId !== undefined ||
-      value.answerText !== undefined ||
-      value.answers !== undefined ||
-      value.response !== undefined,
-    {
-      message: "answerOptionId, answerText, answers, or response is required."
-    }
-  );
-
 export class AgentApplicationService {
   private readonly sessionFacade: SessionFacade;
   private readonly scheduleFacade: ScheduleFacade;
   private readonly approvalResolutionFacade: ApprovalResolutionFacade;
-  private switchProviderInFlight: Promise<SwitchProviderResult> | null = null;
+  private readonly clarifyResolutionFacade: ClarifyResolutionFacade;
+  private readonly providerSwitchFacade: ProviderSwitchFacade;
 
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {
     this.sessionFacade = new SessionFacade(
@@ -411,6 +384,34 @@ export class AgentApplicationService {
         releaseSessionLockIfTerminal: (task) => this.releaseSessionLockIfTerminal(task)
       }
     );
+    this.clarifyResolutionFacade = new ClarifyResolutionFacade(
+      {
+        clarifyService: dependencies.clarifyService,
+        executionKernel: dependencies.executionKernel,
+        findExecutionCheckpoint: (taskId) => dependencies.findExecutionCheckpoint(taskId),
+        findTask: (taskId) => dependencies.findTask(taskId),
+        saveExecutionCheckpoint: (record) => dependencies.saveExecutionCheckpoint(record),
+        scheduleRunLifecycle: dependencies.scheduleRunLifecycle,
+        traceService: dependencies.traceService
+      },
+      {
+        projectAssistantOutput: (sessionId, taskId, output) =>
+          this.projectAssistantOutput(sessionId, taskId, output),
+        releaseSessionLockIfTerminal: (task) => this.releaseSessionLockIfTerminal(task)
+      }
+    );
+    this.providerSwitchFacade = new ProviderSwitchFacade({
+      auditService: dependencies.auditService,
+      findSession: (sessionId) => dependencies.findSession(sessionId),
+      listPendingApprovals: () => dependencies.listPendingApprovals(),
+      listPendingClarifyPrompts: () => dependencies.listPendingClarifyPrompts(),
+      listTasks: () => dependencies.listTasks(),
+      runtime: dependencies,
+      sessionService: dependencies.sessionService,
+      tokenBudgetInputLimitExplicit: dependencies.tokenBudgetInputLimitExplicit,
+      traceService: dependencies.traceService,
+      workspaceRoot: dependencies.workspaceRoot
+    });
   }
 
   public async runTask(options: RuntimeRunOptions): Promise<RunTaskResult> {
@@ -969,119 +970,12 @@ export class AgentApplicationService {
     }
   ): Promise<ClarifyActionResult> {
     this.reconcileExpiredApprovals();
-    const parsed = clarifyAnswerSchema.parse({
-      ...input,
-      promptId,
-      reviewerId
-    });
-    const prompt = this.dependencies.clarifyService.answer({
-        promptId: parsed.promptId,
-        reviewerId: parsed.reviewerId,
-        ...(parsed.answerOptionId !== undefined ? { answerOptionId: parsed.answerOptionId } : {}),
-        ...(parsed.answerText !== undefined ? { answerText: parsed.answerText } : {}),
-        ...(parsed.answers !== undefined ? { answers: parsed.answers } : {}),
-        ...(parsed.response !== undefined ? { response: parsed.response } : {})
-      });
-    const checkpoint = this.dependencies.findExecutionCheckpoint(prompt.taskId);
-    if (checkpoint === null) {
-      throw new AppError({
-        code: "task_not_resumable",
-        message: `Task ${prompt.taskId} has no checkpoint for clarification.`
-      });
-    }
-
-    this.dependencies.traceService.record({
-      actor: `reviewer.${reviewerId}`,
-      eventType: "clarify_resolved",
-      payload: {
-          answerOptionId: prompt.answerOptionId,
-          answers: prompt.answers,
-          answerText: prompt.answerText,
-          promptId: prompt.promptId,
-          response: prompt.response,
-          status: "answered"
-      },
-      stage: "governance",
-      summary: `Clarification answered for task ${prompt.taskId}`,
-      taskId: prompt.taskId
-    });
-
-    const answerText = formatClarifyAnswerForModel(prompt);
-    const updatedCheckpoint = {
-      ...checkpoint,
-      messages: [
-        ...checkpoint.messages,
-        {
-          role: "user" as const,
-          content: answerText,
-          metadata: {
-            clarifyPromptId: prompt.promptId,
-            clarifyAnswerOptionId: prompt.answerOptionId
-          }
-        }
-      ],
-      pendingClarifyPromptId: null,
-      updatedAt: new Date().toISOString()
-    };
-    this.dependencies.saveExecutionCheckpoint(updatedCheckpoint);
-
-    try {
-      const taskBeforeResume = this.dependencies.findTask(prompt.taskId);
-      if (taskBeforeResume !== null) {
-        this.dependencies.scheduleRunLifecycle.markResuming(taskBeforeResume);
-      }
-      const result = await this.dependencies.executionKernel.resumeTask(prompt.taskId);
-      this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
-      this.releaseSessionLockIfTerminal(result.task);
-      this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
-      return {
-        output: result.output,
-        prompt,
-        task: result.task
-      };
-    } catch (error) {
-      const appError = toAppError(error);
-      const task = this.dependencies.findTask(prompt.taskId);
-      if (task === null) {
-        throw appError;
-      }
-      return {
-        error: appError,
-        output: null,
-        prompt,
-        task
-      };
-    }
+    return this.clarifyResolutionFacade.answerClarifyPrompt(promptId, reviewerId, input);
   }
 
   public cancelClarifyPrompt(promptId: string, reviewerId: string): ClarifyActionResult {
     this.reconcileExpiredApprovals();
-    const prompt = this.dependencies.clarifyService.cancel({ promptId, reviewerId });
-    this.dependencies.traceService.record({
-      actor: `reviewer.${reviewerId}`,
-      eventType: "clarify_cancelled",
-      payload: {
-        promptId: prompt.promptId,
-        reviewerId
-      },
-      stage: "governance",
-      summary: `Clarification cancelled for task ${prompt.taskId}`,
-      taskId: prompt.taskId
-    });
-
-    const failedTask = this.dependencies.executionKernel.failWaitingClarificationTask(
-      prompt.taskId,
-      new AppError({
-        code: "clarification_cancelled",
-        message: `Clarification prompt ${prompt.promptId} was cancelled.`
-      })
-    );
-
-    return {
-      output: null,
-      prompt,
-      task: failedTask
-    };
+    return this.clarifyResolutionFacade.cancelClarifyPrompt(promptId, reviewerId);
   }
 
   public showTask(taskId: string): {
@@ -1200,64 +1094,20 @@ export class AgentApplicationService {
   }
 
   public modelSelectionView(sessionId?: string): ModelSelectionView {
-    const session = this.resolveOptionalSession(sessionId);
-    return createModelSelectionView({
-      currentProvider: this.dependencies.providerConfig,
-      cwd: this.dependencies.workspaceRoot,
-      runtimeConfig: resolveRuntimeConfig(this.dependencies.workspaceRoot),
-      runtimeOverrideActive: this.dependencies.providerRouter?.hasMainProviderOverride() ?? false,
-      session
-    });
+    return this.providerSwitchFacade.modelSelectionView(sessionId);
   }
 
   public async setSessionModelSelection(input: {
     selection: string;
     sessionId: string;
   }): Promise<{ result: SwitchProviderResult; session: SessionRecord; view: ModelSelectionView }> {
-    const session = this.requireSession(input.sessionId);
-    const result = await this.switchProvider({
-      persist: "session",
-      selection: input.selection,
-      sessionId: session.sessionId
-    });
-    return {
-      result,
-      session: this.requireSession(session.sessionId),
-      view: this.modelSelectionView(session.sessionId)
-    };
+    return this.providerSwitchFacade.setSessionModelSelection(input);
   }
 
   public async clearSessionModelSelection(
     sessionId: string
   ): Promise<{ result: SwitchProviderResult | null; session: SessionRecord; view: ModelSelectionView }> {
-    const session = this.requireSession(sessionId);
-    const priorSelection = readSessionModelSelection(session.metadata);
-    const updated = this.dependencies.sessionService.updateMetadata(
-      session.sessionId,
-      withoutSessionModelSelection(session.metadata)
-    );
-
-    let result: SwitchProviderResult | null = null;
-    const defaultProvider = resolveProviderConfig(this.dependencies.workspaceRoot);
-    if (isProviderSwitchable(defaultProvider)) {
-      result = await switchProviderRuntime({
-        cwd: this.dependencies.workspaceRoot,
-        persist: "session",
-        selection: formatProviderSelection(defaultProvider),
-        tokenBudget: this.dependencies.tokenBudget,
-        tokenBudgetInputLimitExplicit: this.dependencies.tokenBudgetInputLimitExplicit
-      });
-      this.applyProviderSwitchResult(result, { mainProviderOverride: false });
-    } else {
-      this.dependencies.providerRouter?.setMainProvider(null);
-    }
-    this.recordModelSelectionCleared(session.sessionId, priorSelection?.selection ?? null);
-
-    return {
-      result,
-      session: updated,
-      view: this.modelSelectionView(session.sessionId)
-    };
+    return this.providerSwitchFacade.clearSessionModelSelection(sessionId);
   }
 
   public async switchProvider(input: {
@@ -1265,189 +1115,7 @@ export class AgentApplicationService {
     selection: string;
     sessionId?: string;
   }): Promise<SwitchProviderResult> {
-    if (this.switchProviderInFlight !== null) {
-      throw new Error("Model switch already in progress.");
-    }
-
-    const switchTask = this.switchProviderInternal(input);
-    this.switchProviderInFlight = switchTask;
-    try {
-      return await switchTask;
-    } finally {
-      this.switchProviderInFlight = null;
-    }
-  }
-
-  private async switchProviderInternal(input: {
-    persist: ProviderSwitchPersistScope;
-    selection: string;
-    sessionId?: string;
-  }): Promise<SwitchProviderResult> {
-    const runningTasks = this.dependencies.listTasks().filter((task) => task.status === "running");
-    if (runningTasks.length > 0) {
-      throw new Error("Cannot switch model while a task is running. Use /stop first.");
-    }
-    if (this.dependencies.listPendingApprovals().length > 0) {
-      throw new Error("Cannot switch model while an approval is pending.");
-    }
-    if (this.dependencies.listPendingClarifyPrompts().length > 0) {
-      throw new Error("Cannot switch model while clarification is pending.");
-    }
-
-    if (input.persist === "session" && input.sessionId !== undefined) {
-      this.requireSession(input.sessionId);
-    }
-
-    const previousName = this.dependencies.providerConfig.name;
-    const result = await switchProviderRuntime({
-      cwd: this.dependencies.workspaceRoot,
-      persist: input.persist,
-      selection: input.selection,
-      tokenBudget: this.dependencies.tokenBudget,
-      tokenBudgetInputLimitExplicit: this.dependencies.tokenBudgetInputLimitExplicit
-    });
-
-    this.applyProviderSwitchResult(result, { mainProviderOverride: true });
-
-    if (input.persist === "session" && input.sessionId !== undefined) {
-      const session = this.requireSession(input.sessionId);
-      this.dependencies.sessionService.updateMetadata(
-        session.sessionId,
-        withSessionModelSelection(session.metadata, result.selection)
-      );
-      this.recordModelSelectionUpdated({
-        modelName: result.providerConfig.model,
-        providerName: result.providerConfig.name,
-        selection: result.selection,
-        sessionId: session.sessionId,
-        source: "session_user"
-      });
-    } else if (input.persist === "user" || input.persist === "workspace") {
-      this.recordModelSelectionUpdated({
-        modelName: result.providerConfig.model,
-        providerName: result.providerConfig.name,
-        selection: result.selection,
-        sessionId: null,
-        source: input.persist
-      });
-    }
-
-    this.dependencies.traceService.record({
-      actor: "runtime.application",
-      eventType: "route_decision",
-      payload: {
-        kind: "main",
-        mode: this.dependencies.providerRouter?.getMode() ?? "balanced",
-        providerName: result.providerConfig.name,
-        reason: `model switched to ${result.selection}`,
-        sessionId: input.sessionId ?? null,
-        taskId: "runtime",
-        tier: null
-      },
-      stage: "planning",
-      summary: `Switched model to ${result.selection}`,
-      taskId: "runtime"
-    });
-    this.dependencies.auditService.record({
-      action: "route_decided",
-      actor: "runtime.application",
-      approvalId: null,
-      outcome: "succeeded",
-      payload: {
-        kind: "main",
-        modelName: result.providerConfig.model,
-        persist: input.persist,
-        previousProviderName: previousName,
-        providerName: result.providerConfig.name,
-        reason: `model switched to ${result.selection}`,
-        selection: result.selection,
-        sessionId: input.sessionId ?? null
-      },
-      summary: `Provider switched to ${result.selection}`,
-      taskId: null,
-      toolCallId: null
-    });
-
-    return result;
-  }
-
-  private applyProviderSwitchResult(
-    result: SwitchProviderResult,
-    options: { mainProviderOverride: boolean }
-  ): void {
-    this.dependencies.provider = result.provider;
-    this.dependencies.providerConfig = result.providerConfig;
-    this.dependencies.tokenBudget = result.tokenBudget;
-    this.dependencies.executionKernel.setPrimaryProvider(result.provider);
-    this.dependencies.providerRouter?.setMainProvider(options.mainProviderOverride ? result.provider : null);
-    this.dependencies.providerRouter?.clearProviderCache();
-    this.dependencies.auxiliaryProviderResolver?.setMainProvider(result.provider);
-    this.dependencies.auxiliaryProviderResolver?.clearProviderCache();
-    clearFallbackProviderCache();
-  }
-
-  private resolveOptionalSession(sessionId: string | undefined): SessionRecord | null {
-    if (sessionId === undefined) {
-      return null;
-    }
-    return this.requireSession(sessionId);
-  }
-
-  private requireSession(sessionId: string): SessionRecord {
-    const session = this.dependencies.findSession(sessionId);
-    if (session === null) {
-      throw new Error(`Session ${sessionId} was not found.`);
-    }
-    return session;
-  }
-
-  private recordModelSelectionUpdated(input: {
-    modelName: string | null;
-    providerName: string;
-    selection: string;
-    sessionId: string | null;
-    source: "session_user" | "user" | "workspace";
-  }): void {
-    this.dependencies.traceService.record({
-      actor: "runtime.application",
-      eventType: "model_selection_updated",
-      payload: input,
-      stage: "control",
-      summary: `Model selection updated to ${input.selection}`,
-      taskId: input.sessionId === null ? "runtime" : `session:${input.sessionId}`
-    });
-    this.dependencies.auditService.record({
-      action: "model_selection_updated",
-      actor: "runtime.application",
-      approvalId: null,
-      outcome: "succeeded",
-      payload: input,
-      summary: `Model selection updated to ${input.selection}`,
-      taskId: null,
-      toolCallId: null
-    });
-  }
-
-  private recordModelSelectionCleared(sessionId: string, priorSelection: string | null): void {
-    const payload = { priorSelection, sessionId };
-    this.dependencies.traceService.record({
-      actor: "runtime.application",
-      eventType: "model_selection_cleared",
-      payload,
-      stage: "control",
-      summary: `Model selection cleared for session ${sessionId}`,
-      taskId: `session:${sessionId}`
-    });
-    this.dependencies.auditService.record({
-      action: "model_selection_cleared",
-      actor: "runtime.application",
-      approvalId: null,
-      outcome: "succeeded",
-      payload,
-      summary: `Model selection cleared for session ${sessionId}`,
-      taskId: null,
-      toolCallId: null
-    });
+    return this.providerSwitchFacade.switchProvider(input);
   }
   public providerStats(groupBy: "provider" | "session" | "task" | "mode" = "provider"): ProviderStatsSnapshot | null | JsonObject {
     return new ProviderStatsService({
@@ -1894,39 +1562,6 @@ function summarizeText(value: string, maxLength: number): string {
 function extractMemoryKeywords(content: string): string[] {
   const matches = content.toLowerCase().match(/[a-z0-9_./:-]{3,}/gu) ?? [];
   return [...new Set(matches)].slice(0, 16);
-}
-
-function formatClarifyAnswerForModel(prompt: ClarifyPromptRecord): string {
-  if (prompt.response !== null) {
-    return prompt.response;
-  }
-  const answers = prompt.answers ?? deriveLegacyClarifyAnswers(prompt);
-  if (answers !== null) {
-    return Object.entries(answers)
-      .map(([question, answer]) => {
-        const answerText = Array.isArray(answer) ? answer.join(", ") : answer;
-        return `${question}\nAnswer: ${answerText}`;
-      })
-      .join("\n\n");
-  }
-  return (
-    prompt.answerText ??
-    prompt.options.find((item) => item.id === prompt.answerOptionId)?.label ??
-    ""
-  );
-}
-
-function deriveLegacyClarifyAnswers(prompt: ClarifyPromptRecord): Record<string, string | string[]> | null {
-  if (prompt.answerText !== null) {
-    return { [prompt.question]: prompt.answerText };
-  }
-  if (prompt.answerOptionId !== null) {
-    const option = prompt.options.find((item) => item.id === prompt.answerOptionId);
-    if (option !== undefined) {
-      return { [prompt.question]: option.label };
-    }
-  }
-  return null;
 }
 
 function isJsonObject(value: JsonValue | undefined): value is JsonObject {
