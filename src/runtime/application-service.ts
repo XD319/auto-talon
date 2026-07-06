@@ -1671,6 +1671,7 @@ export class AgentApplicationService {
       testCommands: this.dependencies.testCommands,
       testCurrentProvider: (providerSignal) => this.testCurrentProvider(providerSignal),
       tokenBudget: this.dependencies.tokenBudget,
+      deprecatedCompactBufferTokens: this.dependencies.compact.bufferTokens,
       workspaceRoot: this.dependencies.workspaceRoot
     }).configDoctor(signal);
   }

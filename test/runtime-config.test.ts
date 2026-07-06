@@ -280,6 +280,7 @@ describe("runtime config", () => {
         outputLimit: 8_000,
         reservedOutput: 1_000
       },
+      deprecatedCompactBufferTokens: 0,
       workspaceRoot
     });
 
@@ -287,6 +288,74 @@ describe("runtime config", () => {
     expect(report.issues).toEqual(
       expect.arrayContaining([
         expect.stringContaining("Legacy webSearch.backend is disabled and no web config is present")
+      ])
+    );
+  });
+
+  it("warns when deprecated compact.bufferTokens is configured", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        compact: {
+          bufferTokens: 4096
+        }
+      }),
+      "utf8"
+    );
+
+    const config = resolveRuntimeConfig(workspaceRoot);
+    const doctor = new RuntimeDoctorService({
+      allowedFetchHosts: ["*"],
+      customShell: null,
+      databasePath: ":memory:",
+      listExperiences: () => [],
+      maxShellTimeoutMs: 30_000,
+      providerConfig: {
+        apiKey: null,
+        baseUrl: null,
+        builtinProviderName: "mock",
+        configPath: join(workspaceRoot, ".auto-talon", "provider.config.json"),
+        configSource: "defaults",
+        contextWindowSource: null,
+        contextWindowTokens: 64_000,
+        displayName: "Mock",
+        family: "mock",
+        maxRetries: 0,
+        model: "mock-model",
+        name: "mock",
+        streamIdleTimeoutMs: 30_000,
+        timeoutMs: 30_000,
+        transport: "mock"
+      },
+      providerName: "mock",
+      runtimeConfigPath: join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      runtimeConfigSource: "file",
+      runtimeVersion: "test",
+      shellBackend: "default",
+      skillStats: () => ({ issues: [], skills: [] }),
+      testCommands: [],
+      testCurrentProvider: () =>
+        Promise.resolve({
+          apiKeyConfigured: true,
+          endpointReachable: true,
+          message: "ok",
+          modelAvailable: true,
+          modelConfigured: true,
+          modelName: "mock-model",
+          ok: true,
+          providerName: "mock"
+        }),
+      tokenBudget: config.tokenBudget,
+      deprecatedCompactBufferTokens: config.compact.bufferTokens,
+      workspaceRoot
+    });
+
+    const report = await doctor.configDoctor();
+    expect(report.issues).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("compact.bufferTokens is deprecated and has no runtime effect")
       ])
     );
   });

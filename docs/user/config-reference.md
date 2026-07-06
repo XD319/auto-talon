@@ -367,6 +367,7 @@ Runtime token budget defaults (`.auto-talon/runtime.config.json`):
 
 - `unknownContextWindowFallback` applies when the active provider has no `contextWindowTokens` and `tokenBudget.inputLimit` is not set explicitly.
 - `concurrency.allowParallelSessions` disables session-level task locking when set to `true` (power-user mode; default is `false`).
+- `compact.bufferTokens` is deprecated and ignored at runtime. Remove it if present; `talon doctor` warns when the value is greater than zero. See `docs/dev/context-window.md` for compaction settings.
 
 Scheduled info-flow examples:
 - Daily AI news: `talon schedule create "Search recent AI news, fetch the top sources, and summarize action items." --name "Daily AI news" --cron "0 8 * * *" --timezone Asia/Shanghai`

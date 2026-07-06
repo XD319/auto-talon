@@ -33,6 +33,7 @@ export interface RuntimeDoctorServiceDependencies {
     outputLimit: number;
     reservedOutput: number;
   };
+  deprecatedCompactBufferTokens: number;
   workspaceRoot: string;
 }
 
@@ -63,6 +64,9 @@ export class RuntimeDoctorService {
     );
     const webConfigIssues = collectWebConfigIssues(this.dependencies.workspaceRoot);
     const httpAuthIssues = collectHttpAuthDoctorIssues(this.dependencies.workspaceRoot);
+    const deprecatedConfigIssues = collectDeprecatedConfigIssues(
+      this.dependencies.deprecatedCompactBufferTokens
+    );
 
     return {
       apiKeyConfigured: providerHealth.apiKeyConfigured,
@@ -88,7 +92,8 @@ export class RuntimeDoctorService {
         ...shellIssues,
         ...testTimeoutIssues,
         ...webConfigIssues,
-        ...httpAuthIssues
+        ...httpAuthIssues,
+        ...deprecatedConfigIssues
       ],
       maxRetries: this.dependencies.providerConfig.maxRetries,
       modelAvailable: providerHealth.modelAvailable,
@@ -123,6 +128,15 @@ export class RuntimeDoctorService {
       workspaceRoot: this.dependencies.workspaceRoot
     };
   }
+}
+
+function collectDeprecatedConfigIssues(deprecatedCompactBufferTokens: number): string[] {
+  if (deprecatedCompactBufferTokens <= 0) {
+    return [];
+  }
+  return [
+    `compact.bufferTokens is deprecated and has no runtime effect (configured value: ${deprecatedCompactBufferTokens}). Remove it from runtime.config.json; use tokenBudget and compact.thresholdRatio instead.`
+  ];
 }
 
 function collectWebConfigIssues(workspaceRoot: string): string[] {

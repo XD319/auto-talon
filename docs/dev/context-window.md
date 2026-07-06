@@ -71,7 +71,7 @@ Context usage percentage in the TUI is computed against the **usable** window:
 }
 ```
 
-`compact.bufferTokens` is deprecated and kept only for backward compatibility; it has no runtime effect.
+`compact.bufferTokens` is **deprecated** and has **no runtime effect**. If set to a value greater than zero, `talon doctor` reports a warning — remove the field and rely on `tokenBudget` plus `compact.thresholdRatio` (with the built-in compaction safety margin) instead.
 
 ## Summarizer modes
 
