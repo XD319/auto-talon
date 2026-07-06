@@ -130,13 +130,9 @@ import {
   type ModelSelectionView
 } from "./operations/model-selection-service.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
-import { SessionFacade } from "./facades/index.js";
+import { SessionFacade, ScheduleFacade, ApprovalResolutionFacade } from "./facades/index.js";
 
 import { AppError, toAppError } from "./app-error.js";
-import {
-  mergeSessionApprovalFingerprintLists,
-  readSessionApprovalFingerprints
-} from "../approvals/session-approval-fingerprints.js";
 
 export interface RunTaskResult {
   error?: AppError;
@@ -363,13 +359,6 @@ export interface TaskTimelineReport {
   task: TaskRecord | null;
 }
 
-const approvalActionSchema = z.object({
-  action: z.enum(["allow", "deny"]),
-  allowScope: z.enum(["once", "session", "always"]).optional(),
-  approvalId: z.string().min(1),
-  reviewerId: z.string().min(1)
-});
-
 const clarifyAnswerSchema = z
   .object({
     answerOptionId: z.string().min(1).optional(),
@@ -392,13 +381,33 @@ const clarifyAnswerSchema = z
 
 export class AgentApplicationService {
   private readonly sessionFacade: SessionFacade;
-  private readonly approvalFailureContinuations = new Map<string, Promise<ApprovalActionResult>>();
+  private readonly scheduleFacade: ScheduleFacade;
+  private readonly approvalResolutionFacade: ApprovalResolutionFacade;
   private switchProviderInFlight: Promise<SwitchProviderResult> | null = null;
 
   public constructor(private readonly dependencies: AgentApplicationServiceDependencies) {
     this.sessionFacade = new SessionFacade(
       dependencies,
       (sessionId, taskId, output) => this.projectAssistantOutput(sessionId, taskId, output)
+    );
+    this.scheduleFacade = new ScheduleFacade(dependencies);
+    this.approvalResolutionFacade = new ApprovalResolutionFacade(
+      {
+        approvalRuleStore: dependencies.approvalRuleStore,
+        approvalService: dependencies.approvalService,
+        auditService: dependencies.auditService,
+        executionKernel: dependencies.executionKernel,
+        findTask: (taskId) => dependencies.findTask(taskId),
+        scheduleRunLifecycle: dependencies.scheduleRunLifecycle,
+        sessionUiStateService: dependencies.sessionUiStateService,
+        traceService: dependencies.traceService,
+        updateTask: (taskId, patch) => dependencies.updateTask(taskId, patch)
+      },
+      {
+        projectAssistantOutput: (sessionId, taskId, output) =>
+          this.projectAssistantOutput(sessionId, taskId, output),
+        releaseSessionLockIfTerminal: (task) => this.releaseSessionLockIfTerminal(task)
+      }
     );
   }
 
@@ -935,213 +944,7 @@ export class AgentApplicationService {
     allowScope?: ApprovalAllowScope
   ): Promise<ApprovalActionResult> {
     this.reconcileExpiredApprovals();
-    const parsed = approvalActionSchema.parse({
-      action,
-      allowScope,
-      approvalId,
-      reviewerId
-    });
-    const existingApproval = this.dependencies.approvalService.findById(parsed.approvalId);
-    if (existingApproval !== null && existingApproval.status !== "pending") {
-      if (existingApproval.status === "denied" || existingApproval.status === "timed_out") {
-        return this.resumeApprovalFailureOnce(existingApproval);
-      }
-      return this.toCompletedApprovalActionResult(existingApproval);
-    }
-
-    const approval = this.dependencies.approvalService.resolve({
-      action: parsed.action,
-      approvalId: parsed.approvalId,
-      reviewerId: parsed.reviewerId,
-      ...(parsed.allowScope !== undefined ? { allowScope: parsed.allowScope } : {})
-    });
-    if (approval.status === "approved" && approval.allowScope === "always") {
-      this.dependencies.approvalRuleStore.addAlwaysRulesFromApproval(approval, reviewerId);
-    }
-
-    this.dependencies.traceService.record({
-      actor: `reviewer.${reviewerId}`,
-      eventType: "approval_resolved",
-      payload: {
-        approvalId: approval.approvalId,
-        reviewerId: approval.reviewerId,
-        status: approval.status,
-        toolCallId: approval.toolCallId,
-        toolName: approval.toolName
-      },
-      stage: "governance",
-      summary: `Approval ${approval.status} for ${approval.toolName}`,
-      taskId: approval.taskId
-    });
-    this.dependencies.traceService.record({
-      actor: `reviewer.${reviewerId}`,
-      eventType: "review_resolved",
-      payload: {
-        approvalId: approval.approvalId,
-        reviewerId: approval.reviewerId,
-        status: approval.status,
-        toolCallId: approval.toolCallId,
-        toolName: approval.toolName
-      },
-      stage: "lifecycle",
-      summary: `Review resolved for ${approval.toolName}`,
-      taskId: approval.taskId
-    });
-
-    this.dependencies.auditService.record({
-      action: "approval_resolved",
-      actor: `reviewer.${reviewerId}`,
-      approvalId: approval.approvalId,
-      outcome:
-        approval.status === "approved"
-          ? "approved"
-          : approval.status === "timed_out"
-            ? "timed_out"
-            : "denied",
-      payload: {
-        allowScope: approval.allowScope,
-        reviewerId,
-        status: approval.status,
-        toolName: approval.toolName
-      },
-      summary: `Approval ${approval.status} for ${approval.toolName}`,
-      taskId: approval.taskId,
-      toolCallId: approval.toolCallId
-    });
-
-    if (approval.status === "approved") {
-      try {
-        const taskBeforeResume = this.dependencies.findTask(approval.taskId);
-        if (taskBeforeResume !== null) {
-          this.dependencies.scheduleRunLifecycle.markResuming(taskBeforeResume);
-        }
-        if (approval.allowScope === "session" && approval.fingerprint !== null) {
-          if (taskBeforeResume !== null) {
-            this.dependencies.updateTask(approval.taskId, {
-              metadata: {
-                sessionApprovalFingerprints: mergeSessionApprovalFingerprintLists(
-                  readSessionApprovalFingerprints(taskBeforeResume.metadata),
-                  [approval.fingerprint]
-                )
-              }
-            });
-          }
-          if (taskBeforeResume?.sessionId !== null && taskBeforeResume?.sessionId !== undefined) {
-            this.persistSessionApprovalFingerprint(taskBeforeResume.sessionId, approval.fingerprint);
-          }
-        }
-        const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
-        this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
-        this.releaseSessionLockIfTerminal(result.task);
-        this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
-        return {
-          approval,
-          output: result.output,
-          task: result.task
-        };
-      } catch (error) {
-        const appError = toAppError(error);
-        const task = this.dependencies.findTask(approval.taskId);
-        if (task === null) {
-          throw appError;
-        }
-
-        return {
-          approval,
-          error: appError,
-          output: null,
-          task
-        };
-      }
-    }
-
-    return this.resumeApprovalFailureOnce(approval);
-  }
-
-  private persistSessionApprovalFingerprint(sessionId: string, fingerprint: string): void {
-    const uiState = this.dependencies.sessionUiStateService.load(sessionId);
-    if (uiState === null) {
-      return;
-    }
-    if (uiState.sessionApprovalFingerprints.includes(fingerprint)) {
-      return;
-    }
-    this.dependencies.sessionUiStateService.save(sessionId, {
-      sessionApprovalFingerprints: [...uiState.sessionApprovalFingerprints, fingerprint],
-      messages: uiState.messages,
-      interactionMode: uiState.interactionMode,
-      ...(uiState.providerSelection !== null ? { providerSelection: uiState.providerSelection } : {})
-    });
-  }
-
-  private resumeApprovalFailureOnce(approval: ApprovalRecord): Promise<ApprovalActionResult> {
-    const existing = this.approvalFailureContinuations.get(approval.approvalId);
-    if (existing !== undefined) {
-      return existing;
-    }
-
-    const continuation = this.resumeApprovalFailure(approval).finally(() => {
-      this.approvalFailureContinuations.delete(approval.approvalId);
-    });
-    this.approvalFailureContinuations.set(approval.approvalId, continuation);
-    return continuation;
-  }
-
-  private async resumeApprovalFailure(approval: ApprovalRecord): Promise<ApprovalActionResult> {
-    const task = this.dependencies.findTask(approval.taskId);
-    if (task === null || task.status !== "waiting_approval") {
-      return this.toCompletedApprovalActionResult(approval);
-    }
-
-    try {
-      const result = await this.dependencies.executionKernel.resumeTaskAfterApprovalFailure(
-        approval.taskId,
-        approval.toolCallId
-      );
-      this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
-      this.releaseSessionLockIfTerminal(result.task);
-      this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
-      return {
-        approval,
-        output: result.output,
-        task: result.task
-      };
-    } catch (error) {
-      const appError = toAppError(error);
-      const currentTask = this.dependencies.findTask(approval.taskId);
-      if (currentTask === null) {
-        throw appError;
-      }
-
-      return {
-        approval,
-        error: appError,
-        output: null,
-        task: currentTask
-      };
-    }
-  }
-
-  private toCompletedApprovalActionResult(approval: ApprovalRecord): ApprovalActionResult {
-    const task = this.dependencies.findTask(approval.taskId);
-    if (task === null) {
-      throw new AppError({
-        code: "task_not_found",
-        message: `Task ${approval.taskId} was not found.`
-      });
-    }
-    const result: ApprovalActionResult = {
-      approval,
-      output: task.finalOutput,
-      task
-    };
-    if (task.errorCode !== null) {
-      result.error = new AppError({
-        code: task.errorCode,
-        message: task.errorMessage ?? task.errorCode
-      });
-    }
-    return result;
+    return this.approvalResolutionFacade.resolveApproval(approvalId, action, reviewerId, allowScope);
   }
 
   public async answerClarifyPrompt(
@@ -1318,55 +1121,55 @@ export class AgentApplicationService {
   }
 
   public startScheduler(): void {
-    this.dependencies.schedulerService.start();
+    this.scheduleFacade.startScheduler();
   }
 
   public stopScheduler(): void {
-    this.dependencies.schedulerService.stop();
+    this.scheduleFacade.stopScheduler();
   }
 
   public createSchedule(input: CreateScheduleInput): ScheduleRecord {
-    return this.dependencies.schedulerService.createSchedule(input);
+    return this.scheduleFacade.createSchedule(input);
   }
 
   public updateSchedule(scheduleId: string, input: UpdateScheduleInput): ScheduleRecord {
-    return this.dependencies.schedulerService.updateSchedule(scheduleId, input);
+    return this.scheduleFacade.updateSchedule(scheduleId, input);
   }
 
   public listSchedules(query?: ScheduleListQuery): ScheduleRecord[] {
-    return this.dependencies.schedulerService.listSchedules(query);
+    return this.scheduleFacade.listSchedules(query);
   }
 
   public showSchedule(scheduleId: string): ScheduleRecord | null {
-    return this.dependencies.schedulerService.showSchedule(scheduleId);
+    return this.scheduleFacade.showSchedule(scheduleId);
   }
 
   public listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[] {
-    return this.dependencies.schedulerService.listScheduleRuns(scheduleId, query);
+    return this.scheduleFacade.listScheduleRuns(scheduleId, query);
   }
 
   public scheduleStatus(): ReturnType<SchedulerService["status"]> {
-    return this.dependencies.schedulerService.status();
+    return this.scheduleFacade.scheduleStatus();
   }
 
   public async tickScheduleOnce(): Promise<void> {
-    await this.dependencies.schedulerService.tickOnce();
+    await this.scheduleFacade.tickScheduleOnce();
   }
 
   public archiveSchedule(scheduleId: string): ScheduleRecord {
-    return this.dependencies.schedulerService.archiveSchedule(scheduleId);
+    return this.scheduleFacade.archiveSchedule(scheduleId);
   }
 
   public pauseSchedule(scheduleId: string): ScheduleRecord {
-    return this.dependencies.schedulerService.pauseSchedule(scheduleId);
+    return this.scheduleFacade.pauseSchedule(scheduleId);
   }
 
   public resumeSchedule(scheduleId: string): ScheduleRecord {
-    return this.dependencies.schedulerService.resumeSchedule(scheduleId);
+    return this.scheduleFacade.resumeSchedule(scheduleId);
   }
 
   public runScheduleNow(scheduleId: string): ScheduleRunRecord {
-    return this.dependencies.schedulerService.runNow(scheduleId);
+    return this.scheduleFacade.runScheduleNow(scheduleId);
   }
 
   public listArtifacts(taskId: string): ArtifactRecord[] {
@@ -2010,7 +1813,7 @@ export class AgentApplicationService {
         toolCallId: approval.toolCallId
       });
 
-      void this.resumeApprovalFailureOnce(approval);
+      void this.approvalResolutionFacade.resumeApprovalFailureOnce(approval);
     }
 
     for (const prompt of this.dependencies.clarifyService.expirePending()) {

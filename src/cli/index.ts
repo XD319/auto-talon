@@ -6,16 +6,6 @@ import { basename, join, resolve } from "node:path";
 
 import { assertSafeHttpBind } from "../core/http-auth.js";
 import {
-  createGatewayApplication,
-  createGatewayRuntime,
-  createFeishuGatewayPlugin,
-  hasFeishuGatewayConfig,
-  startFeishuGateway,
-  startLocalWebhookGateway,
-  GatewayManager,
-  LocalWebhookAdapter
-} from "../gateway/index.js";
-import {
   McpServer,
   McpSkillBridge,
   McpStdioHost,
@@ -55,19 +45,11 @@ import {
   buildRepoMap,
   createApplication,
   createDefaultRunOptions,
-  formatScheduleTimingPreview,
-  parseExecutionModeInput,
-  previewScheduleTiming,
   resolveDefaultReviewerId,
   resolveDefaultUserId,
-  resolveScheduleTiming,
   initializeWorkspaceFiles,
   resolveAppConfig,
-  timingToCreateFields,
   RUNTIME_VERSION,
-  type AppRuntimeHandle,
-  type CreateApplicationOptions,
-  type ResolveAppConfigOptions
 } from "../runtime/index.js";
 import { runGitReadOnly } from "../runtime/workspace/git-readonly.js";
 import { formatSmokeSuiteReport, runSmokeSuite } from "../testing/index.js";
@@ -82,6 +64,15 @@ import {
   runInteractiveModelWizard,
   setModelSelection
 } from "./model-command.js";
+import {
+  collectOption,
+  parsePositiveIntegerOption,
+  resolveSandboxCliOptions,
+  type SandboxCommandOptions
+} from "./cli-helpers.js";
+import { registerGatewayCommands } from "./gateway-command.js";
+import { registerMemoryCommands } from "./memory-command.js";
+import { registerScheduleCommands } from "./schedule-command.js";
 import { resolveRuntimeConfig, writeAuxiliarySlot } from "../runtime/runtime-config.js";
 import {
   AUXILIARY_SLOTS,
@@ -105,20 +96,11 @@ import {
   formatExperienceSearch,
   formatInboxDetail,
   formatInboxList,
-  formatMemoryList,
-  formatMemoryGuide,
-  formatMemoryRecallExplanation,
-  formatMemoryScope,
-  formatMemorySuggestionQueue,
   formatNextActionList,
   formatProviderCatalog,
   formatProviderHealth,
   formatProviderSmoke,
   formatProviderStats,
-  formatScheduleDetail,
-  formatScheduleList,
-  formatScheduleRunList,
-  formatScheduleStatus,
   formatReplayReport,
   formatRunError,
   formatSkillDraft,
@@ -148,7 +130,6 @@ import type {
   ExperienceType,
   RuntimeOutputEvent
 } from "../types/index.js";
-import type { InboundMessageAdapter } from "../types/index.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
 
 export async function main(argv = process.argv): Promise<void> {
@@ -478,272 +459,7 @@ export async function main(argv = process.argv): Promise<void> {
 
   const traceCommand = program.command("trace").description("Inspect persisted trace data");
 
-  const scheduleCommand = program.command("schedule").description("Manage scheduled background jobs");
-  scheduleCommand
-    .command("create")
-    .argument("<input>", "Scheduled task prompt")
-    .requiredOption("--name <name>", "Schedule display name")
-    .option("--every <duration>", "Recurring interval, e.g. 5m, 1h, 1d")
-    .option("--at <iso>", "One-shot run time in ISO-8601")
-    .option("--cron <expression>", "Cron expression")
-    .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
-    .option("--session <session_id>", "Continue an existing session")
-    .option("--execution-mode <mode>", "isolated, continue, or session:<id>")
-    .option("--profile <profile>", "Agent profile id", "executor")
-    .option("--cwd <cwd>", "Working directory", process.cwd())
-    .option("--max-attempts <num>", "Max retry attempts", parsePositiveIntegerOption("--max-attempts"), 3)
-    .option("--backoff-base <ms>", "Backoff base milliseconds", parsePositiveIntegerOption("--backoff-base"), 5000)
-    .option("--backoff-max <ms>", "Backoff max milliseconds", parsePositiveIntegerOption("--backoff-max"), 300000)
-    .action((input: string, commandOptions: ScheduleCreateOptions) => {
-      const cwd = commandOptions.cwd ?? process.cwd();
-      const handle = createApplication(cwd);
-      try {
-        if (
-          commandOptions.session !== undefined &&
-          commandOptions.executionMode === undefined
-        ) {
-          throw new Error(
-            "--session requires --execution-mode continue or session:<id>; isolated schedules ignore session binding."
-          );
-        }
-        const ownerUserId = resolveDefaultUserId();
-        const name = commandOptions.name ?? "scheduled-run";
-        const profile = (commandOptions.profile ?? "executor") as "executor" | "planner" | "reviewer";
-        const parsedExecutionMode =
-          commandOptions.executionMode === undefined
-            ? null
-            : parseExecutionModeInput(
-                commandOptions.executionMode.startsWith("session:")
-                  ? commandOptions.executionMode
-                  : commandOptions.session !== undefined && commandOptions.executionMode === "continue"
-                    ? "continue"
-                    : commandOptions.executionMode
-              );
-        const timing = resolveScheduleTiming({
-          at: commandOptions.at,
-          cron: commandOptions.cron,
-          every: commandOptions.every,
-          timezone: commandOptions.timezone
-        });
-        const schedule = handle.service.createSchedule({
-          agentProfileId: profile,
-          backoffBaseMs: commandOptions.backoffBase,
-          backoffMaxMs: commandOptions.backoffMax,
-          cwd,
-          input,
-          maxAttempts: commandOptions.maxAttempts,
-          name,
-          ownerUserId,
-          providerName: handle.config.provider.name,
-          ...timingToCreateFields(timing),
-          ...(parsedExecutionMode !== null ? { executionMode: parsedExecutionMode.executionMode } : {}),
-          ...(parsedExecutionMode?.sessionId !== undefined
-            ? { sessionId: parsedExecutionMode.sessionId }
-            : commandOptions.session !== undefined
-              ? { sessionId: commandOptions.session }
-              : {}),
-          ...(commandOptions.timezone !== undefined ? { timezone: commandOptions.timezone } : {})
-        });
-        console.log(formatScheduleDetail(schedule));
-      } finally {
-        handle.close();
-      }
-    });
-  scheduleCommand
-    .command("preview")
-    .argument("<when>", "Schedule expression: 30m, every 2h, cron, or ISO timestamp")
-    .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
-    .option("--count <count>", "Number of future fire times", parsePositiveIntegerOption("--count"), 5)
-    .action((when: string, commandOptions: { count: number; timezone?: string }) => {
-      const timing = resolveScheduleTiming({ timezone: commandOptions.timezone, when });
-      console.log(formatScheduleTimingPreview(previewScheduleTiming(timing, commandOptions.count)));
-    });
-  scheduleCommand
-    .command("list")
-    .option("--status <status>", "Filter status: active | paused | completed | archived")
-    .action((commandOptions: { status?: "active" | "paused" | "completed" | "archived" }) => {
-      withApplication(process.cwd(), (handle) => {
-        const query = commandOptions.status === undefined ? undefined : { status: commandOptions.status };
-        console.log(formatScheduleList(handle.service.listSchedules(query)));
-      });
-    });
-  scheduleCommand.command("show").argument("<schedule_id>").action((scheduleId: string) => {
-    withApplication(process.cwd(), (handle) => {
-      const schedule = handle.service.showSchedule(scheduleId);
-      if (schedule === null) {
-        console.error(`Schedule ${scheduleId} not found.`);
-        process.exitCode = 1;
-        return;
-      }
-      console.log(formatScheduleDetail(schedule));
-    });
-  });
-  scheduleCommand
-    .command("edit")
-    .argument("<schedule_id>")
-    .option("--name <name>", "Schedule display name")
-    .option("--input <input>", "Scheduled task prompt")
-    .option("--every <duration>", "Recurring interval, e.g. 5m, 1h, 1d")
-    .option("--at <iso>", "One-shot run time in ISO-8601")
-    .option("--cron <expression>", "Cron expression")
-    .option("--timezone <timezone>", "IANA timezone for cron, e.g. Asia/Shanghai")
-    .option("--session <session_id>", "Continue an existing session; use none to clear")
-    .option("--profile <profile>", "Agent profile id")
-    .option("--max-attempts <num>", "Max retry attempts", parsePositiveIntegerOption("--max-attempts"))
-    .option("--backoff-base <ms>", "Backoff base milliseconds", parsePositiveIntegerOption("--backoff-base"))
-    .option("--backoff-max <ms>", "Backoff max milliseconds", parsePositiveIntegerOption("--backoff-max"))
-    .action((scheduleId: string, commandOptions: ScheduleEditOptions) => {
-      withApplication(process.cwd(), (handle) => {
-        const timingTouched =
-          commandOptions.at !== undefined ||
-          commandOptions.every !== undefined ||
-          commandOptions.cron !== undefined;
-        const timingFields = timingTouched
-          ? timingToCreateFields(
-              resolveScheduleTiming({
-                at: commandOptions.at,
-                cron: commandOptions.cron,
-                every: commandOptions.every,
-                timezone: commandOptions.timezone
-              })
-            )
-          : {};
-        const updated = handle.service.updateSchedule(scheduleId, {
-          ...(commandOptions.backoffBase !== undefined
-            ? { backoffBaseMs: commandOptions.backoffBase }
-            : {}),
-          ...(commandOptions.backoffMax !== undefined
-            ? { backoffMaxMs: commandOptions.backoffMax }
-            : {}),
-          ...timingFields,
-          ...(commandOptions.input !== undefined ? { input: commandOptions.input } : {}),
-          ...(commandOptions.maxAttempts !== undefined
-            ? { maxAttempts: commandOptions.maxAttempts }
-            : {}),
-          ...(commandOptions.name !== undefined ? { name: commandOptions.name } : {}),
-          ...(commandOptions.profile !== undefined
-            ? { agentProfileId: commandOptions.profile as "executor" | "planner" | "reviewer" }
-            : {}),
-          ...(commandOptions.session !== undefined ? { sessionId: parseNullableOption(commandOptions.session) } : {}),
-          ...(commandOptions.timezone !== undefined ? { timezone: commandOptions.timezone } : {})
-        });
-        console.log(formatScheduleDetail(updated));
-      });
-    });
-  scheduleCommand.command("pause").argument("<schedule_id>").action((scheduleId: string) => {
-    withApplication(process.cwd(), (handle) => {
-      console.log(formatScheduleDetail(handle.service.pauseSchedule(scheduleId)));
-    });
-  });
-  scheduleCommand.command("resume").argument("<schedule_id>").action((scheduleId: string) => {
-    withApplication(process.cwd(), (handle) => {
-      console.log(formatScheduleDetail(handle.service.resumeSchedule(scheduleId)));
-    });
-  });
-  scheduleCommand.command("run-now").argument("<schedule_id>").action((scheduleId: string) => {
-    withApplication(process.cwd(), (handle) => {
-      const run = handle.service.runScheduleNow(scheduleId);
-      console.log(formatScheduleRunList([run]));
-    });
-  });
-  scheduleCommand
-    .command("runs")
-    .argument("<schedule_id>")
-    .option("--status <status>", "Filter status")
-    .option("--tail <count>", "Number of latest runs", parsePositiveIntegerOption("--tail"), 20)
-    .action((scheduleId: string, commandOptions: { status?: string; tail: number }) => {
-      withApplication(process.cwd(), (handle) => {
-        const parsedStatus = commandOptions.status as
-          | "queued"
-          | "running"
-          | "waiting_approval"
-          | "blocked"
-          | "completed"
-          | "failed"
-          | "cancelled"
-          | undefined;
-        const query =
-          parsedStatus === undefined
-            ? { tail: commandOptions.tail }
-            : { status: parsedStatus, tail: commandOptions.tail };
-        const runs = handle.service.listScheduleRuns(scheduleId, query);
-        console.log(formatScheduleRunList(runs));
-      });
-    });
-  scheduleCommand.command("remove").argument("<schedule_id>").description("Archive a schedule").action((scheduleId: string) => {
-    withApplication(process.cwd(), (handle) => {
-      console.log(formatScheduleDetail(handle.service.archiveSchedule(scheduleId)));
-    });
-  });
-  scheduleCommand.command("status").description("Summarize schedules and queued runs").action(() => {
-    withApplication(process.cwd(), (handle) => {
-      console.log(formatScheduleStatus(handle.service.scheduleStatus()));
-    });
-  });
-  scheduleCommand.command("tick").description("Run one scheduler tick and exit").action(async () => {
-    const handle = createApplication(process.cwd());
-    try {
-      await handle.service.tickScheduleOnce();
-      console.log(formatScheduleStatus(handle.service.scheduleStatus()));
-    } finally {
-      handle.close();
-    }
-  });
-  scheduleCommand
-    .command("run [schedule_id]")
-    .description("Run scheduler daemon, or trigger a schedule and optionally wait")
-    .option("--wait", "Wait until the triggered run reaches a terminal status")
-    .option("--timeout <ms>", "Wait timeout in milliseconds", parsePositiveIntegerOption("--timeout"), 300_000)
-    .option("--poll-interval <ms>", "Polling interval while waiting", parsePositiveIntegerOption("--poll-interval"), 500)
-    .action(async (
-      scheduleId: string | undefined,
-      commandOptions: { wait?: boolean; timeout: number; pollInterval: number }
-    ) => {
-      if (scheduleId === undefined) {
-        const handle = createApplication(process.cwd(), {
-          scheduler: { autoStart: true }
-        });
-        console.log("Scheduler started. Press Ctrl+C to stop.");
-        await new Promise<void>((resolve) => {
-          process.on("SIGINT", () => {
-            handle.close();
-            resolve();
-          });
-        });
-        return;
-      }
-
-      const handle = createApplication(process.cwd(), {
-        scheduler: { autoStart: true }
-      });
-      try {
-        const run = handle.service.runScheduleNow(scheduleId);
-        console.log(formatScheduleRunList([run]));
-        if (commandOptions.wait !== true) {
-          return;
-        }
-        const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
-        const deadline = Date.now() + commandOptions.timeout;
-        while (Date.now() < deadline) {
-          await handle.service.tickScheduleOnce();
-          const latest =
-            handle.service.listScheduleRuns(scheduleId, { tail: 20 }).find((entry) => entry.runId === run.runId) ??
-            run;
-          if (terminalStatuses.has(latest.status)) {
-            console.log(formatScheduleRunList([latest]));
-            if (latest.status !== "completed") {
-              process.exitCode = 1;
-            }
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, commandOptions.pollInterval));
-        }
-        console.error(`Timed out waiting for schedule run ${run.runId}.`);
-        process.exitCode = 1;
-      } finally {
-        handle.close();
-      }
-    });
+  registerScheduleCommands(program);
 
   traceCommand
     .argument("[task_id]", "Task identifier")
@@ -2020,332 +1736,7 @@ export async function main(argv = process.argv): Promise<void> {
       await runSmokeCommand(commandOptions);
     });
 
-  const memoryCommand = program.command("memory").description("Inspect governed memories");
-
-  memoryCommand
-    .command("list")
-    .option("--scope <scope>", "Filter scope: profile | project | working | experience_ref | skill_ref")
-    .action((commandOptions: { scope?: "profile" | "project" | "working" | "experience_ref" | "skill_ref" | "session" | "agent" }) => {
-      const handle = createApplication(process.cwd());
-      try {
-        const memories = handle.service.listMemories();
-        const scope =
-          commandOptions.scope === undefined ? undefined : normalizeMemoryScope(commandOptions.scope);
-        console.log(
-          formatMemoryList(
-            scope === undefined ? memories : memories.filter((memory) => memory.scope === scope)
-          )
-        );
-      } finally {
-        handle.close();
-      }
-    });
-
-  memoryCommand.command("guide").description("Explain memory layer semantics").action(() => {
-    console.log(formatMemoryGuide());
-  });
-
-  memoryCommand
-    .command("add")
-    .argument("<scope>", "Memory scope: profile | project")
-    .argument("<text>", "Memory text")
-    .option("--cwd <path>", "Workspace path for project scope", process.cwd())
-    .option("--profile <profile>", "Agent profile for profile scope", "executor")
-    .option("--user <user>", "User id for profile scope")
-    .option("--reviewer <reviewer>", "Reviewer id")
-    .action(
-      (
-        scope: "profile" | "project" | "working",
-        text: string,
-        commandOptions: { cwd: string; profile: string; reviewer?: string; user?: string }
-      ) => {
-        const handle = createApplication(commandOptions.cwd);
-        try {
-          if (scope !== "profile" && scope !== "project") {
-            throw new Error("Memory add only supports profile and project scopes.");
-          }
-          const reviewer =
-            commandOptions.reviewer ?? resolveDefaultReviewerId();
-          const userId = commandOptions.user ?? resolveDefaultUserId();
-          const memory = handle.service.addMemory({
-            content: text,
-            cwd: commandOptions.cwd,
-            profileId: commandOptions.profile,
-            reviewerId: reviewer,
-            scope,
-            userId
-          });
-          console.log(formatMemoryList([memory]));
-        } finally {
-          handle.close();
-        }
-      }
-    );
-
-  memoryCommand
-    .command("forget")
-    .argument("<memory_id>", "Memory identifier")
-    .option("--reviewer <reviewer>", "Reviewer id")
-    .option("--note <note>", "Forget note", "manual memory forget")
-    .action((memoryId: string, commandOptions: { note: string; reviewer?: string }) => {
-      const handle = createApplication(process.cwd());
-      try {
-        const reviewer =
-          commandOptions.reviewer ?? resolveDefaultReviewerId();
-        console.log(formatMemoryList([handle.service.forgetMemory(memoryId, reviewer, commandOptions.note)]));
-      } finally {
-        handle.close();
-      }
-    });
-
-  memoryCommand
-    .command("why")
-    .option("--task <taskId>", "Task id to inspect")
-    .option("--memory <memoryId>", "Filter to one memory id")
-    .action((commandOptions: { memory?: string; task?: string }) => {
-      const handle = createApplication(process.cwd());
-      try {
-        if (commandOptions.task === undefined) {
-          throw new Error("Provide --task <taskId>.");
-        }
-        console.log(
-          formatMemoryRecallExplanation(
-            handle.service.explainMemoryRecall(commandOptions.task, commandOptions.memory)
-          )
-        );
-      } finally {
-        handle.close();
-      }
-    });
-
-  memoryCommand
-    .command("search")
-    .argument("<query>", "Session memory search query")
-    .option("--session <sessionId>", "Search within specific session")
-    .option("--global", "Search across all sessions")
-    .option("--exclude-session <sessionId>", "Exclude one session from global search")
-    .option("--limit <number>", "Max hit count", parsePositiveIntegerOption("--limit"), 5)
-    .action(
-      (
-        query: string,
-        commandOptions: {
-          session?: string;
-          global?: boolean;
-          excludeSession?: string;
-          limit: number;
-        }
-      ) => {
-        const handle = createApplication(process.cwd());
-        try {
-          if (commandOptions.global !== true && commandOptions.session === undefined) {
-            throw new Error("Provide --session <sessionId> or use --global.");
-          }
-          if (commandOptions.global === true && commandOptions.session !== undefined) {
-            throw new Error("Use either --global or --session, not both.");
-          }
-          const hits =
-            commandOptions.global === true
-              ? handle.service.searchSessionSummaries({
-                  excludeSessionId: commandOptions.excludeSession ?? null,
-                  limit: commandOptions.limit,
-                  query
-                })
-              : handle.service.searchSessionSummaries({
-                  limit: commandOptions.limit,
-                  query,
-                  sessionId: commandOptions.session ?? ""
-                });
-          console.log(formatSessionSummarySearchHits(hits));
-        } finally {
-          handle.close();
-        }
-      }
-    );
-
-  memoryCommand
-    .command("show")
-    .argument("<scope>", "Memory scope: profile | project | working | experience_ref | skill_ref")
-    .option("--scope-key <key>", "Explicit scope key")
-    .option("--task-id <taskId>", "Task id for session scope")
-    .option("--cwd <path>", "Workspace path for project scope", process.cwd())
-    .option("--profile <profile>", "Agent profile for agent scope", "executor")
-    .option("--user <user>", "User id for agent scope")
-    .action(
-      (
-        scope: "profile" | "project" | "working" | "experience_ref" | "skill_ref" | "session" | "agent",
-        commandOptions: {
-          scopeKey?: string;
-          taskId?: string;
-          cwd: string;
-          profile: string;
-          user?: string;
-        }
-      ) => {
-        const handle = createApplication(commandOptions.cwd);
-        try {
-          const resolvedScope = normalizeMemoryScope(scope);
-          const scopeKey = resolveScopeKey(resolvedScope, {
-            cwd: commandOptions.cwd,
-            profile: commandOptions.profile,
-            scopeKey: commandOptions.scopeKey,
-            taskId: commandOptions.taskId,
-            user: commandOptions.user
-          });
-          if (resolvedScope === "experience_ref") {
-            console.log(
-              formatExperienceList(
-                handle.service.listExperiences({
-                  scopeKey
-                })
-              )
-            );
-            return;
-          }
-          if (resolvedScope === "skill_ref") {
-            console.log(formatSkillList(handle.service.listSkills()));
-            return;
-          }
-          const result = handle.service.showMemoryScope(resolvedScope, scopeKey);
-          console.log(formatMemoryScope(resolvedScope, scopeKey, result.memories, result.snapshots));
-        } finally {
-          handle.close();
-        }
-      }
-    );
-
-  const snapshotCommand = memoryCommand.command("snapshot").description("Manage memory snapshots");
-
-  snapshotCommand
-    .command("create")
-    .argument("<scope>", "Memory scope: profile | project")
-    .option("--label <label>", "Snapshot label", "manual-snapshot")
-    .option("--scope-key <key>", "Explicit scope key")
-    .option("--task-id <taskId>", "Task id for session scope")
-    .option("--cwd <path>", "Workspace path for project scope", process.cwd())
-    .option("--profile <profile>", "Agent profile for agent scope", "executor")
-    .option("--user <user>", "User id for agent scope")
-    .option("--reviewer <reviewer>", "Snapshot creator id")
-    .action(
-      (
-        scope: "profile" | "project" | "session" | "agent",
-        commandOptions: {
-          cwd: string;
-          label: string;
-          profile: string;
-          reviewer?: string;
-          scopeKey?: string;
-          taskId?: string;
-          user?: string;
-        }
-      ) => {
-        const handle = createApplication(commandOptions.cwd);
-        try {
-          const resolvedScope = normalizeMemoryScope(scope);
-          if (resolvedScope !== "profile" && resolvedScope !== "project") {
-            throw new Error("Snapshot create only supports profile and project scopes.");
-          }
-          const scopeKey = resolveScopeKey(resolvedScope, {
-            cwd: commandOptions.cwd,
-            profile: commandOptions.profile,
-            scopeKey: commandOptions.scopeKey,
-            taskId: commandOptions.taskId,
-            user: commandOptions.user
-          });
-          const reviewer =
-            commandOptions.reviewer ?? resolveDefaultReviewerId();
-          const snapshot = handle.service.createMemorySnapshot(
-            resolvedScope,
-            scopeKey,
-            commandOptions.label,
-            reviewer
-          );
-          console.log(formatSnapshot(snapshot));
-        } finally {
-          handle.close();
-        }
-      }
-    );
-
-  memoryCommand
-    .command("review")
-    .argument("<memory_id>", "Memory identifier")
-    .argument("<status>", "verified | rejected | stale")
-    .option("--reviewer <reviewer>", "Reviewer id")
-    .option("--note <note>", "Review note", "manual memory review")
-    .action(
-      (
-        memoryId: string,
-        status: "verified" | "rejected" | "stale",
-        commandOptions: { note: string; reviewer?: string }
-      ) => {
-        const handle = createApplication(process.cwd());
-        try {
-          const reviewer =
-            commandOptions.reviewer ?? resolveDefaultReviewerId();
-          const reviewed = handle.service.reviewMemory(
-            memoryId,
-            status,
-            reviewer,
-            commandOptions.note
-          );
-          console.log(formatMemoryList([reviewed]));
-        } finally {
-          handle.close();
-        }
-      }
-    );
-
-  const memoryReviewCommand = memoryCommand.command("review-queue").description("Review memory suggestions in inbox");
-
-  memoryReviewCommand
-    .command("list")
-    .option("--user <user>", "Filter by runtime user id")
-    .option("--status <status>", "Filter status: pending | seen | done | dismissed", "pending")
-    .option("--limit <count>", "Limit entries", parsePositiveIntegerOption("--limit"), 20)
-    .action((commandOptions: { limit?: number; status?: InboxListOptions["status"]; user?: string }) => {
-      const handle = createApplication(process.cwd());
-      try {
-        console.log(
-          formatMemorySuggestionQueue(
-            handle.service.listMemorySuggestions({
-              ...(commandOptions.limit !== undefined
-                ? { limit: commandOptions.limit }
-                : {}),
-              ...(commandOptions.status !== undefined ? { status: commandOptions.status } : {}),
-              ...(commandOptions.user !== undefined ? { userId: commandOptions.user } : {})
-            })
-          )
-        );
-      } finally {
-        handle.close();
-      }
-    });
-
-  memoryReviewCommand.command("accept").argument("<inbox_id>").option("--reviewer <reviewer>", "Reviewer id").action(
-    (inboxId: string, commandOptions: { reviewer?: string }) => {
-      const handle = createApplication(process.cwd());
-      try {
-        const reviewer =
-          commandOptions.reviewer ?? resolveDefaultReviewerId();
-        const accepted = handle.service.acceptMemorySuggestion(inboxId, reviewer);
-        console.log(formatInboxDetail(accepted.inboxItem));
-        if (accepted.memory !== null) {
-          console.log(formatMemoryList([accepted.memory]));
-        }
-      } finally {
-        handle.close();
-      }
-    }
-  );
-
-  memoryReviewCommand.command("dismiss").argument("<inbox_id>").action((inboxId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
-      console.log(formatInboxDetail(handle.service.dismissMemorySuggestion(inboxId)));
-    } finally {
-      handle.close();
-    }
-  });
+  registerMemoryCommands(program);
 
   const experienceCommand = program.command("experience").description("Inspect and review experience assets");
 
@@ -2620,138 +2011,9 @@ export async function main(argv = process.argv): Promise<void> {
       }
     });
 
-  const gatewayCommand = program
-    .command("gateway")
-    .description("Run minimal external gateway adapters");
-
-  gatewayCommand
-    .command("serve-webhook")
-    .option("--cwd <path>", "Workspace path", process.cwd())
-    .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
-    .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
-    .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
-    .option("--host <host>", "Host to bind", "127.0.0.1")
-    .option("--port <port>", "Port to bind", parsePortOption("--port"), 7070)
-    .option("--insecure", "Allow binding to non-loopback hosts without HTTP token")
-    .action(async (commandOptions: SandboxCommandOptions & { host: string; insecure?: boolean; port: number }) => {
-      assertSafeHttpBind({
-        cwd: commandOptions.cwd,
-        host: commandOptions.host,
-        insecure: commandOptions.insecure === true
-      });
-      const gatewayApp = createGatewayApplication(commandOptions.cwd, {
-        sandbox: resolveSandboxCliOptions(commandOptions)
-      });
-      const handle = gatewayApp.runtime;
-      const gatewayRuntime = gatewayApp.gateway;
-      const gatewayHandle = await startLocalWebhookGateway(handle, {
-        host: commandOptions.host,
-        port: commandOptions.port
-      }, gatewayRuntime);
-
-      console.log(
-        `Local webhook adapter ${gatewayHandle.adapter.descriptor.adapterId} listening on http://${commandOptions.host}:${commandOptions.port}`
-      );
-      console.log("POST /tasks to submit work, GET /tasks/:taskId to inspect, GET /tasks/:taskId/events for SSE.");
-
-      const shutdown = async (): Promise<void> => {
-        await gatewayHandle.manager.stopAll();
-        gatewayApp.close();
-        process.exit(0);
-      };
-
-      process.once("SIGINT", () => {
-        void shutdown();
-      });
-      process.once("SIGTERM", () => {
-        void shutdown();
-      });
-    });
-
-  gatewayCommand
-    .command("serve-feishu")
-    .option("--cwd <path>", "Workspace path", process.cwd())
-    .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
-    .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
-    .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
-    .option("--local-webhook-port <port>", "Also start local webhook on this port", parsePortOption("--local-webhook-port"))
-    .action(async (commandOptions: SandboxCommandOptions & { localWebhookPort?: number }) => {
-      const gatewayApp = createGatewayApplication(commandOptions.cwd, {
-        sandbox: resolveSandboxCliOptions(commandOptions)
-      });
-      const handle = gatewayApp.runtime;
-      const gatewayRuntime = gatewayApp.gateway;
-      let extraManagers: GatewayManager[] = [];
-      try {
-        const feishu = await startFeishuGateway(handle, gatewayRuntime);
-        extraManagers = [feishu.manager];
-        if (commandOptions.localWebhookPort !== undefined) {
-          const local = await startLocalWebhookGateway(handle, {
-            host: "127.0.0.1",
-            port: commandOptions.localWebhookPort
-          }, gatewayRuntime);
-          extraManagers.push(local.manager);
-        }
-
-        console.log(`Feishu adapter ${feishu.adapter.descriptor.adapterId} is running.`);
-      } catch (error) {
-        for (const manager of extraManagers) {
-          await manager.stopAll();
-        }
-        gatewayApp.close();
-        throw error;
-      }
-      const shutdown = async (): Promise<void> => {
-        for (const manager of extraManagers) {
-          await manager.stopAll();
-        }
-        gatewayApp.close();
-        process.exit(0);
-      };
-      process.once("SIGINT", () => void shutdown());
-      process.once("SIGTERM", () => void shutdown());
-    });
-
-  gatewayCommand
-    .command("list-adapters")
-    .option("--cwd <path>", "Workspace path", process.cwd())
-    .option("--write-root <path>", "Additional writable root (repeatable)", collectOption, [])
-    .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
-    .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
-    .action((commandOptions: SandboxCommandOptions) => {
-      const handle = createApplication(commandOptions.cwd, {
-        sandbox: resolveSandboxCliOptions(commandOptions)
-      });
-      try {
-        const listedAdapters: InboundMessageAdapter[] = [
-          new LocalWebhookAdapter({ port: 0, adapterId: "local-webhook" })
-        ];
-        try {
-          if (hasFeishuGatewayConfig(handle.config.workspaceRoot)) {
-            listedAdapters.push(createFeishuGatewayPlugin().createAdapter(handle));
-          }
-        } catch {
-          // Optional adapter: only listed when config is present.
-        }
-        const manager = new GatewayManager(createGatewayRuntime(handle), listedAdapters);
-        for (const adapter of manager.listAdapters()) {
-          console.log(
-            `${adapter.descriptor.adapterId} (${adapter.descriptor.kind}) ${JSON.stringify(adapter.descriptor.capabilities)}`
-          );
-        }
-      } finally {
-        handle.close();
-      }
-    });
+  registerGatewayCommands(program);
 
   await program.parseAsync(argv);
-}
-
-interface SandboxCommandOptions {
-  cwd: string;
-  sandboxMode?: string;
-  sandboxProfile?: string;
-  writeRoot?: string[];
 }
 
 function createCliOutputListener(jsonEvents: boolean): (event: RuntimeOutputEvent) => void {
@@ -2795,35 +2057,6 @@ interface RunCommandOptions extends SandboxCommandOptions {
   profile: string;
   session?: string;
   timeoutMs?: number;
-}
-
-interface ScheduleCreateOptions {
-  at?: string;
-  backoffBase: number;
-  backoffMax: number;
-  cron?: string;
-  cwd?: string;
-  every?: string;
-  executionMode?: string;
-  maxAttempts: number;
-  name?: string;
-  profile?: string;
-  session?: string;
-  timezone?: string;
-}
-
-interface ScheduleEditOptions {
-  at?: string;
-  backoffBase?: number;
-  backoffMax?: number;
-  cron?: string;
-  every?: string;
-  input?: string;
-  maxAttempts?: number;
-  name?: string;
-  profile?: string;
-  session?: string;
-  timezone?: string;
 }
 
 interface ExperienceFilterOptions {
@@ -2874,48 +2107,11 @@ interface ProviderUseCommandOptions {
   workspace?: boolean;
 }
 
-function collectOption(value: string, previous: string[]): string[] {
-  return [...previous, value];
-}
-
-function withApplication<T>(
-  cwd: string,
-  action: (handle: AppRuntimeHandle) => T,
-  options: CreateApplicationOptions = {}
-): T {
-  const handle = createApplication(cwd, options);
-  try {
-    return action(handle);
-  } finally {
-    handle.close();
-  }
-}
-
-function parsePositiveIntegerOption(optionName: string): (value: string) => number {
-  return (value) => {
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      throw new InvalidArgumentError(`${optionName} must be a positive integer.`);
-    }
-    return parsed;
-  };
-}
-
 function parseNonNegativeIntegerOption(optionName: string): (value: string) => number {
   return (value) => {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed < 0) {
       throw new InvalidArgumentError(`${optionName} must be a non-negative integer.`);
-    }
-    return parsed;
-  };
-}
-
-function parsePortOption(optionName: string): (value: string) => number {
-  return (value) => {
-    const parsed = parsePositiveIntegerOption(optionName)(value);
-    if (parsed > 65535) {
-      throw new InvalidArgumentError(`${optionName} must be between 1 and 65535.`);
     }
     return parsed;
   };
@@ -2962,11 +2158,6 @@ function parseRatioOption(optionName: string): (value: string) => number {
     }
     return parsed;
   };
-}
-
-function parseNullableOption(value: string): string | null {
-  const normalized = value.trim().toLowerCase();
-  return normalized === "none" || normalized === "null" || normalized === "-" ? null : value;
 }
 
 async function runSmokeCommand(commandOptions: SmokeCommandOptions): Promise<void> {
@@ -3046,16 +2237,6 @@ function listInboxItems(commandOptions: InboxListOptions): void {
   } finally {
     handle.close();
   }
-}
-
-function resolveSandboxCliOptions(options: SandboxCommandOptions): ResolveAppConfigOptions {
-  return {
-    ...(options.sandboxMode === "local" || options.sandboxMode === "docker"
-      ? { sandboxMode: options.sandboxMode }
-      : {}),
-    ...(options.sandboxProfile !== undefined ? { sandboxProfile: options.sandboxProfile } : {}),
-    ...(options.writeRoot !== undefined ? { writeRoots: options.writeRoot } : {})
-  };
 }
 
 function toExperienceQuery(options: ExperienceFilterOptions): ExperienceQuery {
@@ -3158,48 +2339,6 @@ function removeLocalPlugin(cwd: string, name: string): { name: string } {
 
 function localPluginsRoot(cwd: string): string {
   return join(resolve(cwd), ".auto-talon", "plugins");
-}
-
-function resolveScopeKey(
-  scope: "profile" | "project" | "working" | "experience_ref" | "skill_ref",
-  options: {
-    cwd: string;
-    profile: string;
-    scopeKey: string | undefined;
-    taskId: string | undefined;
-    user: string | undefined;
-  }
-): string {
-  if (options.scopeKey !== undefined) {
-    return options.scopeKey;
-  }
-
-  if (scope === "working") {
-    if (options.taskId === undefined) {
-      throw new Error("Working scope requires --task-id or --scope-key.");
-    }
-
-    return options.taskId;
-  }
-
-  if (scope === "project" || scope === "experience_ref" || scope === "skill_ref") {
-    return options.cwd;
-  }
-
-  const userId = options.user ?? resolveDefaultUserId();
-  return `${userId}:${options.profile}`;
-}
-
-function normalizeMemoryScope(
-  scope: "profile" | "project" | "working" | "experience_ref" | "skill_ref" | "session" | "agent"
-): "profile" | "project" | "working" | "experience_ref" | "skill_ref" {
-  if (scope === "session") {
-    return "working";
-  }
-  if (scope === "agent") {
-    return "profile";
-  }
-  return scope;
 }
 
 function parseApprovalAllowScope(value: string | undefined): ApprovalAllowScope {
