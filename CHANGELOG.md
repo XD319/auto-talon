@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking:** Legacy thread→session schema and JSON session transcripts require a one-time `talon doctor --fix` after upgrade. Runtime no longer silently repairs legacy schema on every open.
+- `talon doctor` warns when deprecated `compact.bufferTokens` is set (field has no runtime effect).
+
 ## v0.1.0
 
 - First formal release of `auto-talon` as a local-first personal agent for

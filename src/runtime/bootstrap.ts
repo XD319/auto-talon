@@ -38,7 +38,7 @@ import { SkillContextService, SkillDraftManager, SkillRegistry } from "../skills
 import { SkillVersionRegistry } from "../skills/versioning/index.js";
 import { StorageManager } from "../storage/database.js";
 import { migrateConfigFiles, validateConfigVersions } from "../storage/config-migration.js";
-import { RUNTIME_SCHEMA_VERSION } from "../storage/migrations.js";
+import { RUNTIME_SCHEMA_VERSION, finalizeLegacyThreadMigration } from "../storage/migrations.js";
 import { configureSqliteConnection } from "../storage/sqlite-connection.js";
 import { TraceService } from "../tracing/trace-service.js";
 import type {
@@ -79,6 +79,10 @@ import { resolveToolsetForTool } from "../tools/toolsets.js";
 import type { ToolsetName } from "../types/index.js";
 
 import { AgentApplicationService } from "./application-service.js";
+import {
+  assertLegacyWorkspaceMigrated,
+  collectLegacyWorkspaceIssues
+} from "./sessions/legacy-workspace.js";
 import { ContextCompactor, SessionSearchService, SessionSummaryService } from "./context/index.js";
 import { BudgetService } from "./budget/index.js";
 import { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
@@ -414,6 +418,7 @@ export interface CreateApplicationOptions {
     autoStart?: boolean;
   };
   sandbox?: ResolveAppConfigOptions;
+  allowLegacyWorkspace?: boolean;
 }
 
 export function createApplication(
@@ -573,6 +578,9 @@ function buildApplicationRuntime(
   const storage = new StorageManager({
     databasePath: config.databasePath
   });
+  if (options.allowLegacyWorkspace !== true) {
+    assertLegacyWorkspaceMigrated(config.workspaceRoot, storage.database);
+  }
   const traceService = new TraceService(storage.traces);
   const outputService = new RuntimeOutputService(storage.outputs, (taskId) => storage.tasks.findById(taskId));
   const stopOutputTraceProjection = traceService.subscribe((event) => outputService.projectTrace(event));
@@ -1207,7 +1215,10 @@ function buildApplicationRuntime(
     sessionExecutionLock,
     sessionHandoffService,
     gatewaySessionRepository: storage.gatewaySessions,
-    workspaceRoot: config.workspaceRoot
+    workspaceRoot: config.workspaceRoot,
+    collectLegacyWorkspaceIssues: () =>
+      collectLegacyWorkspaceIssues(config.workspaceRoot, storage.database),
+    finalizeLegacyThreadSchema: () => finalizeLegacyThreadMigration(storage.database)
   });
   if (options.scheduler?.autoStart === true) {
     service.startScheduler();

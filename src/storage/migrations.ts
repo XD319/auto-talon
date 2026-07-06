@@ -111,6 +111,11 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "add session execution locks table",
     up: migrateV21,
     version: 21
+  },
+  {
+    description: "finalize thread to session migration and drop legacy tables",
+    up: migrateV22,
+    version: 22
   }
 ];
 
@@ -1077,7 +1082,55 @@ function readPrimaryKeyColumns(database: DatabaseSync, tableName: string): strin
   return rows.filter((row) => row.pk > 0).sort((left, right) => left.pk - right.pk).map((row) => row.name);
 }
 
-function ensureSessionSchemaRepairs(database: DatabaseSync): void {
+function migrateV22(database: DatabaseSync): void {
+  finalizeLegacyThreadMigration(database);
+}
+
+export function finalizeLegacyThreadMigration(database: DatabaseSync): void {
+  ensureCoreSessionTables(database);
+  withForeignKeysDisabled(database, () => {
+    repairLegacySessionIds(database);
+    copyLegacyThreadTables(database);
+    copyLegacySessionSummaries(database);
+    dropLegacyThreadIdColumns(database);
+    dropLegacyThreadTables(database);
+    repairSessionIndex(database);
+  });
+}
+
+const LEGACY_THREAD_TABLES = [
+  "threads",
+  "thread_runs",
+  "thread_lineage",
+  "thread_session_memory_events",
+  "thread_session_memory",
+  "thread_session_memories_current"
+] as const;
+
+export function collectLegacySchemaIssues(database: DatabaseSync): string[] {
+  const issues: string[] = [];
+  for (const tableName of LEGACY_THREAD_TABLES) {
+    if (tableExists(database, tableName)) {
+      issues.push(`Legacy table still present: ${tableName}`);
+    }
+  }
+  for (const tableName of LEGACY_THREAD_ID_TABLES) {
+    if (columnExists(database, tableName, "thread_id")) {
+      issues.push(`Legacy column still present: ${tableName}.thread_id`);
+    }
+  }
+  return issues;
+}
+
+function dropLegacyThreadTables(database: DatabaseSync): void {
+  for (const tableName of LEGACY_THREAD_TABLES) {
+    if (tableExists(database, tableName)) {
+      database.exec(`DROP TABLE ${tableName}`);
+    }
+  }
+}
+
+function ensureCoreSessionTables(database: DatabaseSync): void {
   addColumnIfMissing(database, "tasks", "session_id", "TEXT");
   if (tableExists(database, "tasks")) {
     database.exec("CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)");
@@ -1161,13 +1214,13 @@ function ensureSessionSchemaRepairs(database: DatabaseSync): void {
       metadata_json TEXT NOT NULL
     );
   `);
+}
 
+function ensureSessionSchemaRepairs(database: DatabaseSync): void {
+  ensureCoreSessionTables(database);
+  repairSessionIndex(database);
   withForeignKeysDisabled(database, () => {
-    repairLegacySessionIds(database);
-    dropLegacyThreadIdColumns(database);
-    copyLegacyThreadTables(database);
-    copyLegacySessionSummaries(database);
-    repairSessionIndex(database);
+    ensureReferencedSessionsExist(database);
   });
 }
 
@@ -1249,12 +1302,6 @@ function collectReferencedSessionIdSources(database: DatabaseSync): string[] {
   addSource("session_lineage", "session_id");
   addSource("session_summary_events", "session_id");
   addSource("session_summaries_current", "session_id");
-  addSource("threads", "thread_id");
-  addSource("thread_runs", "thread_id");
-  addSource("thread_lineage", "thread_id");
-  addSource("thread_session_memory_events", "thread_id");
-  addSource("thread_session_memory", "thread_id");
-  addSource("thread_session_memories_current", "thread_id");
 
   return sources;
 }

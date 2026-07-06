@@ -55,4 +55,4 @@ Response:
 
 - All endpoints bind to localhost by default.
 - Session ids are runtime `session_id` values shared by TUI, CLI, and gateway entry points.
-- Legacy `.auto-talon/sessions/*.json` transcripts are migrated into SQLite by `talon doctor`.
+- Legacy `.auto-talon/sessions/*.json` transcripts are migrated into SQLite by `talon doctor --fix` (one-time).

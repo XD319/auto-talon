@@ -24,8 +24,6 @@ export async function startTui(options: StartTuiOptions = {}): Promise<void> {
     ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {})
   });
   try {
-    await handle.service.migrateLegacyTranscripts();
-
     const ownerUserId = resolveDefaultUserId();
     const requestedRuntimeSession = options.resumeSessionId !== undefined || options.continueLatest === true;
     let initialSessionId = requestedRuntimeSession ? options.resumeSessionId : undefined;

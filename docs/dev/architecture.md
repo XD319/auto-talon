@@ -57,4 +57,4 @@ Unified session model:
 - Runtime `session_id` is the canonical identifier across TUI, CLI, gateway, and the session HTTP API.
 - Canonical TUI-visible messages live in SQLite `session_messages`, indexed by `session_messages_fts`.
 - Gateway bindings store `runtime_session_id` and resume via `continueSession` instead of creating a fresh session per message.
-- Legacy `.auto-talon/sessions/*.json` transcripts migrate into SQLite through `talon doctor`.
+- Legacy `.auto-talon/sessions/*.json` transcripts migrate into SQLite through `talon doctor --fix` (one-time). Unmigrated workspaces fail fast until fixed.

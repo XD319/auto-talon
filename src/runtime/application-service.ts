@@ -342,6 +342,8 @@ export interface AgentApplicationServiceDependencies extends RuntimeReadModel {
   auxiliaryProviderResolver?: AuxiliaryProviderResolver;
   budgetService?: BudgetService;
   workspaceRoot: string;
+  collectLegacyWorkspaceIssues: () => string[];
+  finalizeLegacyThreadSchema: () => void;
 }
 
 export interface TaskTimelineEntry {
@@ -524,6 +526,15 @@ export class AgentApplicationService {
       sessionUiStateService: this.dependencies.sessionUiStateService,
       workspaceRoot: this.dependencies.workspaceRoot
     });
+  }
+
+  public async repairLegacyWorkspace(): Promise<TranscriptMigrationResult & { remainingIssues: string[] }> {
+    const transcript = await this.migrateLegacyTranscripts();
+    this.dependencies.finalizeLegacyThreadSchema();
+    return {
+      ...transcript,
+      remainingIssues: this.dependencies.collectLegacyWorkspaceIssues()
+    };
   }
 
   public listSessions(status?: SessionRecord["status"]): SessionRecord[] {
@@ -1655,7 +1666,7 @@ export class AgentApplicationService {
   }
 
   public async configDoctor(signal?: AbortSignal): Promise<AgentDoctorReport> {
-    return new RuntimeDoctorService({
+    const report = await new RuntimeDoctorService({
       allowedFetchHosts: this.dependencies.allowedFetchHosts,
       databasePath: this.dependencies.databasePath,
       listExperiences: () => this.dependencies.listExperiences(),
@@ -1674,6 +1685,14 @@ export class AgentApplicationService {
       deprecatedCompactBufferTokens: this.dependencies.compact.bufferTokens,
       workspaceRoot: this.dependencies.workspaceRoot
     }).configDoctor(signal);
+    const legacyIssues = this.dependencies.collectLegacyWorkspaceIssues();
+    if (legacyIssues.length === 0) {
+      return report;
+    }
+    return {
+      ...report,
+      issues: [...report.issues, ...legacyIssues]
+    };
   }
 
   public async smokeCurrentProvider(signal?: AbortSignal): Promise<ProviderSmokeReport> {

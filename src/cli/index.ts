@@ -793,14 +793,23 @@ export async function main(argv = process.argv): Promise<void> {
     .command("config")
     .description("Configuration and environment checks")
     .command("doctor")
-    .action(async () => {
-      const handle = createApplication(process.cwd());
+    .option("--fix", "Migrate legacy JSON transcripts and finalize thread→session schema")
+    .action(async (commandOptions: { fix?: boolean }) => {
+      const handle = createApplication(process.cwd(), { allowLegacyWorkspace: true });
       try {
-        const migration = await handle.service.migrateLegacyTranscripts();
-        if (migration.migratedFiles > 0 || migration.skippedFiles > 0) {
-          console.log(
-            `Transcript migration: migrated=${migration.migratedFiles} skipped=${migration.skippedFiles}`
-          );
+        if (commandOptions.fix === true) {
+          const repair = await handle.service.repairLegacyWorkspace();
+          if (repair.migratedFiles > 0 || repair.skippedFiles > 0) {
+            console.log(
+              `Transcript migration: migrated=${repair.migratedFiles} skipped=${repair.skippedFiles}`
+            );
+          }
+          if (repair.remainingIssues.length > 0) {
+            console.log("Remaining legacy issues:");
+            for (const issue of repair.remainingIssues) {
+              console.log(`- ${issue}`);
+            }
+          }
         }
         console.log(formatDoctorReport(await handle.service.configDoctor()));
       } finally {
@@ -811,14 +820,23 @@ export async function main(argv = process.argv): Promise<void> {
   program
     .command("doctor")
     .description("Run configuration and environment checks")
-    .action(async () => {
-      const handle = createApplication(process.cwd());
+    .option("--fix", "Migrate legacy JSON transcripts and finalize thread→session schema")
+    .action(async (commandOptions: { fix?: boolean }) => {
+      const handle = createApplication(process.cwd(), { allowLegacyWorkspace: true });
       try {
-        const migration = await handle.service.migrateLegacyTranscripts();
-        if (migration.migratedFiles > 0 || migration.skippedFiles > 0) {
-          console.log(
-            `Transcript migration: migrated=${migration.migratedFiles} skipped=${migration.skippedFiles}`
-          );
+        if (commandOptions.fix === true) {
+          const repair = await handle.service.repairLegacyWorkspace();
+          if (repair.migratedFiles > 0 || repair.skippedFiles > 0) {
+            console.log(
+              `Transcript migration: migrated=${repair.migratedFiles} skipped=${repair.skippedFiles}`
+            );
+          }
+          if (repair.remainingIssues.length > 0) {
+            console.log("Remaining legacy issues:");
+            for (const issue of repair.remainingIssues) {
+              console.log(`- ${issue}`);
+            }
+          }
         }
         console.log(formatDoctorReport(await handle.service.configDoctor()));
       } finally {

@@ -104,7 +104,7 @@ describe("storage migrations", () => {
     }
   });
 
-  it("repairs session ids when database is already at the latest schema version", () => {
+  it("migrates legacy thread_id columns through schema version 22", () => {
     const workspace = mkdtempSync(join(tmpdir(), "auto-talon-session-repair-"));
     const databasePath = join(workspace, "runtime.db");
     const db = new DatabaseSync(databasePath);
@@ -132,7 +132,7 @@ describe("storage migrations", () => {
           thread_id TEXT
         );
         INSERT INTO tasks (task_id, input, thread_id) VALUES ('task-legacy', 'legacy input', 'thread-legacy');
-        PRAGMA user_version = ${RUNTIME_SCHEMA_VERSION};
+        PRAGMA user_version = 21;
       `);
 
       runMigrations(db);
@@ -217,7 +217,7 @@ describe("storage migrations", () => {
           'session-1', 'Legacy session', 'active', 'u1', '/tmp', 'executor', 'mock',
           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, '{}'
         );
-        PRAGMA user_version = ${RUNTIME_SCHEMA_VERSION};
+        PRAGMA user_version = 21;
       `);
 
       runMigrations(db);
@@ -319,7 +319,7 @@ describe("storage migrations", () => {
           'action-1', 'session-orphan', 'session-orphan', 'commitment-1', 'Follow up', 'active', 0, 'manual',
           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '{}'
         );
-        PRAGMA user_version = ${RUNTIME_SCHEMA_VERSION};
+        PRAGMA user_version = 21;
       `);
 
       expect(() => runMigrations(db)).not.toThrow();
@@ -383,7 +383,7 @@ describe("storage migrations", () => {
           session_id TEXT
         );
         INSERT INTO tasks (task_id, input, thread_id) VALUES ('task-1', 'legacy input', 'thread-1');
-        PRAGMA user_version = ${RUNTIME_SCHEMA_VERSION};
+        PRAGMA user_version = 21;
       `);
 
       expect(() => runMigrations(db)).not.toThrow();

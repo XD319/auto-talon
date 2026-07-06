@@ -49,6 +49,7 @@ describe("transcript migrator", () => {
     );
 
     const handle = createApplication(workspaceRoot, {
+      allowLegacyWorkspace: true,
       config: { databasePath: join(workspaceRoot, "runtime.db") }
     });
     try {
