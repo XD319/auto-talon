@@ -29,7 +29,7 @@ describe("runtime config", () => {
     expect(config.tokenBudget.inputLimit).toBe(64_000);
     expect(config.tokenBudget.outputLimit).toBe(8_000);
     expect(config.compact.messageThreshold).toBe(100);
-    expect(config.compact.thresholdRatio).toBe(0.5);
+    expect(config.compact.thresholdRatio).toBe(0.75);
     expect(config.compact.targetRatio).toBe(0.2);
     expect(config.compact.protectFirstN).toBe(3);
     expect(config.compact.protectLastN).toBe(20);

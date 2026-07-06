@@ -58,7 +58,7 @@ describe("context compactor", () => {
             toolCallId: "tc-2",
             toolName: "Shell"
           },
-          { content: "Next Actions:\n- execute pending Shell command", role: "assistant" }
+          { content: "Decision: use Shell\nNext Actions:\n- execute pending Shell command", role: "assistant" }
         ],
         reason: "message_count",
         sessionScopeKey: "task-1",
@@ -68,16 +68,16 @@ describe("context compactor", () => {
     });
 
     expect(sessionSummary.goal).toContain("My long-running objective");
-    expect(sessionSummary.decisions.join(" ")).toContain("Next Actions");
+    expect(sessionSummary.decisions.join(" ")).toContain("use Shell");
     expect(sessionSummary.openLoops.join(" ")).toContain("tc-1");
     expect(sessionSummary.nextActions.length).toBeGreaterThan(0);
     expect(sessionSummary.decisions.every((item) => item.length <= 123)).toBe(true);
     expect(sessionSummary.nextActions.every((item) => item.length <= 123)).toBe(true);
     expect(sessionSummary.nextActions.length).toBeLessThanOrEqual(3);
-    expect(sessionSummary.summary).toContain("completedWork=");
-    expect(sessionSummary.summary).toContain("filesTouched=");
-    expect(sessionSummary.summary).toContain("commandsRun=");
-    expect(sessionSummary.summary).toContain("blockers=");
+    expect(sessionSummary.summary).toContain("## Progress");
+    expect(sessionSummary.summary).toContain("## Relevant Files");
+    expect(sessionSummary.summary).toContain("## Commands Run");
+    expect(sessionSummary.summary).toContain("## Blocked");
     expect(sessionSummary.summary).toContain("[REDACTED_EMAIL]");
     expect(sessionSummary.summary).toContain("token=[REDACTED]");
     expect(
@@ -142,10 +142,9 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionSummary.summary).toContain("goal=Complete phase 2 of the snake game development plan");
-    expect(sessionSummary.summary).toContain(
-      "latest_user_request=Complete phase 2 of the snake game development plan"
-    );
+    expect(sessionSummary.summary).toContain("## Active Goal");
+    expect(sessionSummary.summary).toContain("Complete phase 2 of the snake game development plan");
+    expect(sessionSummary.summary).toContain("## Latest User Request");
     expect(sessionSummary.summary).not.toContain("goal=[n/a]");
     expect(sessionSummary.summary).not.toContain("latest_user_request=[n/a]");
   });
@@ -173,8 +172,9 @@ describe("context compactor", () => {
       task
     });
 
-    expect(sessionSummary.summary).toContain("goal=newer user instruction");
-    expect(sessionSummary.summary).toContain("latest_user_request=newer user instruction");
+    expect(sessionSummary.summary).toContain("## Active Goal");
+    expect(sessionSummary.summary).toContain("newer user instruction");
+    expect(sessionSummary.summary).toContain("## Latest User Request");
   });
 });
 
@@ -202,3 +202,137 @@ function createTask(taskId: string): TaskRecord {
   };
 }
 
+
+describe("context compactor continuity", () => {
+  it("updates goal while preserving durable decisions across final snapshots", () => {
+    const compactor = new ContextCompactor();
+    const summary = compactor.buildSessionSummary({
+      availableTools: [],
+      compact: {
+        maxMessagesBeforeCompact: 2,
+        messages: [
+          { content: "What is the current status?", role: "user" },
+          { content: "Decision: keep the migration reversible", role: "assistant" }
+        ],
+        reason: "context_budget",
+        sessionScopeKey: "session-continuity",
+        taskId: "task-follow-up"
+      },
+      previousSessionSummary: {
+        createdAt: "2026-01-01T00:00:00.000Z",
+        decisions: ["use PostgreSQL"],
+        goal: "Design persistence layer",
+        metadata: { sessionTheme: "Design persistence layer" },
+        nextActions: [],
+        openLoops: [],
+        runId: null,
+        sessionSummaryId: "summary-before-follow-up",
+        summary: "previous summary",
+        taskId: "task-initial",
+        sessionId: "session-1",
+        trigger: "final"
+      },
+      task: { ...createTask("task-follow-up"), input: "What is the current status?" },
+      trigger: "final"
+    });
+    expect(summary.goal).toBe("What is the current status?");
+    expect(summary.decisions).toEqual(["use PostgreSQL", "keep the migration reversible"]);
+    expect(summary.metadata.previousSessionSummaryId).toBe("summary-before-follow-up");
+    expect(summary.metadata.sessionTheme).toBe("Design persistence layer");
+  });
+
+  it("captures user constraints and clarify answers as decisions", () => {
+    const compactor = new ContextCompactor();
+    const summary = compactor.buildSessionSummary({
+      availableTools: [],
+      compact: {
+        maxMessagesBeforeCompact: 4,
+        messages: [
+          { content: "Answer: 皮肤选择", role: "user" },
+          { content: "我让你不要看readme文件，要从之前建议里再选一个", role: "user" }
+        ],
+        reason: "context_budget",
+        sessionScopeKey: "session-constraints",
+        taskId: "task-constraints"
+      },
+      task: createTask("task-constraints")
+    });
+    expect(summary.decisions.some((item) => item.startsWith("Constraint:"))).toBe(true);
+    expect(summary.decisions.some((item) => item.startsWith("Clarify:"))).toBe(true);
+  });
+
+  it("does not classify ordinary conversation as decisions", () => {
+    const compactor = new ContextCompactor();
+    const summary = compactor.buildSessionSummary({
+      availableTools: [],
+      compact: {
+        maxMessagesBeforeCompact: 2,
+        messages: [
+          { content: "Implement feature A", role: "user" },
+          { content: "Done.", role: "assistant" }
+        ],
+        reason: "context_budget",
+        sessionScopeKey: "session-no-decision",
+        taskId: "task-no-decision"
+      },
+      task: createTask("task-no-decision")
+    });
+    expect(summary.decisions).toEqual([]);
+  });
+
+  it("carries forward open loops and next actions from the previous summary", () => {
+    const compactor = new ContextCompactor();
+    const summary = compactor.buildSessionSummary({
+      availableTools: [],
+      compact: {
+        maxMessagesBeforeCompact: 2,
+        messages: [
+          { content: "What is the current status?", role: "user" },
+          { content: "Still working on it.", role: "assistant" }
+        ],
+        reason: "context_budget",
+        sessionScopeKey: "session-open-loop-carry",
+        taskId: "task-follow-up"
+      },
+      previousSessionSummary: {
+        createdAt: "2026-01-01T00:00:00.000Z",
+        decisions: [],
+        goal: "Design persistence layer",
+        metadata: {},
+        nextActions: ["verify follow-up output"],
+        openLoops: ["pending read_file (tc-manual-open-loop)"],
+        runId: null,
+        sessionSummaryId: "summary-before-open-loop",
+        summary: "previous summary",
+        taskId: "task-initial",
+        sessionId: "session-1",
+        trigger: "compact"
+      },
+      task: { ...createTask("task-follow-up"), input: "What is the current status?" }
+    });
+    expect(summary.openLoops.join(" ")).toContain("tc-manual-open-loop");
+    expect(summary.nextActions).toEqual([]);
+  });
+
+  it("uses the latest user message as goal when no previous summary exists", () => {
+    const compactor = new ContextCompactor();
+    const summary = compactor.buildSessionSummary({
+      availableTools: [],
+      compact: {
+        maxMessagesBeforeCompact: 4,
+        messages: [
+          { content: "original objective", role: "user" },
+          { content: "acknowledged", role: "assistant" },
+          { content: "newer user instruction", role: "user" },
+          { content: "working on it", role: "assistant" }
+        ],
+        originalGoal: "original objective",
+        reason: "message_count",
+        sessionScopeKey: "session-latest-goal",
+        taskId: "task-latest-goal"
+      },
+      task: { ...createTask("task-latest-goal"), input: "original objective" }
+    });
+    expect(summary.goal).toContain("newer user instruction");
+  });
+});

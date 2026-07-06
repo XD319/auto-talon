@@ -5,6 +5,24 @@ import type { IncomingMessage } from "node:http";
 import { AppError } from "./app-error.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+let missingHttpTokenWarningEmitted = false;
+
+export function isHttpAuthDisabled(): boolean {
+  return process.env.AGENT_HTTP_INSECURE === "1";
+}
+
+export function collectHttpAuthDoctorIssues(cwd: string): string[] {
+  if (isHttpAuthDisabled()) {
+    return [];
+  }
+  const token = resolveHttpAuthToken(cwd);
+  if (token === null) {
+    return [
+      "Local HTTP services are running without authentication because AGENT_HTTP_TOKEN and .auto-talon/http.token are missing. Run talon init or set AGENT_HTTP_TOKEN."
+    ];
+  }
+  return [];
+}
 
 export function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
@@ -80,8 +98,17 @@ export function requireHttpAuth(
   request: IncomingMessage,
   cwd: string
 ): { authorized: true } | { authorized: false; message: string } {
+  if (isHttpAuthDisabled()) {
+    return { authorized: true };
+  }
   const token = resolveHttpAuthToken(cwd);
   if (token === null) {
+    if (!missingHttpTokenWarningEmitted) {
+      missingHttpTokenWarningEmitted = true;
+      console.warn(
+        "Warning: local HTTP services are accepting unauthenticated requests because no AGENT_HTTP_TOKEN or .auto-talon/http.token is configured."
+      );
+    }
     return { authorized: true };
   }
   const header = (request.headers as Record<string, unknown>).authorization;

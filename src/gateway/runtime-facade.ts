@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AuditService } from "../audit/audit-service.js";
 import { buildApprovalPromptContext } from "../approvals/approval-prompt-view-model.js";
+import { isHttpAuthDisabled, resolveHttpAuthToken } from "../core/http-auth.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { AgentApplicationService } from "../runtime/application-service.js";
 import { parseExecutionModeInput } from "../runtime/scheduler/execution-mode.js";
@@ -10,6 +11,7 @@ import type { ScheduleExecutionMode } from "../runtime/scheduler/execution-mode.
 import type {
   AdapterDescriptor,
   AdapterCapabilityName,
+  ApprovalRecord,
   GatewayRuntimeApi,
   GatewayInboxFilter,
   InboxDeliveryEvent,
@@ -72,8 +74,9 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     request: GatewayTaskRequest,
     observer?: GatewayTaskStreamObserver
   ): Promise<GatewayTaskLaunchResult> {
+    const authorizedRequest = this.withLocalGatewayAuth(request);
     if (this.dependencies.guard !== undefined) {
-      const decision = await this.dependencies.guard.evaluate(adapter.adapterId, request);
+      const decision = await this.dependencies.guard.evaluate(adapter.adapterId, authorizedRequest);
       if (!decision.allowed) {
         this.recordGuardDecision(adapter.adapterId, request, decision.reason, decision.message);
         throw new Error(decision.message);
@@ -608,6 +611,12 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
     return this.dependencies.applicationService.listInbox(filter);
   }
 
+  public listTaskPendingApprovals(taskId: string): ApprovalRecord[] {
+    return this.dependencies.applicationService
+      .listPendingApprovals()
+      .filter((approval) => approval.taskId === taskId);
+  }
+
   public markInboxDone(
     inboxId: string,
     reviewerRuntimeUserId: string
@@ -841,6 +850,27 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       toolCallId: null,
       approvalId: null
     });
+  }
+
+  private withLocalGatewayAuth(request: GatewayTaskRequest): GatewayTaskRequest {
+    if (isHttpAuthDisabled()) {
+      return request;
+    }
+    const token = resolveHttpAuthToken(this.dependencies.defaultCwd);
+    if (token === null) {
+      return request;
+    }
+    const metadata = request.metadata ?? {};
+    if (typeof metadata.authorization === "string" || typeof metadata.authToken === "string") {
+      return request;
+    }
+    return {
+      ...request,
+      metadata: {
+        ...metadata,
+        authToken: token
+      }
+    };
   }
 }
 

@@ -103,3 +103,92 @@ describe("resolveProviderFinalText", () => {
     ).toBe("summary body");
   });
 });
+
+describe("final output polish detection", () => {
+  it("flags reasoning-only finals for polish", async () => {
+    const { isReasoningOnlyFinal, shouldPolishFinalOutput } = await import(
+      "../src/providers/reasoning-content.js"
+    );
+    const response = {
+      kind: "final" as const,
+      message: "",
+      reasoningContent: "Bug Candidate #1: broken fps"
+    };
+    expect(isReasoningOnlyFinal(response)).toBe(true);
+    expect(shouldPolishFinalOutput(response, "Bug Candidate #1: broken fps")).toEqual({
+      polish: true,
+      trigger: "reasoning_only_final"
+    });
+  });
+
+  it("flags long internal reasoning drafts for polish", async () => {
+    const { shouldPolishFinalOutput } = await import("../src/providers/reasoning-content.js");
+    const draft =
+      "Let me think about bug candidate #1. Wait, let me re-read game.js. " +
+      "Actually wait, there is another issue.";
+    const response = {
+      kind: "final" as const,
+      message: draft,
+      reasoningContent: undefined
+    };
+    expect(shouldPolishFinalOutput(response, draft)).toEqual({
+      polish: true,
+      trigger: "internal_reasoning_detected"
+    });
+  });
+
+  it("accepts concise user-facing finals", async () => {
+    const { shouldPolishFinalOutput } = await import("../src/providers/reasoning-content.js");
+    const answer =
+      "1. `js/game.js` updateFPS() never accumulates fpsTime.\n2. `js/snake.js` hash collision check is a no-op.";
+    const response = {
+      kind: "final" as const,
+      message: answer,
+      reasoningContent: undefined
+    };
+    expect(shouldPolishFinalOutput(response, answer)).toEqual({
+      polish: false,
+      trigger: null
+    });
+  });
+});
+
+describe("final output acceptance", () => {
+  it("rejects DSML tool markup masquerading as a final answer", async () => {
+    const { isAcceptableUserFinalText, looksLikeToolMarkup } = await import(
+      "../src/providers/reasoning-content.js"
+    );
+    const dsml =
+      "<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name=\"read_file\">\n</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>";
+    expect(looksLikeToolMarkup(dsml)).toBe(true);
+    expect(
+      isAcceptableUserFinalText(
+        {
+          kind: "final",
+          message: dsml
+        },
+        dsml
+      )
+    ).toEqual({
+      acceptable: false,
+      reason: "tool_markup"
+    });
+  });
+
+  it("accepts polished bug-fix summaries", async () => {
+    const { isAcceptableUserFinalText } = await import("../src/providers/reasoning-content.js");
+    const answer = "修复已验证。Bug 在 `js/snake.js` 的 positionHash 更新顺序错误。";
+    expect(
+      isAcceptableUserFinalText(
+        {
+          kind: "final",
+          message: answer
+        },
+        answer
+      )
+    ).toEqual({
+      acceptable: true,
+      reason: null
+    });
+  });
+});

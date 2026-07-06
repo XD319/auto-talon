@@ -181,6 +181,7 @@ export async function runSmokeTask(
         messageThreshold: expectSessionCompact ? 8 : 100,
         protectFirstN: 3,
         protectLastN: 20,
+        resumeUserTailMessages: 6,
         summarizer: "deterministic" as const,
         targetRatio: 0.2,
         tailMinMessages: 10,

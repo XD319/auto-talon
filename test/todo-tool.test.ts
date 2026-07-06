@@ -5,20 +5,27 @@ import { TodoTool } from "../src/tools/todo-tool.js";
 import type { ToolExecutionContext } from "../src/types/index.js";
 
 describe("TodoTool", () => {
-  it("merges todos by id by default", async () => {
+  it("replaces the list by default", async () => {
     const store = new TodoSessionStore();
     const tool = new TodoTool(store);
     const context = createContext("session-1");
 
-    const first = tool.prepare({
-      todos: [{ content: "Inspect repo", id: "todo-1", status: "pending" }]
-    });
-    await tool.execute(first.preparedInput, context);
+    await tool.execute(
+      tool.prepare({
+        todos: [
+          { content: "First", id: "todo-1", status: "pending" },
+          { content: "Second", id: "todo-2", status: "pending" }
+        ]
+      }).preparedInput,
+      context
+    );
 
-    const second = tool.prepare({
-      todos: [{ content: "Inspect repo", id: "todo-1", status: "in_progress" }]
-    });
-    const result = await tool.execute(second.preparedInput, context);
+    const result = await tool.execute(
+      tool.prepare({
+        todos: [{ content: "Inspect repo", id: "todo-1", status: "in_progress" }]
+      }).preparedInput,
+      context
+    );
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -46,6 +53,7 @@ describe("TodoTool", () => {
     );
     await tool.execute(
       tool.prepare({
+        merge: true,
         todos: [{ content: "First", id: "todo-1", status: "pending" }]
       }).preparedInput,
       context
@@ -54,27 +62,26 @@ describe("TodoTool", () => {
     expect(store.get("session-3").map((todo) => todo.id)).toEqual(["todo-2", "todo-1"]);
   });
 
-  it("replaces todos when merge is false", async () => {
+  it("clears the list when every item is completed", async () => {
     const store = new TodoSessionStore();
     const tool = new TodoTool(store);
-    const context = createContext("session-2");
+    const context = createContext("session-done");
 
-    const initial = tool.prepare({
-      todos: [{ content: "First", id: "todo-1", status: "pending" }]
-    });
-    await tool.execute(initial.preparedInput, context);
-
-    const replacement = tool.prepare({
-      merge: false,
-      todos: [{ content: "Second", id: "todo-2", status: "completed" }]
-    });
-    const result = await tool.execute(replacement.preparedInput, context);
+    await tool.execute(
+      tool.prepare({
+        todos: [{ content: "First", id: "todo-1", status: "pending" }]
+      }).preparedInput,
+      context
+    );
+    const result = await tool.execute(
+      tool.prepare({
+        todos: [{ content: "First", id: "todo-1", status: "completed" }]
+      }).preparedInput,
+      context
+    );
 
     expect(result.success).toBe(true);
-    if (result.success) {
-      const output = result.output as { todos: Array<{ id: string }> };
-      expect(output.todos.map((todo) => todo.id)).toEqual(["todo-2"]);
-    }
+    expect(store.get("session-done")).toEqual([]);
   });
 });
 
@@ -90,3 +97,18 @@ function createContext(sessionId: string): ToolExecutionContext {
     workspaceRoot: process.cwd()
   };
 }
+
+describe("TodoTool clearing", () => {
+  it("accepts an empty replacement to clear session todos", async () => {
+    const store = new TodoSessionStore();
+    const tool = new TodoTool(store);
+    const context = createContext("session-clear");
+    await tool.execute(
+      tool.prepare({ todos: [{ content: "remove me", id: "todo-1", status: "pending" }] }).preparedInput,
+      context
+    );
+    const result = await tool.execute(tool.prepare({ todos: [] }).preparedInput, context);
+    expect(result.success).toBe(true);
+    expect(store.get("session-clear")).toEqual([]);
+  });
+});

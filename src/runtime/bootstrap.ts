@@ -7,6 +7,7 @@ import { ApprovalService } from "../approvals/approval-service.js";
 import { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
 import { ClarifyService } from "../approvals/clarify-service.js";
 import { AuditService } from "../audit/audit-service.js";
+import { toAppError } from "../core/app-error.js";
 import { ExperienceCollector } from "../experience/experience-collector.js";
 import { ExperiencePlane } from "../experience/experience-plane.js";
 import { PromotionAdvisor } from "../experience/promotion/promotion-advisor.js";
@@ -80,6 +81,7 @@ import type { ToolsetName } from "../types/index.js";
 import { AgentApplicationService } from "./application-service.js";
 import { ContextCompactor, SessionSearchService, SessionSummaryService } from "./context/index.js";
 import { BudgetService } from "./budget/index.js";
+import { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
 import { ExecutionKernel } from "./execution-kernel.js";
 import { RuntimeOutputService } from "./runtime-output-service.js";
 import { RecallBudgetPolicy, RecallPlanner } from "./retrieval/index.js";
@@ -102,9 +104,11 @@ import {
   resolveScheduleSessionId,
   runNoAgentCommand,
   verifyScheduledSkills,
-  SchedulerService
+  SchedulerService,
+  ScheduleRunLifecycle
 } from "./scheduler/index.js";
 import { ResumePacketBuilder, SessionService, SessionStateProjector } from "./sessions/index.js";
+import { SessionExecutionLock } from "./sessions/session-execution-lock.js";
 import {
   SessionBranchService,
   SessionHandoffService,
@@ -131,11 +135,14 @@ import { resolveDefaultUserId } from "./runtime-identity.js";
 
 export const RUNTIME_VERSION = "0.1.0";
 
-const DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS = 128_000;
+export const DEFAULT_UNKNOWN_CONTEXT_WINDOW_FALLBACK_TOKENS = 32_000;
 
 export function resolveEffectiveContextWindow(
   provider: ResolvedProviderConfig,
-  runtimeConfig: Pick<RuntimeConfig, "tokenBudget" | "tokenBudgetInputLimitExplicit">
+  runtimeConfig: Pick<
+    RuntimeConfig,
+    "tokenBudget" | "tokenBudgetInputLimitExplicit" | "unknownContextWindowFallback"
+  >
 ): { provider: ResolvedProviderConfig; tokenBudget: TokenBudget } {
   if (runtimeConfig.tokenBudgetInputLimitExplicit) {
     if (
@@ -166,20 +173,21 @@ export function resolveEffectiveContextWindow(
   }
 
   if (provider.contextWindowTokens === null) {
+    const fallbackLimit = runtimeConfig.unknownContextWindowFallback;
     console.warn(
       `Warning: provider ${provider.name} model ${provider.model ?? "-"} is missing contextWindowTokens. ` +
-        `Using fallback input limit ${DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS}. ` +
-        "Set providers.<name>.contextWindowTokens or tokenBudget.inputLimit explicitly."
+        `Using fallback input limit ${fallbackLimit}. ` +
+        "Set providers.<name>.contextWindowTokens, tokenBudget.inputLimit, or tokenBudget.unknownContextWindowFallback explicitly."
     );
     const tokenBudget = assertTokenBudgetCoherent({
       ...runtimeConfig.tokenBudget,
-      inputLimit: DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS
+      inputLimit: fallbackLimit
     });
     return {
       provider: {
         ...provider,
         contextWindowSource: provider.contextWindowSource ?? "provider_manifest",
-        contextWindowTokens: DEFAULT_CONTEXT_WINDOW_FALLBACK_TOKENS
+        contextWindowTokens: fallbackLimit
       },
       tokenBudget
     };
@@ -220,9 +228,11 @@ export interface AppConfig {
   approvalTtlMs: number;
   allowedFetchHosts: string[];
   databasePath: string;
+  defaultInteractionMode: "agent" | "plan" | "acceptEdits";
   defaultMaxIterations: number;
   defaultProfileId: "executor" | "planner" | "reviewer";
   defaultTimeoutMs: number;
+  interactionModes: RuntimeConfig["interactionModes"];
   compact: {
     bufferTokens: number;
     hygieneThresholdRatio: number;
@@ -230,6 +240,7 @@ export interface AppConfig {
     messageThreshold: number;
     protectFirstN: number;
     protectLastN: number;
+    resumeUserTailMessages: number;
     summarizer: "deterministic" | "provider_subagent";
     targetRatio: number;
     tailMinMessages: number;
@@ -282,6 +293,10 @@ export interface AppConfig {
   sandbox: SandboxProfile;
   tokenBudget: TokenBudget;
   tokenBudgetInputLimitExplicit: boolean;
+  unknownContextWindowFallback: number;
+  concurrency: {
+    allowParallelSessions: boolean;
+  };
   tui: {
     diffDisplay: DiffDisplayMode;
     statusLine: TuiStatusLineConfig;
@@ -316,9 +331,11 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     databasePath:
       process.env.AGENT_RUNTIME_DB_PATH ??
       join(workspaceRoot, ".auto-talon", "agent-runtime.db"),
+    defaultInteractionMode: runtimeConfig.defaultInteractionMode,
     defaultMaxIterations: runtimeConfig.defaultMaxIterations,
     defaultProfileId: "executor",
     defaultTimeoutMs: runtimeConfig.defaultTimeoutMs,
+    interactionModes: runtimeConfig.interactionModes,
     compact: runtimeConfig.compact,
     context: runtimeConfig.context,
     contextRetention: runtimeConfig.contextRetention,
@@ -334,6 +351,8 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     sandbox,
     tokenBudget: runtimeConfig.tokenBudget,
     tokenBudgetInputLimitExplicit: runtimeConfig.tokenBudgetInputLimitExplicit,
+    unknownContextWindowFallback: runtimeConfig.unknownContextWindowFallback,
+    concurrency: runtimeConfig.concurrency,
     tui: runtimeConfig.tui,
     webSearch: runtimeConfig.webSearch,
     web: runtimeConfig.web,
@@ -636,7 +655,7 @@ function buildApplicationRuntime(
     registry: skillRegistry
   });
   const terminalSessionManager = new TerminalSessionManager();
-  const todoSessionStore = new TodoSessionStore();
+  const todoSessionStore = new TodoSessionStore(storage.sessionTodos);
   const delegateTaskTool = new DelegateTaskTool();
   const cronjobTool = new CronjobTool();
   const auxiliaryProviderResolver = createAuxiliaryProviderResolver({
@@ -744,6 +763,7 @@ function buildApplicationRuntime(
   });
   const summarizerWorker = new SummarizerWorker({
     contextCompactor,
+    sessionMessageRepository: storage.sessionMessages,
     sessionSummaryService
   });
   const retrievalWorker = new RetrievalWorker({
@@ -832,7 +852,9 @@ function buildApplicationRuntime(
   const sessionBranchService = new SessionBranchService({
     sessionLineageRepository: storage.sessionLineage,
     sessionRepository: storage.sessions,
-    sessionUiStateService
+    sessionSummaryService,
+    sessionUiStateService,
+    todoSessionStore
   });
   const sessionHandoffService = new SessionHandoffService({
     gatewaySessionRepository: storage.gatewaySessions,
@@ -847,6 +869,8 @@ function buildApplicationRuntime(
     sessionRepository: storage.sessions
   });
 
+  const manualCompactCoordinator = new ManualCompactCoordinator();
+
   const executionKernel = new ExecutionKernel({
     auditService,
     auxiliaryProviderResolver,
@@ -859,6 +883,7 @@ function buildApplicationRuntime(
     executionCheckpointRepository: storage.checkpoints,
     contextCompactor,
     getSessionCommitmentState: (sessionId) => sessionCommitmentProjector.project(sessionId),
+    manualCompactCoordinator,
     memoryPlane,
     recallPlanner,
     provider,
@@ -872,15 +897,18 @@ function buildApplicationRuntime(
     retrievalWorker,
     taskRepository: storage.tasks,
     sessionLineageRepository: storage.sessionLineage,
+    sessionMessageRepository: storage.sessionMessages,
     sessionTaskRepository: storage.sessionTasks,
     sessionTranscriptRepository: storage.sessionTranscripts,
     sessionMessageProjector,
     skillContextService,
     toolExposurePlanner,
     toolOrchestrator,
+    todoSessionStore,
     traceService,
     outputService,
     workflow: config.workflow,
+    interactionModes: config.interactionModes,
     workspaceRoot: config.workspaceRoot
   });
   delegateTaskTool.bindExecutor(async (request) => {
@@ -891,9 +919,12 @@ function buildApplicationRuntime(
       interactionMode: "agent",
       maxIterations: request.maxIterations ?? config.defaultMaxIterations,
       metadata: {
+        delegateIsolation: request.isolation === true,
         delegatedFromTaskId: request.parentTaskId
       },
-      ...(parentTask?.sessionId !== null && parentTask?.sessionId !== undefined
+      ...(request.isolation !== true &&
+      parentTask?.sessionId !== null &&
+      parentTask?.sessionId !== undefined
         ? { sessionId: parentTask.sessionId }
         : {}),
       signal: request.signal,
@@ -915,13 +946,26 @@ function buildApplicationRuntime(
   });
   const sessionStateProjector = new SessionStateProjector({
     commitmentProjector: sessionCommitmentProjector,
-    sessionSummaryService
+    sessionMessageRepository: storage.sessionMessages,
+    sessionSummaryService,
+    sessionTranscriptRepository: storage.sessionTranscripts,
+    resumeUserTailMessages: config.compact.resumeUserTailMessages,
+    tailMinMessages: config.compact.tailMinMessages,
+    tailTokenBudget: config.compact.tailTokenBudget
   });
   const resumePacketBuilder = new ResumePacketBuilder({
     config,
-    stateProjector: sessionStateProjector
+    sessionTaskRepository: storage.sessionTasks,
+    stateProjector: sessionStateProjector,
+    taskRepository: storage.tasks
   });
   let service: AgentApplicationService | null = null;
+  const scheduleRunLifecycle = new ScheduleRunLifecycle({
+    scheduleRunRepository: storage.scheduleRuns
+  });
+  const sessionExecutionLock = new SessionExecutionLock(storage.database, {
+    allowParallelSessions: config.concurrency.allowParallelSessions
+  });
   const jobRunner = new JobRunner({
     scheduleRepository: storage.schedules,
     scheduleRunRepository: storage.scheduleRuns,
@@ -963,33 +1007,58 @@ function buildApplicationRuntime(
         throw new Error(guard.reason ?? "Scheduled prompt failed security scan.");
       }
       assertScheduleToolsetsAvailable(scheduleToolsets, toolOrchestrator);
-      const runResult = await service.runTask({
-        agentProfileId: schedule.agentProfileId,
-        cwd: schedule.cwd,
-        maxIterations: config.defaultMaxIterations,
-        metadata: {
-          scheduleRunContext: {
-            disallowScheduleManagement: true,
-            runId: run.runId,
-            scheduleId: schedule.scheduleId
+      try {
+        const runResult = await service.runTask({
+          agentProfileId: schedule.agentProfileId,
+          cwd: schedule.cwd,
+          maxIterations: config.defaultMaxIterations,
+          metadata: {
+            scheduleRunContext: {
+              disallowScheduleManagement: true,
+              runId: run.runId,
+              scheduleId: schedule.scheduleId
+            },
+            ...(schedule.metadata.allowDelegate === true ? { allowDelegate: true } : {}),
+            ...(scheduleToolsets.length > 0 ? { scheduleToolsets } : {})
           },
-          ...(schedule.metadata.allowDelegate === true ? { allowDelegate: true } : {}),
-          ...(scheduleToolsets.length > 0 ? { scheduleToolsets } : {})
-        },
-        taskInput,
-        ...(resolveScheduleSessionId(schedule) !== null
-          ? { sessionId: resolveScheduleSessionId(schedule)! }
-          : {}),
-        timeoutMs: config.defaultTimeoutMs,
-        tokenBudget: {
-          ...config.tokenBudget,
-          usedInput: 0,
-          usedOutput: 0,
-          usedCostUsd: 0
-        },
-        userId: schedule.ownerUserId
-      });
-      return runResult;
+          taskInput,
+          ...(resolveScheduleSessionId(schedule) !== null
+            ? { sessionId: resolveScheduleSessionId(schedule)! }
+            : {}),
+          timeoutMs: config.defaultTimeoutMs,
+          tokenBudget: {
+            ...config.tokenBudget,
+            usedInput: 0,
+            usedOutput: 0,
+            usedCostUsd: 0
+          },
+          userId: schedule.ownerUserId
+        });
+        scheduleRunLifecycle.syncRunFromTask(runResult.task);
+        return runResult;
+      } catch (error) {
+        const appError = toAppError(error);
+        if (appError.code === "session_busy") {
+          storage.scheduleRuns.update(run.runId, {
+            errorMessage: appError.message,
+            scheduledAt: new Date(Date.now() + 30_000).toISOString(),
+            status: "queued"
+          });
+          traceService.record({
+            actor: "scheduler",
+            eventType: "schedule_run_skipped_overlap",
+            payload: {
+              activeRunId: run.runId,
+              reason: "scheduled",
+              scheduleId: schedule.scheduleId
+            },
+            stage: "control",
+            summary: `Deferred schedule run ${run.runId} because session is busy`,
+            taskId: `schedule:${schedule.scheduleId}`
+          });
+        }
+        throw error;
+      }
     },
     executeNoAgent: async ({ schedule }) => {
       const noAgent = readScheduleNoAgent(schedule);
@@ -1081,6 +1150,7 @@ function buildApplicationRuntime(
     listTrace: (taskId) => storage.traces.listByTaskId(taskId),
     findExecutionCheckpoint: (taskId) => storage.checkpoints.findByTaskId(taskId),
     saveExecutionCheckpoint: (record) => storage.checkpoints.save(record),
+    updateTask: (taskId, patch) => storage.tasks.update(taskId, patch),
     updateToolCall: (toolCallId, patch) => storage.toolCalls.update(toolCallId, patch),
     allowedFetchHosts: config.allowedFetchHosts,
     provider,
@@ -1092,12 +1162,14 @@ function buildApplicationRuntime(
     runtimeConfigPath: config.runtimeConfigPath,
     runtimeConfigSource: config.runtimeConfigSource,
     runtimeVersion: config.runtimeVersion,
+    scheduleRunLifecycle,
     schedulerService,
     resumePacketBuilder,
     sessionSummaryService,
     sessionService,
     sessionLineageRepository: storage.sessionLineage,
     sessionMessageRepository: storage.sessionMessages,
+    sessionTranscriptRepository: storage.sessionTranscripts,
     shellBackend: config.workflow.shellBackend,
     tokenBudget: {
       inputLimit: config.tokenBudget.inputLimit,
@@ -1114,6 +1186,7 @@ function buildApplicationRuntime(
     outputService,
     auditService,
     memoryPlane,
+    manualCompactCoordinator,
     maxShellTimeoutMs: config.workflow.maxShellTimeoutMs,
     experiencePlane,
     skillDraftManager,
@@ -1131,6 +1204,7 @@ function buildApplicationRuntime(
     sessionIndexService,
     sessionMessageSearchService,
     sessionBranchService,
+    sessionExecutionLock,
     sessionHandoffService,
     gatewaySessionRepository: storage.gatewaySessions,
     workspaceRoot: config.workspaceRoot

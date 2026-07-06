@@ -107,6 +107,19 @@ describe("session handoff service", () => {
         messages: [{ id: "user:1", kind: "user", text: "Try another approach", timestamp: "2026-01-01T00:00:00.000Z" }],
         title: "Main line"
       });
+      handle.infrastructure.storage.sessionSummaries.create({
+        decisions: ["keep source decision"],
+        goal: "Preserve source context",
+        nextActions: ["continue branch work"],
+        openLoops: [],
+        summary: "source summary",
+        taskId: null,
+        sessionId: source.sessionId,
+        trigger: "manual"
+      });
+      handle.infrastructure.storage.sessionTodos.replace(source.sessionId, [
+        { content: "carry todo", id: "todo-branch", status: "pending" }
+      ]);
       const branch = handle.service.branchSession({
         agentProfileId: "executor",
         cwd: workspaceRoot,
@@ -118,6 +131,10 @@ describe("session handoff service", () => {
       expect(uiState?.interactionMode).toBe("plan");
       expect(uiState?.messages).toHaveLength(1);
       expect(branch.title).toBe("Branch attempt");
+      expect(handle.service.listSessionSummaries(branch.sessionId)[0]?.goal).toBe("Preserve source context");
+      expect(handle.service.getSessionTodos(branch.sessionId)).toEqual([
+        expect.objectContaining({ id: "todo-branch", status: "pending" })
+      ]);
     } finally {
       handle.close();
     }

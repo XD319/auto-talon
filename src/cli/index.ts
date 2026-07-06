@@ -77,6 +77,8 @@ import {
   clearSessionModelSelection,
   formatModelList,
   formatModelStatus,
+  resolveModelCommandCwd,
+  resolveModelCommandWorkspaceFlag,
   runInteractiveModelWizard,
   setModelSelection
 } from "./model-command.js";
@@ -167,7 +169,7 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--sandbox-profile <name>", "Sandbox profile from .auto-talon/sandbox.config.json")
     .option("--sandbox-mode <mode>", "Sandbox mode: local | docker")
     .option("--profile <profile>", "Agent profile", "executor")
-    .option("--mode <mode>", "Interaction mode: agent | plan", "agent")
+    .option("--mode <mode>", "Interaction mode: agent | plan | acceptEdits", "agent")
     .option("--session <sessionId>", "Reuse an existing session id")
     .option("--max-iterations <number>", "Maximum loop iterations", parsePositiveIntegerOption("--max-iterations"))
     .option("--timeout-ms <number>", "Task timeout in milliseconds", parsePositiveIntegerOption("--timeout-ms"))
@@ -182,6 +184,8 @@ export async function main(argv = process.argv): Promise<void> {
         if (commandOptions.mode === "plan") {
           runOptions.interactionMode = "plan";
           runOptions.agentProfileId = "planner";
+        } else if (commandOptions.mode === "acceptEdits") {
+          runOptions.interactionMode = "acceptEdits";
         }
         if (commandOptions.session !== undefined) {
           runOptions.sessionId = commandOptions.session;
@@ -1712,8 +1716,8 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--cwd <path>", "Workspace path", process.cwd())
     .option("--json", "Print JSON")
     .option("--session <sessionId>", "Show effective model for a session")
-    .action((commandOptions: { cwd: string; json?: boolean; session?: string }) => {
-      console.log(formatModelList(commandOptions.cwd, {
+    .action((commandOptions: { cwd: string; json?: boolean; session?: string }, command: Command) => {
+      console.log(formatModelList(resolveModelCommandCwd(commandOptions, command), {
         json: commandOptions.json === true,
         ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {})
       }));
@@ -1725,8 +1729,8 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--cwd <path>", "Workspace path", process.cwd())
     .option("--json", "Print JSON")
     .option("--session <sessionId>", "Show effective model for a session")
-    .action((commandOptions: { cwd: string; json?: boolean; session?: string }) => {
-      console.log(formatModelStatus(commandOptions.cwd, {
+    .action((commandOptions: { cwd: string; json?: boolean; session?: string }, command: Command) => {
+      console.log(formatModelStatus(resolveModelCommandCwd(commandOptions, command), {
         json: commandOptions.json === true,
         ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {})
       }));
@@ -1739,14 +1743,16 @@ export async function main(argv = process.argv): Promise<void> {
     .option("--workspace", "Write to workspace config instead of user config")
     .option("--session <sessionId>", "Write a session-only model override")
     .option("--cwd <path>", "Workspace path", process.cwd())
-    .action(async (selection: string, commandOptions: { cwd: string; session?: string; workspace?: boolean }) => {
-      if (commandOptions.session !== undefined && commandOptions.workspace === true) {
+    .action(async (selection: string, commandOptions: { cwd: string; session?: string; workspace?: boolean }, command: Command) => {
+      const workspace = resolveModelCommandWorkspaceFlag(commandOptions, command);
+      const cwd = resolveModelCommandCwd(commandOptions, command);
+      if (commandOptions.session !== undefined && workspace) {
         throw new Error("Choose either --session or --workspace, not both.");
       }
       console.log(await setModelSelection(selection, {
-        cwd: commandOptions.cwd,
+        cwd,
         ...(commandOptions.session !== undefined ? { sessionId: commandOptions.session } : {}),
-        workspace: commandOptions.workspace === true
+        workspace
       }));
     });
 
@@ -1755,8 +1761,8 @@ export async function main(argv = process.argv): Promise<void> {
     .description("Clear a session model override")
     .requiredOption("--session <sessionId>", "Session id")
     .option("--cwd <path>", "Workspace path", process.cwd())
-    .action(async (commandOptions: { cwd: string; session: string }) => {
-      console.log(await clearSessionModelSelection(commandOptions.cwd, commandOptions.session));
+    .action(async (commandOptions: { cwd: string; session: string }, command: Command) => {
+      console.log(await clearSessionModelSelection(resolveModelCommandCwd(commandOptions, command), commandOptions.session));
     });
 
   const modelAuxiliaryCommand = modelCommand.command("auxiliary").description("Manage auxiliary model slots");

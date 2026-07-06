@@ -1,6 +1,7 @@
 ﻿import { describe, expect, it } from "vitest";
 
 import {
+  collectStructuredSummaryFields,
   DeterministicCompactSummarizer,
   ProviderSubagentSummarizer
 } from "../src/memory/compact-summarizer.js";
@@ -87,13 +88,44 @@ describe("compact summarizer", () => {
     const summarizer = new DeterministicCompactSummarizer();
     const result = await summarizer.summarize(compactInput);
     expect(result.summarizerId).toBe("deterministic");
-    expect(result.summary).toContain("completedWork=");
-    expect(result.summary).toContain("filesTouched=");
-    expect(result.summary).toContain("commandsRun=");
-    expect(result.summary).toContain("blockers=");
-    expect(result.summary).toContain("remaining_work=");
+    expect(result.summary).toContain("## Active Goal");
+    expect(result.summary).toContain("## All User Messages");
+    expect(result.summary).toContain("## Relevant Files");
+    expect(result.summary).toContain("## Blocked");
+    expect(result.summary).toContain("### Remaining Work");
     expect(result.summary).toContain("apiKey=[REDACTED]");
     expect(result.summary).toContain("[REDACTED_EMAIL]");
+  });
+
+  it("preserves assistant reasoning in findings section", () => {
+    const fields = collectStructuredSummaryFields({
+      ...compactInput,
+      messages: [
+        ...compactInput.messages,
+        {
+          content:
+            "Bug 1: score can go negative when addScore receives invalid input without guarding downstream UI updates.",
+          role: "assistant" as const
+        }
+      ]
+    });
+    expect(fields.findings).toContain("Bug 1");
+  });
+
+  it("preserves reasoningContent-only assistant text in findings section", () => {
+    const fields = collectStructuredSummaryFields({
+      ...compactInput,
+      messages: [
+        ...compactInput.messages,
+        {
+          content: "",
+          reasoningContent:
+            "Bug 1: updateFPS() in game.js never accumulates fpsTime, so displayed FPS is wrong.",
+          role: "assistant" as const
+        }
+      ]
+    });
+    expect(fields.findings).toContain("updateFPS()");
   });
 
   it("uses provider_subagent output when provider succeeds", async () => {

@@ -103,6 +103,7 @@ export interface ToolExecutionSuccess {
   success: true;
   summary: string;
   output: JsonValue;
+  runtimeOutput?: JsonValue;
   artifacts?: ArtifactDraft[];
   replayed?: boolean;
 }

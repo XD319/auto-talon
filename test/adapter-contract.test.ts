@@ -105,6 +105,7 @@ function createNoopRuntimeApi(): GatewayRuntimeApi {
   return {
     getTaskSnapshot: () => null,
     listInbox: () => [],
+    listTaskPendingApprovals: () => [],
     markInboxDone: () => {
       throw new Error("Not implemented in adapter contract tests.");
     },

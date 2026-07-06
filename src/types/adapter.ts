@@ -1,3 +1,4 @@
+import type { ApprovalRecord } from "./approval.js";
 import type { JsonObject } from "./common.js";
 import type { AuditLogRecord } from "./audit.js";
 import type { TraceEvent } from "./trace.js";
@@ -210,6 +211,7 @@ export interface GatewayRuntimeApi {
   listScheduleRuns(scheduleId: string, query?: ScheduleRunListQuery): ScheduleRunRecord[];
   listSchedules(query?: ScheduleListQuery): ScheduleRecord[];
   listInbox(filter?: GatewayInboxFilter): InboxItem[];
+  listTaskPendingApprovals(taskId: string): ApprovalRecord[];
   markInboxDone(inboxId: string, reviewerRuntimeUserId: string): InboxItem;
   archiveSchedule(scheduleId: string): ScheduleRecord;
   pauseSchedule(scheduleId: string): ScheduleRecord;

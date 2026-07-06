@@ -302,20 +302,14 @@ describe("coding workflow loop", () => {
     }
   });
 
-  it("defers code-change finals until workspace changes are made", async () => {
+  it("completes implement requests when the model writes files directly", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
     const handle = createApplication(workspaceRoot, {
       config: { databasePath: join(workspaceRoot, "runtime.db") },
       policyConfig: WORKFLOW_POLICY_CONFIG,
       provider: new ScriptedProvider((input) => {
-        const sawImplementationGuard = input.messages.some((message) =>
-          message.content.includes("Intent fulfillment guard")
-        );
         const toolMessages = input.messages.filter((message) => message.role === "tool");
 
-        if (!sawImplementationGuard && toolMessages.length === 0) {
-          return finalResponse("Implemented the requested feature.");
-        }
         if (toolMessages.length === 0) {
           return toolCallResponse("Writing the requested feature.", [
             {
@@ -365,7 +359,7 @@ describe("coding workflow loop", () => {
     }
   });
 
-  it("guards modification finals that make no workspace changes", async () => {
+  it("does not force workspace changes for modification prompts answered in text", async () => {
     const workspaceRoot = await createWorkflowWorkspace();
     let sawIntentGuard = false;
     const handle = createApplication(workspaceRoot, {
@@ -375,22 +369,7 @@ describe("coding workflow loop", () => {
         sawIntentGuard =
           sawIntentGuard ||
           input.messages.some((message) => message.content.includes("Intent fulfillment guard"));
-        if (!sawIntentGuard) {
-          return finalResponse("Here is another bug list without changing files.");
-        }
-        return toolCallResponse("Apply the fix.", [
-          {
-            input: {
-              action: "update_file",
-              newText: "process.exit(0);\n",
-              path: "check.js",
-              targetText: "process.exit(1);\n"
-            },
-            reason: "Fix the failing check.",
-            toolCallId: "intent-fix",
-            toolName: "patch"
-          }
-        ]);
+        return finalResponse("Here is another bug list without changing files.");
       })
     });
 
@@ -399,9 +378,9 @@ describe("coding workflow loop", () => {
       runOptions.maxIterations = 4;
       const result = await handle.service.runTask(runOptions);
 
-      expect(sawIntentGuard).toBe(true);
+      expect(sawIntentGuard).toBe(false);
       expect(result.task.status).toBe("succeeded");
-      expect(await fs.readFile(join(workspaceRoot, "check.js"), "utf8")).toBe("process.exit(0);\n");
+      expect(await fs.readFile(join(workspaceRoot, "check.js"), "utf8")).toBe("process.exit(1);\n");
     } finally {
       handle.close();
     }

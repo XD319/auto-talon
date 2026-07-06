@@ -13,6 +13,7 @@ import type {
   ToolCapability
 } from "../types/index.js";
 import { estimateMessagesTokens } from "./context/token-counter.js";
+import { isDelegateIsolationEnabled } from "./delegate-isolation.js";
 
 export const DEDUPLICATABLE_CAPABILITIES = new Set<ToolCapability>([
   "filesystem.read",
@@ -323,6 +324,9 @@ export function readSessionResumeMessages(metadata: RuntimeRunOptions["metadata"
   if (metadata === undefined || metadata === null) {
     return [];
   }
+  if (isDelegateIsolationEnabled(metadata as Record<string, unknown>)) {
+    return [];
+  }
   const sessionResume = (metadata as Record<string, unknown>).sessionResume;
   if (typeof sessionResume !== "object" || sessionResume === null) {
     return [];
@@ -340,8 +344,26 @@ export function readSessionResumeMessages(metadata: RuntimeRunOptions["metadata"
   );
 }
 
+export function readSessionResumePriorTaskId(metadata: RuntimeRunOptions["metadata"]): string | null {
+  if (metadata === undefined || metadata === null) {
+    return null;
+  }
+  if (isDelegateIsolationEnabled(metadata as Record<string, unknown>)) {
+    return null;
+  }
+  const sessionResume = (metadata as Record<string, unknown>).sessionResume;
+  if (typeof sessionResume !== "object" || sessionResume === null) {
+    return null;
+  }
+  const priorTaskId = (sessionResume as Record<string, unknown>).priorTaskId;
+  return typeof priorTaskId === "string" && priorTaskId.length > 0 ? priorTaskId : null;
+}
+
 export function readSessionResumeMemoryContext(metadata: RuntimeRunOptions["metadata"]): ContextFragment[] {
   if (metadata === undefined || metadata === null) {
+    return [];
+  }
+  if (isDelegateIsolationEnabled(metadata as Record<string, unknown>)) {
     return [];
   }
   const sessionResume = (metadata as Record<string, unknown>).sessionResume;

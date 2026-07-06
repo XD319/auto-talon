@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createApplication } from "../src/runtime/index.js";
 import { startSessionApiServer } from "../src/session-api/server.js";
+import { withWorkspaceAuthHeaders } from "./helpers/http-auth-headers.js";
 import type { Provider, ProviderInput, ProviderResponse } from "../src/types/index.js";
 
 class ScriptedProvider implements Provider {
@@ -44,6 +45,7 @@ describe("session HTTP API", () => {
     });
     const port = await getFreePort();
     const server = await startSessionApiServer({
+      cwd: workspaceRoot,
       host: "127.0.0.1",
       port,
       service: handle.service
@@ -70,18 +72,23 @@ describe("session HTTP API", () => {
         ]
       });
 
-      const listResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions`);
+      const listResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions`, {
+        headers: withWorkspaceAuthHeaders(workspaceRoot)
+      });
       expect(listResponse.status).toBe(200);
       const listBody = (await listResponse.json()) as { sessions: Array<{ sessionId: string }> };
       expect(listBody.sessions.some((entry) => entry.sessionId === session.sessionId)).toBe(true);
 
-      const messagesResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/messages`);
+      const messagesResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/messages`, {
+        headers: withWorkspaceAuthHeaders(workspaceRoot)
+      });
       expect(messagesResponse.status).toBe(200);
       const messagesBody = (await messagesResponse.json()) as { messages: Array<{ kind: string }> };
       expect(messagesBody.messages).toHaveLength(1);
 
       const searchResponse = await fetch(
-        `http://127.0.0.1:${port}/v1/sessions/search?q=${encodeURIComponent("session api")}`
+        `http://127.0.0.1:${port}/v1/sessions/search?q=${encodeURIComponent("session api")}`,
+        { headers: withWorkspaceAuthHeaders(workspaceRoot) }
       );
       expect(searchResponse.status).toBe(200);
       const searchBody = (await searchResponse.json()) as { hits: unknown[] };
@@ -89,7 +96,7 @@ describe("session HTTP API", () => {
 
       const invalidJsonResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/continue`, {
         body: "not-json",
-        headers: { "content-type": "application/json" },
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
         method: "POST"
       });
       expect(invalidJsonResponse.status).toBe(400);
@@ -98,7 +105,7 @@ describe("session HTTP API", () => {
 
       const continueResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/continue`, {
         body: JSON.stringify({ input: "follow up" }),
-        headers: { "content-type": "application/json" },
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
         method: "POST"
       });
       expect(continueResponse.status).toBe(200);
@@ -149,6 +156,7 @@ describe("session HTTP API", () => {
     });
     const port = await getFreePort();
     const server = await startSessionApiServer({
+      cwd: workspaceRoot,
       host: "127.0.0.1",
       port,
       service: handle.service
@@ -164,14 +172,16 @@ describe("session HTTP API", () => {
         title: "Model API session"
       });
 
-      const modelsResponse = await fetch(`http://127.0.0.1:${port}/v1/models?sessionId=${session.sessionId}`);
+      const modelsResponse = await fetch(`http://127.0.0.1:${port}/v1/models?sessionId=${session.sessionId}`, {
+        headers: withWorkspaceAuthHeaders(workspaceRoot)
+      });
       expect(modelsResponse.status).toBe(200);
       const modelsBody = (await modelsResponse.json()) as { configuredModels: Array<{ selection: string }> };
       expect(modelsBody.configuredModels.map((entry) => entry.selection)).toContain("vendor-b:vendor-b-model");
 
       const setResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/model`, {
         body: JSON.stringify({ selection: "vendor-b:vendor-b-model" }),
-        headers: { "content-type": "application/json" },
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
         method: "PATCH"
       });
       expect(setResponse.status).toBe(200);
@@ -182,14 +192,16 @@ describe("session HTTP API", () => {
       expect(setBody.modelSelection?.selection).toBe("vendor-b:vendor-b-model");
       expect(setBody.view.current.source).toBe("session_user");
 
-      const detailResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}`);
+      const detailResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}`, {
+        headers: withWorkspaceAuthHeaders(workspaceRoot)
+      });
       expect(detailResponse.status).toBe(200);
       const detailBody = (await detailResponse.json()) as { modelSelection: { selection: string } | null };
       expect(detailBody.modelSelection?.selection).toBe("vendor-b:vendor-b-model");
 
       const clearResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/model`, {
         body: JSON.stringify({ selection: null }),
-        headers: { "content-type": "application/json" },
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
         method: "PATCH"
       });
       expect(clearResponse.status).toBe(200);
@@ -202,7 +214,7 @@ describe("session HTTP API", () => {
 
       const invalidResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/model`, {
         body: JSON.stringify({ selection: "" }),
-        headers: { "content-type": "application/json" },
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
         method: "PATCH"
       });
       expect(invalidResponse.status).toBe(400);

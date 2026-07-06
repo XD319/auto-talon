@@ -16,7 +16,9 @@ Context window size is resolved in this priority order:
 3. **Per-model manifest** — built-in `MODEL_CONTEXT_WINDOWS` map keyed by provider + model name (with prefix matching for versioned model IDs)
 4. **Provider manifest default** — static `contextWindowTokens` on the provider entry
 
-Providers without a known context window (`xfyun-coding`, `openai-compatible`, `ollama`, `openrouter`) require explicit configuration via `provider setup --context-window-tokens` or `tokenBudget.inputLimit`.
+Providers without a known context window (`xfyun-coding`, `openai-compatible`, `ollama`, `openrouter`) require explicit configuration via `provider setup --context-window-tokens`, `tokenBudget.inputLimit`, or `tokenBudget.unknownContextWindowFallback` (default `32000` in `runtime.config.json`).
+
+`talon doctor` warns when the active provider is missing `contextWindowTokens` and no explicit input limit is configured.
 
 ## Token accounting
 
@@ -53,6 +55,7 @@ Context usage percentage in the TUI is computed against the **usable** window:
     "hygieneThresholdRatio": 0.85,
     "tailTokenBudget": 20000,
     "tailMinMessages": 10,
+    "resumeUserTailMessages": 6,
     "messageThreshold": 100,
     "iterationThreshold": 24,
     "toolCallThreshold": 40,

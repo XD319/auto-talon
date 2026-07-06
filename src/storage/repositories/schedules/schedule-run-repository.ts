@@ -1,5 +1,6 @@
 ﻿import type { DatabaseSync } from "node:sqlite";
 
+import { ACTIVE_SCHEDULE_RUN_STATUSES } from "../../../types/schedule.js";
 import type {
   JsonObject,
   ScheduleRunDraft,
@@ -10,6 +11,8 @@ import type {
   ScheduleRunTrigger,
   ScheduleRunUpdatePatch
 } from "../../../types/index.js";
+
+const ACTIVE_RUN_STATUS_SQL = ACTIVE_SCHEDULE_RUN_STATUSES.map(() => "?").join(", ");
 
 import { parseJsonValue, serializeJsonValue } from "../json.js";
 
@@ -122,6 +125,18 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  public findActiveByScheduleId(scheduleId: string): ScheduleRunRecord | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM schedule_runs
+         WHERE schedule_id = ? AND status IN (${ACTIVE_RUN_STATUS_SQL})
+         ORDER BY scheduled_at DESC, run_id DESC
+         LIMIT 1`
+      )
+      .get(scheduleId, ...ACTIVE_SCHEDULE_RUN_STATUSES) as ScheduleRunRow | undefined;
+    return row === undefined ? null : this.mapRow(row);
+  }
+
   public claimDue(now: string, limit: number): ScheduleRunRecord[] {
     const rows = this.database
       .prepare(
@@ -167,6 +182,7 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
     const next: ScheduleRunRecord = {
       ...existing,
       ...(patch.status !== undefined ? { status: patch.status } : {}),
+      ...(patch.scheduledAt !== undefined ? { scheduledAt: patch.scheduledAt } : {}),
       ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
       ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
       ...(patch.taskId !== undefined ? { taskId: patch.taskId } : {}),
@@ -178,12 +194,13 @@ export class SqliteScheduleRunRepository implements ScheduleRunRepository {
     this.database
       .prepare(
         `UPDATE schedule_runs
-         SET status = ?, started_at = ?, finished_at = ?, task_id = ?, session_id = ?, error_code = ?,
+         SET status = ?, scheduled_at = ?, started_at = ?, finished_at = ?, task_id = ?, session_id = ?, error_code = ?,
              error_message = ?, metadata_json = ?
          WHERE run_id = ?`
       )
       .run(
         next.status,
+        next.scheduledAt,
         next.startedAt,
         next.finishedAt,
         next.taskId,

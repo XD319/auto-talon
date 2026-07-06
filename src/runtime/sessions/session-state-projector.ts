@@ -1,10 +1,19 @@
 ﻿import type {
   ConversationMessage,
   SessionCommitmentState,
-  SessionSummaryRecord
+  SessionMessageRepository,
+  SessionSummaryRecord,
+  SessionTranscriptRepository
 } from "../../types/index.js";
+import { selectTailMessages } from "../context/tail-selector.js";
 import type { SessionSummaryService } from "../context/session-summary-service.js";
 import type { SessionCommitmentProjector } from "../commitments/session-commitment-projector.js";
+import { buildHygieneConversationMessages } from "./build-hygiene-conversation-messages.js";
+import {
+  formatFeatureBacklogForResume,
+  parseFeatureBacklogFromMetadata
+} from "./session-feature-backlog.js";
+import { extractUserMessageText } from "./session-user-message-pin.js";
 
 export interface SessionStateProjection {
   messages: ConversationMessage[];
@@ -13,9 +22,17 @@ export interface SessionStateProjection {
 }
 
 export interface SessionStateProjectorDependencies {
-  sessionSummaryService: SessionSummaryService;
   commitmentProjector: SessionCommitmentProjector;
+  sessionMessageRepository: SessionMessageRepository;
+  sessionSummaryService: SessionSummaryService;
+  sessionTranscriptRepository: SessionTranscriptRepository;
+  resumeUserTailMessages?: number;
+  tailMinMessages?: number;
+  tailTokenBudget?: number | null;
 }
+
+const DEFAULT_TAIL_MIN_MESSAGES = 6;
+const DEFAULT_RESUME_USER_TAIL_MESSAGES = 6;
 
 export class SessionStateProjector {
   public constructor(private readonly dependencies: SessionStateProjectorDependencies) {}
@@ -24,7 +41,10 @@ export class SessionStateProjector {
     const commitmentState = this.dependencies.commitmentProjector.project(sessionId);
     const sessionSummary = this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
     if (sessionSummary !== null) {
-      const messages = toResumeMessages(sessionSummary, commitmentState);
+      const messages = [
+        ...toResumeMessages(sessionSummary, commitmentState),
+        ...projectUserTailMessages(sessionId, this.dependencies)
+      ];
       return {
         commitmentState,
         messages,
@@ -33,10 +53,55 @@ export class SessionStateProjector {
     }
     return {
       commitmentState,
-      messages: [],
+      messages: projectFallbackResumeMessages(sessionId, commitmentState, this.dependencies),
       sessionSummary: null
     };
   }
+}
+
+function projectFallbackResumeMessages(
+  sessionId: string,
+  commitmentState: SessionCommitmentState,
+  dependencies: SessionStateProjectorDependencies
+): ConversationMessage[] {
+  const messages = toCommitmentResumeMessages(commitmentState);
+  const conversation = buildHygieneConversationMessages({
+    sessionId,
+    sessionMessageRepository: dependencies.sessionMessageRepository,
+    sessionTranscriptRepository: dependencies.sessionTranscriptRepository
+  });
+  if (conversation.length === 0) {
+    return messages;
+  }
+  const tail = selectTailMessages(conversation, {
+    tailMinMessages: dependencies.tailMinMessages ?? DEFAULT_TAIL_MIN_MESSAGES,
+    tailTokenBudget: dependencies.tailTokenBudget ?? null
+  });
+  return [...messages, ...tail.messages];
+}
+
+function projectUserTailMessages(
+  sessionId: string,
+  dependencies: SessionStateProjectorDependencies
+): ConversationMessage[] {
+  const limit = dependencies.resumeUserTailMessages ?? DEFAULT_RESUME_USER_TAIL_MESSAGES;
+  const records = dependencies.sessionMessageRepository.listBySessionId(sessionId);
+  const userMessages: ConversationMessage[] = [];
+  for (const record of records) {
+    const text = extractUserMessageText(record);
+    if (text === null) {
+      continue;
+    }
+    userMessages.push({ content: text, role: "user" });
+  }
+  if (userMessages.length === 0) {
+    return [];
+  }
+  const tail = selectTailMessages(userMessages, {
+    tailMinMessages: Math.min(limit, userMessages.length),
+    tailTokenBudget: dependencies.tailTokenBudget ?? null
+  });
+  return tail.messages;
 }
 
 function toResumeMessages(
@@ -46,9 +111,28 @@ function toResumeMessages(
   const messages: ConversationMessage[] = [
     {
       role: "system",
-      content: `KnownSessionGoal: ${normalizeLine(sessionSummary.goal, 220)}`
+      content: `KnownActiveGoal: ${normalizeLine(sessionSummary.goal, 220)}`
     }
   ];
+  const sessionTheme =
+    typeof sessionSummary.metadata?.sessionTheme === "string"
+      ? sessionSummary.metadata.sessionTheme.trim()
+      : "";
+  if (sessionTheme.length > 0) {
+    messages.push({
+      role: "system",
+      content: `KnownSessionTheme: ${normalizeLine(sessionTheme, 220)}`
+    });
+  }
+  const featureBacklog = formatFeatureBacklogForResume(
+    parseFeatureBacklogFromMetadata(sessionSummary.metadata)
+  );
+  if (featureBacklog.length > 0) {
+    messages.push({
+      role: "system",
+      content: `KnownFeatureBacklog:\n${featureBacklog}`
+    });
+  }
   const decisions = compactItems(sessionSummary.decisions, 3, 180);
   if (decisions.length > 0) {
     messages.push({
@@ -70,6 +154,11 @@ function toResumeMessages(
       content: `KnownNextActions: ${nextActions.join(" | ")}`
     });
   }
+  return [...messages, ...toCommitmentResumeMessages(commitmentState)];
+}
+
+function toCommitmentResumeMessages(commitmentState: SessionCommitmentState): ConversationMessage[] {
+  const messages: ConversationMessage[] = [];
   if (commitmentState.currentObjective !== null) {
     messages.push({
       role: "system",
@@ -118,4 +207,3 @@ function normalizeLine(value: string, maxLength: number): string {
   }
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength)}...`;
 }
-

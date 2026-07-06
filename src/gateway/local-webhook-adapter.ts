@@ -13,6 +13,7 @@ import type {
   JsonValue
 } from "../types/index.js";
 import { requireHttpAuth } from "../core/http-auth.js";
+import { AppError } from "../core/app-error.js";
 
 const MAX_REQUEST_BODY_BYTES = 256_000;
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
@@ -36,8 +37,8 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
       contractVersion: 1,
       capabilities: {
         approvalInteraction: {
-          detail: "Returns approval state but does not resolve approvals inline.",
-          supported: false
+          detail: "Resolve approvals via GET /tasks/:taskId/approvals and POST /approvals/:approvalId/resolve, or SSE approval_required events.",
+          supported: true
         },
         attachmentCapability: {
           detail: "Returns attachment references only.",
@@ -117,6 +118,14 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
         this.respondJson(response, error.statusCode, { error: error.code, message: error.message });
         return;
       }
+      if (error instanceof AppError && error.code === "session_busy") {
+        this.respondJson(response, 409, {
+          error: "session_busy",
+          message: error.message,
+          retryAfterSeconds: 30
+        });
+        return;
+      }
       this.respondJson(response, 500, { error: "internal_error" });
     }
   }
@@ -188,6 +197,19 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
           kind: "gateway_result",
           result
         });
+        if (result.result.status === "waiting_approval") {
+          for (const approval of this.runtimeApi.listTaskPendingApprovals(result.result.taskId)) {
+            writeSseEvent(response, "approval_required", {
+              approval: {
+                approvalId: approval.approvalId,
+                toolCallId: approval.toolCallId,
+                toolName: approval.toolName
+              },
+              kind: "approval_required",
+              taskId: result.result.taskId
+            });
+          }
+        }
         writeSseEvent(response, "done", {
           kind: "done",
           taskId: result.result.taskId
@@ -212,6 +234,49 @@ export class LocalWebhookAdapter implements InboundMessageAdapter {
       }
 
       this.respondJson(response, 200, snapshot);
+      return;
+    }
+
+    if (request.method === "GET" && /^\/tasks\/[^/]+\/approvals$/.test(url.pathname)) {
+      const taskId = url.pathname.split("/")[2] ?? "";
+      const snapshot = this.runtimeApi.getTaskSnapshot(taskId);
+      if (snapshot === null) {
+        this.respondJson(response, 404, { error: "task_not_found" });
+        return;
+      }
+      const approvals = this.runtimeApi.listTaskPendingApprovals(taskId);
+      this.respondJson(response, 200, { approvals, taskId });
+      return;
+    }
+
+    if (request.method === "POST" && /^\/approvals\/[^/]+\/resolve$/.test(url.pathname)) {
+      const approvalId = url.pathname.split("/")[2] ?? "";
+      const body = await readJsonBody<{
+        action?: "allow" | "deny";
+        allowScope?: "once" | "session" | "always";
+        reviewerId?: string;
+      }>(request);
+      if (body.action !== "allow" && body.action !== "deny") {
+        throw new RequestValidationError("invalid_request", "action must be allow or deny.");
+      }
+      if (typeof body.reviewerId !== "string" || body.reviewerId.length === 0) {
+        throw new RequestValidationError("invalid_request", "reviewerId is required.");
+      }
+      const result = await this.runtimeApi.resolveApproval({
+        adapterId: this.descriptor.adapterId,
+        ...(body.action === "allow" && body.allowScope !== undefined
+          ? { allowScope: body.allowScope }
+          : {}),
+        approvalId,
+        decision: body.action,
+        reviewerExternalUserId: null,
+        reviewerRuntimeUserId: body.reviewerId
+      });
+      if (result === null) {
+        this.respondJson(response, 404, { error: "approval_not_found" });
+        return;
+      }
+      this.respondJson(response, 200, result);
       return;
     }
 

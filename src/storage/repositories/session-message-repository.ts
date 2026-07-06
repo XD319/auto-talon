@@ -358,10 +358,24 @@ function summarizeText(value: string, maxLength = 76): string {
 }
 
 function toFtsQuery(query: string): string {
-  return query
+  const tokens = query
     .split(/\s+/u)
     .map((token) => token.trim())
-    .filter((token) => token.length > 0)
-    .map((token) => `"${token.replaceAll('"', '""')}"*`)
-    .join(" ");
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return "";
+  }
+  const ftsTokens = tokens.flatMap((token) => {
+    const escaped = `"${token.replaceAll('"', '""')}"*`;
+    if (/[\u3400-\u9fff]/u.test(token) && token.length > 2) {
+      const bigrams: string[] = [];
+      for (let index = 0; index < token.length - 1; index += 1) {
+        bigrams.push(`"${token.slice(index, index + 2).replaceAll('"', '""')}"*`);
+      }
+      return [escaped, ...bigrams];
+    }
+    return [escaped];
+  });
+  const hasCjk = /[\u3400-\u9fff]/u.test(query);
+  return hasCjk ? ftsTokens.join(" OR ") : ftsTokens.join(" ");
 }

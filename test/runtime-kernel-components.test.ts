@@ -1,11 +1,12 @@
 ﻿import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildReadOnlyAnalysisGuardMessage,
   CheckpointManager,
   CompletionController,
   hasCompletionIntent,
-  isModificationIntent,
-  mentionsUnverifiedWork
+  mentionsUnverifiedWork,
+  READ_ONLY_GUARD_THRESHOLD
 } from "../src/runtime/kernel/index.js";
 import type { ToolOrchestrator } from "../src/tools/index.js";
 import type {
@@ -101,63 +102,14 @@ describe("CompletionController", () => {
     expect(mentionsUnverifiedWork("Could not verify because tests are unavailable.")).toBe(true);
   });
 
-  it("recognizes modification intent and excludes analysis-only requests", () => {
-    expect(isModificationIntent("修复严重 Bug")).toBe(true);
-    expect(isModificationIntent("implement the requested feature")).toBe(true);
-    expect(isModificationIntent("目前这个项目还有哪些bug")).toBe(false);
-    expect(isModificationIntent("review the auth module")).toBe(false);
-  });
+  it("builds mode-aware read-only analysis guard messages", () => {
+    const agentMessage = buildReadOnlyAnalysisGuardMessage("agent");
+    const planMessage = buildReadOnlyAnalysisGuardMessage("plan");
 
-  it("guards modification finals that make no workspace changes", () => {
-    const recordTrace = vi.fn();
-    const controller = new CompletionController({
-      describeTool: () => descriptor("read_file", "filesystem.read"),
-      recordTrace
-    });
-    const messages: ConversationMessage[] = [];
-    const state = {
-      completionIntentSeenAt: null,
-      completionVerificationGuardEmitted: false,
-      completionVerificationSatisfied: false,
-      completionVerificationSatisfiedEmitted: false,
-      criticalBudgetPressureEmitted: false,
-      intentFulfillmentGuardEmitted: false,
-      maxIterations: 4,
-      messages,
-      postCompletionVerificationReads: 0,
-      silentToolTurns: 0,
-      turnProviderMessages: messages,
-      warningBudgetPressureEmitted: false,
-      writeToolSucceeded: false
-    };
-
-    expect(
-      controller.evaluateIntentFulfillment(
-        state,
-        messages,
-        { ...task(), input: "修复严重 Bug" },
-        2,
-        "修复严重 Bug",
-        "Here is another bug list."
-      )
-    ).toBe("guard");
-    expect(messages.some((message) => message.content.includes("Intent fulfillment guard"))).toBe(
-      true
-    );
-    expect(recordTrace).toHaveBeenCalledWith(
-      expect.objectContaining({ eventType: "intent_fulfillment_missing" })
-    );
-
-    expect(
-      controller.evaluateIntentFulfillment(
-        state,
-        messages,
-        { ...task(), input: "修复严重 Bug" },
-        3,
-        "修复严重 Bug",
-        "Still no changes."
-      )
-    ).toBe("pass");
+    expect(agentMessage).toContain("synthesis guard");
+    expect(agentMessage).not.toContain("todo");
+    expect(planMessage).toContain("Do not call write, patch, shell, or todo tools");
+    expect(planMessage).not.toMatch(/\btodo tool\b/u);
   });
 
   it("includes configured test commands in completion verification guard", () => {
@@ -173,10 +125,10 @@ describe("CompletionController", () => {
       completionVerificationSatisfied: false,
       completionVerificationSatisfiedEmitted: false,
       criticalBudgetPressureEmitted: false,
-      intentFulfillmentGuardEmitted: false,
       maxIterations: 4,
       messages,
       postCompletionVerificationReads: 0,
+      readOnlyTurns: 0,
       silentToolTurns: 0,
       turnProviderMessages: messages,
       warningBudgetPressureEmitted: false,
@@ -192,6 +144,55 @@ describe("CompletionController", () => {
     );
     expect(decision.kind).toBe("guard");
     expect(messages.at(-1)?.content).toContain("Suggested commands: node check.js, npm test");
+  });
+
+  it("injects read-only analysis guard after many consecutive read-only tool turns", () => {
+    const recordTrace = vi.fn();
+    const controller = new CompletionController({
+      describeTool: () => descriptor("read_file", "filesystem.read"),
+      recordTrace
+    });
+    const messages: ConversationMessage[] = [];
+    const state = {
+      completionIntentSeenAt: null,
+      completionVerificationGuardEmitted: false,
+      completionVerificationSatisfied: false,
+      completionVerificationSatisfiedEmitted: false,
+      criticalBudgetPressureEmitted: false,
+      maxIterations: 20,
+      messages,
+      postCompletionVerificationReads: 0,
+      readOnlyTurns: 0,
+      silentToolTurns: 0,
+      turnProviderMessages: messages,
+      warningBudgetPressureEmitted: false,
+      writeToolSucceeded: false
+    };
+    const toolTurn = {
+      kind: "tool_calls" as const,
+      message: "让我继续读取剩余部分",
+      toolCalls: [{ arguments: { path: "game.js" }, toolCallId: "tc-1", toolName: "read_file" }]
+    };
+
+    for (let iteration = 1; iteration < READ_ONLY_GUARD_THRESHOLD; iteration += 1) {
+      controller.observeProviderToolTurn(state, messages, task(), iteration, toolTurn);
+    }
+    expect(messages.some((message) => message.content.includes("synthesis guard"))).toBe(false);
+
+    controller.observeProviderToolTurn(
+      state,
+      messages,
+      task(),
+      READ_ONLY_GUARD_THRESHOLD,
+      toolTurn,
+      "plan"
+    );
+    expect(messages.some((message) => message.content.includes("Do not call write, patch, shell, or todo tools"))).toBe(
+      true
+    );
+    expect(recordTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "read_only_analysis_guard" })
+    );
   });
 });
 

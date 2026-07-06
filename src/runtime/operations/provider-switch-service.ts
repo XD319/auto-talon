@@ -12,7 +12,7 @@ import {
 import { createProvider } from "../../providers/provider-factory.js";
 import { enrichProviderContextFromApi } from "../../providers/context-window-enrichment.js";
 import { isProviderSwitchable } from "../../providers/provider-switchable.js";
-import { resolveEffectiveContextWindow } from "../bootstrap.js";
+import { resolveEffectiveContextWindow, DEFAULT_UNKNOWN_CONTEXT_WINDOW_FALLBACK_TOKENS } from "../bootstrap.js";
 
 export type ProviderSwitchPersistScope = "session" | "user" | "workspace";
 
@@ -22,9 +22,11 @@ export interface SwitchProviderInput {
   selection: string;
   tokenBudget: TokenBudget;
   tokenBudgetInputLimitExplicit: boolean;
+  unknownContextWindowFallback?: number;
 }
 
 export interface SwitchProviderResult {
+  persistedConfigPath: string | null;
   persistedScope: ProviderSwitchPersistScope | null;
   provider: Provider;
   providerConfig: ResolvedProviderConfig;
@@ -88,10 +90,12 @@ export async function switchProviderRuntime(
   }
 
   let persistedScope: ProviderSwitchPersistScope | null = null;
+  let persistedConfigPath: string | null = null;
   if (input.persist === "user" || input.persist === "workspace") {
     const scope: ProviderConfigScope = input.persist;
-    useProviderConfig(resolvedSelection, { cwd, scope });
+    const writeResult = useProviderConfig(resolvedSelection, { cwd, scope });
     persistedScope = input.persist;
+    persistedConfigPath = writeResult.configPath;
   }
 
   const probeProvider = createProvider(providerConfig);
@@ -100,7 +104,9 @@ export async function switchProviderRuntime(
   });
   const effective = resolveEffectiveContextWindow(enrichedConfig, {
     tokenBudget: input.tokenBudget,
-    tokenBudgetInputLimitExplicit: input.tokenBudgetInputLimitExplicit
+    tokenBudgetInputLimitExplicit: input.tokenBudgetInputLimitExplicit,
+    unknownContextWindowFallback:
+      input.unknownContextWindowFallback ?? DEFAULT_UNKNOWN_CONTEXT_WINDOW_FALLBACK_TOKENS
   });
   const provider = createProvider(effective.provider);
   const tokenBudget: TokenBudget = {
@@ -109,6 +115,7 @@ export async function switchProviderRuntime(
   };
 
   return {
+    persistedConfigPath,
     persistedScope,
     provider,
     providerConfig: effective.provider,

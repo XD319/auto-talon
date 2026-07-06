@@ -33,8 +33,15 @@ export const TRACE_EVENT_TYPES = [
   "iteration_budget_pressure",
   "completion_verification_missing",
   "completion_verification_satisfied",
+  "intent_fulfillment_missing",
+  "empty_final_guarded",
+  "unpolished_final_guarded",
+  "invalid_final_output_rejected",
+  "read_only_analysis_guard",
+  "duplicate_tool_replayed",
   "no_tools_tool_calls_ignored",
   "policy_decision",
+  "accept_edits_auto_allowed",
   "approval_requested",
   "approval_resolved",
   "clarify_requested",
@@ -59,6 +66,7 @@ export const TRACE_EVENT_TYPES = [
   "review_resolved",
   "pre_compress",
   "compact_evaluated",
+  "manual_compact_triggered",
   "tail_budget_exceeded",
   "micro_compact_pruned",
   "compact_summarizer_failed",
@@ -67,6 +75,10 @@ export const TRACE_EVENT_TYPES = [
   "context_assembled",
   "recent_files_refetched",
   "recent_files_pinned",
+  "memory_context_injected",
+  "session_todos_injected",
+  "prior_task_context_injected",
+  "reactive_compact_triggered",
   "repo_map_created",
   "memory_recalled",
   "recall_explain",
@@ -74,12 +86,19 @@ export const TRACE_EVENT_TYPES = [
   "memory_write_rejected",
   "session_compacted",
   "session_summary_written",
+  "session_goal_updated",
+  "user_messages_pinned",
+  "constraint_captured",
+  "feature_backlog_updated",
+  "feature_backlog_filtered",
+  "task_superseded",
   "schedule_created",
   "schedule_updated",
   "schedule_archived",
   "schedule_paused",
   "schedule_resumed",
   "schedule_run_enqueued",
+  "schedule_run_skipped_overlap",
   "schedule_run_started",
   "schedule_run_finished",
   "schedule_run_failed",
@@ -275,6 +294,13 @@ export interface PolicyDecisionPayload extends JsonObject {
   pathScope: PathScope;
   privacyLevel: PrivacyLevel;
   riskLevel: ToolRiskLevel;
+}
+
+export interface AcceptEditsAutoAllowedPayload extends JsonObject {
+  capability: ToolCapability;
+  interactionMode: "acceptEdits";
+  toolCallId: string;
+  toolName: string;
 }
 
 export interface ApprovalRequestedPayload extends JsonObject {
@@ -487,6 +513,11 @@ export interface CompactEvaluatedPayload extends JsonObject {
   triggered: boolean;
 }
 
+export interface ManualCompactTriggeredPayload extends JsonObject {
+  focusTopic?: string;
+  iteration: number;
+}
+
 export interface TailBudgetExceededPayload extends JsonObject {
   protectLastN: number;
   tailMessageCount: number;
@@ -516,6 +547,27 @@ export interface RecentFilesPinnedPayload extends JsonObject {
     path: string;
     truncated: boolean;
   }>;
+}
+
+export interface MemoryContextInjectedPayload extends JsonObject {
+  fragmentCount: number;
+  iteration: number;
+  tokenEstimate: number;
+}
+
+export interface SessionTodosInjectedPayload extends JsonObject {
+  iteration?: number;
+  todoCount: number;
+}
+
+export interface PriorTaskContextInjectedPayload extends JsonObject {
+  priorTaskId: string;
+  truncated: boolean;
+}
+
+export interface ReactiveCompactTriggeredPayload extends JsonObject {
+  droppedMessageCount: number;
+  iteration: number;
 }
 
 export interface RepoMapCreatedPayload extends JsonObject {
@@ -591,6 +643,40 @@ export interface SessionSummaryWrittenPayload extends JsonObject {
   goal: string;
 }
 
+export interface SessionGoalUpdatedPayload extends JsonObject {
+  previousGoal: string;
+  sessionId: string;
+  updatedGoal: string;
+}
+
+export interface UserMessagesPinnedPayload extends JsonObject {
+  count: number;
+  sessionId: string;
+}
+
+export interface ConstraintCapturedPayload extends JsonObject {
+  constraints: string[];
+  sessionId: string;
+}
+
+export interface FeatureBacklogUpdatedPayload extends JsonObject {
+  itemCount: number;
+  sessionId: string;
+}
+
+export interface FeatureBacklogFilteredPayload extends JsonObject {
+  droppedCount: number;
+  filteredCount: number;
+  rawCount: number;
+  sessionId: string;
+}
+
+export interface TaskSupersededPayload extends JsonObject {
+  activeTaskId: string;
+  sessionId: string;
+  supersededTaskId: string;
+}
+
 export interface ScheduleCreatedPayload extends JsonObject {
   scheduleId: string;
   status: "active" | "paused";
@@ -625,6 +711,12 @@ export interface ScheduleRunEnqueuedPayload extends JsonObject {
   trigger: "scheduled" | "manual" | "retry";
   attemptNumber: number;
   scheduledAt: string;
+}
+
+export interface ScheduleRunSkippedOverlapPayload extends JsonObject {
+  activeRunId: string;
+  reason: "scheduled" | "manual";
+  scheduleId: string;
 }
 
 export interface ScheduleRunStartedPayload extends JsonObject {
@@ -973,8 +1065,15 @@ export type TraceEvent =
   | TraceEventBase<"iteration_budget_pressure", IterationBudgetPressurePayload>
   | TraceEventBase<"completion_verification_missing">
   | TraceEventBase<"completion_verification_satisfied">
+  | TraceEventBase<"intent_fulfillment_missing">
+  | TraceEventBase<"empty_final_guarded">
+  | TraceEventBase<"unpolished_final_guarded">
+  | TraceEventBase<"invalid_final_output_rejected">
+  | TraceEventBase<"read_only_analysis_guard">
+  | TraceEventBase<"duplicate_tool_replayed">
   | TraceEventBase<"no_tools_tool_calls_ignored", NoToolsToolCallsIgnoredPayload>
   | TraceEventBase<"policy_decision", PolicyDecisionPayload>
+  | TraceEventBase<"accept_edits_auto_allowed", AcceptEditsAutoAllowedPayload>
   | TraceEventBase<"approval_requested", ApprovalRequestedPayload>
   | TraceEventBase<"approval_resolved", ApprovalResolvedPayload>
   | TraceEventBase<"clarify_requested", ClarifyRequestedPayload>
@@ -999,6 +1098,7 @@ export type TraceEvent =
   | TraceEventBase<"review_resolved", ReviewResolvedPayload>
   | TraceEventBase<"pre_compress", PreCompressPayload>
   | TraceEventBase<"compact_evaluated", CompactEvaluatedPayload>
+  | TraceEventBase<"manual_compact_triggered", ManualCompactTriggeredPayload>
   | TraceEventBase<"tail_budget_exceeded", TailBudgetExceededPayload>
   | TraceEventBase<"micro_compact_pruned", MicroCompactPrunedPayload>
   | TraceEventBase<"compact_summarizer_failed", CompactSummarizerFailedPayload>
@@ -1007,6 +1107,10 @@ export type TraceEvent =
   | TraceEventBase<"context_assembled", ContextAssembledPayload>
   | TraceEventBase<"recent_files_refetched", RecentFilesRefetchedPayload>
   | TraceEventBase<"recent_files_pinned", RecentFilesPinnedPayload>
+  | TraceEventBase<"memory_context_injected", MemoryContextInjectedPayload>
+  | TraceEventBase<"session_todos_injected", SessionTodosInjectedPayload>
+  | TraceEventBase<"prior_task_context_injected", PriorTaskContextInjectedPayload>
+  | TraceEventBase<"reactive_compact_triggered", ReactiveCompactTriggeredPayload>
   | TraceEventBase<"repo_map_created", RepoMapCreatedPayload>
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"recall_explain", RecallExplainPayload>
@@ -1014,12 +1118,19 @@ export type TraceEvent =
   | TraceEventBase<"memory_write_rejected", MemoryWriteRejectedPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
   | TraceEventBase<"session_summary_written", SessionSummaryWrittenPayload>
+  | TraceEventBase<"session_goal_updated", SessionGoalUpdatedPayload>
+  | TraceEventBase<"user_messages_pinned", UserMessagesPinnedPayload>
+  | TraceEventBase<"constraint_captured", ConstraintCapturedPayload>
+  | TraceEventBase<"feature_backlog_updated", FeatureBacklogUpdatedPayload>
+  | TraceEventBase<"feature_backlog_filtered", FeatureBacklogFilteredPayload>
+  | TraceEventBase<"task_superseded", TaskSupersededPayload>
   | TraceEventBase<"schedule_created", ScheduleCreatedPayload>
   | TraceEventBase<"schedule_updated", ScheduleUpdatedPayload>
   | TraceEventBase<"schedule_archived", ScheduleArchivedPayload>
   | TraceEventBase<"schedule_paused", SchedulePausedPayload>
   | TraceEventBase<"schedule_resumed", ScheduleResumedPayload>
   | TraceEventBase<"schedule_run_enqueued", ScheduleRunEnqueuedPayload>
+  | TraceEventBase<"schedule_run_skipped_overlap", ScheduleRunSkippedOverlapPayload>
   | TraceEventBase<"schedule_run_started", ScheduleRunStartedPayload>
   | TraceEventBase<"schedule_run_finished", ScheduleRunFinishedPayload>
   | TraceEventBase<"schedule_run_failed", ScheduleRunFailedPayload>

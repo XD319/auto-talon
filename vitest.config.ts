@@ -5,6 +5,12 @@ export default defineConfig({
     environment: "node",
     maxWorkers: 2,
     minWorkers: 1,
+    pool: "threads",
+    poolMatchGlobs: [
+      ["**/cli-inbox.test.ts", "forks"],
+      ["**/cli-memory-command.test.ts", "forks"],
+      ["**/cli-schedule.test.ts", "forks"]
+    ],
     setupFiles: ["./test/setup-env.ts"],
     testTimeout: 120_000,
     hookTimeout: 120_000,
@@ -12,10 +18,10 @@ export default defineConfig({
     coverage: {
       reporter: ["text", "html"],
       thresholds: {
-        branches: 50,
-        functions: 60,
-        lines: 60,
-        statements: 60
+        branches: 60,
+        functions: 70,
+        lines: 70,
+        statements: 70
       }
     }
   }

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { startLocalWebhookGateway } from "../src/gateway/index.js";
 import { createApplication } from "../src/runtime/index.js";
+import { withWorkspaceAuthHeaders } from "./helpers/http-auth-headers.js";
 import type { Provider, ProviderInput, ProviderResponse } from "../src/types/index.js";
 
 class ImmediateProvider implements Provider {
@@ -54,18 +55,20 @@ describe("gateway inbox endpoints", () => {
           },
           taskInput: "hello"
         }),
-        headers: { "Content-Type": "application/json" },
+        headers: withWorkspaceAuthHeaders(workspace, { "Content-Type": "application/json" }),
         method: "POST"
       });
 
-      const listResponse = await fetch("http://127.0.0.1:39215/inbox");
+      const listResponse = await fetch("http://127.0.0.1:39215/inbox", {
+        headers: withWorkspaceAuthHeaders(workspace)
+      });
       expect(listResponse.ok).toBe(true);
       const items = (await listResponse.json()) as Array<{ inboxId: string }>;
       expect(items.length).toBeGreaterThan(0);
 
       const doneResponse = await fetch(`http://127.0.0.1:39215/inbox/${items[0]!.inboxId}/done`, {
         body: JSON.stringify({ reviewerRuntimeUserId: "reviewer-1" }),
-        headers: { "Content-Type": "application/json" },
+        headers: withWorkspaceAuthHeaders(workspace, { "Content-Type": "application/json" }),
         method: "POST"
       });
       expect(doneResponse.ok).toBe(true);

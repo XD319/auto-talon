@@ -33,7 +33,7 @@
 
 ## Memory / Storage
 
-- Runtime schema baseline: `PRAGMA user_version = 19`.
+- Runtime schema baseline: `PRAGMA user_version = 21`.
 - Schema upgrades from legacy unversioned DB: supported via migration pipeline.
 - Config files without `version`: auto-migrated to `version: 1`.
 - Scope rename compatibility:

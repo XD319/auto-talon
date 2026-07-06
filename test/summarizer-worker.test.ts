@@ -15,25 +15,9 @@ describe("SummarizerWorker", () => {
     let capturedDraft: SessionSummaryDraft | null = null;
     const worker = new SummarizerWorker({
       contextCompactor: new ContextCompactor(),
-      sessionSummaryService: {
-        create(draft: SessionSummaryDraft): SessionSummaryRecord {
-          capturedDraft = draft;
-          return {
-            createdAt: "2026-01-01T00:00:00.000Z",
-            decisions: draft.decisions,
-            goal: draft.goal,
-            metadata: draft.metadata ?? {},
-            nextActions: draft.nextActions,
-            openLoops: draft.openLoops,
-            runId: draft.runId ?? null,
-            sessionSummaryId: "session-memory-1",
-            summary: draft.summary,
-            taskId: draft.taskId ?? null,
-            sessionId: draft.sessionId,
-            trigger: draft.trigger
-          };
-        }
-      } as unknown as SessionSummaryService
+      sessionSummaryService: createSessionSummaryService((draft) => {
+        capturedDraft = draft;
+      })
     });
 
     await worker.execute({
@@ -69,7 +53,91 @@ describe("SummarizerWorker", () => {
       replacedMessageCount: 3
     });
   });
+
+  it("merges previous session summary continuity on the success path", async () => {
+    let capturedDraft: SessionSummaryDraft | null = null;
+    const previousSummary: SessionSummaryRecord = {
+      createdAt: "2026-01-01T00:00:00.000Z",
+      decisions: ["use PostgreSQL"],
+      goal: "Design persistence layer",
+      metadata: {},
+      nextActions: ["verify follow-up output"],
+      openLoops: ["pending read_file (tc-prev)"],
+      runId: null,
+      sessionSummaryId: "summary-before-compact",
+      summary: "previous summary",
+      taskId: "task-initial",
+      sessionId: "session-1",
+      trigger: "compact"
+    };
+    const worker = new SummarizerWorker({
+      contextCompactor: new ContextCompactor(),
+      sessionSummaryService: {
+        ...createSessionSummaryService((draft: SessionSummaryDraft) => {
+          capturedDraft = draft;
+        }),
+        findLatestBySession: () => previousSummary
+      } as unknown as SessionSummaryService
+    });
+
+    await worker.execute({
+      availableTools: [],
+      compactInput: {
+        maxMessagesBeforeCompact: 2,
+        messages: [
+          { content: "What is the current status?", role: "user" },
+          { content: "Decision: keep the migration reversible", role: "assistant" }
+        ],
+        reason: "context_budget",
+        sessionScopeKey: "session-1",
+        taskId: "task-follow-up"
+      },
+      compactResult: {
+        reason: "context_budget",
+        replacementMessages: [{ content: "summary", role: "assistant" }],
+        summaryMemory: null,
+        triggered: true
+      },
+      runId: "run-1",
+      task: createTask()
+    });
+
+    expect(capturedDraft).not.toBeNull();
+    const draft = capturedDraft as SessionSummaryDraft;
+    expect(draft.goal).toBe("What is the current status?");
+    expect(draft.decisions).toEqual(["use PostgreSQL", "keep the migration reversible"]);
+    expect(draft.openLoops.join(" ")).toContain("tc-prev");
+    expect(draft.nextActions).toEqual([]);
+    expect(
+      (draft.metadata as { previousSessionSummaryId?: string }).previousSessionSummaryId
+    ).toBe("summary-before-compact");
+  });
 });
+
+function createSessionSummaryService(
+  onCreate: (draft: SessionSummaryDraft) => void
+): SessionSummaryService {
+  return {
+    create(draft: SessionSummaryDraft): SessionSummaryRecord {
+      onCreate(draft);
+      return {
+        createdAt: "2026-01-01T00:00:00.000Z",
+        decisions: draft.decisions,
+        goal: draft.goal,
+        metadata: draft.metadata ?? {},
+        nextActions: draft.nextActions,
+        openLoops: draft.openLoops,
+        runId: draft.runId ?? null,
+        sessionSummaryId: "session-memory-1",
+        summary: draft.summary,
+        taskId: draft.taskId ?? null,
+        sessionId: draft.sessionId,
+        trigger: draft.trigger
+      };
+    },
+    findLatestBySession: () => null
+  } as unknown as SessionSummaryService;
+}
 
 function createTask(): TaskRecord {
   return {

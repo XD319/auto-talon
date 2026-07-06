@@ -7,7 +7,6 @@ import type {
 } from "../application-service.js";
 import type {
   CommitmentRecord,
-  ConversationMessage,
   InboxItem,
   NextActionRecord,
   RuntimeRunOptions,
@@ -15,13 +14,16 @@ import type {
   TaskRecord,
   SessionCommitmentState,
   SessionLineageRecord,
-  SessionMessageRecord,
   SessionRecord,
   SessionTaskRecord,
   SessionSummaryRecord,
   JsonObject
 } from "../../types/index.js";
-import { estimateMessagesTokens } from "../context/token-counter.js";
+import { estimateConversationMessageTokens } from "../context/token-counter.js";
+import { buildHygieneConversationMessages } from "../sessions/build-hygiene-conversation-messages.js";
+import { pinUserMessagesFromRecords } from "../sessions/session-user-message-pin.js";
+import { isTerminalTaskStatus } from "../sessions/session-execution-lock.js";
+import { withMergedSessionApprovalFingerprints } from "../../approvals/session-approval-fingerprints.js";
 
 export class SessionFacade {
   public constructor(
@@ -34,25 +36,32 @@ export class SessionFacade {
   ) {}
 
   public async runTask(options: RuntimeRunOptions): Promise<RunTaskResult> {
+    const taskId = options.taskId ?? randomUUID();
+    const resolvedSession = this.dependencies.sessionService.getOrCreateSession({
+      agentProfileId: options.agentProfileId,
+      cwd: options.cwd,
+      ownerUserId: options.userId,
+      providerName: this.dependencies.provider.name,
+      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      title: options.taskInput.slice(0, 80)
+    });
+    this.dependencies.sessionExecutionLock.acquire(resolvedSession.sessionId, taskId);
     try {
-      const resolvedSession = this.dependencies.sessionService.getOrCreateSession({
-        agentProfileId: options.agentProfileId,
-        cwd: options.cwd,
-        ownerUserId: options.userId,
-        providerName: this.dependencies.provider.name,
-        ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-        title: options.taskInput.slice(0, 80)
-      });
       const result = await this.dependencies.executionKernel.run({
         ...options,
-        sessionId: resolvedSession.sessionId
+        sessionId: resolvedSession.sessionId,
+        taskId
       });
+      if (isTerminalTaskStatus(result.task.status)) {
+        this.dependencies.sessionExecutionLock.release(resolvedSession.sessionId, result.task.taskId);
+      }
       this.projectAssistantOutput(result.task.sessionId ?? null, result.task.taskId, result.output ?? null);
       return {
         output: result.output,
         task: result.task
       };
     } catch (error) {
+      this.dependencies.sessionExecutionLock.release(resolvedSession.sessionId, taskId);
       const appError =
         error instanceof AppError
           ? error
@@ -61,9 +70,9 @@ export class SessionFacade {
               message: error instanceof Error ? error.message : "Unknown runtime error"
             });
 
-      const taskId =
+      const failedTaskId =
         typeof appError.details?.taskId === "string" ? appError.details.taskId : null;
-      const task = taskId === null ? null : this.dependencies.findTask(taskId);
+      const task = failedTaskId === null ? null : this.dependencies.findTask(failedTaskId);
       if (task === null) {
         throw appError;
       }
@@ -201,7 +210,14 @@ export class SessionFacade {
       title: input.slice(0, 80)
     });
     this.applyContinuationHygiene(session);
-    const options = this.dependencies.resumePacketBuilder.buildResumePacket(sessionId, input, overrides);
+    const persistedUiState = this.dependencies.sessionUiStateService.load(sessionId);
+    const options = this.dependencies.resumePacketBuilder.buildResumePacket(sessionId, input, {
+      ...overrides,
+      metadata: withMergedSessionApprovalFingerprints(
+        overrides?.metadata,
+        persistedUiState?.sessionApprovalFingerprints
+      )
+    });
     return this.runTask(options);
   }
 
@@ -225,9 +241,15 @@ export class SessionFacade {
   }
 
   private applyContinuationHygiene(session: SessionRecord): void {
-    const records = this.dependencies.sessionMessageRepository.listBySessionId(session.sessionId);
-    const messages = records.map(toConversationMessage).filter((message): message is ConversationMessage => message !== null);
-    const tokenEstimate = estimateMessagesTokens(messages);
+    const messages = buildHygieneConversationMessages({
+      sessionId: session.sessionId,
+      sessionMessageRepository: this.dependencies.sessionMessageRepository,
+      sessionTranscriptRepository: this.dependencies.sessionTranscriptRepository
+    });
+    const tokenEstimate = messages.reduce(
+      (total, message) => total + estimateConversationMessageTokens(message),
+      0
+    );
     const threshold = Math.floor(
       this.dependencies.tokenBudget.inputLimit * this.dependencies.compact.hygieneThresholdRatio
     );
@@ -235,6 +257,8 @@ export class SessionFacade {
       return;
     }
 
+    const records = this.dependencies.sessionMessageRepository.listBySessionId(session.sessionId);
+    const pinnedUserMessages = pinUserMessagesFromRecords(records);
     const latestRun = this.dependencies.listSessionTasks(session.sessionId).at(-1) ?? null;
     const task = buildHygieneTask(session, latestRun?.taskId ?? `session-hygiene:${randomUUID()}`, this.dependencies.tokenBudget);
     const summaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
@@ -250,6 +274,9 @@ export class SessionFacade {
         tokenEstimate,
         tokenThreshold: threshold
       },
+      pinnedUserMessages,
+      previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(session.sessionId),
+      sessionTodos: this.dependencies.todoSessionStore.get(session.sessionId),
       task,
       trigger: "resume"
     });
@@ -265,6 +292,7 @@ export class SessionFacade {
       },
       runId: latestRun?.runId ?? null,
       sessionId: session.sessionId,
+      taskId: latestRun?.taskId ?? null,
       trigger: "resume"
     });
     this.dependencies.sessionLineageRepository.append({
@@ -283,20 +311,6 @@ export class SessionFacade {
       sessionId: session.sessionId
     });
   }
-}
-
-function toConversationMessage(record: SessionMessageRecord): ConversationMessage | null {
-  const text = typeof record.payload.text === "string" ? record.payload.text.trim() : "";
-  if (text.length === 0) {
-    return null;
-  }
-  if (record.kind === "agent") {
-    return { content: text, role: "assistant" };
-  }
-  if (record.kind === "user") {
-    return { content: text, role: "user" };
-  }
-  return { content: text, role: "system" };
 }
 
 function buildHygieneTask(

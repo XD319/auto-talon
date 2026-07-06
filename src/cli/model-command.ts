@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import type { Command } from "commander";
 
 import {
   listConfiguredProviders,
@@ -30,6 +31,42 @@ import {
 export interface ModelCommandFormatOptions {
   json?: boolean;
   sessionId?: string;
+}
+
+export function resolveModelCommandWorkspaceFlag(
+  commandOptions: { workspace?: boolean },
+  command?: Command
+): boolean {
+  if (commandOptions.workspace === true) {
+    return true;
+  }
+  return command?.parent?.opts()?.workspace === true;
+}
+
+export function resolveModelCommandCwd(
+  commandOptions: { cwd?: string },
+  command?: Command
+): string {
+  const parent = command?.parent;
+  const parentCwd = parent?.opts()?.cwd as unknown;
+  if (
+    typeof parentCwd === "string" &&
+    parentCwd.length > 0 &&
+    parent?.getOptionValueSource?.("cwd") === "cli"
+  ) {
+    return parentCwd;
+  }
+  if (
+    commandOptions.cwd !== undefined &&
+    commandOptions.cwd.length > 0 &&
+    command?.getOptionValueSource?.("cwd") === "cli"
+  ) {
+    return commandOptions.cwd;
+  }
+  if (commandOptions.cwd !== undefined && commandOptions.cwd.length > 0) {
+    return commandOptions.cwd;
+  }
+  return process.cwd();
 }
 
 export function formatModelStatus(cwd: string, options: ModelCommandFormatOptions = {}): string {
@@ -164,7 +201,7 @@ export async function setModelSelection(
     const lines = [
       `Selected ${result.providerConfig.name}`,
       `Model: ${result.providerConfig.model ?? "-"}`,
-      `Config Path: ${result.providerConfig.configPath}`
+      `Config Path: ${result.persistedConfigPath ?? result.providerConfig.configPath}`
     ];
     const envNotice = formatEnvProviderOverrideNotice();
     if (envNotice !== null) {

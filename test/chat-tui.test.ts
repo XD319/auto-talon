@@ -1938,6 +1938,177 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
+  it("keeps session_total token HUD usage mode after activateSession via restoreSession", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service = createIdleControllerService();
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      getController().restoreSession({
+        id: "session-resume-tokens",
+        messages: [
+          { id: "user:resume", kind: "user", text: "Resume me", timestamp: "2026-01-01T00:00:00.000Z" }
+        ],
+        sessionId: "session-resume-tokens",
+        updatedAt: "2026-01-01T01:00:00.000Z"
+      });
+      await waitFor(() => getController().activeSessionId === "session-resume-tokens");
+      expect(getController().tokenHud.usageMode).toBe("session_total");
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("clears approval fingerprints when creating a new session", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      createSession() {
+        return createStubSessionRecord("session-new", "Untitled session");
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionApprovalFingerprints: ["fp-old"],
+        initialSessionId: "session-active",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      expect(getController().sessionApprovalFingerprints).toEqual(["fp-old"]);
+      getController().createAndActivateSession("Untitled session");
+      await waitFor(() => getController().activeSessionId === "session-new");
+      expect(getController().sessionApprovalFingerprints).toEqual([]);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("uses planner profile immediately after restoring a plan-mode session", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const continueSession = vi.fn((sessionId: string, _text: string, options: Partial<RuntimeRunOptions>) =>
+      Promise.resolve({
+        output: "planned",
+        task: {
+          ...createControllerTask({
+            agentProfileId: options.agentProfileId ?? "executor",
+            cwd: process.cwd(),
+            maxIterations: 12,
+            taskInput: _text,
+            timeoutMs: 120_000,
+            tokenBudget: config.tokenBudget,
+            userId: "reviewer",
+            ...options,
+            sessionId
+          }),
+          finalOutput: "planned",
+          status: "succeeded"
+        }
+      })
+    );
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      continueSession
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      getController().restoreSession({
+        id: "session-plan",
+        interactionMode: "plan",
+        messages: [
+          { id: "user:plan", kind: "user", text: "Plan this", timestamp: "2026-01-01T00:00:00.000Z" }
+        ],
+        sessionId: "session-plan",
+        updatedAt: "2026-01-01T01:00:00.000Z"
+      });
+      await waitFor(() => getController().activeSessionId === "session-plan");
+      expect(getController().submitPrompt("continue planning")).toBe(true);
+      await waitFor(() => continueSession.mock.calls.length === 1);
+      expect(continueSession.mock.calls[0]?.[2]?.agentProfileId).toBe("planner");
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
   it("hydrates failed progress from output events for legacy sessions", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
@@ -3040,9 +3211,13 @@ function createControllerConfig(): AppConfig {
       toolCallThreshold: 10
     },
     databasePath: ":memory:",
+    defaultInteractionMode: "agent",
     defaultMaxIterations: 4,
     defaultProfileId: "executor",
     defaultTimeoutMs: 10_000,
+    interactionModes: {
+      agentWriteApproval: "off"
+    },
     promotion: {
       enabled: false,
       maxHumanJudgmentWeight: 0,

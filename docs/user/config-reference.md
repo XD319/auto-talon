@@ -347,6 +347,27 @@ Governance:
 - `approval-rules.json` stores user-granted always-allow fingerprints and optional shell/file prefix rules.
 - See also `docs/user/approvals.md` and `docs/phase2-governance.md`.
 
+Local HTTP authentication:
+- `talon init` writes `.auto-talon/http.token` (random bearer token). Loopback Session API and webhook gateway require `Authorization: Bearer <token>` when this file or `AGENT_HTTP_TOKEN` is present.
+- Set `AGENT_HTTP_INSECURE=1` to disable auth for local development. `talon doctor` warns when loopback services run without a token.
+- Non-loopback binds require a token unless `--insecure` is passed explicitly.
+
+Runtime token budget defaults (`.auto-talon/runtime.config.json`):
+
+```json
+{
+  "tokenBudget": {
+    "unknownContextWindowFallback": 32000
+  },
+  "concurrency": {
+    "allowParallelSessions": false
+  }
+}
+```
+
+- `unknownContextWindowFallback` applies when the active provider has no `contextWindowTokens` and `tokenBudget.inputLimit` is not set explicitly.
+- `concurrency.allowParallelSessions` disables session-level task locking when set to `true` (power-user mode; default is `false`).
+
 Scheduled info-flow examples:
 - Daily AI news: `talon schedule create "Search recent AI news, fetch the top sources, and summarize action items." --name "Daily AI news" --cron "0 8 * * *" --timezone Asia/Shanghai`
 - Hourly service status check: `talon schedule create "Search public status pages for our dependencies and summarize incidents." --name "Status patrol" --every 1h`

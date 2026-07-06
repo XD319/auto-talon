@@ -29,7 +29,7 @@ describe("ResumePacketBuilder", () => {
       messages: [
         {
           role: "system",
-          content: "KnownSessionGoal: 目前这个项目还有哪些bug"
+          content: "KnownActiveGoal: 目前这个项目还有哪些bug"
         }
       ],
       sessionSummary: {
@@ -75,5 +75,48 @@ describe("ResumePacketBuilder", () => {
         message.content.startsWith("KnownCurrentDirective:")
       )
     ).toBe(true);
+  });
+
+  it("includes fallback context messages when no session summary exists", () => {
+    const projection: SessionStateProjection = {
+      commitmentState: {
+        activeNextActions: [],
+        blockedReason: null,
+        currentObjective: null,
+        nextAction: null,
+        openCommitments: [],
+        pendingDecision: null
+      },
+      messages: [
+        { role: "user", content: "Prior user request before compaction" },
+        { role: "assistant", content: "Prior assistant reply" }
+      ],
+      sessionSummary: null
+    };
+    const builder = new ResumePacketBuilder({
+      config: {
+        defaultMaxIterations: 12,
+        defaultProfileId: "executor",
+        defaultTimeoutMs: 120000,
+        tokenBudget: {
+          inputLimit: 1000,
+          outputLimit: 1000,
+          reservedOutput: 100,
+          usedCostUsd: 0,
+          usedInput: 0,
+          usedOutput: 0
+        },
+        workspaceRoot: "D:/repo"
+      } as AppConfig,
+      stateProjector: {
+        projectState: () => projection
+      }
+    });
+
+    const packet = builder.buildResumePacket("session-1", "continue the work");
+    const resume = packet.metadata?.sessionResume as { contextMessages: Array<{ content: string; role: string }> };
+
+    expect(resume.contextMessages.length).toBeGreaterThan(0);
+    expect(resume.contextMessages.some((message) => message.content.includes("Prior user request"))).toBe(true);
   });
 });

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { McpClientManager } from "../src/mcp/index.js";
 
 describe("McpClientManager", () => {
-  it("discovers configured mcp tools with runtime-safe naming", () => {
+  it("discovers configured mcp tools with runtime-safe naming", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "auto-talon-mcp-"));
     try {
       mkdirSync(join(workspace, ".auto-talon"), { recursive: true });
@@ -36,6 +36,7 @@ describe("McpClientManager", () => {
       const manager = new McpClientManager(workspace);
       const tools = manager.discover();
       expect(tools.some((tool) => tool.name === "mcp__fake__echo")).toBe(true);
+      await manager.close();
     } finally {
       rmSync(workspace, { force: true, recursive: true });
     }
@@ -72,6 +73,7 @@ describe("McpClientManager", () => {
       expect(servers).toHaveLength(1);
       expect(servers[0]?.id).toBe("broken");
       expect(servers[0]?.discoveryError).not.toBeNull();
+      await manager.close();
     } finally {
       rmSync(workspace, { force: true, recursive: true });
     }

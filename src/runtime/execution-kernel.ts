@@ -19,6 +19,7 @@ import {
   providerUsageToJson,
   readSessionResumeMemoryContext,
   readSessionResumeMessages,
+  readSessionResumePriorTaskId,
   rebuildTurnProviderMessages,
   sanitizeToolCallPairing,
   sleepWithAbort,
@@ -33,6 +34,7 @@ import {
   CompletionController,
   isSuccessfulVerificationToolCall as isSuccessfulVerificationToolExecution
 } from "./kernel/index.js";
+import { toolResultOutputForModel } from "./kernel/tool-result-model.js";
 import { buildRepoMap } from "./repo-map.js";
 import { tokenBudgetToJson } from "./serialization.js";
 import {
@@ -42,6 +44,11 @@ import {
   syncPinnedRecentFilesMessage
 } from "./context/recent-file-reads.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
+import {
+  resolveTodoSessionKeyFromTaskMetadata,
+  syncSessionTodosMessage
+} from "./context/session-todos.js";
+import { PRIOR_TASK_RESULT_SOURCE_TYPE } from "./sessions/prior-task-context.js";
 import type { ContextCompactor, SessionSummaryService } from "./context/index.js";
 import {
   computeCompactThreshold,
@@ -51,14 +58,24 @@ import {
   type HybridTokenCounterState
 } from "./context/token-counter.js";
 import { applyToolOutputBudget } from "./context/tool-output-budget.js";
+import { buildSessionHandoffMessageContent, listDiscardedMessages } from "./context/compact-handoff.js";
+import type { ManualCompactRequest } from "./context/manual-compact-coordinator.js";
+import {
+  dropOldestNonSystemMessages,
+  isContextOverflowProviderError
+} from "./context/reactive-compact.js";
 import { pruneOldToolResults } from "./context/tool-result-pruner.js";
 import { selectTailMessages } from "./context/tail-selector.js";
 import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
-import type { RuntimeConfig, WorkflowRuntimeConfig } from "./runtime-config.js";
+import type { RuntimeConfig, WorkflowRuntimeConfig, InteractionModesRuntimeConfig } from "./runtime-config.js";
 import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-exposure-planner.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
+import {
+  isAcceptableUserFinalText,
+  resolveProviderFinalText
+} from "../providers/reasoning-content.js";
 import { generateWithProviderFailover } from "../providers/provider-failover.js";
 import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js";
 import type { AuditService } from "../audit/audit-service.js";
@@ -85,11 +102,13 @@ import type {
   TaskRepository,
   SessionCommitmentState,
   SessionLineageRepository,
+  SessionMessageRepository,
   SessionTaskRepository,
   SessionEntrySource,
   ToolExecutionResult,
   TokenBudget,
-  BudgetPricingEntry
+  BudgetPricingEntry,
+  JsonValue
 } from "../types/index.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
 import { buildCapabilityDeclaration } from "../memory/capability-declaration-builder.js";
@@ -105,7 +124,10 @@ import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { SessionMessageProjector } from "./sessions/session-message-projector.js";
+import { pinUserMessagesFromRecords } from "./sessions/session-user-message-pin.js";
 import type { SkillContextService } from "../skills/index.js";
+import type { ManualCompactCoordinator } from "./context/manual-compact-coordinator.js";
+import type { TodoItem, TodoSessionStore } from "../tools/todo-session-store.js";
 
 export interface ExecutionKernelDependencies {
   agentProfileRegistry: AgentProfileRegistry;
@@ -114,6 +136,7 @@ export interface ExecutionKernelDependencies {
   compactPolicy: CompactTriggerPolicy;
   executionCheckpointRepository: ExecutionCheckpointRepository;
   getSessionCommitmentState?: (sessionId: string) => SessionCommitmentState | null;
+  manualCompactCoordinator?: ManualCompactCoordinator;
   memoryPlane: MemoryPlane;
   recallPlanner: RecallPlanner;
   provider: Provider;
@@ -122,6 +145,7 @@ export interface ExecutionKernelDependencies {
   taskRepository: TaskRepository;
   sessionTaskRepository: SessionTaskRepository;
   sessionLineageRepository: SessionLineageRepository;
+  sessionMessageRepository?: SessionMessageRepository;
   sessionTranscriptRepository: SessionTranscriptRepository;
   sessionMessageProjector?: SessionMessageProjector;
   contextCompactor: ContextCompactor;
@@ -141,6 +165,8 @@ export interface ExecutionKernelDependencies {
   routingMode?: "cheap_first" | "balanced" | "quality_first";
   toolExposurePlanner?: ToolExposurePlanner;
   skillContextService?: SkillContextService;
+  todoSessionStore?: TodoSessionStore;
+  interactionModes: InteractionModesRuntimeConfig;
   workspaceRoot: string;
 }
 
@@ -149,6 +175,7 @@ interface ExecutionLoopState {
   costWarnedToolNames: string[];
   cumulativeToolCallCount: number;
   cwd: string;
+  iterationsSinceLastCompact: number;
   managedAbortController: ReturnType<typeof createManagedAbortController>;
   maxIterations: number;
   microPrunedCount: number;
@@ -165,9 +192,9 @@ interface ExecutionLoopState {
   completionVerificationSatisfied: boolean;
   completionVerificationSatisfiedEmitted: boolean;
   criticalBudgetPressureEmitted: boolean;
-  intentFulfillmentGuardEmitted: boolean;
   interactionMode?: RuntimeRunOptions["interactionMode"];
   postCompletionVerificationReads: number;
+  readOnlyTurns: number;
   selectedSkillContext: ContextFragment[];
   silentToolTurns: number;
   toolCallSignatures: Map<
@@ -231,6 +258,28 @@ export class ExecutionKernel {
     return routed?.provider ?? this.dependencies.provider;
   }
 
+  private syncSessionTodosContext(input: {
+    iteration?: number;
+    messages: ConversationMessage[];
+    task: TaskRecord;
+  }): { todoCount: number } | null {
+    const store = this.dependencies.todoSessionStore;
+    if (store === undefined) {
+      return null;
+    }
+    const sessionKey = resolveTodoSessionKeyFromTaskMetadata({
+      ...(input.task.sessionId !== undefined ? { sessionId: input.task.sessionId } : {}),
+      taskId: input.task.taskId,
+      taskMetadata: input.task.metadata
+    });
+    const injected = syncSessionTodosMessage(input.messages, store, sessionKey);
+    if (injected === null) {
+      return null;
+    }
+    const todoCount = store.get(sessionKey).length;
+    return { todoCount };
+  }
+
   private async planRecall(
     input: Parameters<RecallPlanner["plan"]>[0]
   ): Promise<ReturnType<RecallPlanner["plan"]>> {
@@ -265,7 +314,8 @@ export class ExecutionKernel {
     const taskMetadata = {
       ...(options.metadata ?? {}),
       ...explicitSkillMetadata,
-      ...(options.interactionMode !== undefined ? { interactionMode: options.interactionMode } : {})
+      ...(options.interactionMode !== undefined ? { interactionMode: options.interactionMode } : {}),
+      agentWriteApproval: this.dependencies.interactionModes.agentWriteApproval
     };
     let task = this.dependencies.taskRepository.create({
       agentProfileId: options.agentProfileId,
@@ -279,6 +329,9 @@ export class ExecutionKernel {
       sessionId: options.sessionId ?? null,
       tokenBudget: options.tokenBudget
     });
+    if (options.sessionId !== undefined && options.sessionId !== null) {
+      this.supersedeStaleSessionTasks(options.sessionId, taskId);
+    }
     const stopOutputSubscription =
       options.onOutputEvent === undefined
         ? null
@@ -419,11 +472,28 @@ export class ExecutionKernel {
         availableTools,
         profile,
         repoMap?.summary,
-        initialToolExposure?.decisions ?? []
+        initialToolExposure?.decisions ?? [],
+        options.interactionMode
       );
       const resumeContextMessages = readSessionResumeMessages(taskMetadata);
       if (resumeContextMessages.length > 0) {
         injectResumeContextMessages(messages, resumeContextMessages);
+        const priorTaskMessage = resumeContextMessages.find(
+          (message) => message.metadata?.sourceType === PRIOR_TASK_RESULT_SOURCE_TYPE
+        );
+        if (priorTaskMessage !== undefined) {
+          this.dependencies.traceService.record({
+            actor: "runtime.context",
+            eventType: "prior_task_context_injected",
+            payload: {
+              priorTaskId: readSessionResumePriorTaskId(taskMetadata) ?? "unknown",
+              truncated: priorTaskMessage.content.includes("...[prior task output truncated]")
+            },
+            stage: "planning",
+            summary: "Injected prior task final output into session continuation context",
+            taskId
+          });
+        }
       }
       const resumeMemoryContext = readSessionResumeMemoryContext(taskMetadata);
       if (repoMap !== null) {
@@ -452,8 +522,8 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
-        intentFulfillmentGuardEmitted: false,
         interactionMode: options.interactionMode,
+        iterationsSinceLastCompact: 0,
         managedAbortController,
         maxIterations: options.maxIterations,
         memoryContext: [...recallPlan.fragments, ...resumeMemoryContext],
@@ -467,6 +537,7 @@ export class ExecutionKernel {
         pendingToolCalls: [],
         postCompletionVerificationReads: 0,
         ...(repoMap?.summary !== undefined ? { repoMapSummary: repoMap.summary } : {}),
+        readOnlyTurns: 0,
         selectedSkillContext: recallPlan.fragments.filter((fragment) => fragment.scope === "skill_ref"),
         silentToolTurns: 0,
         task,
@@ -539,8 +610,8 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
-        intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
+        iterationsSinceLastCompact: 0,
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
@@ -549,6 +620,7 @@ export class ExecutionKernel {
         ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         pendingToolCalls: checkpoint.pendingToolCalls,
         postCompletionVerificationReads: 0,
+        readOnlyTurns: 0,
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
@@ -632,8 +704,8 @@ export class ExecutionKernel {
         completionVerificationSatisfiedEmitted: false,
         criticalBudgetPressureEmitted: false,
         cumulativeToolCallCount: 0,
-        intentFulfillmentGuardEmitted: false,
         interactionMode: readInteractionModeFromMetadata(runMetadata.metadata),
+        iterationsSinceLastCompact: 0,
         managedAbortController,
         maxIterations: resumedTask.maxIterations,
         memoryContext: checkpoint.memoryContext,
@@ -642,6 +714,7 @@ export class ExecutionKernel {
         ...(options.onOutputEvent !== undefined ? { onOutputEvent: options.onOutputEvent } : {}),
         pendingToolCalls: [rejectedToolCall],
         postCompletionVerificationReads: 0,
+        readOnlyTurns: 0,
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
@@ -754,6 +827,7 @@ export class ExecutionKernel {
         task.taskId,
         iteration
       );
+      state.iterationsSinceLastCompact += 1;
       throwIfAborted(
         state.managedAbortController.abortController.signal,
         state.managedAbortController.getReason()
@@ -811,6 +885,24 @@ export class ExecutionKernel {
           });
         }
         syncPinnedRecentFilesMessage(state.turnProviderMessages, state.recentFileReadCache);
+        const injectedTodos = this.syncSessionTodosContext({
+          iteration,
+          messages: state.turnProviderMessages,
+          task
+        });
+        if (injectedTodos !== null) {
+          this.dependencies.traceService.record({
+            actor: "runtime.context",
+            eventType: "session_todos_injected",
+            payload: {
+              iteration,
+              todoCount: injectedTodos.todoCount
+            },
+            stage: "planning",
+            summary: `Injected ${injectedTodos.todoCount} session todo item(s) into provider messages`,
+            taskId: task.taskId
+          });
+        }
         const assembled = this.contextAssembler.assemble({
           availableTools,
           filteredOutFragments: state.turnFilteredFragments,
@@ -828,6 +920,20 @@ export class ExecutionKernel {
             assembled.debug.filteredOutFragments
           );
         state.managedAbortController.touchActivity("context_assembled");
+        if (assembled.memoryContextInjection !== null) {
+          this.dependencies.traceService.record({
+            actor: "runtime.context",
+            eventType: "memory_context_injected",
+            payload: {
+              fragmentCount: assembled.memoryContextInjection.fragmentCount,
+              iteration,
+              tokenEstimate: assembled.memoryContextInjection.tokenEstimate
+            },
+            stage: "planning",
+            summary: `Injected ${assembled.memoryContextInjection.fragmentCount} recall fragments into provider messages`,
+            taskId: task.taskId
+          });
+        }
         const turnId = randomUUID();
         this.emitOutput({
           eventType: "assistant_turn_started",
@@ -840,7 +946,7 @@ export class ExecutionKernel {
           stage: "planning",
           taskId: task.taskId
         });
-        const providerInput = {
+        let providerInput = {
           ...assembled.providerInput,
           onTextDelta: (delta: string) => {
             state.managedAbortController.touchActivity("assistant_turn_delta");
@@ -931,54 +1037,105 @@ export class ExecutionKernel {
 
         const startedAt = Date.now();
         let providerResponse;
-        try {
-          providerResponse = await generateWithProviderFailover(
-            {
-              auditService: this.dependencies.auditService,
-              cwd: this.dependencies.workspaceRoot,
-              enableFailover: true,
-              primaryProvider: activeProvider,
-              taskId: task.taskId,
-              traceService: this.dependencies.traceService
-            },
-            providerInput
-          );
-        } catch (error) {
-          const providerError = normalizeProviderFailure(error, activeProvider);
-          const abortReason = state.managedAbortController.getReason();
-          const signalAborted = state.managedAbortController.abortController.signal.aborted;
-          const timeoutSource =
-            signalAborted && abortReason === "timeout"
-              ? state.managedAbortController.timeoutMode
-              : providerError.category === "timeout_error"
-                ? "provider"
-                : undefined;
-          this.dependencies.traceService.record({
-            actor: `provider.${activeProvider.name}`,
-            eventType: "provider_request_failed",
-            payload: {
-              errorCategory:
-                signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category,
-              errorMessage: providerError.message,
-              iteration,
-              lastActivityReason: state.managedAbortController.getLastActivityReason(),
-              latencyMs: Date.now() - startedAt,
-              modelName: providerError.modelName ?? activeProvider.model ?? null,
-              providerName: activeProvider.name,
-              retryCount: providerError.retryCount,
-              timeoutMs: state.managedAbortController.timeoutMs,
-              ...(timeoutSource !== undefined ? { timeoutSource } : {})
-            },
-            stage: "planning",
-            summary: `Provider request failed with ${
-              signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category
-            }`,
-            taskId: task.taskId
-          });
-          if (signalAborted) {
-            throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
+        let reactiveCompactUsed = false;
+        for (let providerAttempt = 0; providerAttempt < 2; providerAttempt += 1) {
+          try {
+            providerResponse = await generateWithProviderFailover(
+              {
+                auditService: this.dependencies.auditService,
+                cwd: this.dependencies.workspaceRoot,
+                enableFailover: true,
+                primaryProvider: activeProvider,
+                taskId: task.taskId,
+                traceService: this.dependencies.traceService
+              },
+              providerInput
+            );
+            break;
+          } catch (error) {
+            const providerError = normalizeProviderFailure(error, activeProvider);
+            if (
+              !reactiveCompactUsed &&
+              isContextOverflowProviderError(providerError)
+            ) {
+              const droppedFromTurn = dropOldestNonSystemMessages(state.turnProviderMessages);
+              const droppedFromMessages =
+                state.turnProviderMessages === messages
+                  ? 0
+                  : dropOldestNonSystemMessages(messages);
+              if (droppedFromTurn > 0 || droppedFromMessages > 0) {
+                reactiveCompactUsed = true;
+                providerInput = {
+                  ...providerInput,
+                  ...this.contextAssembler.assemble({
+                    availableTools,
+                    filteredOutFragments: state.turnFilteredFragments,
+                    iteration,
+                    memoryContext: state.memoryContext,
+                    messages: state.turnProviderMessages,
+                    signal: state.managedAbortController.abortController.signal,
+                    task,
+                    tokenBudget: state.tokenBudget
+                  }).providerInput,
+                  onProviderStatus: providerInput.onProviderStatus,
+                  onRetry: providerInput.onRetry,
+                  onTextDelta: providerInput.onTextDelta
+                };
+                this.dependencies.traceService.record({
+                  actor: "runtime.context",
+                  eventType: "reactive_compact_triggered",
+                  payload: {
+                    droppedMessageCount: Math.max(droppedFromTurn, droppedFromMessages),
+                    iteration
+                  },
+                  stage: "planning",
+                  summary: "Dropped oldest messages after provider context overflow",
+                  taskId: task.taskId
+                });
+                continue;
+              }
+            }
+            const abortReason = state.managedAbortController.getReason();
+            const signalAborted = state.managedAbortController.abortController.signal.aborted;
+            const timeoutSource =
+              signalAborted && abortReason === "timeout"
+                ? state.managedAbortController.timeoutMode
+                : providerError.category === "timeout_error"
+                  ? "provider"
+                  : undefined;
+            this.dependencies.traceService.record({
+              actor: `provider.${activeProvider.name}`,
+              eventType: "provider_request_failed",
+              payload: {
+                errorCategory:
+                  signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category,
+                errorMessage: providerError.message,
+                iteration,
+                lastActivityReason: state.managedAbortController.getLastActivityReason(),
+                latencyMs: Date.now() - startedAt,
+                modelName: providerError.modelName ?? activeProvider.model ?? null,
+                providerName: activeProvider.name,
+                retryCount: providerError.retryCount,
+                timeoutMs: state.managedAbortController.timeoutMs,
+                ...(timeoutSource !== undefined ? { timeoutSource } : {})
+              },
+              stage: "planning",
+              summary: `Provider request failed with ${
+                signalAborted && abortReason === "timeout" ? "timeout_error" : providerError.category
+              }`,
+              taskId: task.taskId
+            });
+            if (signalAborted) {
+              throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
+            }
+            throw providerError;
           }
-          throw providerError;
+        }
+        if (providerResponse === undefined) {
+          throw new AppError({
+            code: "provider_error",
+            message: "Provider request failed after reactive compaction retry."
+          });
         }
         state.managedAbortController.touchActivity("provider_request_succeeded");
         const assistantDisplay = providerResponse.kind === "final" ? "final" : "intermediate";
@@ -1115,23 +1272,43 @@ export class ExecutionKernel {
         }
 
         if (providerResponse.kind === "final") {
-          const intentDecision = this.completionController.evaluateIntentFulfillment(
-            state,
-            messages,
-            task,
-            iteration,
-            task.input,
-            providerResponse.message
-          );
-          if (intentDecision === "guard") {
-            continue;
+          const resolvedFinalText = resolveProviderFinalText(providerResponse) ?? "";
+          const acceptance = isAcceptableUserFinalText(providerResponse, resolvedFinalText);
+          if (!acceptance.acceptable) {
+            this.dependencies.traceService.record({
+              actor: "runtime.kernel",
+              eventType:
+                acceptance.reason === "empty" ? "empty_final_guarded" : "unpolished_final_guarded",
+              payload: {
+                iteration,
+                providerName: activeProvider.name,
+                ...(acceptance.reason !== null && acceptance.reason !== "empty"
+                  ? { trigger: acceptance.reason }
+                  : {}),
+                ...(resolvedFinalText.length > 0 ? { resolvedLength: resolvedFinalText.length } : {})
+              },
+              stage: "completion",
+              summary:
+                acceptance.reason === "empty"
+                  ? "Empty final response redirected to no-tools summary"
+                  : `Unpolished final response redirected (${acceptance.reason ?? "unknown"})`,
+              taskId: task.taskId
+            });
+            return this.requestFinalSummaryWithoutTools(
+              state,
+              messages,
+              availableTools,
+              task,
+              iteration,
+              acceptance.reason === "empty" ? "empty_final_output" : "unpolished_final_output"
+            );
           }
           const verificationDecision = this.completionController.evaluateFinalVerification(
             state,
             messages,
             task,
             iteration,
-            providerResponse.message
+            resolvedFinalText
           );
           if (verificationDecision.kind === "guard") {
             continue;
@@ -1257,7 +1434,14 @@ export class ExecutionKernel {
         const toolTurnResponse =
           lastToolCallsResponse ?? findLastAssistantToolCallsResponse(messages);
         if (toolTurnResponse !== null) {
-          this.completionController.observeProviderToolTurn(state, messages, iteration, toolTurnResponse);
+          this.completionController.observeProviderToolTurn(
+            state,
+            messages,
+            task,
+            iteration,
+            toolTurnResponse,
+            state.interactionMode ?? "agent"
+          );
         }
         lastToolCallsResponse = null;
       }
@@ -1312,7 +1496,32 @@ export class ExecutionKernel {
         state,
         task
       });
-      const compacted = await this.compactMessages(compactInputBase);
+      const manualCompactRequest =
+        this.dependencies.manualCompactCoordinator?.consume(task.taskId) ?? null;
+      if (manualCompactRequest !== null) {
+        this.dependencies.traceService.record({
+          actor: "runtime.context",
+          eventType: "manual_compact_triggered",
+          payload: {
+            iteration,
+            ...(manualCompactRequest.focusTopic !== undefined
+              ? { focusTopic: manualCompactRequest.focusTopic }
+              : {})
+          },
+          stage: "memory",
+          summary: "Manual compaction requested",
+          taskId: task.taskId
+        });
+      }
+      const compacted = await this.compactMessages(
+        {
+          ...compactInputBase,
+          ...(manualCompactRequest?.focusTopic !== undefined
+            ? { focusTopic: manualCompactRequest.focusTopic }
+            : {})
+        },
+        manualCompactRequest
+      );
       if (compacted.triggered) {
         const compactReason = compacted.reason ?? "message_count";
         const preCompactMessages = [...messages];
@@ -1343,11 +1552,100 @@ export class ExecutionKernel {
           const workerDispatcher = this.dependencies.workerDispatcher;
           const summarizerWorker = this.dependencies.summarizerWorker;
           const persistCompactSummary = (): void => {
+            const previousSessionSummary =
+              this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
+            const pinnedUserMessages = this.resolvePinnedUserMessages(sessionId);
+            const sessionTodos = this.resolveSessionTodos(sessionId);
             const sessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
               availableTools,
               compact: compactInput,
+              pinnedUserMessages,
+              previousSessionSummary,
+              sessionTodos,
               task
             });
+            if (
+              previousSessionSummary !== null &&
+              sessionSummaryDraft.goal !== previousSessionSummary.goal
+            ) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "session_goal_updated",
+                payload: {
+                  previousGoal: previousSessionSummary.goal,
+                  sessionId,
+                  updatedGoal: sessionSummaryDraft.goal
+                },
+                stage: "memory",
+                summary: "Session goal updated during compaction",
+                taskId: task.taskId
+              });
+            }
+            if (pinnedUserMessages.length > 0) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "user_messages_pinned",
+                payload: {
+                  count: pinnedUserMessages.length,
+                  sessionId
+                },
+                stage: "memory",
+                summary: `Pinned ${pinnedUserMessages.length} user messages into session summary`,
+                taskId: task.taskId
+              });
+            }
+            const capturedConstraints = sessionSummaryDraft.decisions.filter((item) =>
+              item.startsWith("Constraint:")
+            );
+            if (capturedConstraints.length > 0) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "constraint_captured",
+                payload: {
+                  constraints: capturedConstraints,
+                  sessionId
+                },
+                stage: "memory",
+                summary: "User constraints captured into session summary",
+                taskId: task.taskId
+              });
+            }
+            if (Array.isArray(sessionSummaryDraft.metadata?.featureBacklog)) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "feature_backlog_updated",
+                payload: {
+                  itemCount: sessionSummaryDraft.metadata.featureBacklog.length,
+                  sessionId
+                },
+                stage: "memory",
+                summary: "Feature backlog updated in session summary",
+                taskId: task.taskId
+              });
+            }
+            const rawCount = sessionSummaryDraft.metadata?.featureBacklogRawCount;
+            const droppedCount = sessionSummaryDraft.metadata?.featureBacklogDroppedCount;
+            const featureBacklog = sessionSummaryDraft.metadata?.featureBacklog;
+            const filteredCount = Array.isArray(featureBacklog) ? featureBacklog.length : 0;
+            if (
+              typeof rawCount === "number" &&
+              typeof droppedCount === "number" &&
+              droppedCount > 0
+            ) {
+              this.dependencies.traceService.record({
+                actor: "runtime.context",
+                eventType: "feature_backlog_filtered",
+                payload: {
+                  droppedCount,
+                  filteredCount,
+                  rawCount,
+                  sessionId
+                },
+                stage: "memory",
+                summary: `Filtered ${droppedCount} noisy feature backlog item(s)`,
+                taskId: task.taskId
+              });
+            }
             this.dependencies.sessionSummaryService.create({
               ...sessionSummaryDraft,
               metadata: {
@@ -1373,6 +1671,7 @@ export class ExecutionKernel {
                   compactInput,
                   compactResult: compacted,
                   runId: latestRun?.runId ?? null,
+                  sessionTodos: this.resolveSessionTodos(sessionId),
                   task
                 },
                 maxAttempts: 2,
@@ -1394,8 +1693,10 @@ export class ExecutionKernel {
         const initialSystemPrompt =
           messages.find((message) => message.role === "system") ?? null;
         messages.length = 0;
-        state.toolCallSignatures.clear();
         state.silentToolTurns = 0;
+        state.readOnlyTurns = 0;
+        state.cumulativeToolCallCount = 0;
+        state.iterationsSinceLastCompact = 0;
         if (initialSystemPrompt !== null) {
           messages.push(initialSystemPrompt);
         }
@@ -1426,6 +1727,10 @@ export class ExecutionKernel {
         });
         messages.push(...compacted.replacementMessages);
         syncPinnedRecentFilesMessage(messages, state.recentFileReadCache);
+        this.syncSessionTodosContext({
+          messages,
+          task
+        });
         state.compactedCount += 1;
         state.tokenCounter = createHybridTokenCounterState();
         const refreshSessionId = task.sessionId ?? null;
@@ -1463,115 +1768,179 @@ export class ExecutionKernel {
     availableTools: ProviderToolDescriptor[],
     task: TaskRecord,
     iteration: number,
-    reason: "max_iterations_exhausted" | "post_completion_verification_exhausted"
+    reason:
+      | "max_iterations_exhausted"
+      | "post_completion_verification_exhausted"
+      | "empty_final_output"
+      | "unpolished_final_output"
   ): Promise<RuntimeRunResult> {
     const activeProvider = this.resolveActiveMainProvider(task);
-    const summaryPrompt =
+    const baseSummaryPrompt =
       reason === "max_iterations_exhausted"
         ? `The loop reached its iteration budget (${state.maxIterations}). Do not call tools. Summarize the completed work, files changed or inspected, and any remaining work.`
-        : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
-    const finalMessages: ConversationMessage[] = [
-      ...state.turnProviderMessages,
-      {
-        content: summaryPrompt,
-        metadata: {
-          privacyLevel: "internal",
-          retentionKind: "session",
-          sourceType: "system_prompt"
-        },
-        role: "system"
-      }
-    ];
-    const startedAt = Date.now();
-    let providerResponse: ProviderResponse;
-    try {
-      providerResponse = await generateWithProviderFailover(
+        : reason === "empty_final_output"
+          ? "The model attempted to finalize with an empty response. Do not call tools. Provide the final answer now based on everything you have learned so far."
+          : reason === "unpolished_final_output"
+            ? `Your previous response was internal reasoning or too long, not a polished user-facing answer. Do not call tools. Answer the user's request directly: "${task.input}". Be concise. Use a numbered list when the user asked for a specific count. Do not include chain-of-thought, self-dialogue, or draft candidate lists. Give final conclusions only with file paths and brief descriptions.`
+            : "The task appears complete and further verification reads are no longer useful. Do not call tools. Provide the final answer now with completed work and any remaining notes.";
+    const strictSuffix =
+      " Respond with plain natural language only. Never output tool-call markup, DSML, XML tags, JSON tool schemas, or pseudo tool invocations.";
+    const polishReason =
+      reason === "unpolished_final_output" || reason === "empty_final_output";
+
+    let finalMessage = "";
+    let lastRejectionReason: string | null = null;
+    let lastProviderResponse: ProviderResponse | undefined;
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const summaryPrompt = attempt === 1 ? baseSummaryPrompt : `${baseSummaryPrompt}${strictSuffix}`;
+      const finalMessages: ConversationMessage[] = [
+        ...state.turnProviderMessages,
         {
-          auditService: this.dependencies.auditService,
-          cwd: this.dependencies.workspaceRoot,
-          enableFailover: true,
-          primaryProvider: activeProvider,
-          taskId: task.taskId,
-          traceService: this.dependencies.traceService
-        },
-        {
-          agentProfileId: task.agentProfileId,
-          availableTools: [],
-          iteration: iteration + 1,
-          memoryContext: state.memoryContext,
-          messages: finalMessages,
-          ...(state.onAssistantTextDelta !== undefined
-            ? { onTextDelta: state.onAssistantTextDelta }
-            : {}),
-          signal: state.managedAbortController.abortController.signal,
-          task,
-          tokenBudget: state.tokenBudget
+          content: summaryPrompt,
+          metadata: {
+            privacyLevel: "internal",
+            retentionKind: "session",
+            sourceType: "system_prompt"
+          },
+          role: "system"
         }
-      );
-    } catch (error) {
-      if (error instanceof AppError) {
-        throw error;
+      ];
+      const startedAt = Date.now();
+      let providerResponse: ProviderResponse;
+      try {
+        providerResponse = await generateWithProviderFailover(
+          {
+            auditService: this.dependencies.auditService,
+            cwd: this.dependencies.workspaceRoot,
+            enableFailover: true,
+            primaryProvider: activeProvider,
+            taskId: task.taskId,
+            traceService: this.dependencies.traceService
+          },
+          {
+            agentProfileId: task.agentProfileId,
+            availableTools: [],
+            iteration: iteration + attempt,
+            memoryContext: state.memoryContext,
+            messages: finalMessages,
+            ...(state.onAssistantTextDelta !== undefined
+              ? { onTextDelta: state.onAssistantTextDelta }
+              : {}),
+            signal: state.managedAbortController.abortController.signal,
+            task,
+            tokenBudget: {
+              ...state.tokenBudget,
+              outputLimit: polishReason
+                ? Math.min(state.tokenBudget.outputLimit, 2_000)
+                : state.tokenBudget.outputLimit,
+              reservedOutput: polishReason
+                ? Math.min(state.tokenBudget.reservedOutput, 200)
+                : state.tokenBudget.reservedOutput
+            }
+          }
+        );
+      } catch (error) {
+        if (error instanceof AppError) {
+          throw error;
+        }
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new AppError({
+            code: "interrupt",
+            message: error.message
+          });
+        }
+        throw toAppError(error);
       }
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new AppError({
-          code: "interrupt",
-          message: error.message
-        });
-      }
-      throw toAppError(error);
-    }
-    state.managedAbortController.touchActivity("no_tools_final_summary");
+      lastProviderResponse = providerResponse;
+      state.managedAbortController.touchActivity("no_tools_final_summary");
 
-    this.dependencies.traceService.record({
-      actor: `provider.${activeProvider.name}`,
-      eventType: "provider_request_succeeded",
-      payload: {
-        iteration: iteration + 1,
-        kind: providerResponse.kind,
-        latencyMs: Date.now() - startedAt,
-        modelName:
-          providerResponse.metadata?.modelName ??
-          activeProvider.model ??
-          activeProvider.describe?.().model ??
-          null,
-        providerName: providerResponse.metadata?.providerName ?? activeProvider.name,
-        retryCount: providerResponse.metadata?.retryCount ?? 0,
-        usage: providerUsageToJson(providerResponse.usage)
-      },
-      stage: "completion",
-      summary: `No-tools final summary completed with ${providerResponse.kind}`,
-      taskId: task.taskId
-    });
-
-    if (providerResponse.kind === "tool_calls") {
       this.dependencies.traceService.record({
         actor: `provider.${activeProvider.name}`,
-        eventType: "no_tools_tool_calls_ignored",
+        eventType: "provider_request_succeeded",
         payload: {
-          iteration: iteration + 1,
-          message: providerResponse.message,
-          reason,
-          toolNames: providerResponse.toolCalls.map((call) => call.toolName)
+          attempt,
+          iteration: iteration + attempt,
+          kind: providerResponse.kind,
+          latencyMs: Date.now() - startedAt,
+          modelName:
+            providerResponse.metadata?.modelName ??
+            activeProvider.model ??
+            activeProvider.describe?.().model ??
+            null,
+          providerName: providerResponse.metadata?.providerName ?? activeProvider.name,
+          retryCount: providerResponse.metadata?.retryCount ?? 0,
+          usage: providerUsageToJson(providerResponse.usage)
         },
         stage: "completion",
-        summary: "Ignored tool calls from no-tools final summary",
+        summary: `No-tools final summary attempt ${attempt} completed with ${providerResponse.kind}`,
+        taskId: task.taskId
+      });
+
+      if (providerResponse.kind === "tool_calls") {
+        this.dependencies.traceService.record({
+          actor: `provider.${activeProvider.name}`,
+          eventType: "no_tools_tool_calls_ignored",
+          payload: {
+            attempt,
+            iteration: iteration + attempt,
+            message: providerResponse.message,
+            reason,
+            toolNames: providerResponse.toolCalls.map((call) => call.toolName)
+          },
+          stage: "completion",
+          summary: "Ignored tool calls from no-tools final summary",
+          taskId: task.taskId
+        });
+      }
+
+      const responseForValidation =
+        providerResponse.kind === "final"
+          ? providerResponse
+          : {
+              kind: "final" as const,
+              message: providerResponse.message
+            };
+      const resolvedText = (resolveProviderFinalText(responseForValidation) ?? "").trim();
+      const acceptance = isAcceptableUserFinalText(responseForValidation, resolvedText);
+      if (acceptance.acceptable) {
+        finalMessage = resolvedText;
+        break;
+      }
+
+      lastRejectionReason = acceptance.reason;
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "invalid_final_output_rejected",
+        payload: {
+          attempt,
+          reason: acceptance.reason,
+          resolvedLength: resolvedText.length,
+          summaryReason: reason
+        },
+        stage: "completion",
+        summary: `No-tools final summary rejected (${acceptance.reason ?? "unknown"})`,
         taskId: task.taskId
       });
     }
 
-    const finalMessage = providerResponse.message.trim();
     if (finalMessage.length === 0) {
       throw new AppError({
-        code: "max_rounds_exceeded",
-        message: `Task exceeded ${state.maxIterations} iterations.`
+        code: lastRejectionReason === "empty" ? "max_rounds_exceeded" : "provider_error",
+        message:
+          lastRejectionReason === "tool_markup"
+            ? "No-tools final summary returned tool-call markup instead of a user-facing answer."
+            : lastRejectionReason === "empty"
+              ? `Task exceeded ${state.maxIterations} iterations.`
+              : "No-tools final summary did not produce an acceptable user-facing answer."
       });
     }
 
     messages.push({
       content: finalMessage,
       role: "assistant",
-      ...(providerResponse.metadata?.raw !== undefined
-        ? { metadata: providerResponse.metadata.raw }
+      ...(lastProviderResponse?.metadata?.raw !== undefined
+        ? { metadata: lastProviderResponse.metadata.raw }
         : {})
     });
     return this.completeTaskSuccess(state, messages, availableTools, task, finalMessage);
@@ -1664,6 +2033,9 @@ export class ExecutionKernel {
       const finalSessionSummaryDraft = this.dependencies.contextCompactor.buildSessionSummary({
         availableTools,
         compact: buildFinalSessionCompactInput(messages, completedTask),
+        pinnedUserMessages: this.resolvePinnedUserMessages(completedTask.sessionId),
+        previousSessionSummary: this.dependencies.sessionSummaryService.findLatestBySession(completedTask.sessionId),
+        sessionTodos: this.resolveSessionTodos(completedTask.sessionId),
         task: completedTask,
         trigger: "final"
       });
@@ -1716,7 +2088,7 @@ export class ExecutionKernel {
         : this.dependencies.sessionSummaryService.findLatestBySession(input.task.sessionId)?.summary;
     return {
       contextWindowTokens: input.state.tokenBudget.inputLimit,
-      iteration: input.iteration,
+      iteration: input.state.iterationsSinceLastCompact,
       iterationThreshold: this.dependencies.compact.iterationThreshold,
       maxMessagesBeforeCompact: this.dependencies.compact.messageThreshold,
       messages: input.messages,
@@ -1777,9 +2149,13 @@ export class ExecutionKernel {
   }
 
   private async compactMessages(
-    input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0]
+    input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0],
+    manualRequest: ManualCompactRequest | null = null
   ): Promise<SessionCompactResult> {
-    const decision = this.dependencies.compactPolicy.shouldCompact(input);
+    const decision =
+      manualRequest !== null
+        ? { reason: "token_budget" as const, triggered: true }
+        : this.dependencies.compactPolicy.shouldCompact(input);
     this.dependencies.traceService.record({
       actor: "runtime.context",
       eventType: "compact_evaluated",
@@ -1822,6 +2198,7 @@ export class ExecutionKernel {
         messages: messagesToSummarize,
         ...(input.originalGoal !== undefined ? { originalGoal: input.originalGoal } : {}),
         ...(input.previousSummary !== undefined ? { previousSummary: input.previousSummary } : {}),
+        ...(input.focusTopic !== undefined ? { focusTopic: input.focusTopic } : {}),
         ...(input.recentlyReadFilesSummary !== undefined
           ? { recentlyReadFilesSummary: input.recentlyReadFilesSummary }
           : {}),
@@ -1875,6 +2252,7 @@ export class ExecutionKernel {
     const preservedMessages = mergeProtectedMessages(protectedHead, preservedTail.messages);
     const protectedHeadCount = Math.min(protectedHead.length, preservedMessages.length);
     const preserved = preservedMessages.map((message) => mapCompactConversationMessage(message));
+    const discardedMessages = listDiscardedMessages(messagesToSummarize, preservedMessages);
 
     return {
       reason:
@@ -1886,11 +2264,15 @@ export class ExecutionKernel {
       replacementMessages: [
         ...preserved.slice(0, protectedHeadCount),
         {
-          content: [
-            "Session handoff:",
-            "Earlier work may already be reflected in pinned files, todos, or workspace state.",
-            summarized.summary
-          ].join("\n"),
+          content: buildSessionHandoffMessageContent({
+            compactedMessages: discardedMessages,
+            summary: summarized.summary
+          }),
+          metadata: {
+            privacyLevel: "internal",
+            retentionKind: "session",
+            sourceType: "compact_handoff"
+          },
           role: "system"
         },
         ...preserved.slice(protectedHeadCount)
@@ -1937,6 +2319,9 @@ export class ExecutionKernel {
     if (this.dependencies.compact.summarizer !== "provider_subagent") {
       return new DeterministicCompactSummarizer();
     }
+    if (sessionId !== null && this.hasStructuredSessionMemory(sessionId)) {
+      return new DeterministicCompactSummarizer();
+    }
     const helperProvider =
       this.dependencies.auxiliaryProviderResolver?.resolve("compression", {
         sessionId,
@@ -1964,6 +2349,65 @@ export class ExecutionKernel {
       },
       { maxInputTokens: helperContextWindow }
     );
+  }
+
+  private hasStructuredSessionMemory(sessionId: string): boolean {
+    const summary = this.dependencies.sessionSummaryService.findLatestBySession(sessionId);
+    if (summary === null) {
+      return false;
+    }
+    const pinned = summary.metadata?.userMessagePin;
+    const featureBacklog = summary.metadata?.featureBacklog;
+    return (
+      Array.isArray(pinned) &&
+      pinned.length > 0 &&
+      Array.isArray(featureBacklog) &&
+      featureBacklog.length > 0 &&
+      summary.decisions.length > 0
+    );
+  }
+
+  private resolvePinnedUserMessages(sessionId: string): string[] {
+    if (this.dependencies.sessionMessageRepository === undefined) {
+      return [];
+    }
+    return pinUserMessagesFromRecords(
+      this.dependencies.sessionMessageRepository.listBySessionId(sessionId)
+    );
+  }
+
+  private resolveSessionTodos(sessionId: string): TodoItem[] {
+    return this.dependencies.todoSessionStore?.get(sessionId) ?? [];
+  }
+
+  private supersedeStaleSessionTasks(sessionId: string, activeTaskId: string): void {
+    for (const sessionTask of this.dependencies.sessionTaskRepository.listBySessionId(sessionId)) {
+      if (sessionTask.taskId === activeTaskId) {
+        continue;
+      }
+      const staleTask = this.dependencies.taskRepository.findById(sessionTask.taskId);
+      if (staleTask === null || staleTask.status !== "running") {
+        continue;
+      }
+      this.dependencies.taskRepository.update(staleTask.taskId, {
+        errorCode: "cancelled",
+        errorMessage: "Superseded by a newer session task.",
+        finishedAt: new Date().toISOString(),
+        status: "cancelled"
+      });
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "task_superseded",
+        payload: {
+          activeTaskId,
+          sessionId,
+          supersededTaskId: staleTask.taskId
+        },
+        stage: "lifecycle",
+        summary: "Stale running task cancelled for session continuation",
+        taskId: activeTaskId
+      });
+    }
   }
 
   private finalizeTaskFailure(
@@ -2192,7 +2636,7 @@ export class ExecutionKernel {
       if (paused !== null) {
         for (let priorOffset = 0; priorOffset < batchOffset; priorOffset += 1) {
           const priorInvocation = batchInvocations[priorOffset];
-          if (priorInvocation === undefined) {
+          if (priorInvocation === null || priorInvocation === undefined) {
             continue;
           }
           this.applyCompletedToolCallOutcome(
@@ -2622,7 +3066,7 @@ export class ExecutionKernel {
     return {
       kind: "completed",
       result: {
-        output: parsedOutput as import("../../types/index.js").JsonValue,
+        output: parsedOutput as JsonValue,
         replayed: true,
         success: true,
         summary: `Tool ${toolCall.toolName} replayed from duplicate cache`
@@ -2633,7 +3077,7 @@ export class ExecutionKernel {
         finishedAt: new Date().toISOString(),
         input: toolCall.input,
         iteration: state.task.currentIteration,
-        output: parsedOutput as import("../../types/index.js").JsonValue,
+        output: parsedOutput as JsonValue,
         requestedAt: new Date().toISOString(),
         riskLevel: toolDescriptor?.riskLevel ?? "low",
         startedAt: new Date().toISOString(),
@@ -2792,18 +3236,6 @@ function formatWorkflowTestCommandHints(
   commands: WorkflowRuntimeConfig["testCommands"]
 ): string[] {
   return commands.map((command) => (typeof command === "string" ? command : command.command));
-}
-
-function toolResultOutputForModel(result: ToolExecutionResult): unknown {
-  if (result.success) {
-    return result.output;
-  }
-  return {
-    error: result.errorMessage,
-    errorCode: result.errorCode,
-    recoverable: true,
-    ...(result.details === undefined ? {} : { details: result.details })
-  };
 }
 
 function toolResultSummary(result: ToolExecutionResult, toolName: string): string {

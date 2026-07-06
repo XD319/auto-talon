@@ -74,6 +74,8 @@ describe("loop discipline", () => {
 
     expect(text).toContain("loop discipline");
     expect(text).toContain("identical arguments");
+    expect(text).toContain("todo items");
+    expect(text).toContain("instead of repeating the same discovery work");
   });
 
   it("builds stable tool call signatures regardless of key order", () => {

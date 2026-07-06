@@ -172,6 +172,7 @@ export interface SessionCompactInput {
   messages: Array<{
     role: string;
     content: string;
+    reasoningContent?: string;
     toolCallId?: string;
     toolName?: string;
     toolCalls?: Array<{
@@ -204,6 +205,8 @@ export interface SessionCompactInput {
   recentlyReadFilesSummary?: string;
   /** Prior session handoff summary for iterative compaction updates. */
   previousSummary?: string;
+  /** Optional user focus instructions for manual compaction. */
+  focusTopic?: string;
 }
 
 export interface SessionCompactResult {

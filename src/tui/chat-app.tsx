@@ -21,6 +21,11 @@ import { StatusBar, StatusLineRow } from "./components/status-bar.js";
 import { useSessionTodos } from "./hooks/use-session-todos.js";
 import { useStatusLine } from "./hooks/use-status-line.js";
 import type { TodoItem } from "../tools/todo-session-store.js";
+import {
+  resolveActiveClarifyQuestion,
+  resolveClarifyOptionSubmit,
+  shouldStartClarifyInCustomMode
+} from "./view-models/clarify-prompt-actions.js";
 import { estimateTodoPanelRows, toTodoTracePayload } from "./view-models/todo-format.js";
 import { resolveStatusLineFields } from "../runtime/tui-status-line-config.js";
 import { formatGitBranchLabel, readGitBranchStatus } from "./workspace-git-status.js";
@@ -62,6 +67,11 @@ import {
   handleModelCommand,
   restoreSessionProviderSelection
 } from "./model-command-handler.js";
+import {
+  cycleInteractionMode,
+  formatAgentWriteApprovalHelp,
+  formatModeChangeMessage
+} from "./interaction-mode.js";
 
 export interface ChatTuiAppProps {
   config: TuiAppConfig;
@@ -107,7 +117,7 @@ export function ChatTuiApp({
   const resolvedSessionId = React.useMemo(() => initialSessionId ?? randomUUID(), [initialSessionId]);
   const [sessionTitle, setSessionTitle] = React.useState(initialSessionTitle ?? "assistant");
   const [interactionMode, setInteractionMode] = React.useState<TuiInteractionMode>(
-    initialInteractionMode ?? "agent"
+    initialInteractionMode ?? config.defaultInteractionMode ?? "agent"
   );
   const [sessionPickerOpen, setSessionPickerOpen] = React.useState(false);
   const [sessionIndexEntries, setSessionIndexEntries] = React.useState<SessionIndexEntry[]>([]);
@@ -137,6 +147,7 @@ export function ChatTuiApp({
       : {}),
     ...(initialRuntimeSessionId !== undefined ? { initialSessionId: initialRuntimeSessionId } : {}),
     interactionMode,
+    onInteractionModeChange: setInteractionMode,
     onOutputEvent: (event) => scrollbackRef.current?.onOutputEvent(event),
     onTraceEvent: (event) => scrollbackRef.current?.onTraceEvent(event),
     reviewerId,
@@ -210,7 +221,6 @@ export function ChatTuiApp({
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
-        providerSelection: null,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title
       });
@@ -225,11 +235,19 @@ export function ChatTuiApp({
       controller.messages,
       controller.sessionApprovalFingerprints,
       interactionMode,
-      liveConfig,
       refreshSessionIndex,
       service,
       sessionTitle
     ]
+  );
+
+  const applyInteractionModeChange = React.useCallback(
+    (nextMode: TuiInteractionMode) => {
+      setInteractionMode(nextMode);
+      controller.addSystemMessage(formatModeChangeMessage(nextMode));
+      flushActiveSessionState();
+    },
+    [controller.addSystemMessage, flushActiveSessionState]
   );
 
   const dismissRecap = React.useCallback(() => {
@@ -288,12 +306,15 @@ export function ChatTuiApp({
     if (controller.busy || controller.activeSessionId === null) {
       return;
     }
+    const sessionIdAtSchedule = controller.activeSessionId;
     saveTimerRef.current = setTimeout(() => {
-      service.saveSessionUiState(controller.activeSessionId!, {
+      if (controller.activeSessionId !== sessionIdAtSchedule) {
+        return;
+      }
+      service.saveSessionUiState(sessionIdAtSchedule, {
         entrySource: "tui",
         interactionMode,
         messages: controller.messages as never,
-        providerSelection: null,
         sessionApprovalFingerprints: controller.sessionApprovalFingerprints,
         title: sessionTitle
       });
@@ -310,7 +331,6 @@ export function ChatTuiApp({
     controller.messages,
     controller.sessionApprovalFingerprints,
     interactionMode,
-    liveConfig,
     refreshSessionIndex,
     service,
     sessionTitle
@@ -324,11 +344,12 @@ export function ChatTuiApp({
 
   React.useEffect(() => {
     if (controller.pendingClarifyPrompt !== null) {
+      const firstQuestion = resolveActiveClarifyQuestion(controller.pendingClarifyPrompt, 0);
       setClarifySelectionIndex(0);
       setClarifyQuestionIndex(0);
       setClarifyAnswers({});
       setClarifyMultiSelections({});
-      setClarifyCustomActive(false);
+      setClarifyCustomActive(shouldStartClarifyInCustomMode(firstQuestion));
     }
   }, [controller.pendingClarifyPrompt?.promptId]);
 
@@ -432,12 +453,12 @@ export function ChatTuiApp({
       if (controller.activeSessionId !== null && controller.activeSessionId !== sessionId) {
         flushActiveSessionState();
       }
-      const uiStateBeforeActivate = service.loadSessionUiState(sessionId);
-      if (uiStateBeforeActivate?.providerSelection !== null && uiStateBeforeActivate?.providerSelection !== undefined) {
+      const uiState = service.loadSessionUiState(sessionId);
+      if (uiState?.providerSelection !== null && uiState?.providerSelection !== undefined) {
         try {
           const restored = await restoreSessionProviderSelection({
             currentProvider: service.currentProvider(),
-            providerSelection: uiStateBeforeActivate.providerSelection,
+            providerSelection: uiState.providerSelection,
             service,
             sessionId
           });
@@ -456,11 +477,18 @@ export function ChatTuiApp({
           controller.addSystemMessage(`Could not restore session model: ${message}`);
         }
       }
-      const activated = controller.activateSession(sessionId);
+      const activated = controller.activateSession(sessionId, {
+        ...(uiState !== null
+          ? {
+              interactionMode: uiState.interactionMode,
+              messages: uiState.messages as ChatMessage[],
+              sessionApprovalFingerprints: uiState.sessionApprovalFingerprints
+            }
+          : {})
+      });
       if (!activated) {
         return false;
       }
-      const uiState = service.loadSessionUiState(sessionId);
       scrollbackRef.current?.replayMessages(
         uiState !== null && uiState.messages.length > 0
           ? (uiState.messages as ChatMessage[])
@@ -535,11 +563,13 @@ export function ChatTuiApp({
           [
             "Most used: /resume <session> /sessions /today /inbox /new <title> /schedule create <when> | <prompt>",
             "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
-            "Session: /mode [agent|plan] /model [provider:model] [--global|--workspace] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
+            "Session: /mode [agent|plan|acceptEdits] or Shift+Tab to cycle (plan = read-only suggestions)",
+            formatAgentWriteApprovalHelp(liveConfig.interactionModes.agentWriteApproval),
+            "Session: /model [provider:model] [--global|--workspace] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
             "File edits: scrollback shows +added/-removed line counts with a folded diff preview; use /diff for more detail.",
             `Diff display: ${liveConfig.tui.diffDisplay} (set tui.diffDisplay in runtime.config.json: summary | collapsed | full).`,
             "Ops: use `talon ops` or `talon tui --mode ops` when you need trace, diff, approvals, or runtime diagnostics.",
-            "Shortcuts: Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | Ctrl+T tasks panel",
+            "Shortcuts: Shift+Tab cycle mode | Enter send | Alt+Enter / Ctrl+J newline | Ctrl+Shift+V paste | Ctrl+O external editor | Alt+P expand pasted draft | Tab slash-complete | Ctrl+P/N history | Ctrl+T tasks panel",
             "Saved sessions: use `talon tui --resume <id>` to restore UI state and messages from SQLite.",
             "Transcript is written to terminal scrollback; use your terminal scrollbar or mouse wheel to review history."
           ].join("\n")
@@ -635,7 +665,7 @@ export function ChatTuiApp({
 
       if (text === "/mode") {
         controller.addSystemMessage(
-          `Current mode: ${interactionMode}. Use /mode plan, /mode acceptEdits, or /mode agent.`
+          `Current mode: ${interactionMode}. Use Shift+Tab to cycle, or /mode plan, /mode acceptEdits, or /mode agent.`
         );
         return true;
       }
@@ -646,14 +676,7 @@ export function ChatTuiApp({
           : text.endsWith("acceptEdits")
             ? "acceptEdits"
             : "agent";
-        setInteractionMode(nextMode);
-        controller.addSystemMessage(
-          nextMode === "plan"
-            ? "Mode set to plan. Future prompts are read-only until you switch back with /mode agent."
-            : nextMode === "acceptEdits"
-              ? "Mode set to acceptEdits. Workspace file edits stay allowed; shell and other high-risk tools still require approval."
-              : "Mode set to agent. Future prompts can edit files when the request clearly asks for changes."
-        );
+        applyInteractionModeChange(nextMode);
         return true;
       }
 
@@ -887,6 +910,25 @@ export function ChatTuiApp({
         return true;
       }
 
+      if (text === "/compact" || text.startsWith("/compact ")) {
+        const taskId = controller.activeTaskId;
+        if (taskId === null) {
+          controller.addSystemMessage("No active task to compact.");
+          return true;
+        }
+        const focusTopic = text.startsWith("/compact ") ? text.slice("/compact ".length).trim() : undefined;
+        service.requestManualCompact(
+          taskId,
+          focusTopic !== undefined && focusTopic.length > 0 ? focusTopic : undefined
+        );
+        controller.addSystemMessage(
+          focusTopic !== undefined && focusTopic.length > 0
+            ? `Manual compaction queued with focus: ${focusTopic}`
+            : "Manual compaction queued for the next safe breakpoint."
+        );
+        return true;
+      }
+
       if (text === "/diff") {
         controller.addSystemMessage(controller.formatDiffSummary());
         return true;
@@ -1005,6 +1047,7 @@ export function ChatTuiApp({
       controller,
       cwd,
       activateSessionById,
+      applyInteractionModeChange,
       openSessionPicker,      refreshSessionIndex,
       restoreSession,
       service,
@@ -1016,16 +1059,9 @@ export function ChatTuiApp({
   );
 
   const activeClarifyQuestion =
-    controller.pendingClarifyPrompt?.questions[clarifyQuestionIndex] ??
-    (controller.pendingClarifyPrompt === null
+    controller.pendingClarifyPrompt === null
       ? null
-      : {
-          allowCustomAnswer: controller.pendingClarifyPrompt.allowCustomAnswer,
-          multiSelect: false,
-          options: controller.pendingClarifyPrompt.options,
-          placeholder: controller.pendingClarifyPrompt.placeholder,
-          question: controller.pendingClarifyPrompt.question
-        });
+      : resolveActiveClarifyQuestion(controller.pendingClarifyPrompt, clarifyQuestionIndex);
   const activeClarifyPrompt =
     controller.pendingClarifyPrompt === null || activeClarifyQuestion === null
       ? null
@@ -1066,10 +1102,11 @@ export function ChatTuiApp({
         return;
       }
       if (clarifyQuestionIndex + 1 < prompt.questions.length) {
+        const nextQuestion = resolveActiveClarifyQuestion(prompt, clarifyQuestionIndex + 1);
         setClarifyAnswers(nextAnswers);
         setClarifyQuestionIndex((current) => current + 1);
         setClarifySelectionIndex(0);
-        setClarifyCustomActive(false);
+        setClarifyCustomActive(shouldStartClarifyInCustomMode(nextQuestion));
         return;
       }
       void controller.answerPendingClarifyPrompt({ answers: nextAnswers, response });
@@ -1108,23 +1145,25 @@ export function ChatTuiApp({
     if (question === null) {
       return;
     }
-    if (question.multiSelect) {
-      const selectedLabels = question.options
-        .filter((option) => activeClarifySelectedOptionIds.includes(option.id))
-        .map((option) => option.label);
-      if (selectedLabels.length > 0) {
-        submitClarifyAnswer(selectedLabels);
-      }
+    const result = resolveClarifyOptionSubmit({
+      question,
+      selectedOptionIds: activeClarifySelectedOptionIds,
+      selectionIndex: clarifySelectionIndex
+    });
+    if (result.kind === "enter_custom") {
+      setClarifyCustomActive(true);
       return;
     }
-    const option = question.options[clarifySelectionIndex];
-    if (option !== undefined) {
-      submitClarifyAnswer(option.label, option.id);
+    if (result.kind === "blocked") {
+      controller.addSystemMessage(result.message);
+      return;
     }
+    submitClarifyAnswer(result.answer, result.optionId);
   }, [
     activeClarifyQuestion,
     activeClarifySelectedOptionIds,
     clarifySelectionIndex,
+    controller,
     submitClarifyAnswer
   ]);
 
@@ -1142,6 +1181,15 @@ export function ChatTuiApp({
   useInput((_input, key) => {
     if (key.ctrl && _input === "t") {
       controller.toggleTodoPanel();
+    }
+    if (
+      key.shift &&
+      key.tab &&
+      !controller.busy &&
+      controller.pendingApproval === null &&
+      controller.pendingClarifyPrompt === null
+    ) {
+      applyInteractionModeChange(cycleInteractionMode(interactionMode));
     }
   });
 
@@ -1252,6 +1300,8 @@ export function ChatTuiApp({
           const answerText = value.trim();
           if (answerText.length > 0) {
             submitClarifyAnswer(answerText);
+          } else {
+            controller.addSystemMessage("Type your answer, then press Enter.");
           }
           return;
         }

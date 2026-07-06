@@ -2,13 +2,20 @@
   ProviderToolDescriptor,
   SessionCompactInput,
   TaskRecord,
-  SessionSummaryDraft
+  SessionSummaryDraft,
+  SessionSummaryRecord
 } from "../../types/index.js";
 import {
   collectStructuredSummaryFields,
   formatStructuredSummary,
   redactSensitiveSummary
 } from "../../memory/compact-summarizer.js";
+import type { TodoItem } from "../../tools/todo-session-store.js";
+import {
+  collectFeatureBacklog,
+  formatFeatureBacklogSection,
+  serializeFeatureBacklog
+} from "../sessions/session-feature-backlog.js";
 
 export interface BuildSessionSummaryInput {
   task: TaskRecord;
@@ -16,18 +23,41 @@ export interface BuildSessionSummaryInput {
     reason: "message_count" | "context_budget" | "token_budget" | "tool_call_count" | "iteration_count";
   };
   availableTools: ProviderToolDescriptor[];
+  previousSessionSummary?: SessionSummaryRecord | null;
+  pinnedUserMessages?: string[];
+  sessionTodos?: TodoItem[];
   trigger?: SessionSummaryDraft["trigger"];
 }
 
 export class ContextCompactor {
   public buildSessionSummary(input: BuildSessionSummaryInput): SessionSummaryDraft {
-    const goal = redactSensitiveSummary(
+    const userMessages = input.compact.messages.filter((message) => message.role === "user");
+    const currentGoal = redactSensitiveSummary(
       summarize(
-      input.compact.messages.find((message) => message.role === "user")?.content ?? input.task.input,
-      500
+        userMessages.at(-1)?.content ??
+          input.compact.originalGoal ??
+          input.task.input,
+        500
       )
     );
-    const decisions = collectDecisions(input.compact.messages).map((item) => redactSensitiveSummary(item));
+    const previousSessionSummary = input.previousSessionSummary ?? null;
+    const goal = currentGoal;
+    const sessionTheme = resolveSessionTheme({
+      compactMessages: input.compact.messages,
+      currentGoal,
+      previousSessionSummary
+    });
+    const userConstraintDecisions = collectUserConstraints(
+      input.compact.messages,
+      input.pinnedUserMessages ?? []
+    );
+    const decisions = uniqueList([
+      ...(previousSessionSummary?.decisions ?? []),
+      ...userConstraintDecisions,
+      ...collectDecisions(input.compact.messages)
+    ])
+      .map((item) => redactSensitiveSummary(item))
+      .slice(-12);
     const unresolvedToolCalls = new Map<string, string>();
     const resolvedToolCalls = new Set<string>();
     for (const message of input.compact.messages) {
@@ -40,11 +70,45 @@ export class ContextCompactor {
         resolvedToolCalls.add(message.toolCallId);
       }
     }
-    const openLoops = [...unresolvedToolCalls.entries()]
+    const currentOpenLoops = [...unresolvedToolCalls.entries()]
       .filter(([toolCallId]) => !resolvedToolCalls.has(toolCallId))
-      .map(([toolCallId, toolName]) => redactSensitiveSummary(`pending ${toolName} (${toolCallId})`));
-    const nextActions = collectNextActions(input.compact.messages).map((item) => redactSensitiveSummary(item));
-    const structured = collectStructuredSummaryFields(input.compact);
+      .map(([toolCallId, toolName]) => formatOpenLoop(toolName, toolCallId));
+    const openLoops = mergeOpenLoops(
+      previousSessionSummary?.openLoops ?? [],
+      currentOpenLoops,
+      resolvedToolCalls
+    )
+      .map((item) => redactSensitiveSummary(item))
+      .slice(-12);
+    const hasUnresolvedToolCalls = currentOpenLoops.length > 0;
+    const carriedNextActions =
+      hasUnresolvedToolCalls && previousSessionSummary !== null ? previousSessionSummary.nextActions : [];
+    const nextActions =
+      input.trigger === "final"
+        ? []
+        : uniqueList([...carriedNextActions, ...collectNextActions(input.compact.messages)])
+            .map((item) => redactSensitiveSummary(item))
+            .slice(-3);
+    const featureBacklogResult = collectFeatureBacklog({
+      assistantMessages: input.compact.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.content),
+      decisions,
+      ...(previousSessionSummary?.metadata !== undefined
+        ? { previousMetadata: previousSessionSummary.metadata }
+        : {}),
+      ...(input.sessionTodos !== undefined ? { sessionTodos: input.sessionTodos } : {})
+    });
+    const featureBacklog = featureBacklogResult.items;
+    const featureBacklogSection =
+      featureBacklog.length >= 2 ? formatFeatureBacklogSection(featureBacklog) : "";
+    const structured = collectStructuredSummaryFields(input.compact, {
+      featureBacklogSection,
+      pinnedUserMessages: input.pinnedUserMessages ?? [],
+      sessionTheme
+    });
+    structured.goal = goal;
+    structured.latestUserRequest = currentGoal;
     const summary = redactSensitiveSummary(
       [
         formatStructuredSummary(structured),
@@ -60,6 +124,20 @@ export class ContextCompactor {
       metadata: {
         compactReason: input.compact.reason,
         compactTaskId: input.compact.taskId,
+        ...(previousSessionSummary !== null
+          ? { previousSessionSummaryId: previousSessionSummary.sessionSummaryId }
+          : {}),
+        ...(sessionTheme.length > 0 ? { sessionTheme } : {}),
+        ...(input.pinnedUserMessages !== undefined && input.pinnedUserMessages.length > 0
+          ? { userMessagePin: input.pinnedUserMessages }
+          : {}),
+        ...(featureBacklog.length > 0
+          ? {
+              featureBacklog: serializeFeatureBacklog(featureBacklog),
+              featureBacklogDroppedCount: featureBacklogResult.droppedCount,
+              featureBacklogRawCount: featureBacklogResult.rawCount
+            }
+          : {}),
         toolCapabilitySummary: uniqueList([
           ...collectUsedTools(input.compact.messages),
           ...input.availableTools.map((tool) => tool.name)
@@ -141,16 +219,140 @@ function collectNextActions(messages: SessionCompactInput["messages"]): string[]
 }
 
 function collectDecisions(messages: SessionCompactInput["messages"]): string[] {
-  const candidates = messages
+  const decisions = messages
     .filter((message) => message.role === "assistant" || message.role === "user")
-    .slice(-6)
-    .map((message) => normalizeMemoryLine(message.content, 120))
-    .filter((message) => message.length > 0);
-  return uniqueList(candidates).slice(-3);
+    .flatMap((message) => extractExplicitDecisions(message.content));
+  return uniqueList(decisions).slice(-12);
+}
+
+function extractExplicitDecisions(value: string): string[] {
+  const decisions: string[] = [];
+  let inDecisionSection = false;
+  for (const rawLine of value.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (line.length === 0) {
+      if (inDecisionSection) {
+        break;
+      }
+      continue;
+    }
+    const heading = line.replace(/^[#*\s]+|[:\uFF1A*\s]+$/gu, "").trim();
+    if (/^(?:(?:key\s+)?decisions?|decided|\u51b3\u7b56|\u51b3\u5b9a)$/iu.test(heading)) {
+      inDecisionSection = true;
+      continue;
+    }
+    if (/^(?:next actions?|next steps?|blocked|summary|commitments?|\u4e0b\u4e00\u6b65|\u963b\u585e|\u603b\u7ed3)$/iu.test(heading)) {
+      if (inDecisionSection) {
+        break;
+      }
+      continue;
+    }
+    const keyed = line.match(/^(?:decision|decided|\u51b3\u7b56|\u51b3\u5b9a)\s*[:\uFF1A]\s*(.+)$/iu);
+    if (keyed?.[1] !== undefined) {
+      decisions.push(normalizeMemoryLine(keyed[1], 120));
+      continue;
+    }
+    if (!inDecisionSection) {
+      continue;
+    }
+    const item = line.replace(/^[-*+]\s+/u, "").replace(/^\d+[.)]\s+/u, "").trim();
+    if (item.length > 0) {
+      decisions.push(normalizeMemoryLine(item, 120));
+    }
+  }
+  return decisions.filter((item) => item.length > 0);
+}
+
+function collectUserConstraints(
+  messages: SessionCompactInput["messages"],
+  pinnedUserMessages: string[]
+): string[] {
+  const sources = [
+    ...messages.filter((message) => message.role === "user").map((message) => message.content),
+    ...pinnedUserMessages
+  ];
+  const constraints: string[] = [];
+  for (const source of sources) {
+    for (const match of source.matchAll(
+      /(?:不要|别|禁止|不得|请勿)\s*[^。！？\n]{1,80}/gu
+    )) {
+      const normalized = normalizeMemoryLine(match[0], 120);
+      if (normalized.length > 0) {
+        constraints.push(`Constraint: ${normalized}`);
+      }
+    }
+    const clarifyMatch = source.match(/^Answer:\s*(.+)$/imu);
+    if (clarifyMatch?.[1] !== undefined) {
+      const answer = normalizeMemoryLine(clarifyMatch[1], 120);
+      if (answer.length > 0) {
+        constraints.push(`Clarify: ${answer}`);
+      }
+    }
+  }
+  return uniqueList(constraints);
+}
+
+function resolveSessionTheme(input: {
+  compactMessages: SessionCompactInput["messages"];
+  currentGoal: string;
+  previousSessionSummary: SessionSummaryRecord | null;
+}): string {
+  const previousTheme =
+    typeof input.previousSessionSummary?.metadata?.sessionTheme === "string"
+      ? input.previousSessionSummary.metadata.sessionTheme.trim()
+      : "";
+  if (previousTheme.length > 0) {
+    return previousTheme;
+  }
+  const firstUser = input.compactMessages.find((message) => message.role === "user")?.content ?? "";
+  const theme = summarize(firstUser, 500);
+  if (theme.length === 0 || theme === input.currentGoal) {
+    return "";
+  }
+  return theme;
 }
 
 function uniqueList(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function formatOpenLoop(toolName: string, toolCallId: string): string {
+  return `pending ${toolName} (${toolCallId})`;
+}
+
+function parseOpenLoopToolCallId(openLoop: string): string | null {
+  const match = openLoop.match(/\(([^)]+)\)$/u);
+  return match?.[1] ?? null;
+}
+
+function mergeOpenLoops(
+  previousOpenLoops: string[],
+  currentOpenLoops: string[],
+  resolvedToolCalls: Set<string>
+): string[] {
+  const byToolCallId = new Map<string, string>();
+  const order: string[] = [];
+  for (const openLoop of previousOpenLoops) {
+    const toolCallId = parseOpenLoopToolCallId(openLoop);
+    if (toolCallId === null || resolvedToolCalls.has(toolCallId)) {
+      continue;
+    }
+    if (!byToolCallId.has(toolCallId)) {
+      order.push(toolCallId);
+    }
+    byToolCallId.set(toolCallId, openLoop);
+  }
+  for (const openLoop of currentOpenLoops) {
+    const toolCallId = parseOpenLoopToolCallId(openLoop);
+    if (toolCallId === null) {
+      continue;
+    }
+    if (!byToolCallId.has(toolCallId)) {
+      order.push(toolCallId);
+    }
+    byToolCallId.set(toolCallId, openLoop);
+  }
+  return order.map((toolCallId) => byToolCallId.get(toolCallId)!).filter(Boolean);
 }
 
 function summarize(value: string, maxLength: number): string {

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config.js";
 
@@ -65,7 +66,8 @@ const DEFAULT_RUNTIME_CONFIG: JsonObject = {
   },
   tokenBudget: {
     outputLimit: 8000,
-    reservedOutput: 1000
+    reservedOutput: 1000,
+    unknownContextWindowFallback: 32000
   },
   workflow: {
     testCommands: ["npm test", "npm run build"],
@@ -167,7 +169,8 @@ export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceRe
     ...writeConfigIfMissing(workspaceRoot, "mcp-server.config.json", DEFAULT_MCP_SERVER_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "skill-overrides.json", DEFAULT_SKILL_OVERRIDES),
     ...writeConfigIfMissing(workspaceRoot, "tool-overrides.json", DEFAULT_TOOL_OVERRIDES),
-    ...writeConfigIfMissing(workspaceRoot, "approval-rules.json", DEFAULT_APPROVAL_RULES)
+    ...writeConfigIfMissing(workspaceRoot, "approval-rules.json", DEFAULT_APPROVAL_RULES),
+    ...writeHttpTokenIfMissing(workspaceRoot)
   );
 
   return {
@@ -183,4 +186,16 @@ function writeConfigIfMissing(workspaceRoot: string, fileName: string, value: Js
   }
   writeFileSync(configPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   return [configPath];
+}
+
+function writeHttpTokenIfMissing(workspaceRoot: string): string[] {
+  const tokenPath = join(workspaceRoot, ".auto-talon", "http.token");
+  if (existsSync(tokenPath)) {
+    return [];
+  }
+  writeFileSync(tokenPath, `${randomBytes(32).toString("hex")}\n`, {
+    encoding: "utf8",
+    mode: 0o600
+  });
+  return [tokenPath];
 }

@@ -90,9 +90,13 @@ function summarizeMessages(input: SessionCompactInput): string {
 export interface StructuredSummaryFields {
   goal: string;
   latestUserRequest: string;
+  allUserMessages: string[];
+  sessionTheme: string;
+  featureBacklogSection: string;
   completedWork: string;
   evidenceAndVerification: string;
   filesTouched: string[];
+  findings: string;
   recentlyReadFiles: string;
   commandsRun: string[];
   blockers: string[];
@@ -100,7 +104,14 @@ export interface StructuredSummaryFields {
   toolSignals: string;
 }
 
-export function collectStructuredSummaryFields(input: SessionCompactInput): StructuredSummaryFields {
+export function collectStructuredSummaryFields(
+  input: SessionCompactInput,
+  options: {
+    featureBacklogSection?: string;
+    pinnedUserMessages?: string[];
+    sessionTheme?: string;
+  } = {}
+): StructuredSummaryFields {
   const userMessages = input.messages.filter((message) => message.role === "user");
   const assistantMessages = input.messages.filter((message) => message.role === "assistant");
   const toolMessages = input.messages.filter((message) => message.role === "tool");
@@ -108,52 +119,114 @@ export function collectStructuredSummaryFields(input: SessionCompactInput): Stru
   const completedWork = summarize(
     assistantMessages
       .slice(-3)
-      .map((message) => summarize(message.content, 100))
+      .map((message) => summarize(message.content, 200))
       .join(" | "),
-    260
+    500
   );
   const keyToolSignals = summarize(
     toolMessages
       .slice(-3)
-      .map((message) => summarize(message.content, 100))
+      .map((message) => summarize(message.content, 200))
       .join(" | "),
-    260
+    500
   );
   const filesTouched = extractFilesTouched(toolMessages);
   const commandsRun = extractCommands(toolMessages);
   const blockers = extractBlockers(toolMessages, assistantMessages);
   const remainingWork = extractRemainingWork(assistantMessages);
   const evidenceAndVerification = extractEvidence(toolMessages, assistantMessages);
-  const fallbackGoal = summarize(input.originalGoal ?? "", 220);
-  const firstUserGoal = summarize(userMessages.at(0)?.content ?? "", 220);
-  const latestUserGoal = summarize(userMessages.at(-1)?.content ?? "", 220);
+  const fallbackGoal = summarize(input.originalGoal ?? "", 500);
+  const firstUserGoal = summarize(userMessages.at(0)?.content ?? "", 500);
+  const latestUserGoal = summarize(userMessages.at(-1)?.content ?? "", 500);
+  const windowUserMessages = userMessages
+    .map((message) => summarize(message.content, 500))
+    .filter((message) => message.length > 0);
+  const allUserMessages = uniqueList([
+    ...(options.pinnedUserMessages ?? []).map((message) => summarize(message, 500)),
+    ...windowUserMessages
+  ]).slice(-20);
+  const assistantFindings = assistantMessages
+    .map((message) => assistantVisibleText(message))
+    .filter((text) => text.length > 30)
+    .map((text) => summarize(text, 200));
+  const findings =
+    assistantFindings.length > 0 ? assistantFindings.slice(-5).join("\n") : "[none yet]";
   return {
+    allUserMessages,
     blockers,
     commandsRun,
     completedWork: completedWork || "[n/a]",
     evidenceAndVerification: evidenceAndVerification || "[n/a]",
+    featureBacklogSection: options.featureBacklogSection ?? "",
     filesTouched,
-    goal: firstUserGoal || fallbackGoal || "[n/a]",
+    findings,
+    goal: latestUserGoal || firstUserGoal || fallbackGoal || "[n/a]",
     latestUserRequest: latestUserGoal || fallbackGoal || "[n/a]",
     recentlyReadFiles: input.recentlyReadFilesSummary ?? "[none]",
     remainingWork,
+    sessionTheme: options.sessionTheme ?? "",
     toolSignals: keyToolSignals || "[n/a]"
   };
 }
 
 export function formatStructuredSummary(fields: StructuredSummaryFields): string {
+  const userMessagesSection =
+    fields.allUserMessages.length > 0
+      ? fields.allUserMessages.map((message, index) => `${index + 1}. ${message}`).join("\n")
+      : "[none]";
+
+  const themeSection =
+    fields.sessionTheme.trim().length > 0
+      ? ["## Session Theme", fields.sessionTheme, ""]
+      : [];
+  const featureBacklogSection =
+    fields.featureBacklogSection.trim().length > 0
+      ? ["## Feature Backlog", fields.featureBacklogSection, ""]
+      : [];
+
   return redactSensitiveSummary(
     [
-      `goal=${fields.goal}`,
-      `latest_user_request=${fields.latestUserRequest}`,
-      `completedWork=${fields.completedWork}`,
-      `evidence_and_verification=${fields.evidenceAndVerification}`,
-      `filesTouched=${fields.filesTouched.join("; ") || "[none]"}`,
-      `recentlyReadFiles=${fields.recentlyReadFiles}`,
-      `commandsRun=${fields.commandsRun.join("; ") || "[none]"}`,
-      `blockers=${fields.blockers.join("; ") || "[none]"}`,
-      `remaining_work=${fields.remainingWork.join("; ") || "[none]"}`,
-      `tool_signals=${fields.toolSignals}`
+      "## Active Goal",
+      fields.goal,
+      "",
+      ...themeSection,
+      "## Latest User Request",
+      fields.latestUserRequest,
+      "",
+      "## All User Messages",
+      userMessagesSection,
+      "",
+      ...featureBacklogSection,
+      "## Progress",
+      "### Done",
+      fields.completedWork,
+      "",
+      "### Remaining Work",
+      fields.remainingWork.length > 0 ? fields.remainingWork.map((item) => `- ${item}`).join("\n") : "[none]",
+      "",
+      "## Findings So Far",
+      fields.findings,
+      "",
+      "## Key Decisions",
+      "[see session decisions metadata]",
+      "",
+      "## Relevant Files",
+      fields.filesTouched.length > 0 ? fields.filesTouched.map((file) => `- ${file}`).join("\n") : "[none]",
+      "",
+      "## Evidence & Verification",
+      fields.evidenceAndVerification,
+      "",
+      "## Commands Run",
+      fields.commandsRun.length > 0 ? fields.commandsRun.map((command) => `- ${command}`).join("\n") : "[none]",
+      "",
+      "## Blocked",
+      fields.blockers.length > 0 ? fields.blockers.map((blocker) => `- ${blocker}`).join("\n") : "[none]",
+      "",
+      "## Recently Read Files",
+      fields.recentlyReadFiles,
+      "",
+      "## Tool Signals",
+      fields.toolSignals
     ].join("\n")
   );
 }
@@ -164,6 +237,14 @@ export function redactSensitiveSummary(value: string): string {
     .replace(/\b(Bearer\s+)?[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/gu, "[REDACTED_TOKEN]")
     .replace(/\b(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/gu, "[REDACTED_TOKEN]")
     .replace(/\b(password|secret|token|api[_-]?key)\s*[:=]\s*['"]?[^'"\s;]+/giu, "$1=[REDACTED]");
+}
+
+function assistantVisibleText(message: SessionCompactInput["messages"][number]): string {
+  const content = message.content.trim();
+  if (content.length > 0) {
+    return content;
+  }
+  return message.reasoningContent?.trim() ?? "";
 }
 
 function extractFilesTouched(toolMessages: SessionCompactInput["messages"]): string[] {
@@ -231,23 +312,73 @@ function extractRemainingWork(assistantMessages: SessionCompactInput["messages"]
 
 function buildSummarizerPrompt(input: SessionCompactInput): Array<{ content: string; role: "system" | "user" }> {
   const structured = collectStructuredSummaryFields(input);
-  const previousSummary =
-    input.previousSummary !== undefined && input.previousSummary.trim().length > 0
-      ? `Previous handoff summary (update and preserve durable facts):\n${input.previousSummary.trim()}\n\n`
+  const hasPreviousSummary =
+    input.previousSummary !== undefined && input.previousSummary.trim().length > 0;
+  const focusPrefix =
+    input.focusTopic !== undefined && input.focusTopic.trim().length > 0
+      ? `User focus for this compaction: ${input.focusTopic.trim()}\n\n`
       : "";
+  if (hasPreviousSummary) {
+    return buildIterativeUpdatePrompt(input.previousSummary!.trim(), structured, focusPrefix);
+  }
+  return buildInitialSummaryPrompt(structured, focusPrefix);
+}
+
+function buildInitialSummaryPrompt(
+  structured: StructuredSummaryFields,
+  focusPrefix = ""
+): Array<{ content: string; role: "system" | "user" }> {
   return [
     {
       content: [
         "You produce a decision-oriented session handoff for another agent continuing this work.",
         "Compress for continuity, not chronology. Omit lookup chatter unless it is the only evidence.",
-        "Return plain text with exactly these keys, one per line:",
-        "goal, latest_user_request, completedWork, evidence_and_verification, filesTouched, recentlyReadFiles, commandsRun, blockers, remaining_work, tool_signals.",
-        "No markdown."
+        "Return markdown with these sections:",
+        "## Active Goal",
+        "## Latest User Request",
+        "## All User Messages",
+        "## Progress (### Done, ### In Progress, ### Blocked)",
+        "## Key Decisions",
+        "## Relevant Files",
+        "## Evidence & Verification",
+        "## Remaining Work",
+        "## Critical Context",
+        "Preserve user message substance verbatim where possible."
       ].join(" "),
       role: "system"
     },
     {
-      content: `${previousSummary}Source material:\n${formatStructuredSummary(structured)}`,
+      content: `${focusPrefix}Source material:\n${formatStructuredSummary(structured)}`,
+      role: "user"
+    }
+  ];
+}
+
+function buildIterativeUpdatePrompt(
+  previousSummary: string,
+  structured: StructuredSummaryFields,
+  focusPrefix = ""
+): Array<{ content: string; role: "system" | "user" }> {
+  return [
+    {
+      content: [
+        "You are updating an existing structured session handoff.",
+        "PRESERVE all durable facts from the previous summary.",
+        "Move completed items into Done. ADD new progress. REMOVE obsolete entries.",
+        "Never drop file paths, user requests, or blockers unless clearly resolved.",
+        "Return markdown using the same section headings as the previous summary."
+      ].join(" "),
+      role: "system"
+    },
+    {
+      content: [
+        focusPrefix,
+        "Previous handoff summary:",
+        previousSummary,
+        "",
+        "New source material:",
+        formatStructuredSummary(structured)
+      ].join("\n"),
       role: "user"
     }
   ];

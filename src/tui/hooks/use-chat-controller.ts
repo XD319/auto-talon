@@ -38,6 +38,7 @@ export interface UseChatControllerOptions {
   initialSessionApprovalFingerprints?: string[];
   initialSessionId?: string;
   interactionMode?: TuiInteractionMode;
+  onInteractionModeChange?: (mode: TuiInteractionMode) => void;
   onOutputEvent?: (event: RuntimeOutputEvent) => void;
   onTraceEvent?: (event: TraceEvent) => void;
   reviewerId: string;
@@ -132,7 +133,7 @@ export interface ActivateSessionInput {
 const welcomeMessage: ChatMessage = {
   id: "system:welcome",
   kind: "system",
-  text: "Welcome to your AutoTalon personal assistant. Type a request and press Enter to start.",
+  text: "Welcome to AutoTalon. Type a request and press Enter. Use Shift+Tab or /mode plan before analysis-only requests.",
   timestamp: new Date().toISOString()
 };
 const STREAM_FLUSH_INTERVAL_MS = 50;
@@ -208,6 +209,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     source: null,
     usage: null
   });
+  const interactionModeRef = React.useRef<TuiInteractionMode>(input.interactionMode ?? "agent");
+  React.useEffect(() => {
+    interactionModeRef.current = input.interactionMode ?? "agent";
+  }, [input.interactionMode]);
   const busy = busyCount > 0;
 
   const resetAssistantProgressBuffers = React.useCallback(() => {
@@ -397,6 +402,20 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     });
   }, []);
 
+  const resetTokenHudForSessionResume = React.useCallback(() => {
+    tokenHudBaselineRef.current = { mode: "session_total", source: null, usage: null };
+    setTokenHud({
+      compactedCount: 0,
+      contextPercent: 0,
+      estimatedCostUsd: 0,
+      inputTokens: 0,
+      microPrunedCount: 0,
+      outputTokens: 0,
+      statsSource: "none",
+      usageMode: "session_total"
+    });
+  }, []);
+
   const providerSelectionRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const selection = `${input.config.provider.name}:${input.config.provider.model ?? ""}`;
@@ -507,8 +526,10 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             ? hydrateFailedTaskProgress(loaded.messages as ChatMessage[], input.service)
             : [welcomeMessage];
       setMessages(restoredMessages);
-      tokenHudBaselineRef.current = { mode: "session_total", source: null, usage: null };
-      setTokenHud((current) => ({ ...current, usageMode: "session_total", statsSource: "none" }));
+      if (overrides?.interactionMode !== undefined) {
+        interactionModeRef.current = overrides.interactionMode;
+      }
+      resetTokenHudForSessionResume();
       setUiStatus({
         primaryLabel: "session resumed",
         primaryTone: "muted",
@@ -526,7 +547,6 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       );
       setFileEdits([]);
       setQueuedPrompts([]);
-      resetTokenHudState();
       setUsedMemoryCount(0);
       setSessionTodos(input.service.getSessionTodos(sessionId));
       setTodoPanelOpen(true);
@@ -542,7 +562,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       pendingApproval,
       pendingClarifyPrompt,
       resetAssistantProgressBuffers,
-      resetTokenHudState,
+      resetTokenHudForSessionResume,
       stopTraceSubscription
     ]
   );
@@ -578,6 +598,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         title
       });
       switchActiveSession(session.sessionId);
+      setSessionApprovalFingerprints([]);
       return session.sessionId;
     },
     [
@@ -899,9 +920,12 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           activeAbortControllerRef.current = abortController;
           runOptions.signal = abortController.signal;
           runOptions.taskId = taskId;
-          if ((input.interactionMode ?? "agent") === "plan") {
+          const effectiveMode = interactionModeRef.current;
+          if (effectiveMode === "plan") {
             runOptions.agentProfileId = "planner";
             runOptions.interactionMode = "plan";
+          } else if (effectiveMode === "acceptEdits") {
+            runOptions.interactionMode = "acceptEdits";
           }
           runOptions.metadata = {
             ...(runOptions.metadata ?? {}),
@@ -1136,7 +1160,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       flushPendingDelta,
       input.config,
       input.cwd,
-      input.interactionMode,
+      input.onInteractionModeChange,
       input.onOutputEvent,
       input.service,
       sessionApprovalFingerprints,

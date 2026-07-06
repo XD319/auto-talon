@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { buildApprovalFingerprint } from "../approvals/approval-fingerprint.js";
+import { readSessionApprovalFingerprints } from "../approvals/session-approval-fingerprints.js";
 import type { ApprovalRuleStore } from "../approvals/approval-rule-store.js";
 import type { ClarifyService } from "../approvals/clarify-service.js";
 import { AppError, toAppError } from "../core/app-error.js";
@@ -301,13 +302,49 @@ export class ToolOrchestrator {
       );
     }
 
-    if (policyDecision.effect === "allow_with_approval") {
+    const interactionMode = readInteractionMode(context.taskMetadata);
+    const agentWriteApproval = readAgentWriteApproval(context.taskMetadata);
+    let effectiveEffect = policyDecision.effect;
+    if (
+      tool.capability === "filesystem.write" &&
+      prepared.governance.pathScope === "workspace" &&
+      effectiveEffect === "allow"
+    ) {
+      const mode = interactionMode ?? "agent";
+      if (
+        (agentWriteApproval === "on" || agentWriteApproval === "acceptEditsOnly") &&
+        mode === "agent"
+      ) {
+        effectiveEffect = "allow_with_approval";
+      }
+    }
+
+    if (effectiveEffect === "allow_with_approval") {
       const fingerprint = buildApprovalFingerprint(tool.name, prepared.sandbox);
       const sessionApprovalFingerprints = readSessionApprovalFingerprints(context.taskMetadata);
+      const acceptEditsAutoAllow =
+        interactionMode === "acceptEdits" && tool.capability === "filesystem.write";
       const autoApproved =
+        acceptEditsAutoAllow ||
         sessionApprovalFingerprints.includes(fingerprint.fingerprint) ||
         this.dependencies.approvalRuleStore.hasFingerprint(fingerprint.fingerprint) ||
         this.dependencies.approvalRuleStore.matches(prepared.sandbox, tool.name);
+
+      if (acceptEditsAutoAllow) {
+        this.dependencies.traceService.record({
+          actor: "policy.engine",
+          eventType: "accept_edits_auto_allowed",
+          payload: {
+            capability: tool.capability,
+            interactionMode,
+            toolCallId: toolCall.toolCallId,
+            toolName: tool.name
+          },
+          stage: "governance",
+          summary: `Auto-allowed ${tool.name} in acceptEdits mode`,
+          taskId: request.taskId
+        });
+      }
 
       if (!autoApproved) {
         const approvalRequest = this.dependencies.approvalService.ensureApprovalRequest({
@@ -504,7 +541,11 @@ export class ToolOrchestrator {
 
       return {
         kind: "completed",
-        result,
+        result: {
+          ...result,
+          output: persistedOutput,
+          ...(persistedOutput !== result.output ? { runtimeOutput: result.output } : {})
+        },
         toolCall: finishedCall
       };
     } catch (error) {
@@ -1048,12 +1089,26 @@ function extractSandboxTarget(sandboxDetails: Record<string, unknown>): string {
   return "unknown";
 }
 
-function readSessionApprovalFingerprints(metadata: ToolExecutionContext["taskMetadata"]): string[] {
-  const fingerprints = metadata?.["sessionApprovalFingerprints"];
-  if (!Array.isArray(fingerprints)) {
-    return [];
+function readInteractionMode(
+  metadata: ToolExecutionContext["taskMetadata"]
+): "agent" | "plan" | "acceptEdits" {
+  if (metadata?.interactionMode === "plan") {
+    return "plan";
   }
-  return fingerprints.filter((value): value is string => typeof value === "string");
+  if (metadata?.interactionMode === "acceptEdits") {
+    return "acceptEdits";
+  }
+  return "agent";
+}
+
+function readAgentWriteApproval(
+  metadata: ToolExecutionContext["taskMetadata"]
+): "off" | "on" | "acceptEditsOnly" {
+  const value = metadata?.agentWriteApproval;
+  if (value === "on" || value === "acceptEditsOnly") {
+    return value;
+  }
+  return "off";
 }
 
 function sanitizePersistedOutput(
@@ -1069,7 +1124,43 @@ function sanitizePersistedOutput(
     return contextPolicy.redactText(value, privacyLevel);
   }
 
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return sanitizeRestrictedStructuredOutput(value as Record<string, unknown>, contextPolicy);
+  }
+
   return {
     redacted: contextPolicy.redactText(JSON.stringify(value), privacyLevel)
   };
+}
+
+function sanitizeRestrictedStructuredOutput(
+  value: Record<string, unknown>,
+  contextPolicy: ContextPolicy
+): ToolExecutionSuccess["output"] {
+  const command = typeof value.command === "string" ? value.command : undefined;
+  const exitCode = typeof value.exitCode === "number" ? value.exitCode : undefined;
+  if (command === undefined && exitCode === undefined) {
+    return {
+      redacted: contextPolicy.redactText(JSON.stringify(value), "restricted")
+    };
+  }
+
+  const sanitized: JsonObject = {
+    ...(command !== undefined ? { command } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(typeof value.cwd === "string" ? { cwd: value.cwd } : {}),
+    ...(typeof value.durationMs === "number" ? { durationMs: value.durationMs } : {}),
+    ...(typeof value.timedOut === "boolean" ? { timedOut: value.timedOut } : {}),
+    ...(typeof value.summary === "string" ? { summary: value.summary } : {}),
+    ...(value.passed === true ? { passed: true } : {})
+  };
+  if (
+    value.stdout !== undefined ||
+    value.stderr !== undefined ||
+    value.stderrPreview !== undefined ||
+    value.failureHint !== undefined
+  ) {
+    sanitized.output = "[REDACTED: restricted content]";
+  }
+  return sanitized;
 }

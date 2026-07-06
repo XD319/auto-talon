@@ -218,6 +218,12 @@ export class McpStdioTransport implements McpClientHandle {
       this.child = null;
       this.initialized = false;
     });
+    this.child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED") {
+        return;
+      }
+      this.failAll(`MCP server ${this.serverId} stdin failed.`, error);
+    });
     this.readline = createInterface({
       input: this.child.stdout,
       terminal: false
@@ -228,7 +234,7 @@ export class McpStdioTransport implements McpClientHandle {
   private request(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<JsonRpcMessage> {
     return new Promise<JsonRpcMessage>((resolve, reject) => {
       const child = this.child;
-      if (child === null) {
+      if (child === null || child.stdin.destroyed || child.stdin.writableEnded) {
         reject(
           new AppError({
             code: "tool_execution_error",
@@ -249,7 +255,25 @@ export class McpStdioTransport implements McpClientHandle {
         );
       }, timeoutMs);
       this.pending.set(id, { method, reject, resolve, timeout });
-      child.stdin.write(`${JSON.stringify({ id, jsonrpc: "2.0", method, params })}\n`, "utf8");
+      child.stdin.write(`${JSON.stringify({ id, jsonrpc: "2.0", method, params })}\n`, "utf8", (error) => {
+        if (error === undefined || error === null) {
+          return;
+        }
+        const pending = this.pending.get(id);
+        if (pending === undefined) {
+          return;
+        }
+        this.pending.delete(id);
+        clearTimeout(pending.timeout);
+        pending.reject(
+          new AppError({
+            cause: error,
+            code: "tool_execution_error",
+            details: { method, serverId: this.serverId },
+            message: `MCP server ${this.serverId} closed while sending ${method}.`
+          })
+        );
+      });
     });
   }
 

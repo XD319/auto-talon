@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { ExecutionContextAssembler } from "../src/runtime/context-assembler.js";
-import type { AgentProfile, TaskRecord } from "../src/types/index.js";
+import {
+  ExecutionContextAssembler,
+  MEMORY_CONTEXT_SOURCE_TYPE,
+  mergeMemoryContextIntoMessages
+} from "../src/runtime/context-assembler.js";
+import type { AgentProfile, ContextFragment, TaskRecord } from "../src/types/index.js";
 
 describe("ExecutionContextAssembler", () => {
   it("describes public web fetch usage in the initial system prompt", () => {
@@ -82,6 +86,97 @@ describe("ExecutionContextAssembler", () => {
     expect(messages[0]?.content).toContain("FIRECRAWL_API_KEY");
     expect(messages[0]?.content).toContain("cannot discover search results");
   });
+
+  it("injects plan mode guidance into the initial system prompt", () => {
+    const assembler = new ExecutionContextAssembler();
+    const messages = assembler.buildInitialMessages(
+      createTask(),
+      [
+        {
+          capability: "filesystem.read",
+          description: "Read a local file",
+          inputSchema: { type: "object" },
+          name: "read_file",
+          privacyLevel: "internal",
+          riskLevel: "low"
+        }
+      ],
+      createProfile(),
+      undefined,
+      [],
+      "plan"
+    );
+
+    expect(messages[0]?.content).toContain("You are in plan mode");
+    expect(messages[0]?.content).toContain("/mode agent");
+  });
+
+  it("merges memoryContext recall fragments into provider messages", () => {
+    const assembler = new ExecutionContextAssembler();
+    const fragments = [createMemoryFragment()];
+    const assembled = assembler.assemble({
+      availableTools: [],
+      iteration: 1,
+      memoryContext: fragments,
+      messages: [
+        {
+          content: "You are a coding agent.",
+          metadata: {
+            privacyLevel: "internal",
+            retentionKind: "working",
+            sourceType: "system_prompt"
+          },
+          role: "system"
+        },
+        {
+          content: "fix the bug",
+          metadata: {
+            privacyLevel: "internal",
+            retentionKind: "working",
+            sourceType: "user_input"
+          },
+          role: "user"
+        }
+      ],
+      signal: new AbortController().signal,
+      task: createTask(),
+      tokenBudget: createTask().tokenBudget
+    });
+
+    const recalledMessage = assembled.providerInput.messages.find(
+      (message) => message.metadata?.sourceType === MEMORY_CONTEXT_SOURCE_TYPE
+    );
+    expect(recalledMessage?.role).toBe("system");
+    expect(recalledMessage?.content).toContain("Recalled context:");
+    expect(recalledMessage?.content).toContain("Use pnpm for verification");
+    expect(assembled.memoryContextInjection?.fragmentCount).toBe(1);
+    expect(typeof assembled.memoryContextInjection?.tokenEstimate).toBe("number");
+    expect(assembled.providerInput.memoryContext).toEqual(fragments);
+  });
+
+  it("replaces an existing recalled-context message on re-assembly", () => {
+    const existing = mergeMemoryContextIntoMessages(
+      [
+        {
+          content: "system",
+          role: "system"
+        }
+      ],
+      [createMemoryFragment()]
+    ).messages;
+    const next = mergeMemoryContextIntoMessages(existing, [
+      {
+        ...createMemoryFragment(),
+        text: "Updated recall text"
+      }
+    ]);
+
+    const recalledMessages = next.messages.filter(
+      (message) => message.metadata?.sourceType === MEMORY_CONTEXT_SOURCE_TYPE
+    );
+    expect(recalledMessages).toHaveLength(1);
+    expect(recalledMessages[0]?.content).toContain("Updated recall text");
+  });
 });
 
 function createProfile(): AgentProfile {
@@ -120,5 +215,22 @@ function createTask(): TaskRecord {
       usedOutput: 0
     },
     updatedAt: now
+  };
+}
+
+function createMemoryFragment(): ContextFragment {
+  return {
+    confidence: 0.9,
+    memoryId: "memory:project:smoke",
+    privacyLevel: "internal",
+    retentionPolicy: {
+      kind: "project",
+      reason: "Project memory",
+      ttlDays: null
+    },
+    scope: "project",
+    status: "active",
+    text: "Use pnpm for verification",
+    title: "Smoke verification"
   };
 }
