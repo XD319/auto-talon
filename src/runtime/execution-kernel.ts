@@ -115,6 +115,7 @@ import {
   ProviderSubagentSummarizer
 } from "../memory/compact-summarizer.js";
 import type { CompactTriggerPolicy } from "../memory/compact-policy.js";
+import type { WebSearchBackend } from "../core/web-search-config.js";
 import type { ToolOrchestrator } from "../tools/index.js";
 import { buildParallelSafeLookup } from "../tools/tool-parallel-policy.js";
 import type { TraceService } from "../tracing/trace-service.js";
@@ -164,6 +165,7 @@ export interface ExecutionKernelDependencies {
   skillContextService?: SkillContextService;
   todoSessionStore?: TodoSessionStore;
   interactionModes: InteractionModesRuntimeConfig;
+  webSearchBackend: WebSearchBackend;
   workspaceRoot: string;
 }
 
@@ -496,7 +498,8 @@ export class ExecutionKernel {
         profile,
         repoMap?.summary,
         initialToolExposure?.decisions ?? [],
-        options.interactionMode
+        options.interactionMode,
+        { searchBackend: this.dependencies.webSearchBackend }
       );
       const resumeContextMessages = readSessionResumeMessages(taskMetadata);
       if (resumeContextMessages.length > 0) {

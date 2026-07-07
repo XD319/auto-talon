@@ -635,6 +635,168 @@ describe("WebSearchTool", () => {
     expect(calls[0]?.body).toMatchObject({ days: 14 });
     expect(calls[1]?.url).toContain("freshness=pw");
   });
+
+  it("falls back from ddgs to a configured API backend when built-in search fails", async () => {
+    const tool = new WebSearchTool(
+      new SandboxService({
+        allowedFetchHosts: ["*"],
+        workspaceRoot: process.cwd()
+      }),
+      {
+        backend: "auto",
+        extractBackend: "http",
+        longPageThresholdBytes: 64_000,
+        maxResults: 5,
+        providers: {
+          brave: {
+            apiKey: "brave-key",
+            apiKeyEnv: "BRAVE_SEARCH_API_KEY",
+            apiUrl: "https://api.search.brave.com/res/v1/web/search"
+          },
+          ddgs: { apiKey: null, apiKeyEnv: null, apiUrl: null },
+          exa: { apiKey: null, apiKeyEnv: "EXA_API_KEY", apiUrl: null },
+          firecrawl: { apiKey: null, apiKeyEnv: "FIRECRAWL_API_KEY", apiUrl: null },
+          searxng: { apiKey: null, apiKeyEnv: null, apiUrl: null },
+          tavily: { apiKey: null, apiKeyEnv: "TAVILY_API_KEY", apiUrl: null }
+        },
+        searchBackend: "ddgs",
+        summaryTargetBytes: 5_000
+      },
+      new Map([
+        [
+          "ddgs",
+          {
+            backend: "ddgs",
+            requiresApiKey: false,
+            search: () => Promise.reject(new Error("Built-in web search failed"))
+          }
+        ],
+        [
+          "brave",
+          {
+            backend: "brave",
+            requiresApiKey: true,
+            search: () =>
+              Promise.resolve({
+                provider: "brave",
+                query: "docs",
+                results: [
+                  {
+                    snippet: "Brave snippet",
+                    title: "Brave result",
+                    url: "https://example.com/brave"
+                  }
+                ]
+              })
+          }
+        ]
+      ])
+    );
+
+    const prepared = tool.prepare({ query: "docs" }, createContext());
+    const result = await tool.execute(prepared.preparedInput, createContext());
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("Expected fallback web_search success.");
+    }
+    expect(result.output).toMatchObject({ provider: "brave" });
+    expect(result.details).toMatchObject({
+      fallbackFrom: "ddgs",
+      requestedBackend: "ddgs"
+    });
+  });
+
+  it("returns remediation when ddgs and configured API backends all fail", async () => {
+    const tool = new WebSearchTool(
+      new SandboxService({
+        allowedFetchHosts: ["*"],
+        workspaceRoot: process.cwd()
+      }),
+      {
+        backend: "auto",
+        extractBackend: "http",
+        longPageThresholdBytes: 64_000,
+        maxResults: 5,
+        providers: {
+          brave: {
+            apiKey: "brave-key",
+            apiKeyEnv: "BRAVE_SEARCH_API_KEY",
+            apiUrl: "https://api.search.brave.com/res/v1/web/search"
+          },
+          ddgs: { apiKey: null, apiKeyEnv: null, apiUrl: null },
+          exa: { apiKey: null, apiKeyEnv: "EXA_API_KEY", apiUrl: null },
+          firecrawl: { apiKey: null, apiKeyEnv: "FIRECRAWL_API_KEY", apiUrl: null },
+          searxng: { apiKey: null, apiKeyEnv: null, apiUrl: null },
+          tavily: { apiKey: null, apiKeyEnv: "TAVILY_API_KEY", apiUrl: null }
+        },
+        searchBackend: "ddgs",
+        summaryTargetBytes: 5_000
+      },
+      new Map([
+        [
+          "ddgs",
+          {
+            backend: "ddgs",
+            requiresApiKey: false,
+            search: () => Promise.reject(new Error("Built-in web search failed"))
+          }
+        ],
+        [
+          "brave",
+          {
+            backend: "brave",
+            requiresApiKey: true,
+            search: () => Promise.reject(new Error("Brave failed"))
+          }
+        ]
+      ])
+    );
+
+    const prepared = tool.prepare({ query: "docs" }, createContext());
+    const result = await tool.execute(prepared.preparedInput, createContext());
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected web_search failure.");
+    }
+    expect(result.details?.remediation).toContain("BRAVE_SEARCH_API_KEY");
+  });
+
+  it("does not fall back to ddgs when an explicit API backend fails", async () => {
+    const tool = new WebSearchTool(
+      new SandboxService({
+        allowedFetchHosts: ["api.search.brave.com"],
+        workspaceRoot: process.cwd()
+      }),
+      {
+        ...createFullWebConfig(),
+        providers: {
+          ...createFullWebConfig().providers,
+          brave: {
+            apiKey: "brave-key",
+            apiKeyEnv: "BRAVE_SEARCH_API_KEY",
+            apiUrl: "https://api.search.brave.com/res/v1/web/search"
+          }
+        },
+        searchBackend: "brave"
+      },
+      {
+        backend: "brave",
+        requiresApiKey: true,
+        search: () => Promise.reject(new Error("Brave unavailable"))
+      }
+    );
+    const prepared = tool.prepare({ query: "docs" }, createContext());
+    const result = await tool.execute(prepared.preparedInput, createContext());
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected brave failure.");
+    }
+    expect(result.errorMessage).toContain("Brave unavailable");
+    expect(result.details?.provider).toBe("brave");
+  });
 });
 
 function createSandbox(): SandboxService {

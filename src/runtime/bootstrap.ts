@@ -917,6 +917,7 @@ function buildApplicationRuntime(
     outputService,
     workflow: config.workflow,
     interactionModes: config.interactionModes,
+    webSearchBackend: config.web.searchBackend,
     workspaceRoot: config.workspaceRoot
   });
   delegateTaskTool.bindExecutor(async (request) => {

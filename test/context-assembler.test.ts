@@ -31,6 +31,31 @@ describe("ExecutionContextAssembler", () => {
     expect(messages[0]?.content).toContain("Available tools: web_extract.");
   });
 
+  it("warns when web_search uses best-effort ddgs scraping", () => {
+    const assembler = new ExecutionContextAssembler();
+    const messages = assembler.buildInitialMessages(
+      createTask(),
+      [
+        {
+          capability: "network.fetch_public_readonly",
+          description: "Search the public web",
+          inputSchema: { type: "object" },
+          name: "web_search",
+          privacyLevel: "restricted",
+          riskLevel: "medium"
+        }
+      ],
+      createProfile(),
+      undefined,
+      [],
+      undefined,
+      { searchBackend: "ddgs" }
+    );
+
+    expect(messages[0]?.content).toContain("best-effort");
+    expect(messages[0]?.content).toContain("BRAVE_SEARCH_API_KEY");
+  });
+
   it("keeps the initial system prompt concise when web fetch is unavailable", () => {
     const assembler = new ExecutionContextAssembler();
     const messages = assembler.buildInitialMessages(

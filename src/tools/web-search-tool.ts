@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { parse } from "node-html-parser";
 
-import type { WebRuntimeConfig, WebSearchBackend, WebSearchRuntimeConfig } from "../core/web-search-config.js";
+import {
+  buildWebSearchRemediationHint,
+  listConfiguredApiSearchBackends,
+  type WebRuntimeConfig,
+  type WebSearchBackend,
+  type WebSearchRuntimeConfig
+} from "../core/web-search-config.js";
 import type { SandboxService } from "../sandbox/sandbox-service.js";
 import type {
   JsonObject,
@@ -242,42 +248,55 @@ export class WebSearchTool implements ToolDefinition<typeof webSearchSchema, Pre
       };
     }
 
+    const searchInput = {
+      ...(input.allowedDomains !== undefined ? { allowedDomains: input.allowedDomains } : {}),
+      apiKey: provider.apiKey,
+      apiUrl: provider.apiUrl,
+      ...(input.blockedDomains !== undefined ? { blockedDomains: input.blockedDomains } : {}),
+      maxResults: input.maxResults,
+      query: input.query,
+      ...(input.recencyDays !== undefined ? { recencyDays: input.recencyDays } : {}),
+      signal: context.signal
+    };
+
     try {
-      const output = addSearchCitations(await client.search({
-        ...(input.allowedDomains !== undefined ? { allowedDomains: input.allowedDomains } : {}),
-        apiKey: provider.apiKey,
-        apiUrl: provider.apiUrl,
-        ...(input.blockedDomains !== undefined ? { blockedDomains: input.blockedDomains } : {}),
-        maxResults: input.maxResults,
-        query: input.query,
-        ...(input.recencyDays !== undefined ? { recencyDays: input.recencyDays } : {}),
-        signal: context.signal
-      }));
-      return {
-        artifacts: [
-          {
-            artifactType: "web_search_results",
-            content: output as unknown as JsonObject,
-            uri: input.plan.url
-          }
-        ],
-        output: output as unknown as JsonObject,
-        success: true,
-        summary: `Found ${output.results.length} web results for ${input.query}`
-      };
+      const output = addSearchCitations(await client.search(searchInput));
+      return buildWebSearchSuccessResult(input, output);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown web_search provider error.";
-      return {
-        details: {
-          attempts: readWebSearchAttempts(error),
-          endpointUrl: input.plan.url,
-          provider: input.backend,
-          url: input.plan.url
-        },
-        errorCode: "tool_execution_error",
-        errorMessage: message,
-        success: false
-      };
+      if (input.backend !== "ddgs") {
+        return buildWebSearchFailureResult(input, error, input.backend);
+      }
+
+      let attempts = readWebSearchAttempts(error);
+      let lastMessage = error instanceof Error ? error.message : "Unknown web_search provider error.";
+      for (const fallbackBackend of listConfiguredApiSearchBackends(this.config)) {
+        const fallbackClient = this.clients.get(fallbackBackend);
+        const fallbackProvider = this.config.providers[fallbackBackend];
+        if (fallbackClient === undefined) {
+          continue;
+        }
+        try {
+          const output = addSearchCitations(
+            await fallbackClient.search({
+              ...searchInput,
+              apiKey: fallbackProvider.apiKey,
+              apiUrl: fallbackProvider.apiUrl
+            })
+          );
+          if (output.results.length > 0) {
+            return buildWebSearchSuccessResult(input, output, {
+              fallbackFrom: "ddgs",
+              requestedBackend: "ddgs"
+            });
+          }
+        } catch (fallbackError) {
+          lastMessage =
+            fallbackError instanceof Error ? fallbackError.message : "Unknown web_search provider error.";
+          attempts = [...attempts, ...readWebSearchAttempts(fallbackError)];
+        }
+      }
+
+      return buildWebSearchFailureResult(input, lastMessage, "ddgs", attempts);
     }
   }
 }
@@ -753,6 +772,47 @@ class WebSearchProviderError extends Error {
     this.name = "WebSearchProviderError";
     this.cause = cause;
   }
+}
+
+function buildWebSearchSuccessResult(
+  input: PreparedWebSearchInput,
+  output: WebSearchResponse,
+  details: JsonObject = {}
+): ToolExecutionResult {
+  return {
+    artifacts: [
+      {
+        artifactType: "web_search_results",
+        content: output as unknown as JsonObject,
+        uri: input.plan.url
+      }
+    ],
+    details,
+    output: output as unknown as JsonObject,
+    success: true,
+    summary: `Found ${output.results.length} web results for ${input.query}`
+  };
+}
+
+function buildWebSearchFailureResult(
+  input: PreparedWebSearchInput,
+  error: unknown,
+  provider: WebSearchBackend,
+  attempts: WebSearchAttempt[] = readWebSearchAttempts(error)
+): ToolExecutionResult {
+  const message = typeof error === "string" ? error : error instanceof Error ? error.message : "Unknown web_search provider error.";
+  return {
+    details: {
+      attempts,
+      endpointUrl: input.plan.url,
+      provider,
+      remediation: buildWebSearchRemediationHint(),
+      url: input.plan.url
+    },
+    errorCode: "tool_execution_error",
+    errorMessage: message,
+    success: false
+  };
 }
 
 function addSearchCitations(response: WebSearchResponse): WebSearchResponse {

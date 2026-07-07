@@ -106,6 +106,7 @@ export interface ToolExecutionSuccess {
   runtimeOutput?: JsonValue;
   artifacts?: ArtifactDraft[];
   replayed?: boolean;
+  details?: JsonObject;
 }
 
 export interface ToolExecutionFailure {

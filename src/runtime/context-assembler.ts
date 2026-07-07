@@ -11,6 +11,7 @@ import type {
   ToolExposureDecision,
   TuiInteractionMode
 } from "../types/index.js";
+import type { WebSearchBackend, WebRuntimeConfig } from "../core/web-search-config.js";
 import { estimateMessagesTokens } from "./context/token-counter.js";
 
 export const MEMORY_CONTEXT_SOURCE_TYPE = "memory_context_recall";
@@ -71,13 +72,19 @@ export class ExecutionContextAssembler {
     profile: AgentProfile,
     repoMapSummary?: string,
     toolExposureDecisions: ToolExposureDecision[] = [],
-    interactionMode?: TuiInteractionMode
+    interactionMode?: TuiInteractionMode,
+    webConfig?: Pick<WebRuntimeConfig, "searchBackend">
   ): ConversationMessage[] {
     const toolNames = availableTools.map((tool) => tool.name).join(", ");
     const publicWebFetchAvailable = availableTools.some(
       (tool) => tool.capability === "network.fetch_public_readonly"
     );
+    const webSearchExposed = availableTools.some((tool) => tool.name === "web_search");
     const unavailableWebSearchNote = buildUnavailableWebSearchNote(toolExposureDecisions);
+    const bestEffortWebSearchNote = buildBestEffortWebSearchNote(
+      webSearchExposed,
+      webConfig?.searchBackend
+    );
     const planModeNote =
       interactionMode === "plan"
         ? "You are in plan mode. Do not modify files. Produce analysis and a structured plan. Tell the user to switch to /mode agent when they want execution."
@@ -88,6 +95,7 @@ export class ExecutionContextAssembler {
       "Use tools only when needed.",
       "Visible tools may still be denied by policy, sandbox checks, or approval requirements at execution time.",
       unavailableWebSearchNote,
+      bestEffortWebSearchNote,
       publicWebFetchAvailable
         ? "When web_extract is available, you may use it to read public web pages for current documentation or realtime public information. When web_search is available, you may use it to find public web pages before fetching them. These are sandboxed, read-only network tools and must not be used for private, internal, or authenticated resources."
         : null,
@@ -131,6 +139,20 @@ export class ExecutionContextAssembler {
     );
     return messages;
   }
+}
+
+function buildBestEffortWebSearchNote(
+  webSearchExposed: boolean,
+  searchBackend: WebSearchBackend | undefined
+): string | null {
+  if (!webSearchExposed || searchBackend !== "ddgs") {
+    return null;
+  }
+  return [
+    "web_search uses built-in DuckDuckGo/Bing scraping (best-effort).",
+    "Empty or partial results are normal when providers block automated access.",
+    "Configure BRAVE_SEARCH_API_KEY or another API backend for reliable search."
+  ].join(" ");
 }
 
 function buildUnavailableWebSearchNote(
