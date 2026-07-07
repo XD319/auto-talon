@@ -177,6 +177,7 @@ describe("CodeSearchTool", () => {
     };
     expect(output.searchBackend).toBe("node");
     expect(output.matches[0]?.relativePath).toBe("src/fallback.ts");
+    expect(result.summary).toContain("ripgrep unavailable");
   });
 
   it("does not stop node file discovery at the result limit", async () => {

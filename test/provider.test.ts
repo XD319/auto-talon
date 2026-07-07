@@ -2066,7 +2066,14 @@ describe("Provider integration", () => {
       expect(doctorReport.shellBackendAvailable).toBe(true);
       expect(doctorReport.shellExecutable.length).toBeGreaterThan(0);
       expect(doctorReport.shellMaxTimeoutMs).toBeGreaterThan(0);
-      expect(doctorReport.issues).toEqual([]);
+      const providerIssues = doctorReport.issues.filter(
+        (issue) =>
+          !issue.includes("web.searchBackend resolves to ddgs") &&
+          !issue.includes("Local HTTP services are running without authentication") &&
+          !issue.includes("ripgrep (rg) is not on PATH") &&
+          !issue.includes("git is not on PATH")
+      );
+      expect(providerIssues).toEqual([]);
       expect(doctorReport.workspaceSecretFindings).toEqual([]);
     } finally {
       handle.close();

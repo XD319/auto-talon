@@ -1,8 +1,12 @@
 # Windows troubleshooting
 
+## Setup script (`setup.ps1`)
+
+`./scripts/setup.ps1` installs dependencies, builds the project, and bootstraps workspace config. By default it also checks whether **ripgrep** (`rg`) is on `PATH` after the build (use `-CheckRipgrep:$false` to skip). If `rg` is missing, the script prints install hints and links here; it does not auto-install ripgrep.
+
 ## Code search (`rg` / ripgrep)
 
-`code_search` prefers **ripgrep** (`rg`) when it is on `PATH`. On Windows, if `rg` is missing, the tool falls back to a slower Node.js directory walk.
+`code_search` prefers **ripgrep** (`rg`) when it is on `PATH`. On Windows, if `rg` is missing, the tool falls back to a slower Node.js directory walk. Tool JSON output includes `searchBackend: "rg" | "node"`; when Node is used, the `summary` notes that ripgrep was unavailable.
 
 Install ripgrep and ensure `rg --version` works in the same shell you use for `talon`:
 
@@ -10,6 +14,10 @@ Install ripgrep and ensure `rg --version` works in the same shell you use for `t
 - Or via package manager: `winget install BurntSushi.ripgrep.MSVC` / `choco install ripgrep`
 
 Run `talon doctor` (or `talon config doctor`) after installing; the report should no longer warn about missing `rg`.
+
+## Git
+
+Several workspace commands rely on `git` (for example `git status`). On Windows, `talon doctor` warns when `git` is not on `PATH`. Install [Git for Windows](https://git-scm.com/download/win) and confirm `git --version` works in your shell.
 
 ## PowerShell execution policy
 

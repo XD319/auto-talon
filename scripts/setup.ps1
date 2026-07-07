@@ -1,3 +1,7 @@
+param(
+  [switch]$CheckRipgrep = $true
+)
+
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $PSScriptRoot
@@ -26,6 +30,19 @@ corepack pnpm build
 
 Write-Host "[auto-talon] Bootstrapping workspace config..."
 corepack pnpm dev init --yes --cwd "$RootDir"
+
+if ($CheckRipgrep) {
+  Write-Host "[auto-talon] Checking ripgrep (rg)..."
+  rg --version *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[auto-talon] WARNING: ripgrep (rg) is not on PATH. Code search falls back to a slower Node filesystem scan." -ForegroundColor Yellow
+    Write-Host "  winget install BurntSushi.ripgrep.MSVC"
+    Write-Host "  choco install ripgrep"
+    Write-Host "  See docs/user/windows-troubleshooting.md"
+  } else {
+    Write-Host "[auto-talon] ripgrep is available."
+  }
+}
 
 Write-Host "[auto-talon] Setup completed."
 Write-Host "Try: corepack pnpm dev run `"hello`" --cwd `"$RootDir`""

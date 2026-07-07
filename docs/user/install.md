@@ -34,7 +34,7 @@ corepack pnpm dev tui
 Or use scripts:
 
 - Linux/macOS: `bash scripts/setup.sh`
-- Windows PowerShell: `./scripts/setup.ps1`
+- Windows PowerShell: `./scripts/setup.ps1` (checks Node, builds, bootstraps config, and warns if `rg` is missing — see [Windows troubleshooting](windows-troubleshooting.md))
 
 ## Verify
 

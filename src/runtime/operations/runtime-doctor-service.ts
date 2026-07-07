@@ -194,12 +194,26 @@ function collectResolvedWebConfigIssues(web: WebRuntimeConfig): string[] {
   return issues;
 }
 
-function collectPlatformToolIssues(): string[] {
+export function collectPlatformToolIssues(
+  options: {
+    isCommandAvailable?: (command: string) => boolean;
+    platform?: NodeJS.Platform;
+  } = {}
+): string[] {
+  const platform = options.platform ?? process.platform;
+  const isAvailable = options.isCommandAvailable ?? isCommandAvailable;
   const issues: string[] = [];
-  if (process.platform === "win32" && !isCommandAvailable("rg")) {
-    issues.push(
-      "ripgrep (rg) is not on PATH. Code search falls back to a slower Node walker; install rg for faster search (see docs/user/windows-troubleshooting.md)."
-    );
+  if (platform === "win32") {
+    if (!isAvailable("rg")) {
+      issues.push(
+        "ripgrep (rg) is not on PATH. Code search falls back to a slower Node walker; install rg for faster search (see docs/user/windows-troubleshooting.md)."
+      );
+    }
+    if (!isAvailable("git")) {
+      issues.push(
+        "git is not on PATH. Workspace commands that rely on git status may fail; install Git for Windows and ensure git --version works in your shell."
+      );
+    }
   }
   return issues;
 }

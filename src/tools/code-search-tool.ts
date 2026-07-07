@@ -179,7 +179,7 @@ export class CodeSearchTool implements ToolDefinition<typeof codeSearchSchema, P
         searchedFileCount: files.length
       },
       success: true,
-      summary: summarizeSearchResult(input.mode, input.query, modeOutput)
+      summary: summarizeSearchResult(input.mode, input.query, modeOutput, searchResult.backend)
     };
   }
 }
@@ -380,18 +380,28 @@ function buildModeOutput(
   };
 }
 
-function summarizeSearchResult(mode: CodeSearchMode, query: string, output: JsonObject): string {
+function summarizeSearchResult(
+  mode: CodeSearchMode,
+  query: string,
+  output: JsonObject,
+  searchBackend: "node" | "rg"
+): string {
+  let summary: string;
   if (mode === "files") {
     const fileCount = typeof output.fileCount === "number" ? output.fileCount : 0;
-    return `Found ${fileCount} matching files for "${query}"`;
-  }
-  if (mode === "count") {
+    summary = `Found ${fileCount} matching files for "${query}"`;
+  } else if (mode === "count") {
     const totalMatchCount = typeof output.totalMatchCount === "number" ? output.totalMatchCount : 0;
-    return `Found ${totalMatchCount} total matches for "${query}"`;
+    summary = `Found ${totalMatchCount} total matches for "${query}"`;
+  } else {
+    const matchCount = typeof output.matchCount === "number" ? output.matchCount : 0;
+    const filenameMatches = Array.isArray(output.filenameMatches) ? output.filenameMatches.length : 0;
+    summary = `Found ${matchCount} content matches and ${filenameMatches} filename matches for "${query}"`;
   }
-  const matchCount = typeof output.matchCount === "number" ? output.matchCount : 0;
-  const filenameMatches = Array.isArray(output.filenameMatches) ? output.filenameMatches.length : 0;
-  return `Found ${matchCount} content matches and ${filenameMatches} filename matches for "${query}"`;
+  if (searchBackend === "node") {
+    return `${summary}; ripgrep unavailable, used Node filesystem scan`;
+  }
+  return summary;
 }
 
 async function collectFiles(
