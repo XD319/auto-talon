@@ -292,6 +292,39 @@ describe("runtime config", () => {
     );
   });
 
+  it("warns when resolved web search uses default ddgs scraping", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const doctor = createMockDoctor(workspaceRoot);
+    const report = await doctor.configDoctor();
+    expect(report.issues).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("web.searchBackend resolves to ddgs (best-effort)")
+      ])
+    );
+  });
+
+  it("suggests preferring API search when credentials exist but ddgs remains active", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({
+        web: {
+          searchBackend: "ddgs"
+        }
+      }),
+      "utf8"
+    );
+    vi.stubEnv("BRAVE_SEARCH_API_KEY", "brave-test-key");
+    const doctor = createMockDoctor(workspaceRoot);
+    const report = await doctor.configDoctor();
+    expect(report.issues).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Detected API credentials for web search while web.searchBackend is ddgs")
+      ])
+    );
+  });
+
   it("warns when deprecated compact.bufferTokens is configured", async () => {
     const workspaceRoot = await createTempWorkspace();
     await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
@@ -570,4 +603,53 @@ async function createTempWorkspace(): Promise<string> {
   const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-runtime-config-"));
   tempPaths.push(workspaceRoot);
   return workspaceRoot;
+}
+
+function createMockDoctor(workspaceRoot: string): RuntimeDoctorService {
+  const config = resolveRuntimeConfig(workspaceRoot);
+  return new RuntimeDoctorService({
+    allowedFetchHosts: config.allowedFetchHosts,
+    customShell: config.workflow.customShell,
+    databasePath: ":memory:",
+    deprecatedCompactBufferTokens: config.compact.bufferTokens,
+    listExperiences: () => [],
+    maxShellTimeoutMs: config.workflow.maxShellTimeoutMs,
+    providerConfig: {
+      apiKey: null,
+      baseUrl: null,
+      builtinProviderName: "mock",
+      configPath: join(workspaceRoot, ".auto-talon", "provider.config.json"),
+      configSource: "defaults",
+      contextWindowSource: null,
+      contextWindowTokens: 64_000,
+      displayName: "Mock",
+      family: "mock",
+      maxRetries: 0,
+      model: "mock-model",
+      name: "mock",
+      streamIdleTimeoutMs: 30_000,
+      timeoutMs: 30_000,
+      transport: "mock"
+    },
+    providerName: "mock",
+    runtimeConfigPath: join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+    runtimeConfigSource: "defaults",
+    runtimeVersion: "test",
+    shellBackend: config.workflow.shellBackend,
+    skillStats: () => ({ issues: [], skills: [] }),
+    testCommands: config.workflow.testCommands,
+    testCurrentProvider: () =>
+      Promise.resolve({
+        apiKeyConfigured: true,
+        endpointReachable: true,
+        message: "ok",
+        modelAvailable: true,
+        modelConfigured: true,
+        modelName: "mock-model",
+        ok: true,
+        providerName: "mock"
+      }),
+    tokenBudget: config.tokenBudget,
+    workspaceRoot
+  });
 }

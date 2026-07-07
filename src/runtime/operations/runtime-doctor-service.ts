@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { hasLegacyShortRemoteTimeout, type ResolvedProviderConfig } from "../../providers/index.js";
+import { listConfiguredApiSearchBackends } from "../../core/web-search-config.js";
+import type { WebRuntimeConfig } from "../../core/web-search-config.js";
 import { configureSqliteConnection } from "../../storage/sqlite-connection.js";
 import { collectHttpAuthDoctorIssues } from "../../core/http-auth.js";
 import type { ExperienceRecord, ProviderHealthCheck } from "../../types/index.js";
 import type { ShellBackend, WorkflowCustomShell, WorkflowTestCommand } from "../runtime-config.js";
 import { resolveDefaultShellConfig } from "../../tools/shell/shell-executor.js";
+import { resolveRuntimeConfig } from "../runtime-config.js";
 
 export interface RuntimeDoctorServiceDependencies {
   allowedFetchHosts: string[];
@@ -62,7 +65,11 @@ export class RuntimeDoctorService {
       this.dependencies.testCommands,
       this.dependencies.maxShellTimeoutMs
     );
-    const webConfigIssues = collectWebConfigIssues(this.dependencies.workspaceRoot);
+    const resolvedWeb = resolveRuntimeConfig(this.dependencies.workspaceRoot).web;
+    const webConfigIssues = [
+      ...collectLegacyWebFileIssues(this.dependencies.workspaceRoot),
+      ...collectResolvedWebConfigIssues(resolvedWeb)
+    ];
     const platformIssues = collectPlatformToolIssues();
     const httpAuthIssues = collectHttpAuthDoctorIssues(this.dependencies.workspaceRoot);
     const deprecatedConfigIssues = collectDeprecatedConfigIssues(
@@ -141,7 +148,7 @@ function collectDeprecatedConfigIssues(deprecatedCompactBufferTokens: number): s
   ];
 }
 
-function collectWebConfigIssues(workspaceRoot: string): string[] {
+function collectLegacyWebFileIssues(workspaceRoot: string): string[] {
   const runtimeConfigPath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
   if (!existsSync(runtimeConfigPath)) {
     return [];
@@ -166,19 +173,25 @@ function collectWebConfigIssues(workspaceRoot: string): string[] {
         "Legacy webSearch.backend is disabled and no web config is present. Add web.searchBackend (for example firecrawl/tavily/exa/brave/searxng) to enable web_search, or keep web.searchBackend=disabled when only web_extract is intended."
       ];
     }
-    const web = record.web;
-    if (web !== null && typeof web === "object" && !Array.isArray(web)) {
-      const searchBackend = (web as Record<string, unknown>).searchBackend;
-      if (searchBackend === "auto" || searchBackend === "ddgs" || searchBackend === undefined) {
-        return [
-          "web.searchBackend is auto/ddgs (best-effort). Results depend on public scrapers and may be empty when blocked; configure a paid search backend for reliable web_search."
-        ];
-      }
-    }
   } catch {
     return [];
   }
   return [];
+}
+
+function collectResolvedWebConfigIssues(web: WebRuntimeConfig): string[] {
+  const issues: string[] = [];
+  if (web.searchBackend === "ddgs") {
+    issues.push(
+      "web.searchBackend resolves to ddgs (best-effort). Results depend on public scrapers and may be empty when blocked; configure a paid search backend for reliable web_search."
+    );
+    if (listConfiguredApiSearchBackends(web).length > 0) {
+      issues.push(
+        "Detected API credentials for web search while web.searchBackend is ddgs. Set web.searchBackend to \"auto\" or a specific API provider to prefer them over built-in scraping."
+      );
+    }
+  }
+  return issues;
 }
 
 function collectPlatformToolIssues(): string[] {
