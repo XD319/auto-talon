@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  runPackageScript,
   validateLockfilePolicy,
   validateMigrationSchemaVersion,
   validateNodeVersionPolicy,
@@ -47,6 +48,20 @@ describe("release checklist helpers", () => {
 
     expect(result.ok).toBe(false);
     expect(result.details).toContain("maintainer-only");
+  });
+
+  it("runs release validation commands through npm scripts", () => {
+    const workspace = createTempDir("auto-talon-release-command-");
+    writeFileSync(
+      join(workspace, "package.json"),
+      JSON.stringify({ scripts: { lint: "node -e \"process.exit(0)\"" } }, null, 2),
+      "utf8"
+    );
+
+    expect(runPackageScript("lint", workspace)).toEqual({
+      details: "npm run lint",
+      ok: true
+    });
   });
 
   it("requires public npm metadata", () => {

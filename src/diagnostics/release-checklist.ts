@@ -45,9 +45,9 @@ export async function runReleaseChecklist(
   const beta = await runBetaReadinessCheck({ providerName: provider });
   const schema = validateMigrationSchemaVersion();
 
-  const lint = runCommand("corepack", ["pnpm", "lint"], cwd);
-  const test = runCommand("corepack", ["pnpm", "test"], cwd);
-  const build = runCommand("corepack", ["pnpm", "build"], cwd);
+  const lint = runPackageScript("lint", cwd);
+  const test = runPackageScript("test", cwd);
+  const build = runPackageScript("build", cwd);
   const packageMetadata = validatePackageMetadata(cwd);
   const nodeVersion = validateNodeVersionPolicy(cwd);
   const lockfiles = validateLockfilePolicy(cwd);
@@ -111,6 +111,12 @@ export async function runReleaseChecklist(
 
 function toItem(id: string, title: string, ok: boolean, details: string): ReleaseChecklistItem {
   return { id, title, ok, details };
+}
+
+type ReleasePackageScript = "build" | "lint" | "test";
+
+export function runPackageScript(script: ReleasePackageScript, cwd: string): { details: string; ok: boolean } {
+  return runCommand("npm", ["run", script], cwd);
 }
 
 function runCommand(command: string, args: string[], cwd: string): { details: string; ok: boolean } {
