@@ -1,4 +1,10 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+
+const forkPoolTests = [
+  "test/cli-inbox.test.ts",
+  "test/cli-memory-command.test.ts",
+  "test/cli-schedule.test.ts"
+];
 
 export default defineConfig({
   test: {
@@ -6,10 +12,23 @@ export default defineConfig({
     maxWorkers: 2,
     minWorkers: 1,
     pool: "threads",
-    poolMatchGlobs: [
-      ["**/cli-inbox.test.ts", "forks"],
-      ["**/cli-memory-command.test.ts", "forks"],
-      ["**/cli-schedule.test.ts", "forks"]
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "threads",
+          exclude: [...configDefaults.exclude, ...forkPoolTests],
+          pool: "threads"
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: "forks",
+          include: forkPoolTests,
+          pool: "forks"
+        }
+      }
     ],
     setupFiles: ["./test/setup-env.ts"],
     testTimeout: 120_000,
