@@ -1,26 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { createManagedAbortController, throwIfAborted } from "./abort-controller.js";
+import { createManagedAbortController } from "./abort-controller.js";
 import { AppError, toAppError } from "./app-error.js";
-import {
-  buildFilteredContextDebugFragments,
-  ExecutionContextAssembler
-} from "./context-assembler.js";
+import { ExecutionContextAssembler } from "./context-assembler.js";
 import {
   buildFinalSessionCompactInput,
-  buildReviewerTracePayload,
   emitTaskEvent,
-  findLastAssistantToolCallsResponse,
   injectResumeContextMessages,
-  normalizeProviderFailure,
   providerUsageToJson,
   readSessionResumeMemoryContext,
   readSessionResumeMessages,
   readSessionResumePriorTaskId,
-  rebuildTurnProviderMessages,
-  sanitizeToolCallPairing,
-  sleepWithAbort,
   summarizeText,
   toConversationRole
 } from "./kernel-support.js";
@@ -35,11 +26,9 @@ import {
   buildToolTaskMetadata
 } from "./kernel/index.js";
 import { buildRepoMap } from "./repo-map.js";
-import { tokenBudgetToJson } from "./serialization.js";
 import {
   RecentFileReadCache,
-  formatRecentlyReadFilesSummary,
-  syncPinnedRecentFilesMessage
+  formatRecentlyReadFilesSummary
 } from "./context/recent-file-reads.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
 import {
@@ -51,23 +40,16 @@ import type { ContextCompactor, SessionSummaryService } from "./context/index.js
 import {
   computeCompactThreshold,
   computePromptTokens,
-  createHybridTokenCounterState,
-  recordApiUsage,
-  type HybridTokenCounterState
+  createHybridTokenCounterState
 } from "./context/token-counter.js";
 
 import { buildSessionHandoffMessageContent, listDiscardedMessages } from "./context/compact-handoff.js";
 import type { ManualCompactRequest } from "./context/manual-compact-coordinator.js";
-import {
-  dropOldestNonSystemMessages,
-  isContextOverflowProviderError
-} from "./context/reactive-compact.js";
-import { pruneOldToolResults } from "./context/tool-result-pruner.js";
 import { selectTailMessages } from "./context/tail-selector.js";
 import type { RecallPlanner } from "./retrieval/index.js";
 import type { RetrievalWorker, SummarizerWorker, WorkerDispatcher } from "./workers/index.js";
 import type { RuntimeConfig, WorkflowRuntimeConfig, InteractionModesRuntimeConfig } from "./runtime-config.js";
-import type { ToolExposurePlanner, ToolExposurePlannerInput } from "./tool-exposure-planner.js";
+import type { ToolExposurePlanner } from "./tool-exposure-planner.js";
 import type { ProviderRouter } from "../providers/routing/provider-router.js";
 import type { AuxiliaryProviderResolver } from "../providers/auxiliary-resolver.js";
 import {
@@ -79,15 +61,10 @@ import type { AgentProfileRegistry } from "../profiles/agent-profile-registry.js
 import type { AuditService } from "../audit/audit-service.js";
 import type {
   ConversationMessage,
-  ContextAssemblyDebugView,
-  ContextFragment,
   ExecutionCheckpointRepository,
-  MemoryRecallResult,
   Provider,
   ProviderResponse,
   ProviderToolDescriptor,
-  ProviderRetryNotice,
-  ProviderStatusNotice,
   ProviderToolCall,
   RuntimeOutputEvent,
   RuntimeTaskEvent,
@@ -103,12 +80,9 @@ import type {
   SessionMessageRepository,
   SessionTaskRepository,
   SessionEntrySource,
-  TokenBudget,
-  BudgetPricingEntry,
-  JsonValue
+  BudgetPricingEntry
 } from "../types/index.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
-import { buildCapabilityDeclaration } from "../memory/capability-declaration-builder.js";
 import {
   DeterministicCompactSummarizer,
   type CompactSummarizer,
@@ -117,7 +91,6 @@ import {
 import type { CompactTriggerPolicy } from "../memory/compact-policy.js";
 import type { WebSearchBackend } from "../core/web-search-config.js";
 import type { ToolOrchestrator } from "../tools/index.js";
-import { buildParallelSafeLookup } from "../tools/tool-parallel-policy.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";

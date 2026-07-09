@@ -1,16 +1,12 @@
 import {
   isProviderSwitchable,
-  resolveProviderConfig,
-  type ResolvedProviderConfig
+  resolveProviderConfig
 } from "../../providers/index.js";
-import type { AuxiliaryProviderResolver } from "../../providers/auxiliary-resolver.js";
 import { clearFallbackProviderCache } from "../../providers/provider-failover.js";
-import type { ProviderRouter } from "../../providers/routing/provider-router.js";
 import type { AuditService } from "../../audit/audit-service.js";
-import type { Provider, SessionRecord, TaskRecord, TokenBudget } from "../../types/index.js";
+import type { SessionRecord, TaskRecord } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import { resolveRuntimeConfig } from "../runtime-config.js";
-import type { ExecutionKernel } from "../execution-kernel.js";
 import type { AgentApplicationServiceDependencies } from "../application-service.js";
 import type { SessionService } from "../sessions/index.js";
 import {

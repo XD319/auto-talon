@@ -52,7 +52,7 @@ describe("gateway guard", () => {
     const storage = new StorageManager({ databasePath: ":memory:" });
     try {
       const now = (() => {
-        let current = 1_000;
+        const current = 1_000;
         return () => current;
       })();
       const request = {

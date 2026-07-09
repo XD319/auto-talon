@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { GatewayTaskRequest } from "../types/index.js";
-import type { GatewayRateLimitStore } from "../storage/repositories/gateway-rate-limit-repository.js";
+import type { GatewayRateLimitStore } from "./gateway-rate-limit-store.js";
 
 const gatewayConfigSchema = z.object({
   allowlist: z.array(z.string().min(1)).optional(),

@@ -1,15 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export interface GatewayRateLimitBucket {
-  tokens: number;
-  updatedAtMs: number;
-}
+import type {
+  GatewayRateLimitBucket,
+  GatewayRateLimitStore
+} from "../../gateway/gateway-rate-limit-store.js";
 
-export interface GatewayRateLimitStore {
-  load(key: string): GatewayRateLimitBucket | null;
-  prune(olderThanMs: number): void;
-  save(key: string, state: GatewayRateLimitBucket): void;
-}
+export type { GatewayRateLimitBucket, GatewayRateLimitStore } from "../../gateway/gateway-rate-limit-store.js";
 
 export class SqliteGatewayRateLimitRepository implements GatewayRateLimitStore {
   public constructor(private readonly database: DatabaseSync) {}

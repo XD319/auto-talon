@@ -33,7 +33,8 @@
 
 ## Memory / Storage
 
-- Runtime schema baseline: `PRAGMA user_version = 21`.
+- Runtime schema baseline: `PRAGMA user_version = 23`.
+- Legacy DBs below v23 upgrade via migration pipeline; pre-v22 thread/transcript data requires `talon doctor --fix`.
 - Schema upgrades from legacy unversioned DB: supported via migration pipeline.
 - Config files without `version`: auto-migrated to `version: 1`.
 - Scope rename compatibility:
