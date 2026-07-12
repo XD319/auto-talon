@@ -19,15 +19,11 @@ describe("status bar helpers", () => {
     expect(label).toBe("abcdefg...");
   });
 
-  it("formats context as the compact token metric", () => {
-    expect(buildContextMetric(42)).toEqual({ label: "ctx 42%", tone: "success" });
-    expect(buildContextMetric(49)).toEqual({ label: "ctx 49%", tone: "success" });
-    expect(buildContextMetric(50)).toEqual({ label: "ctx 50%", tone: "warn" });
-    expect(buildContextMetric(80)).toEqual({ label: "ctx 80%", tone: "danger" });
-    expect(buildContextMetric(42, { compactedCount: 2, microPrunedCount: 1 })).toEqual({
-      label: "ctx 42% (pruned: 1, compacted: 2)",
-      tone: "success"
-    });
+  it("formats context as percentage only", () => {
+    expect(buildContextMetric(42)).toEqual({ label: "42%", tone: "success" });
+    expect(buildContextMetric(49)).toEqual({ label: "49%", tone: "success" });
+    expect(buildContextMetric(50)).toEqual({ label: "50%", tone: "warn" });
+    expect(buildContextMetric(80)).toEqual({ label: "80%", tone: "danger" });
   });
 
   it("builds session segments without mixing hints", () => {

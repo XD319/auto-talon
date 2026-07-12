@@ -46,18 +46,8 @@ export function buildBuiltinStatusSegments(input: BuiltinStatusLineInput): Statu
     segments.push({ label: formatGitBranchLabel(input.gitStatus), tone: "muted" });
   }
   if (fields.showTokens) {
-    const contextInputTokens = input.tokenHud.contextInputTokens ?? input.tokenHud.inputTokens;
     segments.push({
-      label: formatTokensStatusField(
-        input.tokenHud.contextPercent,
-        contextInputTokens,
-        input.inputLimit,
-        input.reservedOutput,
-        {
-          compactedCount: input.tokenHud.compactedCount,
-          microPrunedCount: input.tokenHud.microPrunedCount
-        }
-      ),
+      label: formatTokensStatusField(input.tokenHud.contextPercent),
       tone: tokensTone(input.tokenHud.contextPercent)
     });
   }
@@ -139,28 +129,8 @@ export function mapRunStateLabel(runState: UiRunState, providerLabel?: string): 
   return runState.replace(/_/gu, " ");
 }
 
-export function formatTokensStatusField(
-  contextPercent: number,
-  inputTokens: number,
-  inputLimit: number,
-  reservedOutput: number,
-  compaction?: { compactedCount?: number; microPrunedCount?: number }
-): string {
-  const parts: string[] = [`${contextPercent}%`];
-  const usableWindow = Math.max(inputLimit - reservedOutput, 1);
-  if (inputTokens > 0) {
-    parts.push(`${compactTokenCount(inputTokens)}/${compactTokenCount(usableWindow)}`);
-  }
-
-  const compactionParts: string[] = [];
-  if ((compaction?.microPrunedCount ?? 0) > 0) {
-    compactionParts.push(`pruned: ${compaction?.microPrunedCount}`);
-  }
-  if ((compaction?.compactedCount ?? 0) > 0) {
-    compactionParts.push(`compacted: ${compaction?.compactedCount}`);
-  }
-  const suffix = compactionParts.length > 0 ? ` (${compactionParts.join(", ")})` : "";
-  return `${parts.join(" · ")}${suffix}`;
+export function formatTokensStatusField(contextPercent: number): string {
+  return `${contextPercent}%`;
 }
 
 export function formatCostStatusField(estimatedCostUsd: number): string | null {
@@ -168,16 +138,6 @@ export function formatCostStatusField(estimatedCostUsd: number): string | null {
     return null;
   }
   return `~$${estimatedCostUsd.toFixed(3)}`;
-}
-
-function compactTokenCount(value: number): string {
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1)}m`;
-  }
-  if (value >= 1_000) {
-    return `${Math.round(value / 1_000)}k`;
-  }
-  return String(value);
 }
 
 function tokensTone(contextPercent: number): StatusTone {

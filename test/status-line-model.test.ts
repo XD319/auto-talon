@@ -74,7 +74,7 @@ describe("status line model", () => {
       "claude-sonnet",
       "plan",
       "main*",
-      "34% · 12k/127k"
+      "34%"
     ]);
   });
 
@@ -115,13 +115,8 @@ describe("status line model", () => {
     expect(mapRunStateLabel("running", "running task")).toBe("running");
   });
 
-  it("formats tokens with compaction suffix", () => {
-    expect(
-      formatTokensStatusField(42, 1200, 8000, 500, {
-        compactedCount: 2,
-        microPrunedCount: 1
-      })
-    ).toBe("42% · 1k/8k (pruned: 1, compacted: 2)");
+  it("formats context as percentage only", () => {
+    expect(formatTokensStatusField(42)).toBe("42%");
   });
 
   it("defaults to standard builtin config", () => {

@@ -1050,7 +1050,7 @@ describe("use-chat-controller helpers", () => {
 
     try {
       await waitFor(() => controller !== null);
-      expect(controller?.submitPrompt("after switch")).toBe(false);
+      expect((controller as ChatController | null)?.submitPrompt("after switch")).toBe(false);
       await waitFor(() =>
         messages.some((message) => message.kind === "system" && message.text.includes("Resolve the pending approval"))
       );
@@ -1105,7 +1105,7 @@ describe("use-chat-controller helpers", () => {
 
     try {
       await waitFor(() => controller !== null);
-      expect(controller?.submitPrompt("after switch")).toBe(true);
+      expect((controller as ChatController | null)?.submitPrompt("after switch")).toBe(true);
       await waitFor(() => messages.some((message) => message.kind === "error"));
 
       const error = messages.find((message): message is Extract<ChatMessage, { kind: "error" }> => message.kind === "error");
