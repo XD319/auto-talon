@@ -121,7 +121,7 @@ describe("status line model", () => {
         compactedCount: 2,
         microPrunedCount: 1
       })
-    ).toBe("42% · 1k/8k (micro-pruned: 1, compacted: 2)");
+    ).toBe("42% · 1k/8k (pruned: 1, compacted: 2)");
   });
 
   it("defaults to standard builtin config", () => {

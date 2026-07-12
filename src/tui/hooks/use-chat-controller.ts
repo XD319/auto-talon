@@ -1,4 +1,4 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import React from "react";
 
@@ -47,6 +47,7 @@ export interface UseChatControllerOptions {
 
 export interface TokenHud {
   compactedCount: number;
+  contextInputTokens: number | null;
   contextPercent: number;
   estimatedCostUsd: number;
   inputTokens: number;
@@ -165,6 +166,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
   const [queuedPrompts, setQueuedPrompts] = React.useState<QueuedPromptEntry[]>([]);
   const [tokenHud, setTokenHud] = React.useState<TokenHud>({
     compactedCount: 0,
+    contextInputTokens: null,
     contextPercent: 0,
     estimatedCostUsd: 0,
     inputTokens: 0,
@@ -310,6 +312,66 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     [input.service]
   );
 
+  const applyTraceTokenTelemetry = React.useCallback(
+    (event: TraceEvent): void => {
+      if (event.eventType === "context_assembled") {
+        const contextInputTokens =
+          typeof event.payload.promptTokenEstimate === "number"
+            ? Math.max(0, event.payload.promptTokenEstimate)
+            : null;
+        const contextPercent =
+          contextInputTokens === null
+            ? null
+            : contextWindowPercentFromPrompt(
+                contextInputTokens,
+                input.config.tokenBudget.inputLimit,
+                input.config.tokenBudget.reservedOutput
+              );
+        setTokenHud((current) => {
+          const nextTokenHud = {
+            ...current,
+            compactedCount:
+              typeof event.payload.compactedCount === "number"
+                ? event.payload.compactedCount
+                : current.compactedCount,
+            contextInputTokens: contextInputTokens ?? current.contextInputTokens,
+            contextPercent: contextPercent ?? current.contextPercent,
+            microPrunedCount:
+              typeof event.payload.microPrunedCount === "number"
+                ? event.payload.microPrunedCount
+                : current.microPrunedCount
+          };
+          return tokenHudEquals(current, nextTokenHud) ? current : nextTokenHud;
+        });
+        return;
+      }
+
+      if (event.eventType === "session_compacted") {
+        setTokenHud((current) => {
+          const nextTokenHud = {
+            ...current,
+            compactedCount: current.compactedCount + 1,
+            contextInputTokens: 0,
+            contextPercent: 0
+          };
+          return tokenHudEquals(current, nextTokenHud) ? current : nextTokenHud;
+        });
+        return;
+      }
+
+      if (event.eventType === "micro_compact_pruned") {
+        setTokenHud((current) => {
+          const nextTokenHud = {
+            ...current,
+            microPrunedCount: current.microPrunedCount + Math.max(0, event.payload.prunedCount)
+          };
+          return tokenHudEquals(current, nextTokenHud) ? current : nextTokenHud;
+        });
+      }
+    },
+    [input.config.tokenBudget.inputLimit, input.config.tokenBudget.reservedOutput]
+  );
+
   const startTraceSubscription = React.useCallback(
     (taskId: string) => {
       stopTraceSubscription();
@@ -323,6 +385,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         if (event.eventType === "memory_recalled") {
           setUsedMemoryCount(event.payload.selectedMemoryIds.length);
         }
+        applyTraceTokenTelemetry(event);
         if (
           event.eventType === "tool_call_finished" &&
           (event.payload.toolName === "write_file" || event.payload.toolName === "patch")
@@ -342,7 +405,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         }
       });
     },
-    [input, recordFileWrite, stopTraceSubscription]
+    [applyTraceTokenTelemetry, input, recordFileWrite, stopTraceSubscription]
   );
 
   const toggleTodoPanel = React.useCallback(() => {
@@ -392,6 +455,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     tokenHudBaselineRef.current = { mode: "live_delta", source: null, usage: null };
     setTokenHud({
       compactedCount: 0,
+      contextInputTokens: null,
       contextPercent: 0,
       estimatedCostUsd: 0,
       inputTokens: 0,
@@ -406,6 +470,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     tokenHudBaselineRef.current = { mode: "session_total", source: null, usage: null };
     setTokenHud({
       compactedCount: 0,
+      contextInputTokens: null,
       contextPercent: 0,
       estimatedCostUsd: 0,
       inputTokens: 0,
@@ -511,6 +576,30 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     }
     ensureRuntimeSession(input.initialSessionId);
   }, [ensureRuntimeSession, input.initialSessionId]);
+  const findBlockingSessionTask = React.useCallback(
+    (sessionId: string | null): TaskRecord | null => {
+      if (sessionId === null) {
+        return null;
+      }
+      return input.service
+        .listTasks()
+        .filter((task) => task.sessionId === sessionId && !isTerminalControllerTaskStatus(task.status))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .at(-1) ?? null;
+    },
+    [input.service]
+  );
+
+  const markBlockingSessionTask = React.useCallback((task: TaskRecord): void => {
+    activeTaskIdRef.current = task.taskId;
+    setActiveTaskId(task.taskId);
+    setUiStatus({
+      primaryLabel: formatBlockingSessionTaskLabel(task),
+      primaryTone: "warn",
+      runState: toUiRunState(task.status),
+      taskLabel: task.taskId.slice(0, 8)
+    });
+  }, []);
 
   const activateSession = React.useCallback(
     (sessionId: string, overrides?: ActivateSessionInput): boolean => {
@@ -530,16 +619,26 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         interactionModeRef.current = overrides.interactionMode;
       }
       resetTokenHudForSessionResume();
-      setUiStatus({
-        primaryLabel: "session resumed",
-        primaryTone: "muted",
-        runState: "idle",
-        taskLabel: null
-      });
-      setActiveTaskId(null);
+      const blockingTask = findBlockingSessionTask(sessionId);
+      if (blockingTask === null) {
+        setUiStatus({
+          primaryLabel: "session resumed",
+          primaryTone: "muted",
+          runState: "idle",
+          taskLabel: null
+        });
+      } else {
+        setUiStatus({
+          primaryLabel: formatBlockingSessionTaskLabel(blockingTask),
+          primaryTone: "warn",
+          runState: toUiRunState(blockingTask.status),
+          taskLabel: blockingTask.taskId.slice(0, 8)
+        });
+      }
+      setActiveTaskId(blockingTask?.taskId ?? null);
       setPendingApproval(null);
       setPendingClarifyPrompt(null);
-      activeTaskIdRef.current = null;
+      activeTaskIdRef.current = blockingTask?.taskId ?? null;
       activeSessionIdRef.current = sessionId;
       seenApprovalMessageIdsRef.current = collectApprovalMessageIds(restoredMessages);
       setSessionApprovalFingerprints(
@@ -558,6 +657,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     [
       busyCount,
       ensureRuntimeSession,
+      findBlockingSessionTask,
       input.service,
       pendingApproval,
       pendingClarifyPrompt,
@@ -586,6 +686,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
   }, []);
+
 
   const createAndActivateSession = React.useCallback(
     (title = "Untitled session"): string => {
@@ -681,7 +782,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           tokenUsage: { inputTokens: number; outputTokens: number; totalTokens?: number };
         };
         const usage = resolveTokenUsage(typedStats, tokenHudBaselineRef.current);
-        const pct = contextWindowPercentFromPrompt(
+        const fallbackContextPercent = contextWindowPercentFromPrompt(
           usage.inputTokens,
           input.config.tokenBudget.inputLimit,
           input.config.tokenBudget.reservedOutput
@@ -693,9 +794,17 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           input.config.budget.pricing
         );
         setTokenHud((current) => {
+          const contextPercent =
+            current.contextInputTokens === null
+              ? fallbackContextPercent
+              : contextWindowPercentFromPrompt(
+                  current.contextInputTokens,
+                  input.config.tokenBudget.inputLimit,
+                  input.config.tokenBudget.reservedOutput
+                );
           const nextTokenHud = {
             ...current,
-            contextPercent: pct,
+            contextPercent,
             estimatedCostUsd: cost,
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,
@@ -713,7 +822,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         taskLabel: null
       });
     }
-  }, [busy, input.config.provider.model, input.config.tokenBudget.inputLimit, input.config.tokenBudget.outputLimit, input.service]);
+  }, [busy, input.config.provider.model, input.config.tokenBudget.inputLimit, input.config.tokenBudget.reservedOutput, input.service]);
 
   React.useEffect(() => {
     refresh();
@@ -770,19 +879,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         if (event.eventType === "memory_recalled") {
           setUsedMemoryCount(event.payload.selectedMemoryIds.length);
         }
-        if (event.eventType === "context_assembled") {
-          setTokenHud((current) => ({
-            ...current,
-            compactedCount:
-              typeof event.payload.compactedCount === "number"
-                ? event.payload.compactedCount
-                : current.compactedCount,
-            microPrunedCount:
-              typeof event.payload.microPrunedCount === "number"
-                ? event.payload.microPrunedCount
-                : current.microPrunedCount
-          }));
-        }
+        applyTraceTokenTelemetry(event);
         if (
           event.eventType === "tool_call_finished" &&
           (event.payload.toolName === "write_file" || event.payload.toolName === "patch")
@@ -796,7 +893,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         }
       }
     },
-    [input, recordFileWrite]
+    [applyTraceTokenTelemetry, input, recordFileWrite]
   );
 
   const removeStreamingMessage = React.useCallback((id: string | null) => {
@@ -1099,24 +1196,30 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             return;
           }
 
+          const submitError = formatSubmitRuntimeError(error);
+          if (submitError.code === "session_busy") {
+            activeTaskIdRef.current = submitError.activeTaskId;
+            setActiveTaskId(submitError.activeTaskId);
+          }
           const timestamp = new Date().toISOString();
+          const errorTaskId = submitError.activeTaskId ?? activeTaskIdRef.current ?? "submit";
           setMessages((current) => [
             ...current,
-            ...failedAssistantProgressMessage(activeTaskIdRef.current ?? "submit", failedProgressText, timestamp),
+            ...failedAssistantProgressMessage(errorTaskId, failedProgressText, timestamp),
             {
-              code: "runtime_error",
+              code: submitError.code,
               id: `error:submit:${randomUUID()}`,
               kind: "error",
-              message: error instanceof Error ? error.message : String(error),
+              message: submitError.message,
               source: "runtime",
               timestamp
             }
           ]);
           setUiStatus({
-            primaryLabel: "failed to run task",
+            primaryLabel: submitError.code === "session_busy" ? "session busy" : "failed to run task",
             primaryTone: "danger",
             runState: "failed",
-            taskLabel: activeTaskIdRef.current?.slice(0, 8) ?? null
+            taskLabel: submitError.activeTaskId?.slice(0, 8) ?? activeTaskIdRef.current?.slice(0, 8) ?? null
           });
         } finally {
           submitInFlightRef.current = false;
@@ -1179,13 +1282,34 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         enqueuePrompt(text);
         return true;
       }
+      if (pendingClarifyPrompt !== null) {
+        addSystemMessage("Answer or cancel the pending clarification before starting another task.");
+        return false;
+      }
+      if (pendingApproval !== null) {
+        addSystemMessage("Resolve the pending approval before starting another task.");
+        return false;
+      }
+      const blockingTask = findBlockingSessionTask(activeSessionIdRef.current);
+      if (blockingTask !== null) {
+        markBlockingSessionTask(blockingTask);
+        addSystemMessage(formatBlockingSessionTaskMessage(blockingTask));
+        refresh();
+        return false;
+      }
       executePrompt(text);
       return true;
     },
     [
+      addSystemMessage,
       busy,
       enqueuePrompt,
-      executePrompt
+      executePrompt,
+      findBlockingSessionTask,
+      markBlockingSessionTask,
+      pendingApproval,
+      pendingClarifyPrompt,
+      refresh
     ]
   );
 
@@ -1700,6 +1824,7 @@ function clarifyPromptRefEquals(left: ClarifyPromptRecord | null, right: Clarify
 function tokenHudEquals(left: TokenHud, right: TokenHud): boolean {
   return (
     left.compactedCount === right.compactedCount &&
+    left.contextInputTokens === right.contextInputTokens &&
     left.contextPercent === right.contextPercent &&
     left.estimatedCostUsd === right.estimatedCostUsd &&
     left.inputTokens === right.inputTokens &&
@@ -1818,6 +1943,22 @@ function resolveUiStatusAfterGovernanceCleared(
       runState: "running"
     };
   }
+  if (task?.status === "waiting_approval") {
+    return {
+      ...current,
+      primaryLabel: "approval required",
+      primaryTone: "warn",
+      runState: "waiting_approval"
+    };
+  }
+  if (task?.status === "waiting_clarification") {
+    return {
+      ...current,
+      primaryLabel: "clarification required",
+      primaryTone: "warn",
+      runState: "waiting_clarification"
+    };
+  }
   if (task?.status === "succeeded") {
     return {
       ...current,
@@ -1841,6 +1982,75 @@ function resolveUiStatusAfterGovernanceCleared(
     primaryTone: "muted",
     runState: "idle"
   };
+}
+
+function isTerminalControllerTaskStatus(status: TaskRecord["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function toUiRunState(status: TaskRecord["status"]): UiStatus["runState"] {
+  if (status === "waiting_approval" || status === "waiting_clarification") {
+    return status;
+  }
+  return "running";
+}
+
+function formatBlockingSessionTaskLabel(task: TaskRecord): string {
+  if (task.status === "waiting_approval") {
+    return "approval required";
+  }
+  if (task.status === "waiting_clarification") {
+    return "clarification required";
+  }
+  return "running task";
+}
+
+function formatBlockingSessionTaskMessage(task: TaskRecord): string {
+  if (task.status === "waiting_approval") {
+    return `Resolve the pending approval for task ${task.taskId.slice(0, 8)} before starting another task.`;
+  }
+  if (task.status === "waiting_clarification") {
+    return `Answer or cancel the pending clarification for task ${task.taskId.slice(0, 8)} before starting another task.`;
+  }
+  return `Session already has active task ${task.taskId.slice(0, 8)}. Wait for it to finish before starting another task.`;
+}
+
+interface SubmitRuntimeError {
+  activeTaskId: string | null;
+  code: string;
+  message: string;
+}
+
+function formatSubmitRuntimeError(error: unknown): SubmitRuntimeError {
+  const code = readErrorCode(error) ?? "runtime_error";
+  const baseMessage = error instanceof Error ? error.message : String(error);
+  const activeTaskId = readActiveTaskId(error);
+  if (code === "session_busy") {
+    return {
+      activeTaskId,
+      code,
+      message: `${baseMessage} Finish the active task, approval, or clarification before sending another prompt.`
+    };
+  }
+  return {
+    activeTaskId,
+    code,
+    message: baseMessage
+  };
+}
+
+function readErrorCode(error: unknown): string | null {
+  const candidate = error as { code?: unknown };
+  return typeof candidate.code === "string" ? candidate.code : null;
+}
+
+function readActiveTaskId(error: unknown): string | null {
+  const details = (error as { details?: unknown }).details;
+  if (typeof details !== "object" || details === null) {
+    return null;
+  }
+  const activeTaskId = (details as { activeTaskId?: unknown }).activeTaskId;
+  return typeof activeTaskId === "string" ? activeTaskId : null;
 }
 
 function uiStatusEquals(left: UiStatus, right: UiStatus): boolean {

@@ -6,6 +6,10 @@ import { Box, useApp, useInput, useStdout } from "ink";
 
 import type { TuiAppConfig, TuiRuntimeService } from "./runtime-api.js";
 import { parseNaturalLanguageScheduleWhen } from "../runtime/scheduler/index.js";
+import {
+  computeCompactThreshold,
+  contextWindowPercentFromPrompt
+} from "../runtime/context/token-counter.js";
 import type { ApprovalAllowScope, InboxItem, TuiInteractionMode } from "../types/index.js";
 import {
   formatMemoryGuide,
@@ -33,7 +37,7 @@ import type { SessionIndexEntry } from "../types/index.js";
 import { SessionBrowser } from "./components/session-browser.js";
 import { SessionRecap } from "./components/session-recap.js";
 import { editInExternalEditor } from "./external-editor.js";
-import { useChatController } from "./hooks/use-chat-controller.js";
+import { useChatController, type TokenHud } from "./hooks/use-chat-controller.js";
 import { useScrollbackTranscript } from "./hooks/use-scrollback-transcript.js";
 import { useTextInput } from "./hooks/use-text-input.js";
 import type { ChatSessionSummary, PersistedChatSession } from "./session-store.js";
@@ -98,6 +102,63 @@ interface InboxCommandController {
 interface ScheduleCommandOptions {
   cwd: string;
   providerName: string;
+}
+
+export interface FormatContextCommandOutputInput {
+  compact: {
+    thresholdRatio: number;
+    tokenThreshold: number | null;
+  };
+  provider: {
+    contextWindowSource?: string | null;
+    model?: string | null;
+    name: string;
+  };
+  tokenBudget: {
+    inputLimit: number;
+    outputLimit: number;
+    reservedOutput: number;
+  };
+  tokenHud: Pick<
+    TokenHud,
+    | "compactedCount"
+    | "contextInputTokens"
+    | "contextPercent"
+    | "inputTokens"
+    | "microPrunedCount"
+    | "outputTokens"
+    | "statsSource"
+    | "usageMode"
+  >;
+}
+
+export function formatContextCommandOutput(input: FormatContextCommandOutputInput): string {
+  const tokenBudget = input.tokenBudget;
+  const usableInputWindow = Math.max(tokenBudget.inputLimit - tokenBudget.reservedOutput, 1);
+  const promptTokens = input.tokenHud.contextInputTokens ?? input.tokenHud.inputTokens;
+  const nextCompactThreshold =
+    input.compact.tokenThreshold ??
+    computeCompactThreshold(tokenBudget.inputLimit, input.compact.thresholdRatio);
+  const nextCompactPercent = contextWindowPercentFromPrompt(
+    nextCompactThreshold,
+    tokenBudget.inputLimit,
+    tokenBudget.reservedOutput
+  );
+  const thresholdSource =
+    input.compact.tokenThreshold === null
+      ? `thresholdRatio=${input.compact.thresholdRatio}; safetyMargin=0.05`
+      : "explicit tokenThreshold";
+  const providerLabel = input.provider.model ?? input.provider.name;
+
+  return [
+    `Context window: ${tokenBudget.inputLimit} tokens (${input.provider.contextWindowSource ?? "unknown"}; provider=${providerLabel}).`,
+    `Usable input window: ${usableInputWindow} tokens (reservedOutput=${tokenBudget.reservedOutput}; outputLimit=${tokenBudget.outputLimit}).`,
+    `Prompt usage: ${input.tokenHud.contextPercent}% (${promptTokens}/${usableInputWindow} usable input tokens).`,
+    `Provider telemetry: input=${input.tokenHud.inputTokens} output=${input.tokenHud.outputTokens}.`,
+    `Next compact threshold: ${nextCompactThreshold} prompt tokens (${nextCompactPercent}% of usable input; ${thresholdSource}).`,
+    `Compaction: compacted=${input.tokenHud.compactedCount} pruned=${input.tokenHud.microPrunedCount}.`,
+    `Usage mode: ${input.tokenHud.usageMode} | stats: ${input.tokenHud.statsSource}`
+  ].join("\n");
 }
 
 export function ChatTuiApp({
@@ -896,16 +957,13 @@ export function ChatTuiApp({
       }
 
       if (text === "/context") {
-        const b = liveConfig.tokenBudget;
-        const usableInputWindow = Math.max(b.inputLimit - b.reservedOutput, 1);
         controller.addSystemMessage(
-          [
-            `Context window: ${b.inputLimit} tokens (${liveConfig.provider.contextWindowSource ?? "unknown"}).`,
-            `Usable input window: ${usableInputWindow} tokens (reservedOutput=${b.reservedOutput}; outputLimit=${b.outputLimit}).`,
-            `Prompt usage: ${controller.tokenHud.contextPercent}% of context window.`,
-            `Used (telemetry): input=${controller.tokenHud.inputTokens} output=${controller.tokenHud.outputTokens}`,
-            `Usage mode: ${controller.tokenHud.usageMode} | stats: ${controller.tokenHud.statsSource}`
-          ].join("\n")
+          formatContextCommandOutput({
+            compact: liveConfig.compact,
+            provider: liveConfig.provider,
+            tokenBudget: liveConfig.tokenBudget,
+            tokenHud: controller.tokenHud
+          })
         );
         return true;
       }
@@ -977,6 +1035,7 @@ export function ChatTuiApp({
           "ui_scroll: native_terminal_scrollback",
           `message_rows: ${controller.messages.length}`,
           `tokens_in: ${controller.tokenHud.inputTokens} tokens_out: ${controller.tokenHud.outputTokens}`,
+          `context_tokens: ${controller.tokenHud.contextInputTokens ?? controller.tokenHud.inputTokens}`,
           `context_pct: ${controller.tokenHud.contextPercent} est_cost_usd: ${controller.tokenHud.estimatedCostUsd.toFixed(4)}`,
           `context_source: ${controller.tokenHud.statsSource} usage_mode: ${controller.tokenHud.usageMode}`,
           "",

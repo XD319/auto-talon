@@ -15,6 +15,7 @@ export interface BuiltinStatusLineInput {
   reservedOutput: number;
   tokenHud: {
     compactedCount: number;
+    contextInputTokens?: number | null;
     contextPercent: number;
     estimatedCostUsd: number;
     inputTokens: number;
@@ -45,10 +46,11 @@ export function buildBuiltinStatusSegments(input: BuiltinStatusLineInput): Statu
     segments.push({ label: formatGitBranchLabel(input.gitStatus), tone: "muted" });
   }
   if (fields.showTokens) {
+    const contextInputTokens = input.tokenHud.contextInputTokens ?? input.tokenHud.inputTokens;
     segments.push({
       label: formatTokensStatusField(
         input.tokenHud.contextPercent,
-        input.tokenHud.inputTokens,
+        contextInputTokens,
         input.inputLimit,
         input.reservedOutput,
         {
@@ -152,7 +154,7 @@ export function formatTokensStatusField(
 
   const compactionParts: string[] = [];
   if ((compaction?.microPrunedCount ?? 0) > 0) {
-    compactionParts.push(`micro-pruned: ${compaction?.microPrunedCount}`);
+    compactionParts.push(`pruned: ${compaction?.microPrunedCount}`);
   }
   if ((compaction?.compactedCount ?? 0) > 0) {
     compactionParts.push(`compacted: ${compaction?.compactedCount}`);

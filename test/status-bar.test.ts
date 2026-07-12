@@ -24,6 +24,10 @@ describe("status bar helpers", () => {
     expect(buildContextMetric(49)).toEqual({ label: "ctx 49%", tone: "success" });
     expect(buildContextMetric(50)).toEqual({ label: "ctx 50%", tone: "warn" });
     expect(buildContextMetric(80)).toEqual({ label: "ctx 80%", tone: "danger" });
+    expect(buildContextMetric(42, { compactedCount: 2, microPrunedCount: 1 })).toEqual({
+      label: "ctx 42% (pruned: 1, compacted: 2)",
+      tone: "success"
+    });
   });
 
   it("builds session segments without mixing hints", () => {

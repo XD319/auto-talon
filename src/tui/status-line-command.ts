@@ -13,7 +13,12 @@ export interface StatusLinePayload {
     total_cost_usd: number;
   };
   context_window: {
+    compacted_count: number;
     context_window_size: number;
+    prompt_tokens: number;
+    provider_input_tokens: number;
+    provider_output_tokens: number;
+    pruned_count: number;
     total_input_tokens: number;
     usable_input_window: number;
     used_percentage: number;
@@ -45,9 +50,13 @@ export interface BuildStatusLinePayloadInput {
   runState: UiRunState;
   sessionId: string | null;
   tokenHud: {
+    compactedCount?: number;
+    contextInputTokens?: number | null;
     contextPercent: number;
     estimatedCostUsd: number;
     inputTokens: number;
+    microPrunedCount?: number;
+    outputTokens?: number;
   };
 }
 
@@ -65,13 +74,19 @@ export function resetStatusLineCommandThrottle(): void {
 
 export function buildStatusLinePayload(input: BuildStatusLinePayloadInput): StatusLinePayload {
   const usableInputWindow = Math.max(input.inputLimit - input.reservedOutput, 1);
+  const contextInputTokens = input.tokenHud.contextInputTokens ?? input.tokenHud.inputTokens;
   return {
     cost: {
       total_cost_usd: input.tokenHud.estimatedCostUsd
     },
     context_window: {
+      compacted_count: input.tokenHud.compactedCount ?? 0,
       context_window_size: input.inputLimit,
-      total_input_tokens: input.tokenHud.inputTokens,
+      prompt_tokens: contextInputTokens,
+      provider_input_tokens: input.tokenHud.inputTokens,
+      provider_output_tokens: input.tokenHud.outputTokens ?? 0,
+      pruned_count: input.tokenHud.microPrunedCount ?? 0,
+      total_input_tokens: contextInputTokens,
       usable_input_window: usableInputWindow,
       used_percentage: input.tokenHud.contextPercent
     },

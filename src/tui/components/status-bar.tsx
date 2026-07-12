@@ -85,7 +85,7 @@ export function buildContextMetric(
   const contextTone = contextPercent < 50 ? "success" : contextPercent < 80 ? "warn" : "danger";
   const compactionParts: string[] = [];
   if ((options?.microPrunedCount ?? 0) > 0) {
-    compactionParts.push(`micro-pruned: ${options?.microPrunedCount}`);
+    compactionParts.push(`pruned: ${options?.microPrunedCount}`);
   }
   if ((options?.compactedCount ?? 0) > 0) {
     compactionParts.push(`compacted: ${options?.compactedCount}`);

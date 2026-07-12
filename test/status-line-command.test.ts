@@ -24,9 +24,13 @@ describe("status line command", () => {
       runState: "idle",
       sessionId: "session-1",
       tokenHud: {
+        compactedCount: 1,
+        contextInputTokens: 750,
         contextPercent: 12,
         estimatedCostUsd: 0.01,
-        inputTokens: 1500
+        inputTokens: 50_000,
+        microPrunedCount: 2,
+        outputTokens: 1_000
       }
     });
 
@@ -40,6 +44,12 @@ describe("status line command", () => {
     expect(payload.context_window.used_percentage).toBe(12);
     expect(payload.context_window.context_window_size).toBe(128_000);
     expect(payload.context_window.usable_input_window).toBe(127_000);
+    expect(payload.context_window.total_input_tokens).toBe(750);
+    expect(payload.context_window.prompt_tokens).toBe(750);
+    expect(payload.context_window.provider_input_tokens).toBe(50_000);
+    expect(payload.context_window.provider_output_tokens).toBe(1_000);
+    expect(payload.context_window.compacted_count).toBe(1);
+    expect(payload.context_window.pruned_count).toBe(2);
     expect(payload.cost.total_cost_usd).toBe(0.01);
   });
 

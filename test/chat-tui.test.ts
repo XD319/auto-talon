@@ -1,4 +1,4 @@
-﻿import { PassThrough } from "node:stream";
+import { PassThrough } from "node:stream";
 
 import { render } from "ink";
 import React from "react";
@@ -14,6 +14,7 @@ import {
   type ChatController
 } from "../src/tui/hooks/use-chat-controller.js";
 import {
+  formatContextCommandOutput,
   handleInboxCommand,
   handleResumeCommand,
   handleScheduleCommand
@@ -137,6 +138,41 @@ describe("chat tui view-models", () => {
     const message = toTraceActivityMessage(event);
     expect(message.kind).toBe("activity");
     expect(message.text).toContain("Running write_file");
+  });
+
+  it("formats context command with prompt telemetry and compact threshold", () => {
+    const text = formatContextCommandOutput({
+      compact: {
+        thresholdRatio: 0.75,
+        tokenThreshold: null
+      },
+      provider: {
+        contextWindowSource: "provider_model_manifest",
+        model: "astron-code-latest",
+        name: "xfyun-coding"
+      },
+      tokenBudget: {
+        inputLimit: 64_000,
+        outputLimit: 8_000,
+        reservedOutput: 1_000
+      },
+      tokenHud: {
+        compactedCount: 1,
+        contextInputTokens: 7_500,
+        contextPercent: 12,
+        inputTokens: 50_000,
+        microPrunedCount: 3,
+        outputTokens: 1_000,
+        statsSource: "live",
+        usageMode: "session_total"
+      }
+    });
+
+    expect(text).toContain("Context window: 64000 tokens (provider_model_manifest; provider=astron-code-latest).");
+    expect(text).toContain("Prompt usage: 12% (7500/63000 usable input tokens).");
+    expect(text).toContain("Provider telemetry: input=50000 output=1000.");
+    expect(text).toContain("Next compact threshold: 44800 prompt tokens (71% of usable input; thresholdRatio=0.75; safetyMargin=0.05).");
+    expect(text).toContain("Compaction: compacted=1 pruned=3.");
   });
 
   it("marks approval message as resolved", () => {
@@ -956,6 +992,131 @@ describe("use-chat-controller helpers", () => {
     }
   });
 
+  it("blocks prompt submission when the active session has a non-terminal task", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const blockingTask = {
+      ...createControllerTask({
+        ...createDefaultRunOptions("needs approval", process.cwd(), config),
+        sessionId: "session-123",
+        taskId: "task-blocked"
+      }),
+      status: "waiting_approval" as const
+    };
+    const continueSession = vi.fn(() => Promise.reject(new Error("continueSession should not be called.")));
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      continueSession,
+      listTasks() {
+        return [blockingTask];
+      },
+      showTask(taskId: string) {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: taskId === blockingTask.taskId ? blockingTask : null,
+          toolCalls: [],
+          trace: []
+        };
+      }
+    };
+    let controller: ChatController | null = null;
+    let messages: ChatMessage[] = [];
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionId: "session-123",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      React.useEffect(() => {
+        messages = instance.messages;
+      }, [instance.messages]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      expect(controller?.submitPrompt("after switch")).toBe(false);
+      await waitFor(() =>
+        messages.some((message) => message.kind === "system" && message.text.includes("Resolve the pending approval"))
+      );
+
+      expect(continueSession).not.toHaveBeenCalled();
+      expect(controller?.activeTaskId).toBe("task-blocked");
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("surfaces session_busy as a session conflict instead of a generic runtime error", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const continueSession = vi.fn(() => Promise.reject(new AppError({
+      code: "session_busy",
+      details: {
+        activeTaskId: "task-existing",
+        sessionId: "session-123"
+      },
+      message: "Session session-123 already has an active task: task-existing."
+    })));
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      continueSession
+    };
+    let controller: ChatController | null = null;
+    let messages: ChatMessage[] = [];
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionId: "session-123",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      React.useEffect(() => {
+        messages = instance.messages;
+      }, [instance.messages]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      expect(controller?.submitPrompt("after switch")).toBe(true);
+      await waitFor(() => messages.some((message) => message.kind === "error"));
+
+      const error = messages.find((message): message is Extract<ChatMessage, { kind: "error" }> => message.kind === "error");
+      expect(continueSession).toHaveBeenCalledTimes(1);
+      expect(controller?.activeTaskId).toBe("task-existing");
+      expect(error?.code).toBe("session_busy");
+      expect(error?.message).toContain("Finish the active task");
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
   it("keeps live trace subscription active while a submitted task is busy", async () => {
     const stdout = new PassThrough();
     const config = createControllerConfig();
@@ -2545,6 +2706,360 @@ describe("use-chat-controller helpers", () => {
       expect(tokenHud.outputTokens).toBe(25_000);
       expect(tokenHud.usageMode).toBe("session_total");
       expect(tokenHud.contextPercent).toBeGreaterThan(0);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("keeps context HUD on prompt telemetry after live compaction", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const tasks = new Map<string, TaskRecord>();
+    const traceEvents: TraceEvent[] = [];
+    const traceListeners = new Set<(event: TraceEvent) => void>();
+    let sequence = 0;
+    let providerInputTokens = 0;
+    let providerOutputTokens = 0;
+    let providerRequests = 0;
+
+    const emitTrace = (
+      taskId: string,
+      draft: {
+        actor: string;
+        eventType: TraceEvent["eventType"];
+        payload: Record<string, unknown>;
+        stage: TraceEvent["stage"];
+        summary: string;
+      }
+    ): void => {
+      sequence += 1;
+      const event = {
+        ...draft,
+        eventId: `trace-${sequence}`,
+        sequence,
+        taskId,
+        timestamp: `2026-01-01T00:00:0${sequence}.000Z`
+      } as TraceEvent;
+      traceEvents.push(event);
+      for (const listener of traceListeners) {
+        listener(event);
+      }
+    };
+
+    const service: ControllerServiceStub = {
+      answerClarifyPrompt() {
+        throw new Error("answerClarifyPrompt should not be called in this test.");
+      },
+      cancelClarifyPrompt() {
+        throw new Error("cancelClarifyPrompt should not be called in this test.");
+      },
+      continueSession() {
+        return Promise.reject(new Error("continueSession should not be called in this test."));
+      },
+      createSession() {
+        throw new Error("createSession should not be called in this test.");
+      },
+      listPendingApprovals() {
+        return [];
+      },
+      listPendingClarifyPrompts() {
+        return [];
+      },
+      listTasks() {
+        return [...tasks.values()];
+      },
+      providerStats() {
+        return {
+          averageLatencyMs: 0,
+          failedRequests: 0,
+          lastErrorCategory: null,
+          lastRequestAt: providerRequests > 0 ? "2026-01-01T00:00:04.000Z" : null,
+          providerName: "mock",
+          retryCount: 0,
+          source: "live" as const,
+          successfulRequests: providerRequests,
+          tokenUsage: {
+            inputTokens: providerInputTokens,
+            outputTokens: providerOutputTokens,
+            totalTokens: providerInputTokens + providerOutputTokens
+          },
+          totalRequests: providerRequests
+        };
+      },
+      resolveApproval() {
+        throw new Error("resolveApproval should not be called in this test.");
+      },
+      runTask(options: RuntimeRunOptions) {
+        const task = createControllerTask(options);
+        tasks.set(task.taskId, task);
+        emitTrace(task.taskId, {
+          actor: "runtime.context",
+          eventType: "context_assembled",
+          payload: {
+            compactedCount: 0,
+            debugView: {},
+            iteration: 1,
+            microPrunedCount: 0,
+            promptTokenEstimate: 7_500
+          },
+          stage: "planning",
+          summary: "Context assembled before compaction"
+        });
+        emitTrace(task.taskId, {
+          actor: "runtime.session_memory",
+          eventType: "session_compacted",
+          payload: {
+            reason: "token_budget",
+            replacedMessageCount: 12,
+            summaryMemoryId: "summary-1"
+          },
+          stage: "memory",
+          summary: "Session compact summary persisted"
+        });
+        emitTrace(task.taskId, {
+          actor: "runtime.context",
+          eventType: "context_assembled",
+          payload: {
+            compactedCount: 1,
+            debugView: {},
+            iteration: 2,
+            microPrunedCount: 0,
+            promptTokenEstimate: 750
+          },
+          stage: "planning",
+          summary: "Context assembled after compaction"
+        });
+        providerInputTokens = 50_000;
+        providerOutputTokens = 1_000;
+        providerRequests = 1;
+        task.status = "succeeded";
+        task.finalOutput = "done";
+        task.finishedAt = new Date().toISOString();
+        return Promise.resolve({ output: "done", task });
+      },
+      showTask(taskId: string) {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: tasks.get(taskId) ?? null,
+          toolCalls: [],
+          trace: traceEvents.filter((event) => event.taskId === taskId)
+        };
+      },
+      subscribeToTaskTrace(taskId: string, listener: (event: TraceEvent) => void) {
+        const wrapped = (event: TraceEvent): void => {
+          if (event.taskId === taskId) {
+            listener(event);
+          }
+        };
+        traceListeners.add(wrapped);
+        return () => {
+          traceListeners.delete(wrapped);
+        };
+      },
+      traceTask(taskId: string) {
+        return traceEvents.filter((event) => event.taskId === taskId);
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      expect(getController().submitPrompt("fill context")).toBe(true);
+      await waitFor(() => getController().tokenHud.inputTokens === 50_000);
+
+      expect(getController().tokenHud.compactedCount).toBe(1);
+      expect(getController().tokenHud.contextInputTokens).toBe(750);
+      expect(getController().tokenHud.contextPercent).toBe(10);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+  it("keeps prompt tokens stable when micro-prune trace arrives", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const tasks = new Map<string, TaskRecord>();
+    const traceEvents: TraceEvent[] = [];
+    const traceListeners = new Set<(event: TraceEvent) => void>();
+    let sequence = 0;
+    let providerInputTokens = 0;
+    let providerOutputTokens = 0;
+    let providerRequests = 0;
+
+    const emitTrace = (
+      taskId: string,
+      draft: {
+        actor: string;
+        eventType: TraceEvent["eventType"];
+        payload: Record<string, unknown>;
+        stage: TraceEvent["stage"];
+        summary: string;
+      }
+    ): void => {
+      sequence += 1;
+      const event = {
+        ...draft,
+        eventId: `trace-prune-${sequence}`,
+        sequence,
+        taskId,
+        timestamp: `2026-01-01T00:01:0${sequence}.000Z`
+      } as TraceEvent;
+      traceEvents.push(event);
+      for (const listener of traceListeners) {
+        listener(event);
+      }
+    };
+
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      listTasks() {
+        return [...tasks.values()];
+      },
+      providerStats() {
+        return {
+          averageLatencyMs: 0,
+          failedRequests: 0,
+          lastErrorCategory: null,
+          lastRequestAt: providerRequests > 0 ? "2026-01-01T00:01:03.000Z" : null,
+          providerName: "mock",
+          retryCount: 0,
+          source: "live" as const,
+          successfulRequests: providerRequests,
+          tokenUsage: {
+            inputTokens: providerInputTokens,
+            outputTokens: providerOutputTokens,
+            totalTokens: providerInputTokens + providerOutputTokens
+          },
+          totalRequests: providerRequests
+        };
+      },
+      runTask(options: RuntimeRunOptions) {
+        const task = createControllerTask(options);
+        tasks.set(task.taskId, task);
+        emitTrace(task.taskId, {
+          actor: "runtime.context",
+          eventType: "context_assembled",
+          payload: {
+            compactedCount: 0,
+            debugView: {},
+            iteration: 1,
+            microPrunedCount: 0,
+            promptTokenEstimate: 750
+          },
+          stage: "planning",
+          summary: "Context assembled before pruning"
+        });
+        emitTrace(task.taskId, {
+          actor: "runtime.context",
+          eventType: "micro_compact_pruned",
+          payload: {
+            iteration: 1,
+            prunedCount: 2,
+            savedTokensEstimate: 4_000
+          },
+          stage: "planning",
+          summary: "Micro-compaction pruned old tool results"
+        });
+        providerInputTokens = 50_000;
+        providerOutputTokens = 1_000;
+        providerRequests = 1;
+        task.status = "succeeded";
+        task.finalOutput = "done";
+        task.finishedAt = new Date().toISOString();
+        return Promise.resolve({ output: "done", task });
+      },
+      showTask(taskId: string) {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: tasks.get(taskId) ?? null,
+          toolCalls: [],
+          trace: traceEvents.filter((event) => event.taskId === taskId)
+        };
+      },
+      subscribeToTaskTrace(taskId: string, listener: (event: TraceEvent) => void) {
+        const wrapped = (event: TraceEvent): void => {
+          if (event.taskId === taskId) {
+            listener(event);
+          }
+        };
+        traceListeners.add(wrapped);
+        return () => {
+          traceListeners.delete(wrapped);
+        };
+      },
+      traceTask(taskId: string) {
+        return traceEvents.filter((event) => event.taskId === taskId);
+      }
+    };
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      expect(getController().submitPrompt("prune context")).toBe(true);
+      await waitFor(() => getController().tokenHud.inputTokens === 50_000);
+
+      expect(getController().tokenHud.contextInputTokens).toBe(750);
+      expect(getController().tokenHud.contextPercent).toBe(10);
+      expect(getController().tokenHud.microPrunedCount).toBe(2);
     } finally {
       await unmountInkApp(app);
     }
