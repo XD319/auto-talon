@@ -53,6 +53,7 @@ export function buildLayeredMemoryView(input: {
         },
         sourceType: fragment.sourceType,
         status: fragment.status,
+        tier: "retrieval",
         summary: fragment.text,
         supersedes: null,
         title: fragment.title,

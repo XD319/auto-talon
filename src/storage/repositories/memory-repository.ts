@@ -27,6 +27,8 @@ interface MemoryRow {
   retention_policy_json: string;
   confidence: number;
   status: MemoryRecord["status"];
+  tier: MemoryRecord["tier"];
+
   created_at: string;
   updated_at: string;
   last_verified_at: string | null;
@@ -59,6 +61,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
             retention_policy_json,
             confidence,
             status,
+            tier,
             created_at,
             updated_at,
             last_verified_at,
@@ -67,7 +70,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
             conflicts_with_json,
             keywords_json,
             metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -83,6 +86,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
         serializeJsonValue(record.retentionPolicy),
         record.confidence,
         record.status,
+        record.tier ?? "retrieval",
         now,
         now,
         record.status === "verified" ? now : null,
@@ -109,6 +113,9 @@ export class SqliteMemoryRepository implements MemoryRepository {
       { sql: "scope = ?", value: query.scope === undefined ? null : denormalizeScope(query.scope), when: query.scope !== undefined },
       { sql: "scope_key = ?", value: query.scopeKey ?? null, when: query.scopeKey !== undefined },
       { sql: "status <> 'rejected'", when: query.includeRejected !== true },
+      { sql: "status <> 'archived'", when: query.includeArchived !== true },
+      { sql: "status <> 'stale'", when: query.includeStale !== true },
+      { sql: "tier = ?", value: query.tier ?? null, when: query.tier !== undefined },
       {
         sql: "(expires_at IS NULL OR expires_at > ?)",
         value: new Date().toISOString(),
@@ -141,6 +148,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
         patch.lastVerifiedAt === undefined ? existing.lastVerifiedAt : patch.lastVerifiedAt,
       metadata: patch.metadata ?? existing.metadata,
       status: patch.status ?? existing.status,
+      tier: patch.tier ?? existing.tier,
       summary: patch.summary ?? existing.summary,
       supersedes: patch.supersedes === undefined ? existing.supersedes : patch.supersedes,
       title: patch.title ?? existing.title,
@@ -156,6 +164,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
               summary = ?,
               confidence = ?,
               status = ?,
+              tier = ?,
               updated_at = ?,
               last_verified_at = ?,
               expires_at = ?,
@@ -172,6 +181,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
         nextRecord.summary,
         nextRecord.confidence,
         nextRecord.status,
+        nextRecord.tier,
         nextRecord.updatedAt,
         nextRecord.lastVerifiedAt,
         nextRecord.expiresAt,
@@ -204,6 +214,7 @@ export class SqliteMemoryRepository implements MemoryRepository {
       source: parseJsonValue<MemoryRecord["source"]>(row.source_json),
       sourceType: row.source_type,
       status: row.status,
+      tier: row.tier ?? "retrieval",
       summary: row.summary,
       supersedes: row.supersedes,
       title: row.title,

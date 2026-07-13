@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   SessionMessageDraft,
   SessionMessageRecord,
   SessionMessageSearchHit
@@ -32,10 +32,13 @@ import type {
 } from "./experience.js";
 import type {
   MemoryDraft,
+  MemoryEmbeddingRecord,
   MemoryQuery,
   MemoryRecord,
   MemorySnapshotDraft,
   MemorySnapshotRecord,
+  SessionCoreSnapshotDraft,
+  SessionCoreSnapshotRecord,
   MemoryUpdatePatch
 } from "./memory.js";
 import type { ArtifactDraft, ArtifactRecord, ToolCallRecord } from "./tool.js";
@@ -129,6 +132,8 @@ export interface SessionSummaryRepository {
     limit: number;
     query: string;
     excludeSessionId?: string | null;
+    ownerUserId?: string;
+    workspaceRoot?: string;
   }): SessionSearchHit[];
 }
 
@@ -243,6 +248,13 @@ export interface ExecutionCheckpointRepository {
   delete(taskId: string): void;
 }
 
+export interface MemoryEmbeddingRepository {
+  upsert(record: Omit<MemoryEmbeddingRecord, "updatedAt">): MemoryEmbeddingRecord;
+  findByMemoryId(memoryId: string): MemoryEmbeddingRecord | null;
+  remove(memoryId: string): void;
+  count(): number;
+}
+
 export interface MemoryRepository {
   create(record: MemoryDraft): MemoryRecord;
   findById(memoryId: string): MemoryRecord | null;
@@ -263,6 +275,12 @@ export interface MemorySnapshotRepository {
   listByScope(scope: MemorySnapshotRecord["scope"], scopeKey: string): MemorySnapshotRecord[];
 }
 
+export interface SessionCoreSnapshotRepository {
+  create(record: SessionCoreSnapshotDraft): SessionCoreSnapshotRecord;
+  findBySessionId(sessionId: string): SessionCoreSnapshotRecord | null;
+  deleteBySessionId(sessionId: string): void;
+}
+
 export interface SessionMessageRepository {
   append(record: SessionMessageDraft): SessionMessageRecord;
   countBySessionId(sessionId: string): number;
@@ -270,7 +288,27 @@ export interface SessionMessageRepository {
   findLatestUserPreview(sessionId: string): string | null;
   listBySessionId(sessionId: string): SessionMessageRecord[];
   replaceAll(sessionId: string, messages: SessionMessageDraft[]): SessionMessageRecord[];
-  search(input: { limit: number; query: string; sessionIdPrefix?: string }): SessionMessageSearchHit[];
+  search(input: {
+    limit: number;
+    query: string;
+    sessionIdPrefix?: string;
+    ownerUserId?: string;
+    workspaceRoot?: string;
+    roleFilter?: Array<"user" | "agent" | "system" | "activity" | "approval" | "approval_result" | "error">;
+    window?: number;
+  }): SessionMessageSearchHit[];
+  scroll?(input: {
+    sessionId: string;
+    aroundMessageId: string;
+    window: number;
+    ownerUserId?: string;
+    workspaceRoot?: string;
+  }): SessionMessageSearchHit[];
+  browse?(input: {
+    limit: number;
+    ownerUserId?: string;
+    workspaceRoot?: string;
+  }): SessionMessageSearchHit[];
 }
 
 export interface GatewaySessionRepository {

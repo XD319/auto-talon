@@ -83,6 +83,7 @@ export const TRACE_EVENT_TYPES = [
   "memory_recalled",
   "recall_explain",
   "memory_written",
+  "memory_flush_completed",
   "memory_write_rejected",
   "session_compacted",
   "session_summary_written",
@@ -616,6 +617,11 @@ export interface RecallExplainPayload extends JsonObject {
   } & JsonObject>;
 }
 
+export interface MemoryFlushCompletedPayload extends JsonObject {
+  iteration: number;
+  suggestionCount: number;
+}
+
 export interface MemoryWrittenPayload extends JsonObject {
   memoryId: string;
   scope: MemoryScope;
@@ -1115,6 +1121,7 @@ export type TraceEvent =
   | TraceEventBase<"memory_recalled", MemoryRecalledPayload>
   | TraceEventBase<"recall_explain", RecallExplainPayload>
   | TraceEventBase<"memory_written", MemoryWrittenPayload>
+  | TraceEventBase<"memory_flush_completed", MemoryFlushCompletedPayload>
   | TraceEventBase<"memory_write_rejected", MemoryWriteRejectedPayload>
   | TraceEventBase<"session_compacted", SessionCompactedPayload>
   | TraceEventBase<"session_summary_written", SessionSummaryWrittenPayload>

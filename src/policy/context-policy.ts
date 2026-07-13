@@ -8,16 +8,16 @@ import type {
 export class ContextPolicy {
   public filterForModelContext(input: ContextPolicyFilterInput): ContextPolicyFilterResult {
     const decisions = input.fragments.map((fragment) => {
-      if (fragment.status === "rejected") {
+      if (fragment.status === "rejected" || fragment.status === "archived" || fragment.status === "stale") {
         return {
           allowed: false,
           fragment,
           reasonCode: "filtered_by_policy" as const,
-          reason: "Rejected memory cannot enter model context."
+          reason: "Rejected, stale, or archived memory cannot enter model context."
         };
       }
 
-      if (fragment.scope !== "working" && fragment.retentionPolicy.kind === "working") {
+      if (fragment.scope !== "working" && fragment.scope !== "session_ref" && fragment.scope !== "skill_ref" && fragment.retentionPolicy.kind === "working") {
         return {
           allowed: false,
           fragment,

@@ -1,4 +1,4 @@
-﻿import { mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -16,7 +16,9 @@ import { SqliteInboxRepository } from "./repositories/inbox/inbox-repository.js"
 import { SqliteCommitmentRepository } from "./repositories/commitments/commitment-repository.js";
 import { SqliteNextActionRepository } from "./repositories/commitments/next-action-repository.js";
 import { SqliteMemoryRepository } from "./repositories/memory-repository.js";
+import { SqliteMemoryEmbeddingRepository } from "./repositories/memory-embedding-repository.js";
 import { SqliteMemorySnapshotRepository } from "./repositories/memory-snapshot-repository.js";
+import { SqliteSessionCoreSnapshotRepository } from "./repositories/session-core-snapshot-repository.js";
 import { SqliteRunMetadataRepository } from "./repositories/run-metadata-repository.js";
 import { SqliteRuntimeOutputRepository } from "./repositories/runtime-output-repository.js";
 import { SqliteScheduleRepository } from "./repositories/schedules/schedule-repository.js";
@@ -59,7 +61,9 @@ export class StorageManager {
   public readonly checkpoints: SqliteExecutionCheckpointRepository;
   public readonly experiences: SqliteExperienceRepository;
   public readonly memories: SqliteMemoryRepository;
+  public readonly memoryEmbeddings: SqliteMemoryEmbeddingRepository;
   public readonly memorySnapshots: SqliteMemorySnapshotRepository;
+  public readonly sessionCoreSnapshots: SqliteSessionCoreSnapshotRepository;
   public readonly gatewaySessions: SqliteGatewaySessionRepository;
   public readonly gatewayRateLimits: SqliteGatewayRateLimitRepository;
   public readonly inbox: SqliteInboxRepository;
@@ -96,7 +100,9 @@ export class StorageManager {
     this.checkpoints = new SqliteExecutionCheckpointRepository(this.database);
     this.experiences = new SqliteExperienceRepository(this.database);
     this.memories = new SqliteMemoryRepository(this.database);
+    this.memoryEmbeddings = new SqliteMemoryEmbeddingRepository(this.database);
     this.memorySnapshots = new SqliteMemorySnapshotRepository(this.database);
+    this.sessionCoreSnapshots = new SqliteSessionCoreSnapshotRepository(this.database);
     this.gatewaySessions = new SqliteGatewaySessionRepository(this.database);
     this.gatewayRateLimits = new SqliteGatewayRateLimitRepository(this.database);
     this.inbox = new SqliteInboxRepository(this.database);

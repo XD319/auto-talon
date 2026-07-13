@@ -1,4 +1,4 @@
-﻿import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 interface SchemaMigration {
   description: string;
@@ -121,6 +121,11 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "add gateway rate limit persistence table",
     up: migrateV23,
     version: 23
+  },
+  {
+    description: "add Hermes memory tiers, snapshots, embeddings, and trigram search",
+    up: migrateV24,
+    version: 24
   }
 ];
 
@@ -1103,6 +1108,56 @@ function migrateV23(database: DatabaseSync): void {
   `);
 }
 
+function migrateV24(database: DatabaseSync): void {
+  if (tableExists(database, "memories")) {
+    addColumnIfMissing(database, "memories", "tier", "TEXT NOT NULL DEFAULT 'retrieval'");
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_memories_core
+        ON memories(tier, scope, scope_key, status, updated_at DESC);
+      CREATE TABLE IF NOT EXISTS memory_embeddings (
+        memory_id TEXT PRIMARY KEY REFERENCES memories(memory_id),
+        content_hash TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dimensions INTEGER NOT NULL,
+        embedding BLOB NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+  }
+
+  if (tableExists(database, "sessions")) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_core_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL UNIQUE REFERENCES sessions(session_id),
+        profile_scope_key TEXT NOT NULL,
+        project_scope_key TEXT NOT NULL,
+        profile_memory_ids_json TEXT NOT NULL,
+        project_memory_ids_json TEXT NOT NULL,
+        profile_text TEXT NOT NULL,
+        project_text TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+  }
+
+  if (tableExists(database, "session_messages_fts") && !tableExists(database, "session_messages_trigram")) {
+    try {
+      database.exec(`
+        CREATE VIRTUAL TABLE session_messages_trigram USING fts5(
+          message_id UNINDEXED,
+          session_id UNINDEXED,
+          content,
+          tokenize='trigram'
+        );
+        INSERT INTO session_messages_trigram(message_id, session_id, content)
+        SELECT message_id, session_id, content FROM session_messages_fts;
+      `);
+    } catch {
+      // Older SQLite builds may not provide the trigram tokenizer; LIKE remains available.
+    }
+  }
+}
 export function finalizeLegacyThreadMigration(database: DatabaseSync): void {
   ensureCoreSessionTables(database);
   withForeignKeysDisabled(database, () => {
@@ -1239,6 +1294,7 @@ function ensureSessionSchemaRepairs(database: DatabaseSync): void {
   withForeignKeysDisabled(database, () => {
     ensureReferencedSessionsExist(database);
   });
+  migrateV24(database);
 }
 
 function withForeignKeysDisabled(database: DatabaseSync, action: () => void): void {

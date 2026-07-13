@@ -28,7 +28,7 @@ const memoryReviewSchema = z.object({
   memoryId: z.string().min(1),
   note: z.string().min(1),
   reviewerId: z.string().min(1),
-  status: z.enum(["verified", "rejected", "stale"])
+  status: z.enum(["verified", "rejected", "stale", "archived"])
 });
 
 export interface MemoryPlaneDependencies {
@@ -166,8 +166,10 @@ export class MemoryPlane {
   } {
     return {
       memories: this.list({
+        includeArchived: true,
         includeExpired: true,
         includeRejected: true,
+        includeStale: true,
         scope,
         scopeKey
       }),
@@ -207,8 +209,10 @@ export class MemoryPlane {
     scopeKey: string;
   }): MemorySnapshotRecord {
     const memories = this.list({
+      includeArchived: true,
       includeExpired: true,
       includeRejected: true,
+      includeStale: true,
       scope: input.scope,
       scopeKey: input.scopeKey
     });

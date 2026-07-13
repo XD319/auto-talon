@@ -32,7 +32,8 @@ export const EXPERIENCE_STATUSES = [
   "accepted",
   "promoted",
   "rejected",
-  "stale"
+  "stale",
+  "archived"
 ] as const;
 
 export type ExperienceStatus = (typeof EXPERIENCE_STATUSES)[number];
@@ -138,6 +139,7 @@ export interface ExperienceQuery {
   sourceType?: ExperienceSourceType;
   status?: ExperienceStatus;
   statuses?: ExperienceStatus[];
+  includeArchived?: boolean;
   minValueScore?: number;
   taskId?: string;
   reviewerId?: string;

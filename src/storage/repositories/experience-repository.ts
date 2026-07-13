@@ -126,6 +126,7 @@ export class SqliteExperienceRepository implements ExperienceRepository {
       { sql: "type = ?", value: query.type ?? null, when: query.type !== undefined },
       { sql: "source_type = ?", value: query.sourceType ?? null, when: query.sourceType !== undefined },
       { sql: "status = ?", value: query.status ?? null, when: query.status !== undefined },
+      { sql: "status <> 'archived'", when: query.includeArchived !== true },
       {
         sql: `status IN (${(query.statuses ?? []).map(() => "?").join(", ")})`,
         values: query.statuses ?? [],

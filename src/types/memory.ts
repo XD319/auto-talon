@@ -9,9 +9,13 @@ export const PERSISTED_MEMORY_SCOPES = ["profile", "project"] as const;
 
 export type MemoryScope = (typeof MEMORY_SCOPES)[number];
 
-export const MEMORY_STATUSES = ["candidate", "verified", "stale", "rejected"] as const;
+export const MEMORY_STATUSES = ["candidate", "verified", "stale", "rejected", "archived"] as const;
 
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
+
+export const MEMORY_TIERS = ["core", "retrieval"] as const;
+
+export type MemoryTier = (typeof MEMORY_TIERS)[number];
 
 export const MEMORY_SOURCE_TYPES = [
   "user_input",
@@ -55,6 +59,7 @@ export interface MemoryRecord {
   retentionPolicy: RetentionPolicy;
   confidence: number;
   status: MemoryStatus;
+  tier: MemoryTier;
   createdAt: string;
   updatedAt: string;
   lastVerifiedAt: string | null;
@@ -76,6 +81,7 @@ export interface MemoryDraft {
   retentionPolicy: RetentionPolicy;
   confidence: number;
   status: MemoryStatus;
+  tier?: MemoryTier;
   expiresAt: string | null;
   supersedes?: string | null;
   conflictsWith?: string[];
@@ -89,6 +95,7 @@ export interface MemoryUpdatePatch {
   summary?: string;
   confidence?: number;
   status?: MemoryStatus;
+  tier?: MemoryTier;
   lastVerifiedAt?: string | null;
   expiresAt?: string | null;
   supersedes?: string | null;
@@ -101,7 +108,10 @@ export interface MemoryQuery {
   scope?: MemoryScope;
   scopeKey?: string;
   includeRejected?: boolean;
+  includeArchived?: boolean;
+  includeStale?: boolean;
   includeExpired?: boolean;
+  tier?: MemoryTier;
   limit?: number;
 }
 
@@ -252,8 +262,38 @@ export interface MemorySnapshotDiff {
 export interface MemoryReviewRequest {
   memoryId: string;
   reviewerId: string;
-  status: Extract<MemoryStatus, "verified" | "rejected" | "stale">;
+  status: Extract<MemoryStatus, "verified" | "rejected" | "stale" | "archived">;
   note: string;
+}
+
+export interface MemoryEmbeddingRecord {
+  memoryId: string;
+  contentHash: string;
+  model: string;
+  dimensions: number;
+  embedding: Float32Array;
+  updatedAt: string;
+}
+export interface SessionCoreSnapshotRecord {
+  snapshotId: string;
+  sessionId: string;
+  profileScopeKey: string;
+  projectScopeKey: string;
+  profileMemoryIds: string[];
+  projectMemoryIds: string[];
+  profileText: string;
+  projectText: string;
+  createdAt: string;
+}
+
+export interface SessionCoreSnapshotDraft {
+  sessionId: string;
+  profileScopeKey: string;
+  projectScopeKey: string;
+  profileMemoryIds: string[];
+  projectMemoryIds: string[];
+  profileText: string;
+  projectText: string;
 }
 
 export const memoryDraftSchema = z.object({
@@ -279,6 +319,7 @@ export const memoryDraftSchema = z.object({
     traceEventId: z.string().nullable()
   }),
   status: z.enum(MEMORY_STATUSES),
+  tier: z.enum(MEMORY_TIERS).default("retrieval"),
   summary: z.string().min(1),
   supersedes: z.string().nullable().optional(),
   title: z.string().min(1)
