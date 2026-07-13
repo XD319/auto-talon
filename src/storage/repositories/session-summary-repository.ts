@@ -1,4 +1,4 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import type {
@@ -191,6 +191,8 @@ export class SqliteSessionSummaryRepository implements SessionSummaryRepository 
     limit: number;
     query: string;
     excludeSessionId?: string | null;
+    ownerUserId?: string;
+    workspaceRoot?: string;
   }): SessionSearchHit[] {
     const rows = this.searchGlobalFts(input) ?? this.searchGlobalFallback(input);
     return rows.map((row) => this.mapSearchRow(row));
@@ -206,12 +208,22 @@ export class SqliteSessionSummaryRepository implements SessionSummaryRepository 
     limit: number;
     query: string;
     excludeSessionId?: string | null;
+    ownerUserId?: string;
+    workspaceRoot?: string;
   }): SessionIndexRow[] | null {
     const whereClauses = ["session_index MATCH ?"];
     const parameters: SqlParameter[] = [input.query];
     if (input.excludeSessionId !== undefined && input.excludeSessionId !== null) {
       whereClauses.push("session_id != ?");
       parameters.push(input.excludeSessionId);
+    }
+    if (input.ownerUserId !== undefined) {
+      whereClauses.push("session_id IN (SELECT session_id FROM sessions WHERE owner_user_id = ?)");
+      parameters.push(input.ownerUserId);
+    }
+    if (input.workspaceRoot !== undefined) {
+      whereClauses.push("session_id IN (SELECT session_id FROM sessions WHERE cwd = ?)");
+      parameters.push(input.workspaceRoot);
     }
     parameters.push(input.limit);
     return this.searchFtsWithQuery(whereClauses.join(" AND "), parameters);
@@ -255,13 +267,25 @@ export class SqliteSessionSummaryRepository implements SessionSummaryRepository 
     limit: number;
     query: string;
     excludeSessionId?: string | null;
+    ownerUserId?: string;
+    workspaceRoot?: string;
   }): SessionIndexRow[] {
     const hasExclude = input.excludeSessionId !== undefined && input.excludeSessionId !== null;
+    const whereClauses = [hasExclude ? "session_id != ?" : "1=1"];
+    const whereParams: SqlParameter[] = hasExclude ? [input.excludeSessionId as string] : [];
+    if (input.ownerUserId !== undefined) {
+      whereClauses.push("session_id IN (SELECT session_id FROM sessions WHERE owner_user_id = ?)");
+      whereParams.push(input.ownerUserId);
+    }
+    if (input.workspaceRoot !== undefined) {
+      whereClauses.push("session_id IN (SELECT session_id FROM sessions WHERE cwd = ?)");
+      whereParams.push(input.workspaceRoot);
+    }
     return this.searchFallbackByScope({
       limit: input.limit,
       query: input.query,
-      whereClause: hasExclude ? "session_id != ?" : "1=1",
-      whereParams: hasExclude ? [input.excludeSessionId as string] : []
+      whereClause: whereClauses.join(" AND "),
+      whereParams
     });
   }
 

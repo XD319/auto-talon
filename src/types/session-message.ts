@@ -48,6 +48,14 @@ export interface SessionMessageSearchHit {
   sequence: number;
   sessionId: string;
   sessionTitle: string;
+  role?: SessionMessageKind;
+  before?: SessionMessageRecord[];
+  after?: SessionMessageRecord[];
+  totalMessages?: number;
+  firstMessageId?: string | null;
+  lastMessageId?: string | null;
+  previousMessageId?: string | null;
+  nextMessageId?: string | null;
 }
 
 export interface SessionIndexEntry {

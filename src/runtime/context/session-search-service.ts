@@ -1,4 +1,4 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import type {
   ContextFragment,
@@ -25,6 +25,8 @@ export class SessionSearchService {
     limit: number;
     query: string;
     excludeSessionId?: string | null;
+    ownerUserId?: string;
+    workspaceRoot?: string;
   }): ContextFragment[] {
     const hits = this.dependencies.repository.searchGlobal(input);
     if (hits.length === 0) {
