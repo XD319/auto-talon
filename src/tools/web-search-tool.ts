@@ -117,7 +117,7 @@ export class WebSearchTool implements ToolDefinition<typeof webSearchSchema, Pre
     "Search the public web and return normalized search results for follow-up web_extract reads.";
   public readonly capability = "network.fetch_public_readonly" as const;
   public readonly riskLevel = "medium" as const;
-  public readonly privacyLevel = "restricted" as const;
+  public readonly privacyLevel = "public" as const;
   public readonly costLevel = "cheap" as const;
   public readonly sideEffectLevel = "external_read_only" as const;
   public readonly toolKind = "external_tool" as const;

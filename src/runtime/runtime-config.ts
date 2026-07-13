@@ -20,6 +20,7 @@ import type {
   WebSearchRuntimeConfig
 } from "../core/web-search-config.js";
 import type { ContextRetentionConfig } from "./context/recent-file-reads.js";
+import { resolveWorkspaceLayout } from "./workspace-layout.js";
 import {
   AUXILIARY_SLOTS,
   DEFAULT_AUXILIARY_CONFIG,
@@ -552,9 +553,13 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
 };
 
 export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
-  const workspaceRoot = resolve(cwd);
-  const configPath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
-  const fileConfig = loadRuntimeConfigFile(configPath);
+  const layout = resolveWorkspaceLayout(cwd);
+  const userConfigPath = join(layout.userConfigRoot, "runtime.config.json");
+  const workspaceConfigPath = layout.configRoot === null ? null : join(layout.configRoot, "runtime.config.json");
+  const userConfig = loadRuntimeConfigFile(userConfigPath);
+  const workspaceConfig = workspaceConfigPath === null ? null : loadRuntimeConfigFile(workspaceConfigPath);
+  const fileConfig = mergeRuntimeConfigFiles(userConfig, workspaceConfig);
+  const configPath = workspaceConfig !== null && workspaceConfigPath !== null ? workspaceConfigPath : userConfigPath;
   const envConfig = readEnvRuntimeConfig();
   const configSource = Object.keys(envConfig).length > 0
     ? "env"
@@ -907,6 +912,33 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
 
 type RuntimeConfigFile = z.infer<typeof runtimeConfigFileSchema>;
 
+function mergeRuntimeConfigFiles(userConfig: RuntimeConfigFile | null, workspaceConfig: RuntimeConfigFile | null): RuntimeConfigFile | null {
+  if (userConfig === null && workspaceConfig === null) return null;
+  const merged = deepMergeRuntime(userConfig ?? {}, workspaceConfig ?? {}) as RuntimeConfigFile;
+  if (userConfig !== null && workspaceConfig !== null) {
+    if (userConfig.web?.providers !== undefined) merged.web = { ...(merged.web ?? {}), providers: userConfig.web.providers };
+    if (userConfig.web?.backend === "disabled") merged.web = { ...(merged.web ?? {}), backend: "disabled", searchBackend: "disabled", extractBackend: "disabled" };
+    if (userConfig.web?.searchBackend === "disabled") merged.web = { ...(merged.web ?? {}), searchBackend: "disabled" };
+    if (userConfig.webSearch?.backend === "disabled") merged.webSearch = { ...(merged.webSearch ?? {}), backend: "disabled" };
+    if (userConfig.allowedFetchHosts !== undefined && workspaceConfig.allowedFetchHosts !== undefined) merged.allowedFetchHosts = intersectHosts(userConfig.allowedFetchHosts, workspaceConfig.allowedFetchHosts);
+  }
+  return merged;
+}
+
+function intersectHosts(userHosts: string[], workspaceHosts: string[]): string[] {
+  if (userHosts.includes("*")) return workspaceHosts;
+  if (workspaceHosts.includes("*")) return userHosts;
+  const allowed = new Set(userHosts.map((host) => host.toLowerCase()));
+  return workspaceHosts.filter((host) => allowed.has(host.toLowerCase()));
+}
+function deepMergeRuntime(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const current = result[key];
+    result[key] = value !== null && typeof value === "object" && !Array.isArray(value) && current !== null && typeof current === "object" && !Array.isArray(current) ? deepMergeRuntime(current as Record<string, unknown>, value as Record<string, unknown>) : value;
+  }
+  return result;
+}
 function loadRuntimeConfigFile(configPath: string): RuntimeConfigFile | null {
   if (!existsSync(configPath)) {
     return null;

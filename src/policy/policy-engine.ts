@@ -107,3 +107,14 @@ function includesIfPresent<T extends string>(values: readonly T[] | undefined, c
 
   return values.includes(candidate);
 }
+
+export interface LayeredPolicyResult {
+  effect: "allow" | "allow_with_approval" | "deny";
+  decidingLayers: string[];
+}
+
+/** Combines independent policy layers without permitting a less restrictive layer to override another. */
+export function combinePolicyEffects(layers: ReadonlyArray<{ effect: "allow" | "allow_with_approval" | "deny"; layer: string }>): LayeredPolicyResult {
+  const effect = layers.some((entry) => entry.effect === "deny") ? "deny" : layers.some((entry) => entry.effect === "allow_with_approval") ? "allow_with_approval" : "allow";
+  return { effect, decidingLayers: layers.filter((entry) => entry.effect === effect).map((entry) => entry.layer) };
+}

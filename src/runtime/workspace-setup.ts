@@ -8,11 +8,6 @@ type JsonObject = Record<string, unknown>;
 
 const CONFIG_VERSION = 1;
 
-const DEFAULT_PROVIDER_CONFIG: JsonObject = {
-  version: CONFIG_VERSION,
-  providers: {}
-};
-
 const DEFAULT_RUNTIME_CONFIG: JsonObject = {
   version: CONFIG_VERSION,
   approvalTtlMs: 300000,
@@ -159,8 +154,7 @@ export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceRe
 
   const createdFiles: string[] = [];
   createdFiles.push(
-    ...writeConfigIfMissing(workspaceRoot, "provider.config.json", DEFAULT_PROVIDER_CONFIG),
-    ...writeConfigIfMissing(workspaceRoot, "runtime.config.json", DEFAULT_RUNTIME_CONFIG),
+    ...writeConfigIfMissing(workspaceRoot, "runtime.config.json", workspaceRuntimeDefaults()),
     ...writeConfigIfMissing(workspaceRoot, "policy.config.json", DEFAULT_POLICY_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "sandbox.config.json", DEFAULT_SANDBOX_CONFIG),
     ...writeConfigIfMissing(workspaceRoot, "gateway.config.json", DEFAULT_GATEWAY_CONFIG),
@@ -179,6 +173,12 @@ export function initializeWorkspaceFiles(workspaceRoot: string): InitWorkspaceRe
   };
 }
 
+function workspaceRuntimeDefaults(): JsonObject {
+  const constraints = { ...DEFAULT_RUNTIME_CONFIG };
+  delete constraints.web;
+  delete constraints.webSearch;
+  return constraints;
+}
 function writeConfigIfMissing(workspaceRoot: string, fileName: string, value: JsonObject): string[] {
   const configPath = join(workspaceRoot, ".auto-talon", fileName);
   if (existsSync(configPath)) {

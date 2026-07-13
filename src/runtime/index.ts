@@ -16,4 +16,5 @@ export * from "./sessions/index.js";
 export * from "./retrieval/index.js";
 export * from "./workers/index.js";
 export * from "./workspace-setup.js";
+export * from "./workspace-layout.js";
 export * from "./runtime-identity.js";

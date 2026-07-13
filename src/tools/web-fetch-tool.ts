@@ -118,7 +118,7 @@ export class WebFetchTool implements ToolDefinition<typeof webFetchSchema, Prepa
     "Fetch and extract a public text-oriented HTTP resource through a sandboxed allowlist.";
   public readonly capability = "network.fetch_public_readonly" as const;
   public readonly riskLevel = "medium" as const;
-  public readonly privacyLevel = "restricted" as const;
+  public readonly privacyLevel = "public" as const;
   public readonly costLevel = "cheap" as const;
   public readonly sideEffectLevel = "external_read_only" as const;
   public readonly toolKind = "external_tool" as const;

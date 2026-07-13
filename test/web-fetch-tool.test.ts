@@ -6,6 +6,10 @@ import type { ToolExecutionContext } from "../src/types/index.js";
 import type { WebRuntimeConfig } from "../src/runtime/runtime-config.js";
 
 describe("WebFetchTool", () => {
+  it("keeps public page content visible to the model", () => {
+    const sandbox = new SandboxService({ allowedFetchHosts: ["*"], workspaceRoot: process.cwd() });
+    expect(new WebFetchTool(sandbox).privacyLevel).toBe("public");
+  });
   it("uses manual redirect mode to prevent host-allowlist bypass via redirects", async () => {
     const sandboxService = new SandboxService({
       allowedFetchHosts: ["example.com"],

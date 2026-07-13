@@ -1,5 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { DiffDisplayMode } from "../presentation/diff-display.js";
@@ -134,7 +134,7 @@ import {
 } from "./runtime-config.js";
 import { ToolOverrideStore } from "../tools/tool-overrides.js";
 import { ToolExposurePlanner } from "./tool-exposure-planner.js";
-import { initializeWorkspaceFiles } from "./workspace-setup.js";
+import { ensureWorkspaceState, resolveWorkspaceLayout, type WorkspaceMode } from "./workspace-layout.js";
 import { resolveDefaultUserId } from "./runtime-identity.js";
 
 export const RUNTIME_VERSION = "0.1.0";
@@ -232,6 +232,8 @@ export interface AppConfig {
   approvalTtlMs: number;
   allowedFetchHosts: string[];
   databasePath: string;
+  configRoot: string | null;
+  configSources: Record<string, string>;
   defaultInteractionMode: "agent" | "plan" | "acceptEdits";
   defaultMaxIterations: number;
   defaultProfileId: "executor" | "planner" | "reviewer";
@@ -309,6 +311,10 @@ export interface AppConfig {
   web: WebRuntimeConfig;
   workflow: WorkflowRuntimeConfig;
   workspaceRoot: string;
+  workingDirectory: string;
+  stateRoot: string;
+  initializedWorkspaceRoot: string | null;
+  workspaceMode: WorkspaceMode;
   scheduler: {
     pollIntervalMs: number;
   };
@@ -321,10 +327,13 @@ export interface ResolveAppConfigOptions {
 }
 
 export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigOptions = {}): AppConfig {
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
-  initializeWorkspaceFiles(workspaceRoot);
-  migrateConfigFiles(workspaceRoot);
-  validateConfigVersions(workspaceRoot);
+  const layout = resolveWorkspaceLayout(cwd);
+  ensureWorkspaceState(layout);
+  const workspaceRoot = layout.workspaceRoot ?? layout.workingDirectory;
+  if (layout.workspaceRoot !== null) {
+    migrateConfigFiles(layout.workspaceRoot);
+    validateConfigVersions(layout.workspaceRoot);
+  }
   const provider = resolveProviderConfig(workspaceRoot);
   const sandbox = resolveSandboxProfile(workspaceRoot, options);
   const runtimeConfig = resolveRuntimeConfig(workspaceRoot);
@@ -334,7 +343,9 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     allowedFetchHosts: runtimeConfig.allowedFetchHosts,
     databasePath:
       process.env.AGENT_RUNTIME_DB_PATH ??
-      join(workspaceRoot, ".auto-talon", "agent-runtime.db"),
+      join(layout.stateRoot, "agent-runtime.db"),
+    configRoot: layout.configRoot,
+    configSources: { provider: provider.configPath, runtime: runtimeConfig.configPath },
     defaultInteractionMode: runtimeConfig.defaultInteractionMode,
     defaultMaxIterations: runtimeConfig.defaultMaxIterations,
     defaultProfileId: "executor",
@@ -362,34 +373,12 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     web: runtimeConfig.web,
     workflow: runtimeConfig.workflow,
     scheduler: runtimeConfig.scheduler,
+    workingDirectory: layout.workingDirectory,
+    stateRoot: layout.stateRoot,
+    initializedWorkspaceRoot: layout.workspaceRoot,
+    workspaceMode: layout.workspaceMode,
     workspaceRoot
   };
-}
-
-function resolveWorkspaceRoot(cwd: string): string {
-  const envWorkspaceRoot = process.env.AGENT_WORKSPACE_ROOT?.trim();
-  if (envWorkspaceRoot !== undefined && envWorkspaceRoot.length > 0) {
-    return resolve(envWorkspaceRoot);
-  }
-
-  const requestedRoot = resolve(cwd);
-  return findWorkspaceRoot(requestedRoot) ?? requestedRoot;
-}
-
-function findWorkspaceRoot(startPath: string): string | null {
-  let candidate = startPath;
-
-  while (true) {
-    if (existsSync(join(candidate, ".auto-talon", "runtime.config.json"))) {
-      return candidate;
-    }
-
-    const parent = dirname(candidate);
-    if (parent === candidate) {
-      return null;
-    }
-    candidate = parent;
-  }
 }
 
 export interface AppRuntimeHandle {

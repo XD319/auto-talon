@@ -43,6 +43,7 @@ import { registerScheduleCommands } from "./schedule-command.js";
 import { registerSessionCommands } from "./session-command.js";
 import { registerTaskTraceCommands } from "./task-trace-command.js";
 import { resolveRuntimeConfig, writeAuxiliarySlot } from "../runtime/runtime-config.js";
+import { migrateUserCapabilities } from "../storage/user-capability-migration.js";
 import {
   AUXILIARY_SLOTS,
   type AuxiliarySlot
@@ -193,9 +194,11 @@ export async function main(argv = process.argv): Promise<void> {
   registerTaskTraceCommands(program);
   registerScheduleCommands(program);
 
-  program
+  const configCommand = program
     .command("config")
-    .description("Configuration and environment checks")
+    .description("Configuration and environment checks");
+
+  configCommand
     .command("doctor")
     .option("--fix", "Migrate legacy JSON transcripts and finalize thread→session schema")
     .action(async (commandOptions: { fix?: boolean }) => {
@@ -221,6 +224,20 @@ export async function main(argv = process.argv): Promise<void> {
       }
     });
 
+  configCommand
+    .command("migrate")
+    .description("Migrate legacy capability configuration to the user configuration directory")
+    .option("--user-capabilities", "Migrate provider and Web capabilities")
+    .option("--apply", "Write changes (default is dry-run)")
+    .action((commandOptions: { apply?: boolean; userCapabilities?: boolean }) => {
+      if (commandOptions.userCapabilities !== true) throw new Error("Specify --user-capabilities.");
+      const result = migrateUserCapabilities(process.cwd(), commandOptions.apply === true);
+      console.log(result.applied ? "Migration applied." : "Dry run; no files written.");
+      for (const source of result.sourceFiles) console.log(`Source: ${source} (legacy-workspace)`);
+      for (const target of result.targetFiles) console.log(`Target: ${target}`);
+      for (const envName of result.environmentVariables) console.log(`Required env: ${envName}`);
+      for (const warning of result.warnings) console.log(`Warning: ${warning}`);
+    });
   program
     .command("doctor")
     .description("Run configuration and environment checks")

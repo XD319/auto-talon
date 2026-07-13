@@ -14,6 +14,9 @@ import type { WebRuntimeConfig, WebSearchRuntimeConfig } from "../src/runtime/ru
 import type { ToolExecutionContext } from "../src/types/index.js";
 
 describe("WebSearchTool", () => {
+  it("keeps public search results visible to the model", () => {
+    expect(new WebSearchTool(createSandbox(), createFullWebConfig()).privacyLevel).toBe("public");
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });

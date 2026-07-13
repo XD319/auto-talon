@@ -1270,11 +1270,8 @@ function mergeProviderConfigFiles(
   userConfig: ProviderConfigFile,
   workspaceConfig: ProviderConfigFile
 ): ProviderConfigFile {
-  const customProviders = mergeNamedEntries(
-    userConfig.customProviders,
-    workspaceConfig.customProviders
-  );
-  const providers = mergeNamedEntries(userConfig.providers, workspaceConfig.providers);
+  const customProviders = mergeCustomProviderEntriesSecurely(userConfig.customProviders, workspaceConfig.customProviders);
+  const providers = mergeProviderEntriesSecurely(userConfig.providers, workspaceConfig.providers);
   const modelAliases = mergeModelAliases(userConfig.modelAliases, workspaceConfig.modelAliases);
   const fallback = mergeFallbackConfigs(userConfig, workspaceConfig);
 
@@ -1294,6 +1291,33 @@ function mergeProviderConfigFiles(
   };
 }
 
+function mergeCustomProviderEntriesSecurely(userEntries: Record<string, CustomProviderFileEntry> | undefined, workspaceEntries: Record<string, CustomProviderFileEntry> | undefined): Record<string, CustomProviderFileEntry> | undefined {
+  if (userEntries === undefined && workspaceEntries === undefined) return undefined;
+  const result = { ...(userEntries ?? {}) };
+  for (const [name, entry] of Object.entries(workspaceEntries ?? {})) {
+    const userEntry = result[name];
+    if (userEntry === undefined) result[name] = entry;
+    else if (entry.model !== undefined) result[name] = { ...userEntry, model: entry.model };
+  }
+  return result;
+}
+
+function mergeProviderEntriesSecurely(userEntries: Record<string, ProviderFileEntry> | undefined, workspaceEntries: Record<string, ProviderFileEntry> | undefined): Record<string, ProviderFileEntry> | undefined {
+  if (userEntries === undefined && workspaceEntries === undefined) return undefined;
+  const result: Record<string, ProviderFileEntry> = { ...(userEntries ?? {}) };
+  for (const [name, workspaceEntry] of Object.entries(workspaceEntries ?? {})) {
+    const userEntry = result[name];
+    if (userEntry === undefined) result[name] = workspaceEntry; // one-cycle legacy compatibility
+    else result[name] = {
+      ...userEntry,
+      ...workspaceEntry,
+      ...(userEntry.apiKey !== undefined ? { apiKey: userEntry.apiKey } : { apiKey: null }),
+      ...(userEntry.baseUrl !== undefined ? { baseUrl: userEntry.baseUrl } : { baseUrl: null }),
+      ...(userEntry.credentials !== undefined ? { credentials: userEntry.credentials } : { credentials: [] })
+    };
+  }
+  return result;
+}
 function mergeFallbackConfigs(
   userConfig: ProviderConfigFile,
   workspaceConfig: ProviderConfigFile

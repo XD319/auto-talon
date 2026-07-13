@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { IncomingMessage } from "node:http";
 
 import { AppError } from "./app-error.js";
+import { resolveWorkspaceLayout } from "../runtime/workspace-layout.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 let missingHttpTokenWarningEmitted = false;
@@ -40,7 +41,7 @@ export function resolveHttpAuthToken(cwd: string): string | null {
   if (fromEnv !== undefined && fromEnv.length > 0) {
     return fromEnv;
   }
-  const tokenPath = join(cwd, ".auto-talon", "http.token");
+  const tokenPath = join(resolveWorkspaceLayout(cwd).stateRoot, "http.token");
   if (!existsSync(tokenPath)) {
     return null;
   }
