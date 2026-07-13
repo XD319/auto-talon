@@ -1,4 +1,4 @@
-﻿import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,6 +51,7 @@ describe("cli memory commands", () => {
     try {
       process.chdir(workspace);
       await main(["node", "talon", "run", "collect memory context"]);
+      await main(["node", "talon", "memory", "on"]);
       await main(["node", "talon", "memory", "add", "project", "Prefer vitest for memory verification"]);
       await main(["node", "talon", "run", "memory verification guidance"]);
       await main(["node", "talon", "task", "list"]);
@@ -115,7 +116,7 @@ describe("cli memory commands", () => {
 
       const output = logSpy.mock.calls.map((entry) => String(entry[0] ?? "")).join("\n");
       expect(output).toContain("Selected:");
-      expect(output).toContain("stale");
+      expect(output).toContain("archived");
       expect(output).toContain("Memory suggestions:");
       expect(output).toContain("Inbox ID:");
       expect(output).toContain("Inbox project memory suggestion");

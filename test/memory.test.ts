@@ -9,6 +9,7 @@ import { MemoryPlane } from "../src/memory/memory-plane.js";
 import { ContextPolicy } from "../src/policy/context-policy.js";
 import { ExecutionContextAssembler } from "../src/runtime/context-assembler.js";
 import { createApplication, createDefaultRunOptions } from "../src/runtime/index.js";
+import { writeMemoryEnabled } from "../src/runtime/runtime-config.js";
 import { StorageManager } from "../src/storage/database.js";
 import { TraceService } from "../src/tracing/trace-service.js";
 import type { Provider, ProviderInput, ProviderResponse, TaskRecord } from "../src/types/index.js";
@@ -144,7 +145,7 @@ describe("Phase 3 memory plane", () => {
     }
   });
 
-  it("downgrades stale memory during recall ordering", () => {
+  it("excludes stale memory from recall and requires an explicit management query", () => {
     const { memoryPlane, close } = createMemoryHarness();
 
     try {
@@ -205,7 +206,8 @@ describe("Phase 3 memory plane", () => {
         })
       );
 
-      expect(memoryPlane.list({ includeExpired: true, scope: "project", scopeKey: "workspace-stale" }).some((memory) => memory.status === "stale")).toBe(true);
+      expect(memoryPlane.list({ includeExpired: true, scope: "project", scopeKey: "workspace-stale" }).some((memory) => memory.status === "stale")).toBe(false);
+      expect(memoryPlane.list({ includeExpired: true, includeStale: true, scope: "project", scopeKey: "workspace-stale" }).some((memory) => memory.status === "stale")).toBe(true);
       expect(result.recall.candidates[0]?.memory.title).toBe("Fresh guide");
     } finally {
       close();
@@ -364,9 +366,13 @@ describe("Phase 3 memory plane", () => {
 
   it("records recall provenance in task trace", async () => {
     const workspaceRoot = await createTempWorkspace();
+    writeMemoryEnabled(workspaceRoot, true);
     const handle = createApplication(workspaceRoot, {
       config: {
-        databasePath: join(workspaceRoot, "runtime.db")
+        databasePath: join(workspaceRoot, "runtime.db"),
+        memory: {
+          enabled: true
+        }
       },
       provider: new ScriptedProvider(() => ({
         kind: "final",
@@ -467,7 +473,7 @@ describe("Phase 3 memory plane", () => {
     }
   });
 
-  it("includes recall explanations, confidence, status, and filter reasons", () => {
+  it("does not expose restricted stale memory in recall explanations", () => {
     const { memoryPlane, storage, close } = createMemoryHarness();
 
     try {
@@ -509,11 +515,7 @@ describe("Phase 3 memory plane", () => {
         .find((event) => event.eventType === "memory_recalled");
 
       expect(recallEvent).toBeDefined();
-      expect(recallEvent?.payload.entries[0]?.explanation).toContain("privacy=restricted");
-      expect(recallEvent?.payload.entries[0]?.confidence).toBe(0.61);
-      expect(recallEvent?.payload.entries[0]?.status).toBe("stale");
-      expect(recallEvent?.payload.entries[0]?.downrankReasons).toContain("stale_memory");
-      expect(recallEvent?.payload.entries[0]?.filterReasonCode).toBe("filtered_by_privacy");
+      expect(recallEvent?.payload.entries).toEqual([]);
     } finally {
       close();
     }

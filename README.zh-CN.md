@@ -38,6 +38,21 @@ talon provider test
 talon tui
 ```
 
+PowerShell 用户可以为当前会话设置 provider key：
+
+```powershell
+$env:OPENAI_API_KEY = "your-api-key"
+```
+
+在配置真实 provider 前，可以先用 mock provider 验证 CLI：
+
+```bash
+talon init --yes
+talon provider setup mock
+talon provider test
+talon --version
+```
+
 从源码运行：
 
 ```bash
@@ -155,6 +170,24 @@ npm run release:check
 npm pack --dry-run --json
 ```
 
+完整检查可能需要数分钟。`release check` 会输出当前阶段，并为每个子命令设置
+10 分钟超时。如果同一干净 checkout 中的 `corepack pnpm check` 已经通过，可以
+避免重复执行 lint、tests 和 build：
+
+```bash
+npm run release:check -- --skip-quality-checks
+```
+
+发布前确认 npm 身份，发布后从 registry 安装指定版本进行验证：
+
+```bash
+npm whoami
+npm publish --access public
+npm install -g auto-talon@0.1.0
+talon --version
+talon doctor
+```
+
 安装或更新本地项目后运行：
 
 ```bash
@@ -167,3 +200,8 @@ Release checklist 覆盖 lint、tests、build、smoke/eval 阈值、beta readine
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+
+### 长期记忆
+
+长期记忆默认关闭。使用 /memory on、/memory off 或 	alon memory on|off 手动开关；详见 [docs/user/memory.md](docs/user/memory.md)。

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createApplication, createDefaultRunOptions } from "../runtime/index.js";
+import { writeMemoryEnabled } from "../runtime/runtime-config.js";
 import {
   requireProviderManifest,
   resolveDefaultProviderSettings,
@@ -168,6 +169,7 @@ export async function runSmokeTask(
 ): Promise<SmokeTaskRunResult> {
   const workspaceRoot = await fs.mkdtemp(join(tmpdir(), `auto-talon-smoke-${taskFixture.taskId}-`));
   await seedWorkspace(workspaceRoot);
+  writeMemoryEnabled(workspaceRoot, true);
 
   const provider = createHarnessProvider(options.providerName);
   const runtimeProviderName = options.providerName === "scripted-smoke" ? "mock" : options.providerName;

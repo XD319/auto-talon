@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApplication, createDefaultRunOptions } from "../src/runtime/index.js";
+import { writeMemoryEnabled } from "../src/runtime/runtime-config.js";
 import { nextPanel, previousPanel } from "../src/tui/hooks/use-dashboard-controller.js";
 import { extractChainLabel, RuntimeDashboardQueryService } from "../src/tui/view-models/runtime-dashboard.js";
 import type { LocalPolicyConfig, Provider, ProviderInput, ProviderResponse } from "../src/types/index.js";
@@ -151,6 +152,7 @@ describe("Phase 4 Ink TUI query models", () => {
 
   it("shows memory hits and failure reasons in the dashboard details", async () => {
     const workspaceRoot = await createTempWorkspace();
+    writeMemoryEnabled(workspaceRoot, true);
     const handle = createApplication(workspaceRoot, {
       config: {
         databasePath: join(workspaceRoot, "runtime.db")

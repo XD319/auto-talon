@@ -282,8 +282,9 @@ export class ExperiencePlane {
     }
   ): ExperienceRecallCandidate[] {
     const filters = input.filters ?? {};
-    const candidates = this.recallEngine.rankExperiences(this.dependencies.experienceRepository.list(filters), {
-      filters,
+    const recallFilters: ExperienceQuery = { ...filters, statuses: ["accepted", "promoted"] };
+    const candidates = this.recallEngine.rankExperiences(this.dependencies.experienceRepository.list(recallFilters), {
+      filters: recallFilters,
       limit: input.limit,
       query
     });

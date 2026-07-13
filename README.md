@@ -54,6 +54,21 @@ talon provider test
 talon tui
 ```
 
+PowerShell users can set the provider key for the current session with:
+
+```powershell
+$env:OPENAI_API_KEY = "your-api-key"
+```
+
+To verify the CLI before configuring a real provider:
+
+```bash
+talon init --yes
+talon provider setup mock
+talon provider test
+talon --version
+```
+
 Run from source:
 
 ```bash
@@ -185,6 +200,26 @@ npm run release:check
 npm pack --dry-run --json
 ```
 
+The full suite can take several minutes. `release check` prints its current
+stage and gives each child command a ten-minute timeout. If `corepack pnpm
+check` has already passed in the same clean checkout, avoid repeating lint,
+tests, and build with:
+
+```bash
+npm run release:check -- --skip-quality-checks
+```
+
+Before publishing, verify the npm identity and then validate the exact version
+from the registry after publication:
+
+```bash
+npm whoami
+npm publish --access public
+npm install -g auto-talon@0.1.0
+talon --version
+talon doctor
+```
+
 After installing or updating a local project:
 
 ```bash
@@ -199,3 +234,8 @@ setup scripts, and package contents.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+
+### Long-term memory
+
+Long-term memory is off by default. Use /memory on, /memory off, or 	alon memory on|off; see [docs/user/memory.md](docs/user/memory.md).
