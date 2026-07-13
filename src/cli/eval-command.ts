@@ -167,10 +167,17 @@ export function registerEvalCommands(program: Command): void {
     .command("check")
     .option("--provider <provider>", "Provider to use for eval checks", "scripted-smoke")
     .option("--cwd <path>", "Workspace path", process.cwd())
-    .action(async (commandOptions: { cwd: string; provider: SupportedProviderName | "scripted-smoke" }) => {
+    .option("--skip-quality-checks", "Skip lint, test, and build after running them separately")
+    .action(async (commandOptions: {
+      cwd: string;
+      provider: SupportedProviderName | "scripted-smoke";
+      skipQualityChecks?: boolean;
+    }) => {
       const report = await runReleaseChecklist({
         cwd: commandOptions.cwd,
-        provider: commandOptions.provider
+        onProgress: (message) => console.error(`[release] ${message}`),
+        provider: commandOptions.provider,
+        skipQualityChecks: commandOptions.skipQualityChecks === true
       });
       console.log(formatReleaseChecklistReport(report));
       if (!report.allPassed) {

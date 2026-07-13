@@ -23,14 +23,20 @@ export interface ReleaseChecklistReport {
 }
 
 export interface ReleaseChecklistOptions {
+  commandTimeoutMs?: number;
   cwd?: string;
+  onProgress?: (message: string) => void;
   provider?: SupportedProviderName | "scripted-smoke";
+  skipQualityChecks?: boolean;
 }
 
 export async function runReleaseChecklist(
   options: ReleaseChecklistOptions = {}
 ): Promise<ReleaseChecklistReport> {
   const cwd = options.cwd ?? process.cwd();
+  const commandTimeoutMs = options.commandTimeoutMs ?? 10 * 60 * 1000;
+  const progress = options.onProgress ?? (() => undefined);
+  progress("Validating release repository");
   const repository = validateReleaseRepository(cwd);
   if (!repository.ok) {
     return {
@@ -41,17 +47,37 @@ export async function runReleaseChecklist(
   }
 
   const provider = options.provider ?? "scripted-smoke";
+  progress(`Running smoke/eval checks with ${provider}`);
   const evalReport = await runEvalReport({ providerName: provider });
+  progress("Running beta readiness checks");
   const beta = await runBetaReadinessCheck({ providerName: provider });
   const schema = validateMigrationSchemaVersion();
 
-  const lint = runPackageScript("lint", cwd);
-  const test = runPackageScript("test", cwd);
-  const build = runPackageScript("build", cwd);
+  const skippedQualityCheck = {
+    details: "skipped by --skip-quality-checks; run corepack pnpm check separately",
+    ok: true
+  };
+  progress(options.skipQualityChecks === true ? "Skipping lint, test, and build" : "Running lint");
+  const lint = options.skipQualityChecks === true
+    ? skippedQualityCheck
+    : runPackageScript("lint", cwd, commandTimeoutMs);
+  if (options.skipQualityChecks !== true) {
+    progress("Running full test suite (this can take several minutes)");
+  }
+  const test = options.skipQualityChecks === true
+    ? skippedQualityCheck
+    : runPackageScript("test", cwd, commandTimeoutMs);
+  if (options.skipQualityChecks !== true) {
+    progress("Building release artifacts");
+  }
+  const build = options.skipQualityChecks === true
+    ? skippedQualityCheck
+    : runPackageScript("build", cwd, commandTimeoutMs);
   const packageMetadata = validatePackageMetadata(cwd);
   const nodeVersion = validateNodeVersionPolicy(cwd);
   const lockfiles = validateLockfilePolicy(cwd);
-  const pack = runPackDryRun(cwd);
+  progress("Inspecting npm package contents");
+  const pack = runPackDryRun(cwd, commandTimeoutMs);
   const packContents = pack.ok
     ? validatePackContents(pack.files)
     : { ok: false, details: pack.details };
@@ -101,6 +127,7 @@ export async function runReleaseChecklist(
       packagedTextEncoding.details
     )
   ];
+  progress("Release checklist complete");
 
   return {
     allPassed: items.every((item) => item.ok),
@@ -115,20 +142,29 @@ function toItem(id: string, title: string, ok: boolean, details: string): Releas
 
 type ReleasePackageScript = "build" | "lint" | "test";
 
-export function runPackageScript(script: ReleasePackageScript, cwd: string): { details: string; ok: boolean } {
-  return runCommand("npm", ["run", script], cwd);
+export function runPackageScript(
+  script: ReleasePackageScript,
+  cwd: string,
+  timeoutMs = 10 * 60 * 1000
+): { details: string; ok: boolean } {
+  return runCommand("npm", ["run", script], cwd, timeoutMs);
 }
 
-function runCommand(command: string, args: string[], cwd: string): { details: string; ok: boolean } {
+function runCommand(command: string, args: string[], cwd: string, timeoutMs: number): { details: string; ok: boolean } {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
-    shell: process.platform === "win32"
+    shell: process.platform === "win32",
+    timeout: timeoutMs
   });
   if (result.status === 0) {
     return { ok: true, details: `${command} ${args.join(" ")}` };
   }
-  const error = result.stderr?.trim() || result.stdout?.trim() || "unknown failure";
+  const timedOut = result.error !== undefined && "code" in result.error && result.error.code === "ETIMEDOUT";
+  if (timedOut) {
+    return { ok: false, details: `${command} ${args.join(" ")} timed out after ${timeoutMs}ms` };
+  }
+  const error = result.stderr?.trim() || result.stdout?.trim() || result.error?.message || "unknown failure";
   return { ok: false, details: error.split("\n")[0] ?? "failed" };
 }
 
@@ -177,6 +213,9 @@ export function validatePackageMetadata(cwd: string): { details: string; ok: boo
   }
   if (!hasBinTalon(packageJson)) {
     missing.push("bin.talon");
+  }
+  if (!hasPublicPublishConfig(packageJson)) {
+    missing.push("publishConfig.access=public");
   }
 
   return {
@@ -388,12 +427,17 @@ function locateTextIndex(contents: string, index: number): { column: number; lin
   return { column, line };
 }
 
-function runPackDryRun(cwd: string): { details: string; files: string[]; ok: boolean } {
+function runPackDryRun(cwd: string, timeoutMs: number): { details: string; files: string[]; ok: boolean } {
   const result = spawnSync("npm", ["pack", "--dry-run", "--json"], {
     cwd,
     encoding: "utf8",
-    shell: process.platform === "win32"
+    shell: process.platform === "win32",
+    timeout: timeoutMs
   });
+  const timedOut = result.error !== undefined && "code" in result.error && result.error.code === "ETIMEDOUT";
+  if (timedOut) {
+    return { details: `npm pack timed out after ${timeoutMs}ms`, files: [], ok: false };
+  }
   if (result.status !== 0) {
     const error = result.stderr?.trim() || result.stdout?.trim() || "unknown failure";
     return { details: error.split("\n")[0] ?? "npm pack failed", files: [], ok: false };
@@ -463,5 +507,14 @@ function hasBinTalon(packageJson: Record<string, unknown>): boolean {
     typeof bin === "object" &&
     bin !== null &&
     (bin as Record<string, unknown>).talon === "dist/cli/bin.js"
+  );
+}
+
+function hasPublicPublishConfig(packageJson: Record<string, unknown>): boolean {
+  const publishConfig = packageJson.publishConfig;
+  return (
+    typeof publishConfig === "object" &&
+    publishConfig !== null &&
+    (publishConfig as Record<string, unknown>).access === "public"
   );
 }

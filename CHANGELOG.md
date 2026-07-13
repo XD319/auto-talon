@@ -4,7 +4,10 @@
 
 - First formal release of `auto-talon` as a local-first personal agent for
   CLI/TUI daily work.
-- **Breaking:** Legacy thread→session schema and JSON session transcripts require a one-time `talon doctor --fix` after upgrade. Runtime no longer silently repairs legacy schema on every open.
+- **Pre-release upgrade note:** Users upgrading from source checkouts or preview
+  builds with the legacy thread→session schema or JSON session transcripts must
+  run `talon doctor --fix` once. Runtime no longer silently repairs the legacy
+  schema on every open.
 - `talon doctor` warns when deprecated `compact.bufferTokens` is set (field has no runtime effect).
 - Added the `talon tui` daily agent surface, `talon run` / `talon continue`
   terminal workflows, and operational views for tasks, sessions, trace, audit,
