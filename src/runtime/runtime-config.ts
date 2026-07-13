@@ -164,7 +164,38 @@ const runtimeConfigFileSchema = z.object({
       toolOutputMaxTokens: z.number().int().positive().optional()
     })
     .optional(),
-  recall: z
+  memory: z
+    .object({
+      enabled: z.boolean().optional(),
+      core: z
+        .object({
+          profileTokenBudget: z.number().int().positive().optional(),
+          projectTokenBudget: z.number().int().positive().optional()
+        })
+        .optional(),
+      flush: z
+        .object({
+          enabled: z.boolean().optional(),
+          maxSuggestions: z.number().int().positive().max(10).optional()
+        })
+        .optional(),
+      search: z
+        .object({
+          provider: z.enum(["fts", "openai_compatible"]).optional(),
+          openaiCompatible: z
+            .object({
+              endpoint: z.string().url().optional(),
+              model: z.string().min(1).optional(),
+              apiKeyEnv: z.string().min(1).optional(),
+              dimensions: z.number().int().positive().optional(),
+              timeoutMs: z.number().int().positive().optional(),
+              batchSize: z.number().int().positive().optional()
+            })
+            .optional()
+        })
+        .optional()
+    })
+    .optional(),  recall: z
     .object({
       budgetRatio: z.number().positive().max(1).optional(),
       enabled: z.boolean().optional(),
@@ -355,7 +386,28 @@ export interface RuntimeConfig {
     engine: "hermes_compressor";
   };
   contextRetention: ContextRetentionConfig;
-  recall: {
+  memory: {
+    enabled: boolean;
+    core: {
+      profileTokenBudget: number;
+      projectTokenBudget: number;
+    };
+    flush: {
+      enabled: boolean;
+      maxSuggestions: number;
+    };
+    search: {
+      provider: "fts" | "openai_compatible";
+      openaiCompatible: {
+        endpoint: string;
+        model: string;
+        apiKeyEnv: string;
+        dimensions: number;
+        timeoutMs: number;
+        batchSize: number;
+      };
+    };
+  };  recall: {
     enabled: boolean;
     budgetRatio: number;
     maxCandidatesPerScope: number;
@@ -494,7 +546,28 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     maxTotalBytesUnderGuard: 200_000,
     toolOutputMaxTokens: 2_500
   },
-  recall: {
+  memory: {
+    enabled: false,
+    core: {
+      profileTokenBudget: 500,
+      projectTokenBudget: 800
+    },
+    flush: {
+      enabled: true,
+      maxSuggestions: 3
+    },
+    search: {
+      provider: "fts",
+      openaiCompatible: {
+        endpoint: "https://api.openai.com/v1/embeddings",
+        model: "text-embedding-3-small",
+        apiKeyEnv: "OPENAI_API_KEY",
+        dimensions: 1536,
+        timeoutMs: 10_000,
+        batchSize: 32
+      }
+    }
+  },  recall: {
     budgetRatio: 0.25,
     enabled: true,
     maxCandidatesPerScope: 10
@@ -739,7 +812,46 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         fileConfig?.context?.engine ??
         DEFAULT_RUNTIME_CONFIG.context.engine
     },
-    recall: {
+    memory: {
+      enabled:
+        envConfig.memory?.enabled ??
+        fileConfig?.memory?.enabled ??
+        DEFAULT_RUNTIME_CONFIG.memory.enabled,
+      core: {
+        profileTokenBudget:
+          envConfig.memory?.core?.profileTokenBudget ??
+          fileConfig?.memory?.core?.profileTokenBudget ??
+          DEFAULT_RUNTIME_CONFIG.memory.core.profileTokenBudget,
+        projectTokenBudget:
+          envConfig.memory?.core?.projectTokenBudget ??
+          fileConfig?.memory?.core?.projectTokenBudget ??
+          DEFAULT_RUNTIME_CONFIG.memory.core.projectTokenBudget
+      },
+      flush: {
+        enabled:
+          envConfig.memory?.flush?.enabled ??
+          fileConfig?.memory?.flush?.enabled ??
+          DEFAULT_RUNTIME_CONFIG.memory.flush.enabled,
+        maxSuggestions:
+          envConfig.memory?.flush?.maxSuggestions ??
+          fileConfig?.memory?.flush?.maxSuggestions ??
+          DEFAULT_RUNTIME_CONFIG.memory.flush.maxSuggestions
+      },
+      search: {
+        provider:
+          envConfig.memory?.search?.provider ??
+          fileConfig?.memory?.search?.provider ??
+          DEFAULT_RUNTIME_CONFIG.memory.search.provider,
+        openaiCompatible: {
+          endpoint: envConfig.memory?.search?.openaiCompatible?.endpoint ?? fileConfig?.memory?.search?.openaiCompatible?.endpoint ?? DEFAULT_RUNTIME_CONFIG.memory.search.openaiCompatible.endpoint,
+          model: envConfig.memory?.search?.openaiCompatible?.model ?? fileConfig?.memory?.search?.openaiCompatible?.model ?? DEFAULT_RUNTIME_CONFIG.memory.search.openaiCompatible.model,
+          apiKeyEnv: envConfig.memory?.search?.openaiCompatible?.apiKeyEnv ?? fileConfig?.memory?.search?.openaiCompatible?.apiKeyEnv ?? DEFAULT_RUNTIME_CONFIG.memory.search.openaiCompatible.apiKeyEnv,
+          dimensions: envConfig.memory?.search?.openaiCompatible?.dimensions ?? fileConfig?.memory?.search?.openaiCompatible?.dimensions ?? DEFAULT_RUNTIME_CONFIG.memory.search.openaiCompatible.dimensions,
+          timeoutMs: envConfig.memory?.search?.openaiCompatible?.timeoutMs ?? fileConfig?.memory?.search?.openaiCompatible?.timeoutMs ?? DEFAULT_RUNTIME_CONFIG.memory.search.openaiCompatible.timeoutMs,
+          batchSize: envConfig.memory?.search?.openaiCompatible?.batchSize ?? fileConfig?.memory?.search?.openaiCompatible?.batchSize ?? DEFAULT_RUNTIME_CONFIG.memory.search.openaiCompatible.batchSize
+        }
+      }
+    },    recall: {
       budgetRatio:
         envConfig.recall?.budgetRatio ??
         fileConfig?.recall?.budgetRatio ??
@@ -1114,6 +1226,11 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
       ...(config.workflow ?? {}),
       shellBackend: shellBackendSchema.parse(shellBackend)
     };
+  }
+
+  const memoryEnabled = readBooleanEnv("AGENT_MEMORY_ENABLED");
+  if (memoryEnabled !== undefined) {
+    config.memory = { ...(config.memory ?? {}), enabled: memoryEnabled };
   }
 
   const promotionEnabled = readBooleanEnv("AGENT_PROMOTION_ENABLED");
@@ -1544,6 +1661,23 @@ export function writeAuxiliarySlot(cwd: string, slot: AuxiliarySlot, value: stri
       ...DEFAULT_AUXILIARY_CONFIG,
       ...fileConfig.auxiliary,
       [slot]: normalizedValue.toLowerCase() === "auto" ? "auto" : normalizedValue
+    }
+  };
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  return configPath;
+}
+
+export function writeMemoryEnabled(cwd: string, enabled: boolean): string {
+  const workspaceRoot = resolve(cwd);
+  const configPath = join(workspaceRoot, ".auto-talon", "runtime.config.json");
+  const fileConfig = loadRuntimeConfigFile(configPath) ?? {};
+  const nextConfig = {
+    version: 1,
+    ...fileConfig,
+    memory: {
+      ...fileConfig.memory,
+      enabled
     }
   };
   mkdirSync(dirname(configPath), { recursive: true });

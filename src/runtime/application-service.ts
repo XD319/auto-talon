@@ -21,6 +21,7 @@ import {
   type WorkflowCustomShell,
   type WorkflowTestCommand
 } from "./runtime-config.js";
+import { resolveRuntimeConfig, writeMemoryEnabled } from "./runtime-config.js";
 import type { BudgetService } from "./budget/budget-service.js";
 import type {
   ApprovalRecord,
@@ -774,7 +775,7 @@ export class AgentApplicationService {
 
   public reviewMemory(
     memoryId: string,
-    status: "verified" | "rejected" | "stale",
+    status: "verified" | "rejected" | "stale" | "archived",
     reviewerId: string,
     note: string
   ): MemoryRecord {
@@ -829,6 +830,7 @@ export class AgentApplicationService {
         traceEventId: null
       },
       status: "verified",
+      tier: "core",
       summary,
       title
     });
@@ -841,7 +843,7 @@ export class AgentApplicationService {
   }
 
   public forgetMemory(memoryId: string, reviewerId: string, note: string): MemoryRecord {
-    return this.reviewMemory(memoryId, "stale", reviewerId, note);
+    return this.reviewMemory(memoryId, "archived", reviewerId, note);
   }
 
   public explainMemoryRecall(taskId: string, memoryId?: string): {
@@ -889,6 +891,18 @@ export class AgentApplicationService {
     };
   }
 
+  public getLongTermMemoryStatus(cwd: string): { enabled: boolean; configPath: string } {
+    const config = resolveRuntimeConfig(cwd);
+    return { enabled: config.memory.enabled, configPath: config.configPath };
+  }
+
+  public setLongTermMemoryEnabled(cwd: string, enabled: boolean): {
+    enabled: boolean;
+    configPath: string;
+  } {
+    const configPath = writeMemoryEnabled(cwd, enabled);
+    return { enabled, configPath };
+  }
   public listMemorySuggestions(query: {
     limit?: number;
     status?: InboxItem["status"];
@@ -907,29 +921,34 @@ export class AgentApplicationService {
     memory: MemoryRecord | null;
   } {
     const item = this.requireMemorySuggestion(inboxId);
-    const draft = parseMemorySuggestionDraft(item.metadata);
-    const memory =
-      draft === null
-        ? this.restoreExistingSuggestedMemory(item)
-        : this.dependencies.memoryPlane.writeMemory({
-            confidence: draft.confidence,
-            content: draft.content,
-            expiresAt: null,
-            keywords: draft.keywords,
-            metadata: {
-              ...draft.metadata,
-              acceptedFromInboxId: item.inboxId,
-              acceptedBy: reviewerId
-            },
-            privacyLevel: draft.privacyLevel,
-            retentionPolicy: draft.retentionPolicy,
-            scope: draft.scope,
-            scopeKey: draft.scopeKey,
-            source: draft.source,
-            status: "verified",
-            summary: draft.summary,
-            title: draft.title
-          });
+    const action = item.metadata.action;
+    const memory = action === "replace" || action === "remove"
+      ? this.applyMemoryMutationSuggestion(item, reviewerId, action)
+      : (() => {
+          const draft = parseMemorySuggestionDraft(item.metadata);
+          return draft === null
+            ? this.restoreExistingSuggestedMemory(item)
+            : this.dependencies.memoryPlane.writeMemory({
+                confidence: draft.confidence,
+                content: draft.content,
+                expiresAt: null,
+                keywords: draft.keywords,
+                metadata: {
+                  ...draft.metadata,
+                  acceptedFromInboxId: item.inboxId,
+                  acceptedBy: reviewerId
+                },
+                privacyLevel: draft.privacyLevel,
+                retentionPolicy: draft.retentionPolicy,
+                scope: draft.scope,
+                scopeKey: draft.scopeKey,
+                source: draft.source,
+                status: "verified",
+                tier: "core",
+                summary: draft.summary,
+                title: draft.title
+              });
+        })();
     const done = this.dependencies.inboxService.markDone(inboxId, reviewerId);
     return { inboxItem: done, memory };
   }
@@ -1251,6 +1270,73 @@ export class AgentApplicationService {
     return item;
   }
 
+  private applyMemoryMutationSuggestion(
+    item: InboxItem,
+    reviewerId: string,
+    action: "replace" | "remove"
+  ): MemoryRecord | null {
+    const targetMemoryId = typeof item.metadata.targetMemoryId === "string"
+      ? item.metadata.targetMemoryId
+      : null;
+    if (targetMemoryId === null) {
+      throw new Error("Memory suggestion has no target memory.");
+    }
+    const current = this.dependencies.findMemory(targetMemoryId);
+    if (current === null || current.status === "archived") {
+      throw new Error(`Target memory ${targetMemoryId} is no longer active.`);
+    }
+    if (action === "remove") {
+      return this.dependencies.memoryPlane.reviewMemory({
+        memoryId: current.memoryId,
+        reviewerId,
+        status: "archived",
+        note: `Accepted remove suggestion ${item.inboxId}`
+      });
+    }
+    const oldText = typeof item.metadata.oldText === "string" ? item.metadata.oldText : "";
+    const replacement = typeof item.metadata.content === "string" ? item.metadata.content : "";
+    if (oldText.length === 0 || current.content.split(oldText).length !== 2) {
+      throw new Error("Replace suggestion no longer has a unique substring match.");
+    }
+    const content = current.content.replace(oldText, replacement);
+    const created = this.dependencies.memoryPlane.writeMemory({
+      confidence: Math.max(current.confidence, 0.9),
+      content,
+      expiresAt: current.expiresAt,
+      keywords: extractMemoryKeywords(content),
+      metadata: {
+        ...current.metadata,
+        acceptedFromInboxId: item.inboxId,
+        acceptedBy: reviewerId
+      },
+      privacyLevel: current.privacyLevel,
+      retentionPolicy: current.retentionPolicy,
+      scope: current.scope,
+      scopeKey: current.scopeKey,
+      source: {
+        label: `Accepted replace suggestion ${item.inboxId}`,
+        sourceType: "manual_review",
+        taskId: item.taskId,
+        toolCallId: null,
+        traceEventId: null
+      },
+      status: "verified",
+      tier: "core",
+      summary: summarizeText(content, 160),
+      supersedes: current.memoryId,
+      title: summarizeText(content, 80)
+    });
+    if (created === null) {
+      throw new Error("Replacement memory was rejected by policy; original memory was preserved.");
+    }
+    this.dependencies.memoryPlane.reviewMemory({
+      memoryId: current.memoryId,
+      reviewerId,
+      status: "archived",
+      note: `Superseded by ${created.memoryId}`
+    });
+    return created;
+  }
   private restoreExistingSuggestedMemory(item: InboxItem): MemoryRecord | null {
     const promotedMemoryId = typeof item.metadata.promotedMemoryId === "string" ? item.metadata.promotedMemoryId : null;
     if (promotedMemoryId === null) {
@@ -1669,6 +1755,7 @@ function contextFragmentToMemoryRecord(
     },
     sourceType: fragment.sourceType,
     status: fragment.status,
+    tier: "retrieval",
     summary: fragment.text,
     supersedes: null,
     title: fragment.title,

@@ -18,6 +18,7 @@ import {
   formatSnapshot
 } from "./formatters.js";
 import { parsePositiveIntegerOption } from "./cli-helpers.js";
+import { MemoryMaintenanceService } from "../memory/memory-maintenance.js";
 
 type InboxListStatus = "pending" | "seen" | "done" | "dismissed";
 
@@ -66,6 +67,49 @@ function resolveScopeKey(
 export function registerMemoryCommands(program: Command): void {
   const memoryCommand = program.command("memory").description("Inspect governed memories");
 
+  memoryCommand.command("status").description("Show whether long-term memory is enabled").action(() => {
+    const handle = createApplication(process.cwd());
+    try {
+      const status = handle.service.getLongTermMemoryStatus(process.cwd());
+      console.log(`Long-term memory: ${status.enabled ? "on" : "off"}\nConfig: ${status.configPath}`);
+    } finally {
+      handle.close();
+    }
+  });
+
+  for (const enabled of [true, false] as const) {
+    memoryCommand.command(enabled ? "on" : "off")
+      .description(`${enabled ? "Enable" : "Disable"} long-term memory for this workspace`)
+      .action(() => {
+        const handle = createApplication(process.cwd());
+        try {
+          const status = handle.service.setLongTermMemoryEnabled(process.cwd(), enabled);
+          console.log(`Long-term memory is now ${status.enabled ? "on" : "off"}.`);
+        } finally {
+          handle.close();
+        }
+      });
+  }
+  const maintenanceCommand = memoryCommand.command("maintenance").description("Archive and rebuild legacy memory data");
+  maintenanceCommand.command("rebuild")
+    .option("--dry-run", "Preview changes without modifying data")
+    .option("--apply", "Back up and apply changes")
+    .action((options: { dryRun?: boolean; apply?: boolean }) => {
+      if (options.dryRun === options.apply) throw new Error("Choose exactly one of --dry-run or --apply.");
+      const handle = createApplication(process.cwd());
+      try {
+        const service = new MemoryMaintenanceService(handle.infrastructure.storage.database, handle.config.databasePath);
+        console.log(JSON.stringify(service.rebuild(options.apply === true ? "apply" : "dry-run"), null, 2));
+      } finally { handle.close(); }
+    });
+
+  memoryCommand.command("doctor").description("Report long-term memory health and coverage").action(() => {
+    const handle = createApplication(process.cwd());
+    try {
+      const service = new MemoryMaintenanceService(handle.infrastructure.storage.database, handle.config.databasePath);
+      console.log(JSON.stringify(service.doctor(), null, 2));
+    } finally { handle.close(); }
+  });
   memoryCommand
     .command("list")
     .option("--scope <scope>", "Filter scope: profile | project | working | experience_ref | skill_ref")

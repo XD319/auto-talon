@@ -81,6 +81,7 @@ export interface ExecutionLoopCallbacks {
     input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0],
     manualRequest?: ManualCompactRequest | null
   ) => Promise<SessionCompactResult>;
+  shouldCompact: (input: Parameters<CompactTriggerPolicy["shouldCompact"]>[0]) => boolean;
   completeTaskSuccess: (
     state: ExecutionLoopState,
     messages: ConversationMessage[],
@@ -89,6 +90,10 @@ export interface ExecutionLoopCallbacks {
     finalOutput: string
   ) => RuntimeRunResult;
   emitOutput: (draft: Parameters<RuntimeOutputService["record"]>[0]) => RuntimeOutputEvent;
+  flushMemory?: (input: {
+    task: TaskRecord; messages: ConversationMessage[]; iteration: number;
+    tokenBudget: ExecutionLoopState["tokenBudget"]; signal: AbortSignal; provider: Provider;
+  }) => Promise<number>;
   planRecall: (
     input: Parameters<RecallPlanner["plan"]>[0]
   ) => Promise<ReturnType<RecallPlanner["plan"]>>;
@@ -867,6 +872,26 @@ export class ExecutionLoopRunner {
           },
           stage: "memory",
           summary: "Manual compaction requested",
+          taskId: task.taskId
+        });
+      }
+      const willCompact =
+        manualCompactRequest !== null || this.callbacks.shouldCompact(compactInputBase);
+      if (willCompact && this.callbacks.flushMemory !== undefined) {
+        const suggestionCount = await this.callbacks.flushMemory({
+          task,
+          messages,
+          iteration,
+          tokenBudget: state.tokenBudget,
+          signal: state.managedAbortController.abortController.signal,
+          provider: this.callbacks.resolveActiveMainProvider(task)
+        });
+        this.dependencies.traceService.record({
+          actor: "runtime.memory_flush",
+          eventType: "memory_flush_completed",
+          payload: { iteration, suggestionCount },
+          stage: "memory",
+          summary: `Memory flush completed with ${suggestionCount} suggestion(s)`,
           taskId: task.taskId
         });
       }

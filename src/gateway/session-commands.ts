@@ -14,6 +14,8 @@ export interface GatewayResumeSessionOperations {
     runtimeUserId: string;
   }) => { resumeHint: string };
   resolveGatewayRuntimeSessionId: (adapterId: string, externalSessionId: string) => string | null;
+  getLongTermMemoryStatus: (cwd: string) => { enabled: boolean; configPath: string };
+  setLongTermMemoryEnabled: (cwd: string, enabled: boolean) => { enabled: boolean; configPath: string };
 }
 
 export interface GatewayResumeCommandInput {
@@ -24,6 +26,7 @@ export interface GatewayResumeCommandInput {
   runtimeUserId: string;
   sessions: GatewayResumeSessionOperations;
   taskInput: string;
+  cwd: string;
 }
 
 export interface GatewayResumeCommandResult {
@@ -37,6 +40,13 @@ export function tryHandleGatewayResumeCommand(
   const trimmed = input.taskInput.trim();
   const parts = trimmed.split(/\s+/u);
   const command = parts[0] ?? "";
+  if (command === "/memory" && ["on", "off", "status"].includes(parts[1] ?? "")) {
+    const action = parts[1] ?? "status";
+    const status = action === "status"
+      ? input.sessions.getLongTermMemoryStatus(input.cwd)
+      : input.sessions.setLongTermMemoryEnabled(input.cwd, action === "on");
+    return { handled: true, message: `Long-term memory: ${status.enabled ? "on" : "off"}` };
+  }
   if (command !== "/sessions" && command !== "/resume") {
     return { handled: false };
   }

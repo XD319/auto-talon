@@ -23,3 +23,5 @@ export * from "./todo-session-store.js";
 export * from "./tool-overrides.js";
 export * from "./toolsets.js";
 export * from "./session-search-tool.js";
+
+export * from "./memory-tool.js";

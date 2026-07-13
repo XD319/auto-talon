@@ -83,6 +83,7 @@ import type {
   BudgetPricingEntry
 } from "../types/index.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
+import type { MemoryFlushService } from "../memory/memory-flush-service.js";
 import {
   DeterministicCompactSummarizer,
   type CompactSummarizer,
@@ -109,6 +110,7 @@ export interface ExecutionKernelDependencies {
   getSessionCommitmentState?: (sessionId: string) => SessionCommitmentState | null;
   manualCompactCoordinator?: ManualCompactCoordinator;
   memoryPlane: MemoryPlane;
+  memoryFlushService?: MemoryFlushService;
   recallPlanner: RecallPlanner;
   provider: Provider;
   runMetadataRepository: RunMetadataRepository;
@@ -217,9 +219,13 @@ export class ExecutionKernel {
       {
         buildCompactInput: (input) => this.buildCompactInput(input),
         compactMessages: (input, manualRequest) => this.compactMessages(input, manualRequest),
+        shouldCompact: (input) => this.dependencies.compactPolicy.shouldCompact(input).triggered,
         completeTaskSuccess: (state, messages, availableTools, task, finalOutput) =>
           this.completeTaskSuccess(state, messages, availableTools, task, finalOutput),
         emitOutput: (draft) => this.emitOutput(draft),
+        ...(dependencies.memoryFlushService !== undefined
+          ? { flushMemory: (input: Parameters<MemoryFlushService["flush"]>[0]) => dependencies.memoryFlushService?.flush(input) ?? Promise.resolve(0) }
+          : {}),
         planRecall: (input) => this.planRecall(input),
         requestFinalSummaryWithoutTools: (state, messages, availableTools, task, iteration, reason) =>
           this.requestFinalSummaryWithoutTools(

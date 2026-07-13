@@ -12,6 +12,8 @@ import { ExperienceCollector } from "../experience/experience-collector.js";
 import { ExperiencePlane } from "../experience/experience-plane.js";
 import { PromotionAdvisor } from "../experience/promotion/promotion-advisor.js";
 import { MemoryPlane } from "../memory/memory-plane.js";
+import { CoreMemoryService } from "../memory/core-memory-service.js";
+import { MemoryFlushService } from "../memory/memory-flush-service.js";
 import { CompactTriggerPolicy } from "../memory/compact-policy.js";
 import { McpClientManager } from "../mcp/index.js";
 import { ContextPolicy } from "../policy/context-policy.js";
@@ -69,6 +71,7 @@ import {
   WebSearchTool,
   SessionSearchTool,
   TodoTool,
+  MemoryTool,
   CronjobTool
 } from "../tools/index.js";
 import { TodoSessionStore } from "../tools/todo-session-store.js";
@@ -257,6 +260,7 @@ export interface AppConfig {
   };
   context: RuntimeConfig["context"];
   contextRetention: ContextRetentionConfig;
+  memory: RuntimeConfig["memory"];
   recall: {
     enabled: boolean;
     budgetRatio: number;
@@ -354,6 +358,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     compact: runtimeConfig.compact,
     context: runtimeConfig.context,
     contextRetention: runtimeConfig.contextRetention,
+    memory: runtimeConfig.memory,
     recall: runtimeConfig.recall,
     promotion: runtimeConfig.promotion,
     routing: runtimeConfig.routing,
@@ -499,6 +504,20 @@ function mergeCreateApplicationConfig(
     contextRetention: {
       ...resolvedConfig.contextRetention,
       ...options.config?.contextRetention
+    },
+    memory: {
+      ...resolvedConfig.memory,
+      ...options.config?.memory,
+      core: { ...resolvedConfig.memory.core, ...options.config?.memory?.core },
+      flush: { ...resolvedConfig.memory.flush, ...options.config?.memory?.flush },
+      search: {
+        ...resolvedConfig.memory.search,
+        ...options.config?.memory?.search,
+        openaiCompatible: {
+          ...resolvedConfig.memory.search.openaiCompatible,
+          ...options.config?.memory?.search?.openaiCompatible
+        }
+      }
     },
     recall: {
       ...resolvedConfig.recall,
@@ -685,6 +704,11 @@ function buildApplicationRuntime(
     new WebFetchTool(sandboxService, undefined, config.web, undefined, webPageSummarizer),
     new WebSearchTool(sandboxService, config.web),
     new SessionSearchTool({ searchService: sessionMessageSearchService }),
+    new MemoryTool({
+      enabled: () => resolveRuntimeConfig(config.workspaceRoot).memory.enabled,
+      inboxRepository: storage.inbox,
+      memoryRepository: storage.memories
+    }),
     new TodoTool(todoSessionStore),
     cronjobTool,
     ...mcpClientManager.createCatalogTools((tool) => {
@@ -735,9 +759,16 @@ function buildApplicationRuntime(
   const recallBudgetPolicy = new RecallBudgetPolicy({
     budgetRatio: config.recall.budgetRatio
   });
+  const coreMemoryService = new CoreMemoryService(
+    storage.memories,
+    storage.sessionCoreSnapshots,
+    config.memory.core
+  );
   const recallPlanner = new RecallPlanner({
     budgetPolicy: recallBudgetPolicy,
-    enabled: config.recall.enabled,
+    contextPolicy,
+    coreMemoryService,
+    enabled: () => config.recall.enabled && resolveRuntimeConfig(config.workspaceRoot).memory.enabled,
     experiencePlane,
     maxCandidatesPerScope: config.recall.maxCandidatesPerScope,
     memoryPlane,
@@ -868,6 +899,15 @@ function buildApplicationRuntime(
 
   const manualCompactCoordinator = new ManualCompactCoordinator();
 
+  const memoryFlushService = new MemoryFlushService({
+    enabled: () => {
+      const current = resolveRuntimeConfig(config.workspaceRoot);
+      return current.memory.enabled && current.memory.flush.enabled;
+    },
+    maxSuggestions: config.memory.flush.maxSuggestions,
+    toolOrchestrator,
+    workspaceRoot: config.workspaceRoot
+  });
   const executionKernel = new ExecutionKernel({
     auditService,
     auxiliaryProviderResolver,
@@ -882,6 +922,7 @@ function buildApplicationRuntime(
     getSessionCommitmentState: (sessionId) => sessionCommitmentProjector.project(sessionId),
     manualCompactCoordinator,
     memoryPlane,
+    memoryFlushService,
     recallPlanner,
     provider,
     providerRouter,

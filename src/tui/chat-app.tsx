@@ -623,7 +623,7 @@ export function ChatTuiApp({
         controller.addSystemMessage(
           [
             "Most used: /resume <session> /sessions /today /inbox /new <title> /schedule create <when> | <prompt>",
-            "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [review|add|forget|why]",
+            "Workflow: /resume <session> /sessions /inbox [show] /next [list|done|block] /commitments [list|done|block] /schedule [list|pause|resume] /memory [on|off|status|review|add|forget|why]",
             "Session: /mode [agent|plan|acceptEdits] or Shift+Tab to cycle (plan = read-only suggestions)",
             formatAgentWriteApprovalHelp(liveConfig.interactionModes.agentWriteApproval),
             "Session: /model [provider:model] [--global|--workspace] /edit /status /clear /new [title] /stop /history /context /cost /diff /sandbox /rollback <id|last> /title <name>",
@@ -1825,7 +1825,18 @@ function handleMemoryCommand(
     controller.addSystemMessage(guidance.join("\n\n"));
     return true;
   }
-  if (sub === "review") {
+  if (sub === "on" || sub === "off") {
+    const status = service.setLongTermMemoryEnabled(cwd, sub === "on");
+    controller.addSystemMessage(
+      `Long-term memory is now ${status.enabled ? "on" : "off"}. The change applies to the next task; existing session snapshots remain frozen.`
+    );
+    return true;
+  }
+  if (sub === "status") {
+    const status = service.getLongTermMemoryStatus(cwd);
+    controller.addSystemMessage(`Long-term memory: ${status.enabled ? "on" : "off"}`);
+    return true;
+  }  if (sub === "review") {
     const items = service.listMemorySuggestions({
       limit: 20,
       status: "pending",
@@ -1899,7 +1910,7 @@ function handleMemoryCommand(
     );
     return true;
   }
-  controller.addSystemMessage("Usage: /memory | /memory review | /memory add <profile|project> <text> | /memory forget <memory-id-prefix> | /memory why [memory-id-prefix]");
+  controller.addSystemMessage("Usage: /memory <on|off|status> | /memory review | /memory add <profile|project> <text> | /memory forget <memory-id-prefix> | /memory why [memory-id-prefix]");
   return true;
 }
 

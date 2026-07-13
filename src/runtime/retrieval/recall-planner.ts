@@ -1,7 +1,9 @@
-﻿import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import type { ExperiencePlane } from "../../experience/experience-plane.js";
 import { createProfileScopeKey } from "../../memory/memory-plane.js";
+import type { CoreMemoryService } from "../../memory/core-memory-service.js";
+import { ContextPolicy } from "../../policy/context-policy.js";
 import type { SkillContextService } from "../../skills/index.js";
 import type {
   ContextFragment,
@@ -36,12 +38,16 @@ export interface RecallPlannerDependencies {
       limit: number;
       query: string;
       excludeSessionId?: string | null;
+      ownerUserId?: string;
+      workspaceRoot?: string;
     }) => ContextFragment[];
   };
   skillContextService: SkillContextService;
   traceService: TraceService;
   budgetPolicy: RecallBudgetPolicy;
-  enabled: boolean;
+  contextPolicy?: ContextPolicy;
+  coreMemoryService?: CoreMemoryService;
+  enabled: boolean | (() => boolean);
   maxCandidatesPerScope: number;
 }
 
@@ -63,8 +69,11 @@ export class RecallPlanner {
   public constructor(private readonly dependencies: RecallPlannerDependencies) {}
 
   public plan(input: RecallPlanningInput): RecallPlanResult {
-    if (!this.dependencies.enabled) {
-      return this.planLegacy(input);
+    const enabled = typeof this.dependencies.enabled === "function"
+      ? this.dependencies.enabled()
+      : this.dependencies.enabled;
+    if (!enabled) {
+      return this.planWithoutLongTermMemory(input);
     }
     const enrichedQuery = buildEnrichedQuery(input.task, input.sessionCommitmentState, input.toolPlan);
     const budget = this.dependencies.budgetPolicy.computeBudget(input.tokenBudget);
@@ -82,6 +91,13 @@ export class RecallPlanner {
     const memoryCandidates = memoryRecall.candidates.map((candidate) =>
       toMemoryCandidate(candidate, memoryDecisionById.get(candidate.memory.memoryId)?.allowed !== false)
     );
+    const coreFragments = input.task.sessionId === null || input.task.sessionId === undefined || this.dependencies.coreMemoryService === undefined
+      ? []
+      : this.dependencies.coreMemoryService.load({
+          sessionId: input.task.sessionId,
+          profileScopeKey: createProfileScopeKey(input.task),
+          projectScopeKey: input.task.cwd
+        }).fragments;
 
     const experienceCandidates = this.dependencies.experiencePlane
       .recallExperiences(enrichedQuery, {
@@ -115,7 +131,9 @@ export class RecallPlanner {
         : this.dependencies.sessionSearchService.searchGlobalAsContext({
             excludeSessionId: sessionId ?? null,
             limit: this.dependencies.maxCandidatesPerScope,
-            query: enrichedQuery
+            query: enrichedQuery,
+            ownerUserId: input.task.requesterUserId,
+            workspaceRoot: input.task.cwd
           });
     const sessionLocalCandidates = sessionFragments.map((fragment) =>
       toSessionCandidate(fragment, {
@@ -136,13 +154,33 @@ export class RecallPlanner {
       ...sessionLocalCandidates,
       ...globalSessionCandidates
     ];
+    const contextPolicy = this.dependencies.contextPolicy ?? new ContextPolicy();
+    const policyResults = allCandidates.map((candidate) => ({
+      candidate,
+      decision: contextPolicy.filterForModelContext({
+        fragments: [candidate.fragment]
+      }).decisions[0]
+    }));
+    const policyDenied = policyResults
+      .filter((item) => item.decision?.allowed !== true)
+      .map((item) => ({
+        id: item.candidate.id,
+        reason: `${item.candidate.reason}; ${item.decision?.reason ?? "filtered_by_policy"}`,
+        scope: item.candidate.scope,
+        score: item.candidate.score,
+        selected: false as const,
+        tokenEstimate: item.candidate.tokenEstimate
+      }));
+    const allowedCandidates = policyResults
+      .filter((item) => item.decision?.allowed === true)
+      .map((item) => item.candidate);
     const reservedSessionLocal = reserveSessionLocalCandidates(
-      sessionLocalCandidates,
+      sessionLocalCandidates.filter((candidate) => allowedCandidates.includes(candidate)),
       budget.totalTokenBudget,
       2
     );
     const reservedIds = new Set(reservedSessionLocal.selected.map((item) => item.id));
-    const remainingCandidates = allCandidates.filter((candidate) => !reservedIds.has(candidate.id));
+    const remainingCandidates = allowedCandidates.filter((candidate) => !reservedIds.has(candidate.id));
     const remainingSelection = this.selector.select(remainingCandidates, {
       scopeWeights: budget.scopeWeights,
       tokenBudget: Math.max(0, budget.totalTokenBudget - reservedSessionLocal.tokenUsed)
@@ -153,19 +191,31 @@ export class RecallPlanner {
         ...reservedSessionLocal.selectedFragments,
         ...remainingSelection.selectedFragments
       ],
-      skipped: [...reservedSessionLocal.skipped, ...remainingSelection.skipped],
+      skipped: [...policyDenied, ...reservedSessionLocal.skipped, ...remainingSelection.skipped],
       tokenUsed: reservedSessionLocal.tokenUsed + remainingSelection.tokenUsed
     };
 
     const explain: RecallExplainPayload = {
       candidateCount:
+        coreFragments.length +
         memoryCandidates.length +
         experienceCandidates.length +
         skillCandidates.length +
         sessionLocalCandidates.length +
         globalSessionCandidates.length,
       enrichedQuery,
-      items: [...selection.selected, ...selection.skipped].map((item) => ({
+      items: [
+        ...coreFragments.map((fragment) => ({
+          id: fragment.memoryId,
+          reason: fragment.explanation,
+          scope: fragment.scope,
+          score: 1,
+          selected: true as const,
+          tokenEstimate: estimateTokens(fragment.text)
+        })),
+        ...selection.selected,
+        ...selection.skipped
+      ].map((item) => ({
         id: item.id,
         reason: item.reason,
         scope: item.scope,
@@ -173,10 +223,10 @@ export class RecallPlanner {
         selected: item.selected,
         tokenEstimate: item.tokenEstimate
       })),
-      selectedCount: selection.selected.length,
+      selectedCount: coreFragments.length + selection.selected.length,
       skippedCount: selection.skipped.length,
       tokenBudget: budget.totalTokenBudget,
-      tokenUsed: selection.tokenUsed
+      tokenUsed: selection.tokenUsed + coreFragments.reduce((total, fragment) => total + estimateTokens(fragment.text), 0)
     };
 
     this.dependencies.traceService.record({
@@ -190,56 +240,38 @@ export class RecallPlanner {
 
     return {
       explain,
-      fragments: selection.selectedFragments
+      fragments: [...coreFragments, ...selection.selectedFragments]
     };
   }
 
-  private planLegacy(input: RecallPlanningInput): RecallPlanResult {
-    const memoryRecall = this.dependencies.memoryPlane.recall({
-      limit: 6,
-      profileScopeKey: createProfileScopeKey(input.task),
-      projectScopeKey: input.task.cwd,
-      query: input.task.input,
-      taskId: input.task.taskId
-    });
-    this.dependencies.memoryPlane.recordRecall(input.task.taskId, memoryRecall);
+  private planWithoutLongTermMemory(input: RecallPlanningInput): RecallPlanResult {
     const skillFragments = this.dependencies.skillContextService.buildContext(input.task);
     const sessionId = input.task.sessionId;
-    const localSessionFragments =
-      sessionId === null || sessionId === undefined
-        ? []
-        : this.dependencies.sessionSearchService?.searchAsContext({
-            limit: 3,
-            query: input.task.input,
-            sessionId
-          }) ?? [];
-    const globalSessionFragments =
-      this.dependencies.sessionSearchService === undefined || !hasHistoricalRecallSignal(input.task.input)
-        ? []
-        : this.dependencies.sessionSearchService.searchGlobalAsContext({
-            excludeSessionId: sessionId ?? null,
-            limit: 3,
-            query: input.task.input
-          });
-    const fragments = [
-      ...memoryRecall.selectedFragments,
-      ...skillFragments,
-      ...localSessionFragments,
-      ...globalSessionFragments
-    ];
+    const localSessionFragments = sessionId === null || sessionId === undefined
+      ? []
+      : this.dependencies.sessionSearchService?.searchAsContext({
+          limit: 3,
+          query: input.task.input,
+          sessionId
+        }) ?? [];
+    const contextPolicy = this.dependencies.contextPolicy ?? new ContextPolicy();
+    const filtered = contextPolicy.filterForModelContext({
+      fragments: [...skillFragments, ...localSessionFragments]
+    });
+    const fragments = filtered.allowedFragments;
     const explain: RecallExplainPayload = {
-      candidateCount: fragments.length,
+      candidateCount: skillFragments.length + localSessionFragments.length,
       enrichedQuery: input.task.input,
-      items: fragments.map((fragment) => ({
-        id: fragment.memoryId,
-        reason: "legacy_recall_enabled_false",
-        scope: fragment.scope,
-        score: Number(fragment.confidence.toFixed(4)),
-        selected: true,
-        tokenEstimate: estimateTokens(fragment.text)
+      items: filtered.decisions.map((decision) => ({
+        id: decision.fragment.memoryId,
+        reason: decision.reason,
+        scope: decision.fragment.scope,
+        score: decision.fragment.confidence,
+        selected: decision.allowed,
+        tokenEstimate: estimateTokens(decision.fragment.text)
       })),
       selectedCount: fragments.length,
-      skippedCount: 0,
+      skippedCount: filtered.decisions.length - fragments.length,
       tokenBudget: Number.MAX_SAFE_INTEGER,
       tokenUsed: fragments.reduce((total, fragment) => total + estimateTokens(fragment.text), 0)
     };
@@ -248,7 +280,7 @@ export class RecallPlanner {
       eventType: "recall_explain",
       payload: explain,
       stage: "memory",
-      summary: `Recall fallback selected ${fragments.length} items`,
+      summary: "Long-term memory is disabled; only session continuity and skills were considered",
       taskId: input.task.taskId
     });
     return { explain, fragments };

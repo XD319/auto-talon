@@ -92,7 +92,8 @@ export class GatewayRuntimeFacade implements GatewayRuntimeApi {
       ownerUserId,
       runtimeUserId: identityBinding.runtimeUserId,
       sessions: this.dependencies.applicationService,
-      taskInput: request.taskInput
+      taskInput: request.taskInput,
+      cwd: this.dependencies.defaultCwd
     });
     if (resumeCommand.handled) {
       const taskId = randomUUID();
