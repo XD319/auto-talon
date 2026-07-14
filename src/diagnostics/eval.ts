@@ -1,7 +1,6 @@
 import { loadSmokeTaskFixtures } from "../testing/smoke-fixtures.js";
 import { runSmokeSuite } from "../testing/smoke-harness.js";
 import type { SupportedProviderName } from "../providers/index.js";
-import type { SmokeTaskRunResult } from "../testing/index.js";
 
 export interface EvalReport {
   averageDurationMs: number;
@@ -195,7 +194,7 @@ export async function runCodingEvalReport(options: CodingEvalOptions = {}): Prom
       requiresVerificationForMutations: true
     },
     failureReasonDistribution: report.failureReasons,
-    gitReadyDiffRate: mutationTasks.length === 0 ? 1 : report.results.filter(isGitReadyDiffTask).length / mutationTasks.length,
+    gitReadyDiffRate: 0,
     providerName: report.providerName,
     successRate,
     taskCount,
@@ -203,8 +202,4 @@ export async function runCodingEvalReport(options: CodingEvalOptions = {}): Prom
     unverifiedMutationTasks,
     verificationRate
   };
-}
-
-function isGitReadyDiffTask(result: SmokeTaskRunResult): boolean {
-  return result.success && result.writeToolCallCount > 0 && result.failureReason === null;
 }

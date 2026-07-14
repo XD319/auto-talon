@@ -1,0 +1,102 @@
+name: Capability Eval
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 18 * * *"
+
+concurrency:
+  group: capability-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  configuration:
+    name: Check explicit opt-in
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check real-model eval opt-in
+        id: check
+        env:
+          ENABLED: ${{ vars.ENABLE_REAL_MODEL_EVAL }}
+        shell: bash
+        run: |
+          if [[ "$ENABLED" == "true" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "## Capability eval skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Set ENABLE_REAL_MODEL_EVAL=true and configure the protected capability-eval environment to opt in." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  blind-eval:
+    name: OpenAI gpt-4o-mini blind suite
+    needs: configuration
+    if: needs.configuration.outputs.enabled == 'true'
+    environment: capability-eval
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      AGENT_PROVIDER_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      AGENT_PROVIDER_MODEL: gpt-4o-mini
+      EVAL_OUTPUT: eval-artifacts
+      EVAL_BASELINE: fixtures/eval-baselines/openai-gpt-4o-mini.json
+
+    steps:
+      - name: Verify canonical provider credential
+        id: credential
+        shell: bash
+        run: |
+          if [[ -z "$AGENT_PROVIDER_API_KEY" ]]; then
+            echo "OPENAI_API_KEY is unavailable; real capability eval is skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.credential.outputs.available == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: steps.credential.outputs.available == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - name: Setup Node.js
+        if: steps.credential.outputs.available == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.credential.outputs.available == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Run blind capability eval
+        if: steps.credential.outputs.available == 'true'
+        run: pnpm exec tsx src/cli/bin.ts eval run --provider openai --suite fixtures/eval-suites/internal-blind.v1.json --repetitions 3 --output "$EVAL_OUTPUT"
+
+      - name: Compare approved baseline
+        if: always() && steps.credential.outputs.available == 'true'
+        shell: bash
+        run: |
+          if [[ -f "$EVAL_OUTPUT/eval-report.json" && -f "$EVAL_BASELINE" ]]; then
+            pnpm exec tsx src/cli/bin.ts eval compare --current "$EVAL_OUTPUT/eval-report.json" --baseline "$EVAL_BASELINE"
+          elif [[ ! -f "$EVAL_BASELINE" ]]; then
+            echo "::warning::No approved capability baseline exists at $EVAL_BASELINE"
+            echo "Baseline comparison skipped; approve one with talon eval baseline update." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload eval artifacts
+        if: always() && steps.credential.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: capability-eval-${{ github.run_id }}
+          path: eval-artifacts/
+          if-no-files-found: warn
+          retention-days: 30

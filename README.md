@@ -32,8 +32,8 @@ conversations to the same runtime.
   or custom compatible endpoints through one provider catalog.
 - **Multiple entry points, one runtime**: use the same sessions and governance
   from TUI, CLI, Feishu/Lark, local webhooks, and MCP surfaces.
-- **Maintainer-grade diagnostics**: replay, smoke fixtures, eval reports, beta
-  readiness, release checks, and package dry-runs are built into the source
+- **Maintainer-grade diagnostics**: replay, deterministic smoke fixtures, blind
+  real-model evals, baselines, release checks, and package dry-runs are built into the source
   checkout.
 
 ## Install
@@ -140,7 +140,7 @@ talon memory review-queue list
 | Providers | Provider catalog, setup/use/promote, health checks, smoke tests, route diagnostics, usage statistics |
 | Gateways | Local webhook and Feishu/Lark adapters sharing the same runtime, identity mapping, and session commands |
 | MCP and skills | MCP client/server surfaces, skill registry, skill assets, drafts, promotion, enable/disable overrides |
-| Diagnostics | Smoke suite, eval report, beta readiness, replay, release checklist, npm pack contents validation |
+| Diagnostics | Scripted smoke suite, 30-task blind capability eval, scorer evidence, stability metrics, baselines, replay, release checklist |
 
 ## Security Model
 

@@ -565,8 +565,11 @@ function selectFixtures(fixtures: SmokeTaskFixture[], taskIds: string[] | undefi
     return fixtures;
   }
 
-  const requested = new Set(taskIds);
-  return fixtures.filter((fixture) => requested.has(fixture.taskId));
+  const missing = taskIds.filter((taskId) => !fixtures.some((fixture) => fixture.taskId === taskId));
+  if (missing.length > 0) {
+    throw new Error(`Unknown smoke task ids: ${missing.join(", ")}`);
+  }
+  return taskIds.map((taskId) => fixtures.find((fixture) => fixture.taskId === taskId) as SmokeTaskFixture);
 }
 
 function createHarnessProvider(

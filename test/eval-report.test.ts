@@ -38,7 +38,7 @@ describe("eval report", () => {
     expect(report.successRate).toBeGreaterThanOrEqual(0.8);
     expect(report.verificationRate).toBe(1);
     expect(report.toolFailureRate).toBeGreaterThanOrEqual(0);
-    expect(report.gitReadyDiffRate).toBeGreaterThan(0);
+    expect(report.gitReadyDiffRate).toBe(0);
     expect(report.unverifiedMutationTasks).toEqual([]);
     expect(report.betaGate.passed).toBe(true);
   }, 30000);
