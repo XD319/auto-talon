@@ -36,6 +36,14 @@ describe("evaluation core", () => {
     expect(suite.tasks.every((task) => task.scorers.some((scorer) => scorer.required && scorer.type !== "llm_judge"))).toBe(true);
   });
 
+  it("keeps v1 stable and adds five reliability tasks in v2", () => {
+    const suite = loadEvalSuite("fixtures/eval-suites/internal-blind.v2.json");
+    expect(suite.version).toBe("2.0.0");
+    expect(suite.tasks).toHaveLength(35);
+    expect(suite.tasks.map((task) => task.id)).toEqual(expect.arrayContaining([
+      "reliability_timeout_recovery", "reliability_shell_correction", "reliability_verify_cleanup", "reliability_empty_string_boundary", "reliability_counter_contract"
+    ]));
+  });
   it("rejects duplicate tasks and judge-only grading", () => {
     const task = {
       capabilities: ["answer"],

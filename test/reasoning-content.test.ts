@@ -175,6 +175,27 @@ describe("final output acceptance", () => {
     });
   });
 
+  it("rejects xfyun-style <tool_call> markup masquerading as a final answer", async () => {
+    const { isAcceptableUserFinalText, looksLikeToolMarkup } = await import(
+      "../src/providers/reasoning-content.js"
+    );
+    const markup =
+      "<tool_call>write_file<arg_key>path</arg_key><arg_value>verify.mjs</arg_value></tool_call>";
+    expect(looksLikeToolMarkup(markup)).toBe(true);
+    expect(
+      isAcceptableUserFinalText(
+        {
+          kind: "final",
+          message: markup
+        },
+        markup
+      )
+    ).toEqual({
+      acceptable: false,
+      reason: "tool_markup"
+    });
+  });
+
   it("accepts polished bug-fix summaries", async () => {
     const { isAcceptableUserFinalText } = await import("../src/providers/reasoning-content.js");
     const answer = "修复已验证。Bug 在 `js/snake.js` 的 positionHash 更新顺序错误。";

@@ -3,5 +3,6 @@ node_modules/
 .auto-talon/
 coverage/
 .tmp-tests/
+eval-artifacts/
 *.tsbuildinfo
 package-lock.json

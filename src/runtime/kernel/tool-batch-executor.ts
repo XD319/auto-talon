@@ -31,6 +31,7 @@ export interface ToolBatchExecutorDependencies {
   checkpointManager: CheckpointManager;
   contextRetention?: ContextRetentionConfig;
   taskRepository: TaskRepository;
+  testCommands?: string[];
   toolOrchestrator: ToolOrchestrator;
   traceService: TraceService;
   workspaceRoot: string;
@@ -368,6 +369,12 @@ export class ToolBatchExecutor {
           )
         );
       }
+      this.dependencies.traceService.record({
+        actor: "runtime.tooling", eventType: "tool_execution_failed",
+        payload: { iteration, outcomeKind: outcome.kind, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName },
+        stage: "tooling", summary: `Tool ${toolCall.toolName} did not complete`, taskId: task.taskId
+      });
+
       emitTaskEvent(state.onTaskEvent, {
         iteration,
         kind: "tool",
@@ -381,9 +388,12 @@ export class ToolBatchExecutor {
     }
 
     state.cumulativeToolCallCount += 1;
+    if (!outcome.result.success && toolCall.toolName === "shell") {
+      this.dependencies.traceService.record({ actor: "runtime.tooling", eventType: "environment_command_failed", payload: { iteration, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName }, stage: "tooling", summary: "Environment command failed", taskId: task.taskId });
+    }
+
     const toolDescriptor = this.dependencies.toolOrchestrator.describeTool(toolCall.toolName);
-    const writeToolResult =
-      toolDescriptor?.capability === "filesystem.write" || toolCall.toolName.includes("write");
+    const writeToolResult = isContentMutatingWrite(toolCall, toolDescriptor?.capability ?? null);
     if (
       outcome.result.success &&
       outcome.result.replayed !== true &&
@@ -392,7 +402,16 @@ export class ToolBatchExecutor {
       state.writeToolSucceeded = true;
       state.completionVerificationSatisfied = false;
     }
-    if (isSuccessfulVerificationToolExecution(toolCall.toolName, outcome.result)) {
+    if (outcome.result.success && outcome.result.replayed !== true && writeToolResult) {
+      this.dependencies.traceService.record({ actor: "runtime.kernel", eventType: "completion_verification_pending", payload: { iteration, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName }, stage: "completion", summary: "Workspace write requires subsequent verification", taskId: task.taskId });
+    }
+    if (
+      isSuccessfulVerificationToolExecution(
+        toolCall.toolName,
+        outcome.result,
+        this.dependencies.testCommands ?? []
+      )
+    ) {
       state.completionVerificationSatisfied = true;
       if (!state.completionVerificationSatisfiedEmitted) {
         this.dependencies.traceService.record({
@@ -656,4 +675,26 @@ function toolResultSummary(result: ToolExecutionResult, toolName: string): strin
   return result.success
     ? result.summary
     : `Tool ${toolName} failed: ${result.errorMessage}`;
+}
+
+/**
+ * Content-mutating writes require verification. Deleting temporary files via
+ * patch delete_file must not reset verification or mark the workspace as mutated.
+ */
+function isContentMutatingWrite(
+  toolCall: ProviderToolCall,
+  capability: string | null
+): boolean {
+  const looksLikeWrite =
+    capability === "filesystem.write" || toolCall.toolName.includes("write");
+  if (!looksLikeWrite) {
+    return false;
+  }
+  if (toolCall.toolName === "patch") {
+    const action = (toolCall.input as { action?: unknown }).action;
+    if (action === "delete_file") {
+      return false;
+    }
+  }
+  return true;
 }

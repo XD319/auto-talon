@@ -92,6 +92,9 @@ export class ExecutionContextAssembler {
     const systemMessage = [
       profile.systemPrompt,
       planModeNote,
+      `Runtime environment: ${process.platform}; workspace root: ${task.cwd}. Use shell syntax compatible with this platform.`,
+      "After modifying files, prefer configured project test/build/lint commands to verify before finalizing. A successful write remains unverified until a subsequent verification command succeeds without another write to the changed target.",
+      "If you must create a verification-only temporary script, write it under `.auto-talon/scratch/` (preferred) or delete it with patch delete_file before completion. Do not leave verify*.mjs or similar files in the workspace root. Do not delete user business files.",
       "Use tools only when needed.",
       "Visible tools may still be denied by policy, sandbox checks, or approval requirements at execution time.",
       unavailableWebSearchNote,

@@ -77,7 +77,7 @@ export function registerEvalCommands(program: Command): void {
   evalCommand
     .command("run")
     .requiredOption("--provider <provider>", "Configured real provider to evaluate")
-    .option("--suite <path>", "Versioned blind eval suite", "fixtures/eval-suites/internal-blind.v1.json")
+    .option("--suite <path>", "Versioned blind eval suite", "fixtures/eval-suites/internal-blind.v2.json")
     .option("--tasks <taskIds>", "Comma-separated blind task ids")
     .option("--repetitions <number>", "Trials per task", parsePositiveIntegerOption("--repetitions"), 3)
     .option("--judge-provider <provider>", "Optional non-blocking LLM judge provider")
@@ -281,6 +281,11 @@ function formatCapabilityEvalReport(report: EvalRunReport): string {
     `Pass^k: ${(report.metrics.passPowerK * 100).toFixed(1)}%`,
     `Duration p50/p95: ${report.metrics.durationMs.p50.toFixed(0)}ms/${report.metrics.durationMs.p95.toFixed(0)}ms`,
     `Average rounds/tools: ${report.metrics.averageRounds.toFixed(2)}/${report.metrics.averageToolCalls.toFixed(2)}`,
+    report.metrics.verificationCompletionRate === undefined ? "Verification completion: unavailable" : `Verification completion: ${(report.metrics.verificationCompletionRate * 100).toFixed(1)}%`,
+    report.metrics.workspaceScopeViolationRate === undefined ? "Workspace scope violations: unavailable" : `Workspace scope violations: ${(report.metrics.workspaceScopeViolationRate * 100).toFixed(1)}%`,
+    report.metrics.providerRecovery === undefined ? "Provider recovery: unavailable" : `Provider recovery: ${report.metrics.providerRecovery.recovered}/${report.metrics.providerRecovery.attempted}`,
+    report.metrics.failureClassificationCounts === undefined ? "Failure classifications: unavailable" : `Failure classifications: ${Object.entries(report.metrics.failureClassificationCounts).map(([kind, count]) => `${kind}=${count}`).join(", ") || "none"}`,
+
     report.metrics.tokenUsage.available ? `Tokens: ${report.metrics.tokenUsage.totalTokens}` : "Tokens: unavailable",
     report.metrics.costUsd.available ? `Average cost: $${report.metrics.costUsd.average?.toFixed(6)}` : "Cost: unavailable",
     `Gate: ${report.gate.passed ? "passed" : "failed"}`,

@@ -10,7 +10,7 @@ import type { Provider, TraceEvent } from "../types/index.js";
 import { changedPaths, evaluateScorer } from "./scorers.js";
 import { loadEvalSuite, type EvalSuiteManifest, type EvalTask } from "./schema.js";
 import { mean, passAtK, passPowerK, percentile, standardError, wilsonInterval } from "./statistics.js";
-import type { EvalRunReport, EvalTaskResult, EvalTrialResult } from "./types.js";
+import type { EvalFailureClassification, EvalRunReport, EvalTaskResult, EvalTrialResult } from "./types.js";
 
 export interface CapabilityEvalOptions {
   configCwd?: string;
@@ -66,10 +66,21 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
   const totalCost = costValues.length === 0 ? null : costValues.reduce((total, value) => total + value, 0);
   const successes = allTrials.filter((trial) => trial.success).length;
   const successValues = allTrials.map((trial) => trial.success ? 1 : 0);
-  const gateReasons = collectGateReasons(taskResults);
+  let gateReasons = collectGateReasons(taskResults);
   const totalTokens = sumTokens(allTrials);
+  const failureClassificationCounts = countFailureClassifications(allTrials);
+  const providerConfigurationFailures = allTrials.filter((trial) => trial.failureClassification === "provider_configuration_failure");
+  const valid = providerConfigurationFailures.length === 0;
+  if (!valid) gateReasons = [`invalid_run: provider configuration failed in ${providerConfigurationFailures.length} trial(s)`, ...gateReasons];
+  const recoveryAttempts = allTrials.filter((trial) => hasTraceEvent(trial.trace, "task_recovery_started"));
+  const recoveredTrials = recoveryAttempts.filter((trial) => trial.success);
+  const verificationTrials = allTrials.filter((trial) => trial.changedPaths.length > 0);
+  const verifiedTrials = verificationTrials.filter((trial) => hasTraceEvent(trial.trace, "completion_verification_satisfied"));
+  const scopeFailures = allTrials.filter((trial) => trial.failureClassification === "workspace_scope");
+  const toolFailures = allTrials.filter((trial) => hasTraceEvent(trial.trace, "tool_execution_failed") || trial.failureClassification === "tool_failure");
+
   return {
-    gate: { passed: gateReasons.length === 0, reasons: gateReasons },
+    gate: { passed: valid && gateReasons.length === 0, reasons: gateReasons },
     manifest: {
       codeSha: readCodeSha(configCwd),
       datasetSha256: hashFile(options.suitePath),
@@ -101,7 +112,16 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
       standardError: standardError(successValues),
       successRate: allTrials.length === 0 ? 0 : successes / allTrials.length,
       successRate95: wilsonInterval(successes, allTrials.length),
-      tokenUsage: { ...totalTokens, available: totalTokens.totalTokens > 0 }
+      tokenUsage: { ...totalTokens, available: totalTokens.totalTokens > 0 },
+      failureClassificationCounts,
+      providerRecovery: { attempted: recoveryAttempts.length, recovered: recoveredTrials.length, successRate: recoveryAttempts.length === 0 ? 0 : recoveredTrials.length / recoveryAttempts.length },
+      recoverySuccessRate: recoveryAttempts.length === 0 ? null : recoveredTrials.length / recoveryAttempts.length,
+      toolFailureRate: allTrials.length === 0 ? 0 : toolFailures.length / allTrials.length,
+      verificationCompletionRate: verificationTrials.length === 0 ? 1 : verifiedTrials.length / verificationTrials.length,
+      workspaceScopeViolationRate: allTrials.length === 0 ? 0 : scopeFailures.length / allTrials.length,
+      invalidTrialCount: providerConfigurationFailures.length,
+      providerConfigurationFailureCount: providerConfigurationFailures.length,
+      valid
     },
     suite: { description: suite.description, id: suite.id, version: suite.version },
     tasks: taskResults
@@ -160,6 +180,7 @@ async function runTrial(
     const trialCost = details.task?.tokenBudget.usedCostUsd;
     return {
       durationMs: Date.now() - startedAt,
+      failureClassification: classifyFailure(run.task.status, results, details.trace),
       changedPaths: changedPaths(beforeFiles, afterFiles),
       costUsd: trialCost !== undefined && trialCost > 0 ? trialCost : null,
       output: run.output,
@@ -179,6 +200,33 @@ async function runTrial(
   }
 }
 
+function classifyFailure(status: string, results: EvalTrialResult["scorerResults"], trace: TraceEvent[]): EvalFailureClassification | null {
+  if (results.filter((result) => result.required).every((result) => result.passed)) return null;
+  if (trace.some((event) => event.eventType === "provider_request_failed" && /auth|credential|api key/iu.test(String(event.payload.errorMessage ?? "")))) return "provider_configuration_failure";
+  // Hidden command graders are deterministic and take priority over runtime noise.
+  if (results.some((result) => result.required && !result.passed && result.type === "workspace_diff" && /outside=\[(?!\])/u.test(result.evidence))) return "workspace_scope";
+  if (results.some((result) => result.required && !result.passed && result.type === "command")) return "verification_failure";
+  if (trace.some((event) => event.eventType === "provider_request_failed" && event.payload.errorCategory === "timeout_error")) return "provider_timeout";
+  if (hasTraceEvent(trace, "tool_execution_failed")) return "tool_failure";
+  if (hasTraceEvent(trace, "environment_command_failed")) return "environment_failure";
+  if (status === "failed" && (hasTraceEvent(trace, "iteration_exhausted") || hasTraceEvent(trace, "completion_verification_missing"))) return "control_flow_failure";
+  if (results.some((result) => result.required && !result.passed && ["output", "file_state", "tool_trace", "trace"].includes(result.type))) return "model_or_contract";
+  return "unknown";
+}
+
+function countFailureClassifications(trials: EvalTrialResult[]): Partial<Record<EvalFailureClassification, number>> {
+  return trials.reduce<Partial<Record<EvalFailureClassification, number>>>((counts, trial) => {
+    if (trial.failureClassification !== null && trial.failureClassification !== undefined) {
+      const classification = trial.failureClassification;
+      counts[classification] = (counts[classification] ?? 0) + 1;
+    }
+    return counts;
+  }, {});
+}
+
+function hasTraceEvent(trace: TraceEvent[], eventType: string): boolean {
+  return trace.some((event) => event.eventType === eventType);
+}
 function selectTasks(suite: EvalSuiteManifest, taskIds: string[] | undefined): EvalTask[] {
   if (taskIds === undefined || taskIds.length === 0) return suite.tasks;
   const byId = new Map(suite.tasks.map((task) => [task.id, task]));

@@ -14,6 +14,7 @@ export * from "./provider-error.js";
 export * from "./provider-http.js";
 export * from "./openai-message-sanitizer.js";
 export * from "./reasoning-content.js";
+export * from "./text-tool-call-parser.js";
 export * from "./provider-env.js";
 export * from "./provider-config-schema.js";
 export * from "./provider-switchable.js";

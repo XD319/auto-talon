@@ -31,8 +31,11 @@ export const TRACE_EVENT_TYPES = [
   "provider_request_succeeded",
   "provider_request_failed",
   "iteration_budget_pressure",
+  "iteration_exhausted",
   "completion_verification_missing",
   "completion_verification_satisfied",
+  "completion_verification_pending",
+  "environment_command_failed",
   "intent_fulfillment_missing",
   "empty_final_guarded",
   "unpolished_final_guarded",
@@ -138,7 +141,9 @@ export const TRACE_EVENT_TYPES = [
   "worker_succeeded",
   "worker_failed",
   "worker_timeout",
-  "worker_retried"
+  "worker_retried",
+  "task_recovery_started",
+  "tool_execution_failed"
 ] as const;
 
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];
@@ -1044,6 +1049,18 @@ export interface WorkerRetriedPayload extends JsonObject {
   maxAttempts: number;
   delayMs: number;
 }
+export interface TaskRecoveryStartedPayload extends JsonObject {
+  iteration: number;
+  reason: string;
+  recoveryAttempt: number;
+}
+
+export interface ToolExecutionFailedPayload extends JsonObject {
+  iteration: number;
+  outcomeKind: string;
+  toolCallId: string;
+  toolName: string;
+}
 
 export interface FileRollbackPayload extends JsonObject {
   artifactId: string;
@@ -1069,8 +1086,11 @@ export type TraceEvent =
   | TraceEventBase<"provider_request_succeeded", ProviderRequestSucceededPayload>
   | TraceEventBase<"provider_request_failed", ProviderRequestFailedPayload>
   | TraceEventBase<"iteration_budget_pressure", IterationBudgetPressurePayload>
+  | TraceEventBase<"iteration_exhausted">
   | TraceEventBase<"completion_verification_missing">
   | TraceEventBase<"completion_verification_satisfied">
+  | TraceEventBase<"completion_verification_pending">
+  | TraceEventBase<"environment_command_failed">
   | TraceEventBase<"intent_fulfillment_missing">
   | TraceEventBase<"empty_final_guarded">
   | TraceEventBase<"unpolished_final_guarded">
@@ -1176,7 +1196,9 @@ export type TraceEvent =
   | TraceEventBase<"worker_succeeded", WorkerSucceededPayload>
   | TraceEventBase<"worker_failed", WorkerFailedPayload>
   | TraceEventBase<"worker_timeout", WorkerTimeoutPayload>
-  | TraceEventBase<"worker_retried", WorkerRetriedPayload>;
+  | TraceEventBase<"worker_retried", WorkerRetriedPayload>
+  | TraceEventBase<"task_recovery_started", TaskRecoveryStartedPayload>
+  | TraceEventBase<"tool_execution_failed", ToolExecutionFailedPayload>;
 
 export type TraceEventDraft = Omit<TraceEvent, "eventId" | "sequence" | "timestamp"> &
   Partial<Pick<TraceEvent, "eventId" | "sequence" | "timestamp">>;

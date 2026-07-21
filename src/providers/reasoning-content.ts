@@ -136,6 +136,10 @@ export function looksLikeToolMarkup(text: string): boolean {
     sample.includes("tool_calls>") ||
     sample.includes("<invoke") ||
     /\binvoke\s+name=/u.test(sample) ||
+    /<tool_call>/iu.test(sample) ||
+    /<\/tool_call>/iu.test(sample) ||
+    /<arg_key>/iu.test(sample) ||
+    /<arg_value>/iu.test(sample) ||
     (sample.includes('"toolName"') && sample.includes("toolCallId"))
   );
 }

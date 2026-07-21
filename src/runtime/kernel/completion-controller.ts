@@ -177,8 +177,10 @@ export class CompletionController {
     messages: ConversationMessage[],
     task: TaskRecord,
     iteration: number,
-    finalOutput: string
+    finalOutput: string,
+    options: { allowGuard?: boolean } = {}
   ): { finalOutput: string; kind: "complete" } | { kind: "guard" } {
+    const allowGuard = options.allowGuard !== false;
     if (!state.writeToolSucceeded || state.completionVerificationSatisfied) {
       return {
         finalOutput,
@@ -194,7 +196,7 @@ export class CompletionController {
       };
     }
 
-    if (!state.completionVerificationGuardEmitted) {
+    if (allowGuard && !state.completionVerificationGuardEmitted) {
       const testCommands = this.dependencies.testCommands ?? [];
       const cmdHint =
         testCommands.length > 0 ? ` Suggested commands: ${testCommands.join(", ")}.` : "";
@@ -258,21 +260,26 @@ export class CompletionController {
 
 export function isSuccessfulVerificationToolCall(
   toolName: string,
-  result: ToolExecutionResult
+  result: ToolExecutionResult,
+  configuredTestCommands: string[] = []
 ): boolean {
   if (!result.success) {
     return false;
   }
-  const output = result.runtimeOutput ?? result.output;
-  if (toolName !== "shell") {
+  if (toolName !== "shell" && toolName !== "process") {
     return false;
   }
+  const output = result.runtimeOutput ?? result.output;
   if (typeof output !== "object" || output === null || Array.isArray(output)) {
     return false;
   }
   const exitCode = (output as { exitCode?: unknown }).exitCode;
   const command = (output as { command?: unknown }).command;
-  return exitCode === 0 && typeof command === "string" && isVerificationCommand(command);
+  return (
+    exitCode === 0 &&
+    typeof command === "string" &&
+    isVerificationCommand(command, configuredTestCommands)
+  );
 }
 
 export function mentionsUnverifiedWork(message: string): boolean {
@@ -342,13 +349,31 @@ function isReadOnlyToolName(toolName: string): boolean {
   );
 }
 
-function isVerificationCommand(command: string): boolean {
-  const compact = command.toLowerCase();
-  return (
+export function isVerificationCommand(
+  command: string,
+  configuredTestCommands: string[] = []
+): boolean {
+  const compact = command.toLowerCase().trim();
+  if (compact.length === 0) {
+    return false;
+  }
+  if (
     compact.includes("test") ||
     compact.includes("build") ||
     compact.includes("lint") ||
     compact.includes("typecheck") ||
     compact.includes("tsc")
-  );
+  ) {
+    return true;
+  }
+  // Accept one-off node verification scripts (node verify.mjs, node --test, node ./check.js).
+  if (/\bnode(?:\.exe)?\b/u.test(compact) && !/\s-(?:e|p)\b/u.test(compact) && !/\s--(?:eval|print)\b/u.test(compact)) {
+    if (/\b--test\b/u.test(compact) || /\.(?:m?js|cjs|ts)\b/u.test(compact)) {
+      return true;
+    }
+  }
+  return configuredTestCommands.some((configured) => {
+    const hint = configured.toLowerCase().trim();
+    return hint.length > 0 && (compact === hint || compact.includes(hint) || hint.includes(compact));
+  });
 }

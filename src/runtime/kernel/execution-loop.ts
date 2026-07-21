@@ -178,6 +178,7 @@ export class ExecutionLoopRunner {
     const messages = [...state.messages];
     let pendingToolCalls = [...state.pendingToolCalls];
     let lastToolCallsResponse: Extract<ProviderResponse, { kind: "tool_calls" }> | null = null;
+    let taskRecoveryUsed = false;
 
     for (
       let iteration = pendingToolCalls.length > 0 ? task.currentIteration : task.currentIteration + 1;
@@ -487,8 +488,23 @@ export class ExecutionLoopRunner {
               }`,
               taskId: task.taskId
             });
-            if (signalAborted) {
+            if (!taskRecoveryUsed && !signalAborted && providerError.category === "timeout_error") {
+              taskRecoveryUsed = true;
+              this.dependencies.checkpointManager.save({
+                iteration,
+                memoryContext: state.memoryContext,
+                messages,
+                pendingClarifyPromptId: null,
+                pendingToolCalls,
+                taskId: task.taskId
+              });
+              this.dependencies.traceService.record({ actor: "runtime.kernel", eventType: "task_recovery_started", payload: { iteration, reason: "provider_timeout", recoveryAttempt: 1 }, stage: "control", summary: "Retrying task once after provider timeout", taskId: task.taskId });
+              state.turnProviderMessages.push({ content: "Recovery attempt: retain completed tool results and workspace changes. Continue from the remaining objective; verify changes before finalizing.", metadata: { privacyLevel: "internal", retentionKind: "session", sourceType: "system_prompt" }, role: "system" });
+              continue;
+            }
+
               throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
+            if (signalAborted) {
             }
             throw providerError;
           }
@@ -1133,6 +1149,13 @@ export class ExecutionLoopRunner {
         state.turnProviderMessages = rebuildTurnProviderMessages(messages, state.turnProviderMessages);
       }
     }
+
+    this.dependencies.traceService.record({
+      actor: "runtime.kernel", eventType: "iteration_exhausted",
+      payload: { iteration: state.maxIterations, maxIterations: state.maxIterations },
+      stage: "control", summary: "Task reached its iteration limit without a final response",
+      taskId: task.taskId
+    });
 
     return this.callbacks.requestFinalSummaryWithoutTools(
       state,

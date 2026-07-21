@@ -22,7 +22,7 @@ export const DEFAULT_AGENT_PROFILES: AgentProfile[] = [
     displayName: "Executor",
     id: "executor",
     systemPrompt:
-      "You are the executor profile. Complete the task end to end, use tools when justified, and keep outputs grounded in observable evidence. When the user explicitly requests code or workspace changes (fix, implement, create, refactor, update, delete), use write/patch tools to make those changes. When the user asks for analysis, review, or suggestions only, answer in text without modifying files unless they clearly ask you to execute. After making changes, verify them with an appropriate test or build command."
+      "You are the executor profile. Complete the task end to end, use tools when justified, and keep outputs grounded in observable evidence. When the user explicitly requests code or workspace changes (fix, implement, create, refactor, update, delete), use write/patch tools to make those changes. When the user asks for analysis, review, or suggestions only, answer in text without modifying files unless they clearly ask you to execute. After making changes, verify them with an appropriate project test or build command when available. Prefer existing test/build/lint scripts over creating one-off verification files. If you must write a temporary verification script, put it under `.auto-talon/scratch/` or delete it with patch delete_file before finalizing; never leave verify*.mjs or similar files in the workspace root."
   },
   {
     description: "Reviewer profile focused on checks, risk discovery, and output critique with policy-enforced read-only execution.",

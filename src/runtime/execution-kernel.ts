@@ -176,6 +176,7 @@ export class ExecutionKernel {
     this.toolBatchExecutor = new ToolBatchExecutor({
       checkpointManager: this.checkpointManager,
       taskRepository: dependencies.taskRepository,
+      testCommands: formatWorkflowTestCommandHints(dependencies.workflow.testCommands),
       toolOrchestrator: dependencies.toolOrchestrator,
       traceService: dependencies.traceService,
       workspaceRoot: dependencies.workspaceRoot,
@@ -1001,7 +1002,23 @@ export class ExecutionKernel {
         ? { metadata: lastProviderResponse.metadata.raw }
         : {})
     });
-    return this.completeTaskSuccess(state, messages, availableTools, task, finalMessage);
+    const verificationDecision = this.completionController.evaluateFinalVerification(
+      state,
+      messages,
+      task,
+      iteration,
+      finalMessage,
+      { allowGuard: false }
+    );
+    const verifiedOutput =
+      verificationDecision.kind === "complete" ? verificationDecision.finalOutput : finalMessage;
+    if (verifiedOutput !== finalMessage) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage?.role === "assistant") {
+        lastMessage.content = verifiedOutput;
+      }
+    }
+    return this.completeTaskSuccess(state, messages, availableTools, task, verifiedOutput);
   }
 
   private completeTaskSuccess(

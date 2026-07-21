@@ -14,6 +14,7 @@ export interface EvalTrialResult {
   changedPaths: string[];
   costUsd: number | null;
   durationMs: number;
+  failureClassification?: EvalFailureClassification | null;
   output: string | null;
   rounds: number;
   scorerResults: EvalScorerResult[];
@@ -30,6 +31,17 @@ export interface EvalTrialResult {
   trace: TraceEvent[];
   trial: number;
 }
+
+export type EvalFailureClassification =
+  | "model_or_contract"
+  | "provider_timeout"
+  | "provider_configuration_failure"
+  | "tool_failure"
+  | "environment_failure"
+  | "workspace_scope"
+  | "verification_failure"
+  | "control_flow_failure"
+  | "unknown";
 
 export interface EvalTaskResult {
   passAtK: number;
@@ -70,7 +82,16 @@ export interface EvalRunReport {
     standardError: number;
     successRate: number;
     successRate95: { high: number; low: number };
+    invalidTrialCount?: number;
+    providerConfigurationFailureCount?: number;
+    valid?: boolean;
     tokenUsage: EvalTrialResult["tokenUsage"] & { available: boolean };
+    failureClassificationCounts?: Partial<Record<EvalFailureClassification, number>>;
+    providerRecovery?: { attempted: number; recovered: number; successRate: number };
+    recoverySuccessRate?: number | null;
+    toolFailureRate?: number;
+    verificationCompletionRate?: number;
+    workspaceScopeViolationRate?: number;
   };
   suite: Pick<EvalSuiteManifest, "id" | "version" | "description">;
   tasks: EvalTaskResult[];

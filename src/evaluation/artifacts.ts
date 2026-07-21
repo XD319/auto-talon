@@ -24,7 +24,7 @@ function toJunit(report: EvalRunReport): string {
   const trials = report.tasks.flatMap((task) => task.trials.map((trial) => ({ task, trial })));
   const failures = trials.filter(({ trial }) => !trial.success).length;
   const cases = trials.map(({ task, trial }) => {
-    const failure = trial.success ? "" : `<failure message="eval failed">${escapeXml(trial.scorerResults.filter((score) => score.required && !score.passed).map((score) => `${score.id}: ${score.evidence}`).join("\n"))}</failure>`;
+    const failure = trial.success ? "" : `<failure type="${escapeXml(trial.failureClassification ?? "unknown")}" message="eval failed">${escapeXml(trial.scorerResults.filter((score) => score.required && !score.passed).map((score) => `${score.id}: ${score.evidence}`).join("\n"))}</failure>`;
     return `<testcase classname="${escapeXml(task.task.category)}" name="${escapeXml(`${task.task.id}#${trial.trial}`)}" time="${(trial.durationMs / 1000).toFixed(3)}">${failure}</testcase>`;
   }).join("");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="${escapeXml(report.suite.id)}" tests="${trials.length}" failures="${failures}">${cases}</testsuite>\n`;

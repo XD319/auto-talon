@@ -5,6 +5,8 @@ import {
   CheckpointManager,
   CompletionController,
   hasCompletionIntent,
+  isSuccessfulVerificationToolCall,
+  isVerificationCommand,
   mentionsUnverifiedWork,
   READ_ONLY_GUARD_THRESHOLD
 } from "../src/runtime/kernel/index.js";
@@ -144,6 +146,84 @@ describe("CompletionController", () => {
     );
     expect(decision.kind).toBe("guard");
     expect(messages.at(-1)?.content).toContain("Suggested commands: node check.js, npm test");
+  });
+
+  it("recognizes node verification scripts and configured test commands", () => {
+    expect(isVerificationCommand("node --test")).toBe(true);
+    expect(isVerificationCommand("node verify.mjs")).toBe(true);
+    expect(isVerificationCommand("node check.js", ["node check.js"])).toBe(true);
+    expect(isVerificationCommand("npm test")).toBe(true);
+    expect(isVerificationCommand("node -e \"console.log(1)\"")).toBe(false);
+    expect(isVerificationCommand("echo hello")).toBe(false);
+  });
+
+  it("treats successful node verify shell calls as verification evidence", () => {
+    expect(
+      isSuccessfulVerificationToolCall("shell", {
+        output: { command: "node verify.mjs", exitCode: 0, stdout: "ok" },
+        success: true,
+        summary: "verified"
+      })
+    ).toBe(true);
+    expect(
+      isSuccessfulVerificationToolCall("process", {
+        output: { command: "npm test", exitCode: 0 },
+        success: true,
+        summary: "verified"
+      })
+    ).toBe(true);
+    expect(
+      isSuccessfulVerificationToolCall("read_file", {
+        output: { path: "a.txt" },
+        success: true,
+        summary: "read"
+      })
+    ).toBe(false);
+  });
+
+  it("appends unverified warning without looping when guard is disabled", () => {
+    const recordTrace = vi.fn();
+    const controller = new CompletionController({
+      describeTool: () => descriptor("write_file", "filesystem.write"),
+      recordTrace
+    });
+    const messages: ConversationMessage[] = [];
+    const state = {
+      completionIntentSeenAt: null,
+      completionVerificationGuardEmitted: false,
+      completionVerificationSatisfied: false,
+      completionVerificationSatisfiedEmitted: false,
+      criticalBudgetPressureEmitted: false,
+      maxIterations: 4,
+      messages,
+      postCompletionVerificationReads: 0,
+      readOnlyTurns: 0,
+      silentToolTurns: 0,
+      turnProviderMessages: messages,
+      warningBudgetPressureEmitted: false,
+      writeToolSucceeded: true
+    };
+
+    const decision = controller.evaluateFinalVerification(
+      state,
+      messages,
+      task(),
+      3,
+      "Done.",
+      { allowGuard: false }
+    );
+    expect(decision).toEqual({
+      finalOutput:
+        "Done.\n\nUnverified: workspace changes were made after the last successful verification, and no verification command was recorded.",
+      kind: "complete"
+    });
+    expect(messages).toHaveLength(0);
+    expect(recordTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "completion_verification_missing",
+        payload: expect.objectContaining({ reason: "runtime_appended_warning" })
+      })
+    );
   });
 
   it("injects read-only analysis guard after many consecutive read-only tool turns", () => {
