@@ -50,6 +50,7 @@ export interface ExecutionLoopState {
   recentFileReadCache: RecentFileReadCache | null;
   repoMapSummary?: string;
   task: TaskRecord;
+  taskRecoveryUsed: boolean;
   tokenBudget: TokenBudget;
   tokenCounter: HybridTokenCounterState;
   toolArtifactsRoot: string;

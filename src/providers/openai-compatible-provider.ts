@@ -32,7 +32,7 @@ import {
   parseReasoningContent,
   reasoningContentForReplay
 } from "./reasoning-content.js";
-import { parseTextToolCalls } from "./text-tool-call-parser.js";
+import { isPrimarilyTextToolCallMarkup, parseTextToolCalls } from "./text-tool-call-parser.js";
 import { normalizeOpenAiCompatibleMessages } from "./openai-message-sanitizer.js";
 import {
   StreamingFallbackState,
@@ -205,7 +205,7 @@ export class OpenAiCompatibleProvider implements Provider {
       };
     }
 
-    const textToolCalls = parseTextToolCalls(content);
+    const textToolCalls = isPrimarilyTextToolCallMarkup(content) ? parseTextToolCalls(content) : [];
     if (textToolCalls.length > 0) {
       return {
         kind: "tool_calls",
@@ -500,7 +500,7 @@ export class OpenAiCompatibleProvider implements Provider {
         };
       }
 
-      const textToolCalls = parseTextToolCalls(content);
+      const textToolCalls = isPrimarilyTextToolCallMarkup(content) ? parseTextToolCalls(content) : [];
       if (textToolCalls.length > 0) {
         return {
           kind: "tool_calls",

@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { runEvalReport } from "./eval.js";
 import { runBetaReadinessCheck } from "./beta-readiness.js";
+import { runCapabilityEval } from "../evaluation/public.js";
 import type { SupportedProviderName } from "../providers/index.js";
 import { RUNTIME_SCHEMA_VERSION, runMigrations } from "../storage/migrations.js";
 import { configureSqliteConnection } from "../storage/sqlite-connection.js";
@@ -51,6 +52,8 @@ export async function runReleaseChecklist(
   const evalReport = await runEvalReport({ providerName: provider });
   progress("Running beta readiness checks");
   const beta = await runBetaReadinessCheck({ providerName: provider });
+  progress("Running reliability acceptance gate");
+  const acceptance = await runReliabilityAcceptanceGate(provider, cwd);
   const schema = validateMigrationSchemaVersion();
 
   const skippedQualityCheck = {
@@ -97,6 +100,7 @@ export async function runReleaseChecklist(
       `successRate=${(evalReport.successRate * 100).toFixed(1)}%`
     ),
     toItem("beta", "Approval/provider/gateway readiness checks pass", beta.allPassed, `${beta.checklist.length} checks`),
+    toItem("reliability-acceptance", "Reliability acceptance suite passes verification/scope gate", acceptance.ok, acceptance.details),
     toItem("doctor", "Config doctor can run", true, "covered by beta readiness doctor/provider checks"),
     toItem(
       "schema",
@@ -138,6 +142,43 @@ export async function runReleaseChecklist(
 
 function toItem(id: string, title: string, ok: boolean, details: string): ReleaseChecklistItem {
   return { id, title, ok, details };
+}
+
+/**
+ * Runs the reliability acceptance suite with verification/scope gate thresholds.
+ * Requires a real provider; scripted-smoke/mock runs are skipped (reported ok)
+ * because the capability eval refuses non-real providers by design.
+ */
+async function runReliabilityAcceptanceGate(
+  provider: SupportedProviderName | "scripted-smoke",
+  cwd: string
+): Promise<{ details: string; ok: boolean }> {
+  if (provider === "scripted-smoke") {
+    return {
+      details: "skipped: run `talon eval acceptance --provider <real-provider>` for a real-model gate",
+      ok: true
+    };
+  }
+  try {
+    const report = await runCapabilityEval({
+      configCwd: cwd,
+      gateThresholds: { maxWorkspaceScopeViolationRate: 0.1, minVerificationCompletionRate: 0.5 },
+      providerName: provider,
+      repetitions: 1,
+      suitePath: join(cwd, "fixtures", "eval-suites", "reliability-acceptance.v1.json")
+    });
+    return {
+      details: report.gate.passed
+        ? `success=${(report.metrics.successRate * 100).toFixed(1)}%, verification=${(((report.metrics.verificationCompletionRate ?? 1) * 100)).toFixed(1)}%`
+        : report.gate.reasons.join("; "),
+      ok: report.gate.passed
+    };
+  } catch (error) {
+    return {
+      details: `acceptance run failed: ${error instanceof Error ? error.message : String(error)}`,
+      ok: false
+    };
+  }
 }
 
 type ReleasePackageScript = "build" | "lint" | "test";

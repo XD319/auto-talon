@@ -550,6 +550,7 @@ export class ExecutionKernel {
         toolCallSignatures: new Map(),
         turnFilteredFragments: [],
         turnProviderMessages: messages,
+        taskRecoveryUsed: false,
         tokenBudget: options.tokenBudget,
         warningBudgetPressureEmitted: false,
         writeToolSucceeded: false
@@ -630,6 +631,7 @@ export class ExecutionKernel {
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
+        taskRecoveryUsed: this.hasRecoveryBeenUsed(resumedTask.taskId),
         toolCallSignatures: resumeCheckpoint.toolCallSignatures,
         turnFilteredFragments: [],
         turnProviderMessages: checkpoint.messages,
@@ -724,6 +726,7 @@ export class ExecutionKernel {
         selectedSkillContext: [],
         silentToolTurns: 0,
         task: resumedTask,
+        taskRecoveryUsed: this.hasRecoveryBeenUsed(resumedTask.taskId),
         toolCallSignatures: resumeCheckpoint.toolCallSignatures,
         turnFilteredFragments: [],
         turnProviderMessages: checkpoint.messages,
@@ -1190,6 +1193,12 @@ export class ExecutionKernel {
       toolCallCount: input.state.cumulativeToolCallCount,
       toolCallThreshold: this.dependencies.compact.toolCallThreshold
     };
+  }
+
+  private hasRecoveryBeenUsed(taskId: string): boolean {
+    return this.dependencies.traceService
+      .listByTaskId(taskId)
+      .some((event) => event.eventType === "task_recovery_started");
   }
 
   private createContextLoopFields(): Pick<

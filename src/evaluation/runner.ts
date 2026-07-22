@@ -12,8 +12,16 @@ import { loadEvalSuite, type EvalSuiteManifest, type EvalTask } from "./schema.j
 import { mean, passAtK, passPowerK, percentile, standardError, wilsonInterval } from "./statistics.js";
 import type { EvalFailureClassification, EvalRunReport, EvalTaskResult, EvalTrialResult } from "./types.js";
 
+export interface EvalGateThresholds {
+  /** Fail the gate when the verification completion rate drops below this. */
+  minVerificationCompletionRate?: number;
+  /** Fail the gate when the workspace scope violation rate exceeds this. */
+  maxWorkspaceScopeViolationRate?: number;
+}
+
 export interface CapabilityEvalOptions {
   configCwd?: string;
+  gateThresholds?: EvalGateThresholds;
   judge?: Parameters<typeof evaluateScorer>[1]["judge"];
   providerFactory?: () => Provider;
   providerName: string;
@@ -78,6 +86,9 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
   const verifiedTrials = verificationTrials.filter((trial) => hasTraceEvent(trial.trace, "completion_verification_satisfied"));
   const scopeFailures = allTrials.filter((trial) => trial.failureClassification === "workspace_scope");
   const toolFailures = allTrials.filter((trial) => hasTraceEvent(trial.trace, "tool_execution_failed") || trial.failureClassification === "tool_failure");
+  const verificationCompletionRate = verificationTrials.length === 0 ? 1 : verifiedTrials.length / verificationTrials.length;
+  const workspaceScopeViolationRate = allTrials.length === 0 ? 0 : scopeFailures.length / allTrials.length;
+  gateReasons = [...gateReasons, ...collectReliabilityGateReasons(options.gateThresholds, verificationCompletionRate, workspaceScopeViolationRate)];
 
   return {
     gate: { passed: valid && gateReasons.length === 0, reasons: gateReasons },
@@ -117,8 +128,8 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
       providerRecovery: { attempted: recoveryAttempts.length, recovered: recoveredTrials.length, successRate: recoveryAttempts.length === 0 ? 0 : recoveredTrials.length / recoveryAttempts.length },
       recoverySuccessRate: recoveryAttempts.length === 0 ? null : recoveredTrials.length / recoveryAttempts.length,
       toolFailureRate: allTrials.length === 0 ? 0 : toolFailures.length / allTrials.length,
-      verificationCompletionRate: verificationTrials.length === 0 ? 1 : verifiedTrials.length / verificationTrials.length,
-      workspaceScopeViolationRate: allTrials.length === 0 ? 0 : scopeFailures.length / allTrials.length,
+      verificationCompletionRate,
+      workspaceScopeViolationRate,
       invalidTrialCount: providerConfigurationFailures.length,
       providerConfigurationFailureCount: providerConfigurationFailures.length,
       valid
@@ -200,12 +211,16 @@ async function runTrial(
   }
 }
 
-function classifyFailure(status: string, results: EvalTrialResult["scorerResults"], trace: TraceEvent[]): EvalFailureClassification | null {
+export function classifyFailure(status: string, results: EvalTrialResult["scorerResults"], trace: TraceEvent[]): EvalFailureClassification | null {
   if (results.filter((result) => result.required).every((result) => result.passed)) return null;
   if (trace.some((event) => event.eventType === "provider_request_failed" && /auth|credential|api key/iu.test(String(event.payload.errorMessage ?? "")))) return "provider_configuration_failure";
   // Hidden command graders are deterministic and take priority over runtime noise.
   if (results.some((result) => result.required && !result.passed && result.type === "workspace_diff" && /outside=\[(?!\])/u.test(result.evidence))) return "workspace_scope";
   if (results.some((result) => result.required && !result.passed && result.type === "command")) return "verification_failure";
+  // A required workspace_diff that failed without an out-of-scope path (missing
+  // required changes or no changes at all) is a verification/hygiene miss, not an
+  // unclassified failure.
+  if (results.some((result) => result.required && !result.passed && result.type === "workspace_diff")) return "verification_failure";
   if (trace.some((event) => event.eventType === "provider_request_failed" && event.payload.errorCategory === "timeout_error")) return "provider_timeout";
   if (hasTraceEvent(trace, "tool_execution_failed")) return "tool_failure";
   if (hasTraceEvent(trace, "environment_command_failed")) return "environment_failure";
@@ -257,6 +272,34 @@ async function snapshotWorkspace(workspaceRoot: string): Promise<Map<string, str
   }
   await walk(workspaceRoot);
   return snapshot;
+}
+
+function collectReliabilityGateReasons(
+  thresholds: EvalGateThresholds | undefined,
+  verificationCompletionRate: number,
+  workspaceScopeViolationRate: number
+): string[] {
+  if (thresholds === undefined) {
+    return [];
+  }
+  const reasons: string[] = [];
+  if (
+    thresholds.minVerificationCompletionRate !== undefined &&
+    verificationCompletionRate < thresholds.minVerificationCompletionRate
+  ) {
+    reasons.push(
+      `verification_completion_rate ${(verificationCompletionRate * 100).toFixed(1)}% below minimum ${(thresholds.minVerificationCompletionRate * 100).toFixed(1)}%`
+    );
+  }
+  if (
+    thresholds.maxWorkspaceScopeViolationRate !== undefined &&
+    workspaceScopeViolationRate > thresholds.maxWorkspaceScopeViolationRate
+  ) {
+    reasons.push(
+      `workspace_scope_violation_rate ${(workspaceScopeViolationRate * 100).toFixed(1)}% above maximum ${(thresholds.maxWorkspaceScopeViolationRate * 100).toFixed(1)}%`
+    );
+  }
+  return reasons;
 }
 
 function collectGateReasons(tasks: EvalTaskResult[]): string[] {

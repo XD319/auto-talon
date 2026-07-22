@@ -178,7 +178,6 @@ export class ExecutionLoopRunner {
     const messages = [...state.messages];
     let pendingToolCalls = [...state.pendingToolCalls];
     let lastToolCallsResponse: Extract<ProviderResponse, { kind: "tool_calls" }> | null = null;
-    let taskRecoveryUsed = false;
 
     for (
       let iteration = pendingToolCalls.length > 0 ? task.currentIteration : task.currentIteration + 1;
@@ -488,8 +487,14 @@ export class ExecutionLoopRunner {
               }`,
               taskId: task.taskId
             });
-            if (!taskRecoveryUsed && !signalAborted && providerError.category === "timeout_error") {
-              taskRecoveryUsed = true;
+            // Recover once from a provider-reported timeout (transient upstream
+            // slowness surfaced as timeout_error without a task-level abort). A
+            // task-level inactivity/wall-clock abort is intentionally terminal,
+            // and a user interrupt is never revived. `taskRecoveryUsed` lives on
+            // the loop state and is restored from trace on resume, so the retry
+            // stays "at most once" even across a process restart.
+            if (!state.taskRecoveryUsed && !signalAborted && providerError.category === "timeout_error") {
+              state.taskRecoveryUsed = true;
               this.dependencies.checkpointManager.save({
                 iteration,
                 memoryContext: state.memoryContext,

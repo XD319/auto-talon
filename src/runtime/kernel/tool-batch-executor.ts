@@ -681,7 +681,7 @@ function toolResultSummary(result: ToolExecutionResult, toolName: string): strin
  * Content-mutating writes require verification. Deleting temporary files via
  * patch delete_file must not reset verification or mark the workspace as mutated.
  */
-function isContentMutatingWrite(
+export function isContentMutatingWrite(
   toolCall: ProviderToolCall,
   capability: string | null
 ): boolean {

@@ -110,6 +110,50 @@ export function registerEvalCommands(program: Command): void {
     });
 
   evalCommand
+    .command("acceptance")
+    .description("Run the reliability acceptance suite with verification/scope gate thresholds")
+    .requiredOption("--provider <provider>", "Configured real provider to evaluate")
+    .option("--suite <path>", "Acceptance suite", "fixtures/eval-suites/reliability-acceptance.v1.json")
+    .option("--tasks <taskIds>", "Comma-separated task ids")
+    .option("--repetitions <number>", "Trials per task", parsePositiveIntegerOption("--repetitions"), 1)
+    .option("--min-verification-rate <number>", "Minimum verification completion rate", parseRatioOption("--min-verification-rate"), 0.5)
+    .option("--max-scope-violation-rate <number>", "Maximum workspace scope violation rate", parseRatioOption("--max-scope-violation-rate"), 0.1)
+    .option("--judge-provider <provider>", "Optional non-blocking LLM judge provider")
+    .option("--json", "Print JSON instead of text")
+    .option("--output <directory>", "Write JSON, JUnit, and per-task artifacts")
+    .action(async (commandOptions: {
+      judgeProvider?: string;
+      json?: boolean;
+      maxScopeViolationRate: number;
+      minVerificationRate: number;
+      output?: string;
+      provider: string;
+      repetitions: number;
+      suite: string;
+      tasks?: string;
+    }) => {
+      const report = await runCapabilityEval({
+        gateThresholds: {
+          maxWorkspaceScopeViolationRate: commandOptions.maxScopeViolationRate,
+          minVerificationCompletionRate: commandOptions.minVerificationRate
+        },
+        ...(commandOptions.judgeProvider !== undefined
+          ? { judge: createEvalJudge(process.cwd(), commandOptions.judgeProvider) }
+          : {}),
+        providerName: commandOptions.provider,
+        repetitions: commandOptions.repetitions,
+        suitePath: commandOptions.suite,
+        taskIds: commandOptions.tasks?.split(",").map((value) => value.trim()).filter(Boolean) ?? []
+      });
+      if (commandOptions.output !== undefined) {
+        const artifacts = await writeEvalArtifacts(report, commandOptions.output);
+        console.error(`Eval artifacts: ${artifacts.jsonPath}, ${artifacts.junitPath}`);
+      }
+      console.log(commandOptions.json === true ? JSON.stringify(report, null, 2) : formatCapabilityEvalReport(report));
+      if (!report.gate.passed) process.exitCode = 1;
+    });
+
+  evalCommand
     .command("compare")
     .requiredOption("--current <path>", "Current eval report")
     .requiredOption("--baseline <path>", "Approved baseline report")
@@ -135,9 +179,10 @@ export function registerEvalCommands(program: Command): void {
     .action((commandOptions: { output: string; report: string }) => {
       const report = readEvalReport(commandOptions.report);
       if (!report.gate.passed) throw new Error("Cannot approve a failing eval report as baseline.");
-      copyFileSync(resolve(commandOptions.report), resolve(commandOptions.output));
-      mkdirSync(dirname(resolve(commandOptions.output)), { recursive: true });
-      console.log(`Baseline updated: ${resolve(commandOptions.output)}`);
+      const outputPath = resolve(commandOptions.output);
+      mkdirSync(dirname(outputPath), { recursive: true });
+      copyFileSync(resolve(commandOptions.report), outputPath);
+      console.log(`Baseline updated: ${outputPath}`);
     });
 
   evalCommand

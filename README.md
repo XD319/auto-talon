@@ -172,9 +172,11 @@ against sensitive project directories.
 - v0.1.0 includes Feishu/Lark and local webhook gateway adapters. Slack,
   Telegram, Discord, voice, browser automation, image generation, and companion
   mobile/desktop apps are outside this release.
-- `talon release check`, `talon eval run`, and `talon smoke run` are maintainer
-  diagnostics for source checkouts. Installed-package users should start with
-  `talon doctor` and `talon provider test`.
+- `talon release check`, `talon eval run`, `talon eval acceptance`, and
+  `talon smoke run` are maintainer diagnostics for source checkouts.
+  Installed-package users should start with `talon doctor` and
+  `talon provider test`. Upgrading from a preview checkout that still uses the
+  legacy thread→session schema should run `talon doctor --fix` once.
 
 ## Docs by Goal
 

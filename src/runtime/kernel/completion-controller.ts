@@ -266,7 +266,9 @@ export function isSuccessfulVerificationToolCall(
   if (!result.success) {
     return false;
   }
-  if (toolName !== "shell" && toolName !== "process") {
+  // Only one-off shell command runs count as verification evidence. `process`
+  // is a long-lived session API whose exit code does not imply a test/build ran.
+  if (toolName !== "shell") {
     return false;
   }
   const output = result.runtimeOutput ?? result.output;
@@ -349,6 +351,19 @@ function isReadOnlyToolName(toolName: string): boolean {
   );
 }
 
+const NON_EXECUTING_COMMAND_LEADERS = new Set([
+  "echo",
+  "printf",
+  "print",
+  "cat",
+  "type",
+  "ls",
+  "dir",
+  "pwd",
+  "true",
+  ":"
+]);
+
 export function isVerificationCommand(
   command: string,
   configuredTestCommands: string[] = []
@@ -356,6 +371,23 @@ export function isVerificationCommand(
   const compact = command.toLowerCase().trim();
   if (compact.length === 0) {
     return false;
+  }
+  // Commands that only print or list arguments (e.g. `echo npm test`) never run
+  // a verification, so they must not satisfy the completion gate.
+  const leader = compact.split(/\s+/u)[0]?.replace(/^.*[\\/]/u, "") ?? "";
+  if (NON_EXECUTING_COMMAND_LEADERS.has(leader)) {
+    return false;
+  }
+  // Node one-off verification scripts: `node --test`, `node verify.mjs`,
+  // `node ./check.js`. A bare `node src/app.js` is not treated as verification.
+  if (/^node(?:\.exe)?$/u.test(leader)) {
+    if (/\s-(?:e|p)\b/u.test(compact) || /\s--(?:eval|print)\b/u.test(compact)) {
+      return false;
+    }
+    if (/(?:^|\s)--test\b/u.test(compact)) {
+      return true;
+    }
+    return /[\w.-]*(?:test|verify|check)[\w.-]*\.(?:m?js|cjs|ts)\b/u.test(compact);
   }
   if (
     compact.includes("test") ||
@@ -366,14 +398,11 @@ export function isVerificationCommand(
   ) {
     return true;
   }
-  // Accept one-off node verification scripts (node verify.mjs, node --test, node ./check.js).
-  if (/\bnode(?:\.exe)?\b/u.test(compact) && !/\s-(?:e|p)\b/u.test(compact) && !/\s--(?:eval|print)\b/u.test(compact)) {
-    if (/\b--test\b/u.test(compact) || /\.(?:m?js|cjs|ts)\b/u.test(compact)) {
-      return true;
-    }
-  }
+  // A configured command counts only when the actual command equals it or runs
+  // it with additional arguments. Substring matching either direction would let
+  // a bare `npm` satisfy a configured `npm test`.
   return configuredTestCommands.some((configured) => {
     const hint = configured.toLowerCase().trim();
-    return hint.length > 0 && (compact === hint || compact.includes(hint) || hint.includes(compact));
+    return hint.length > 0 && (compact === hint || compact.startsWith(`${hint} `));
   });
 }

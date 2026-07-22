@@ -153,8 +153,22 @@ describe("CompletionController", () => {
     expect(isVerificationCommand("node verify.mjs")).toBe(true);
     expect(isVerificationCommand("node check.js", ["node check.js"])).toBe(true);
     expect(isVerificationCommand("npm test")).toBe(true);
+    expect(isVerificationCommand("npm run build")).toBe(true);
     expect(isVerificationCommand("node -e \"console.log(1)\"")).toBe(false);
     expect(isVerificationCommand("echo hello")).toBe(false);
+  });
+
+  it("rejects non-verification commands that only look like tests", () => {
+    // Bare package managers or partial commands must not satisfy a configured test command.
+    expect(isVerificationCommand("npm", ["npm test"])).toBe(false);
+    expect(isVerificationCommand("npm run", ["npm test", "npm run build"])).toBe(false);
+    // Running an arbitrary application script is not verification.
+    expect(isVerificationCommand("node src/app.js")).toBe(false);
+    // Commands that only echo/print the test command never run it.
+    expect(isVerificationCommand("echo npm test")).toBe(false);
+    // A configured command still matches when run with extra arguments.
+    expect(isVerificationCommand("make verify --fast", ["make verify"])).toBe(true);
+    expect(isVerificationCommand("make verify", ["make verify"])).toBe(true);
   });
 
   it("treats successful node verify shell calls as verification evidence", () => {
@@ -165,13 +179,14 @@ describe("CompletionController", () => {
         summary: "verified"
       })
     ).toBe(true);
+    // A long-lived `process` session exiting 0 is not one-off test evidence.
     expect(
       isSuccessfulVerificationToolCall("process", {
         output: { command: "npm test", exitCode: 0 },
         success: true,
         summary: "verified"
       })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isSuccessfulVerificationToolCall("read_file", {
         output: { path: "a.txt" },
