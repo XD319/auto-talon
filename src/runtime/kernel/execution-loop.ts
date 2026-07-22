@@ -503,9 +503,7 @@ export class ExecutionLoopRunner {
               continue;
             }
 
-              throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
-            if (signalAborted) {
-            }
+            throwIfAborted(state.managedAbortController.abortController.signal, abortReason);
             throw providerError;
           }
         }

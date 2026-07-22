@@ -221,7 +221,7 @@ describe("CompletionController", () => {
     expect(recordTrace).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: "completion_verification_missing",
-        payload: expect.objectContaining({ reason: "runtime_appended_warning" })
+        payload: expect.objectContaining({ reason: "runtime_appended_warning" }) as object
       })
     );
   });
