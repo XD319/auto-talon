@@ -1,4 +1,5 @@
 import type { ExperienceQuery, ExperienceRecord, MemoryRecallCandidate, MemoryRecord } from "../types/index.js";
+import { expandQueryTokens } from "../memory/memory-keywords.js";
 
 export interface ExperienceRecallRequest {
   query: string;
@@ -21,13 +22,18 @@ export interface ExperienceRecallCandidate {
 
 export class RecallEngine {
   public scoreMemory(memory: MemoryRecord, queryTokens: string[]): MemoryRecallCandidate {
-    const keywordScore = overlapRatio(memory.keywords, queryTokens);
+    const contentTokens = tokenize(`${memory.title} ${memory.summary} ${memory.content}`);
+    const keywordOverlap = overlapRatio(memory.keywords, queryTokens);
+    const contentOverlap = overlapRatio(contentTokens, queryTokens);
+    const substringScore = computeContentSubstringScore(memory, queryTokens);
+    const keywordScore = Math.max(keywordOverlap, contentOverlap, substringScore);
     const freshnessScore = memory.status === "stale" ? 0.2 : memory.status === "candidate" ? 0.7 : 1;
     const confidenceScore = memory.confidence;
     const recencyScore = computeRecencyScore(memory.createdAt);
     const pathSignal = computePathSignal(memory, queryTokens);
     const failureSignal = computeFailureSignal(memory, queryTokens);
-    const finalScore = Number(
+    const retrievalSignal = keywordScore + (pathSignal > 0.6 ? pathSignal - 0.6 : 0);
+    let finalScore = Number(
       (
         keywordScore * 0.35 +
         freshnessScore * 0.15 +
@@ -37,6 +43,10 @@ export class RecallEngine {
         failureSignal
       ).toFixed(4)
     );
+    // Drop non-core noise when there is no retrieval signal at all.
+    if (retrievalSignal <= 0 && memory.tier !== "core") {
+      finalScore = 0;
+    }
     const downrankReasons: string[] = [];
 
     if (memory.status === "stale") {
@@ -57,6 +67,9 @@ export class RecallEngine {
     if (failureSignal < 0) {
       downrankReasons.push("failure_noise");
     }
+    if (retrievalSignal <= 0 && memory.tier !== "core") {
+      downrankReasons.push("no_retrieval_signal");
+    }
 
     return {
       confidenceScore,
@@ -70,7 +83,7 @@ export class RecallEngine {
   }
 
   public rankMemory(memories: MemoryRecord[], query: string, limit: number): MemoryRecallCandidate[] {
-    const queryTokens = tokenize(query);
+    const queryTokens = expandQueryTokens(query);
     return memories
       .map((memory) => this.scoreMemory(memory, queryTokens))
       .filter((candidate) => candidate.finalScore > 0)
@@ -280,6 +293,15 @@ function computePathSignal(memory: MemoryRecord, queryTokens: string[]): number 
   }
   const memoryText = `${memory.title} ${memory.summary} ${memory.content}`.toLowerCase();
   return pathLikeTokens.some((token) => memoryText.includes(token.toLowerCase())) ? 1 : 0;
+}
+
+function computeContentSubstringScore(memory: MemoryRecord, queryTokens: string[]): number {
+  if (queryTokens.length === 0) {
+    return 0;
+  }
+  const memoryText = `${memory.title} ${memory.summary} ${memory.content}`.toLowerCase();
+  const hits = queryTokens.filter((token) => token.length >= 2 && memoryText.includes(token.toLowerCase())).length;
+  return hits / queryTokens.length;
 }
 
 function computeFailureSignal(memory: MemoryRecord, queryTokens: string[]): number {

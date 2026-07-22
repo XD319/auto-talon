@@ -126,6 +126,11 @@ const SCHEMA_MIGRATIONS: SchemaMigration[] = [
     description: "add Hermes memory tiers, snapshots, embeddings, and trigram search",
     up: migrateV24,
     version: 24
+  },
+  {
+    description: "add memories_fts full-text index for long-term memory search",
+    up: migrateV25,
+    version: 25
   }
 ];
 
@@ -1158,6 +1163,75 @@ function migrateV24(database: DatabaseSync): void {
     }
   }
 }
+
+function migrateV25(database: DatabaseSync): void {
+  if (!tableExists(database, "memories")) {
+    return;
+  }
+  rebuildMemoriesFts(database);
+}
+
+function rebuildMemoriesFts(database: DatabaseSync): void {
+  if (tableExists(database, "memories_fts")) {
+    database.exec("DROP TABLE memories_fts");
+  }
+  if (tableExists(database, "memories_trigram")) {
+    database.exec("DROP TABLE memories_trigram");
+  }
+
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE memories_fts USING fts5(
+        memory_id UNINDEXED,
+        scope UNINDEXED,
+        scope_key UNINDEXED,
+        content,
+        tokenize='unicode61'
+      );
+    `);
+  } catch {
+    database.exec(`
+      CREATE TABLE memories_fts (
+        memory_id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        content TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_memories_fts_scope
+        ON memories_fts(scope, scope_key);
+    `);
+  }
+
+  database.exec(`
+    INSERT INTO memories_fts(memory_id, scope, scope_key, content)
+    SELECT
+      memory_id,
+      scope,
+      scope_key,
+      trim(coalesce(title, '') || char(10) || coalesce(summary, '') || char(10) || coalesce(content, '') || char(10) || coalesce(keywords_json, ''))
+    FROM memories
+    WHERE status = 'verified'
+      AND privacy_level IN ('public', 'internal')
+      AND (expires_at IS NULL OR expires_at > datetime('now'));
+  `);
+
+  try {
+    database.exec(`
+      CREATE VIRTUAL TABLE memories_trigram USING fts5(
+        memory_id UNINDEXED,
+        scope UNINDEXED,
+        scope_key UNINDEXED,
+        content,
+        tokenize='trigram'
+      );
+      INSERT INTO memories_trigram(memory_id, scope, scope_key, content)
+      SELECT memory_id, scope, scope_key, content FROM memories_fts;
+    `);
+  } catch {
+    // Older SQLite builds may not provide the trigram tokenizer.
+  }
+}
+
 export function finalizeLegacyThreadMigration(database: DatabaseSync): void {
   ensureCoreSessionTables(database);
   withForeignKeysDisabled(database, () => {

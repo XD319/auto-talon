@@ -88,9 +88,11 @@ export class RecallPlanner {
     const memoryDecisionById = new Map(
       memoryRecall.decisions.map((decision) => [decision.fragment.memoryId, decision] as const)
     );
-    const memoryCandidates = memoryRecall.candidates.map((candidate) =>
-      toMemoryCandidate(candidate, memoryDecisionById.get(candidate.memory.memoryId)?.allowed !== false)
-    );
+    const memoryCandidates = memoryRecall.candidates
+      .filter((candidate) => candidate.memory.tier !== "core")
+      .map((candidate) =>
+        toMemoryCandidate(candidate, memoryDecisionById.get(candidate.memory.memoryId)?.allowed !== false)
+      );
     const coreFragments = input.task.sessionId === null || input.task.sessionId === undefined || this.dependencies.coreMemoryService === undefined
       ? []
       : this.dependencies.coreMemoryService.load({
@@ -98,6 +100,8 @@ export class RecallPlanner {
           profileScopeKey: createProfileScopeKey(input.task),
           projectScopeKey: input.task.cwd
         }).fragments;
+    const coreTokenUsed = coreFragments.reduce((total, fragment) => total + estimateTokens(fragment.text), 0);
+    const retrievalTokenBudget = Math.max(0, budget.totalTokenBudget - coreTokenUsed);
 
     const experienceCandidates = this.dependencies.experiencePlane
       .recallExperiences(enrichedQuery, {
@@ -176,14 +180,14 @@ export class RecallPlanner {
       .map((item) => item.candidate);
     const reservedSessionLocal = reserveSessionLocalCandidates(
       sessionLocalCandidates.filter((candidate) => allowedCandidates.includes(candidate)),
-      budget.totalTokenBudget,
+      retrievalTokenBudget,
       2
     );
     const reservedIds = new Set(reservedSessionLocal.selected.map((item) => item.id));
     const remainingCandidates = allowedCandidates.filter((candidate) => !reservedIds.has(candidate.id));
     const remainingSelection = this.selector.select(remainingCandidates, {
       scopeWeights: budget.scopeWeights,
-      tokenBudget: Math.max(0, budget.totalTokenBudget - reservedSessionLocal.tokenUsed)
+      tokenBudget: Math.max(0, retrievalTokenBudget - reservedSessionLocal.tokenUsed)
     });
     const selection = {
       selected: [...reservedSessionLocal.selected, ...remainingSelection.selected],
@@ -207,7 +211,7 @@ export class RecallPlanner {
       items: [
         ...coreFragments.map((fragment) => ({
           id: fragment.memoryId,
-          reason: fragment.explanation,
+          reason: `${fragment.explanation}; budget=core_reserved`,
           scope: fragment.scope,
           score: 1,
           selected: true as const,
@@ -226,7 +230,7 @@ export class RecallPlanner {
       selectedCount: coreFragments.length + selection.selected.length,
       skippedCount: selection.skipped.length,
       tokenBudget: budget.totalTokenBudget,
-      tokenUsed: selection.tokenUsed + coreFragments.reduce((total, fragment) => total + estimateTokens(fragment.text), 0)
+      tokenUsed: selection.tokenUsed + coreTokenUsed
     };
 
     this.dependencies.traceService.record({

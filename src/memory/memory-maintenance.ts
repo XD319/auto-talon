@@ -3,6 +3,8 @@ import { statSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 
 import { scanMemoryContent } from "./memory-safety.js";
+import { asSqliteFtsProvider } from "./create-memory-search-provider.js";
+import type { MemorySearchProvider } from "./search-provider.js";
 
 export interface MemoryMaintenanceReport {
   mode: "dry-run" | "apply";
@@ -17,7 +19,11 @@ export interface MemoryMaintenanceReport {
 }
 
 export class MemoryMaintenanceService {
-  public constructor(private readonly database: DatabaseSync, private readonly databasePath: string) {}
+  public constructor(
+    private readonly database: DatabaseSync,
+    private readonly databasePath: string,
+    private readonly searchProvider?: MemorySearchProvider
+  ) {}
 
   public rebuild(mode: "dry-run" | "apply"): MemoryMaintenanceReport {
     const candidateMemories = this.count("SELECT COUNT(*) AS count FROM memories WHERE status = 'candidate' AND scope IN ('profile','project')");
@@ -61,6 +67,7 @@ export class MemoryMaintenanceService {
   public doctor(): Record<string, unknown> {
     const profileCore = this.count("SELECT COUNT(*) AS count FROM memories WHERE tier='core' AND scope='profile' AND status='verified'");
     const projectCore = this.count("SELECT COUNT(*) AS count FROM memories WHERE tier='core' AND scope='project' AND status='verified'");
+    const fts = asSqliteFtsProvider(this.searchProvider);
     return {
       core: { profile: profileCore, project: projectCore },
       pendingSuggestions: this.count("SELECT COUNT(*) AS count FROM inbox_items WHERE category='memory_suggestion' AND status='pending'"),
@@ -71,7 +78,9 @@ export class MemoryMaintenanceService {
       },
       missingSource: this.count("SELECT COUNT(*) AS count FROM memories WHERE source_json IS NULL OR source_json='{}'"),
       conflictGroups: this.count("SELECT COUNT(*) AS count FROM memories WHERE conflicts_with_json <> '[]'"),
-      embeddingCoverage: this.embeddingCoverage()
+      ftsCoverage: fts?.coverage() ?? this.ftsCoverageFallback(),
+      embeddingCoverage: this.embeddingCoverage(),
+      searchProvider: this.searchProvider?.name ?? "fts"
     };
   }
 
@@ -108,5 +117,22 @@ export class MemoryMaintenanceService {
     const eligible = this.count("SELECT COUNT(*) AS count FROM memories WHERE status='verified' AND privacy_level IN ('public','internal')");
     const embedded = this.count("SELECT COUNT(*) AS count FROM memory_embeddings");
     return eligible === 0 ? 1 : Number((embedded / eligible).toFixed(4));
+  }
+  private ftsCoverageFallback(): number {
+    if (!this.tableExists("memories_fts")) {
+      return 0;
+    }
+    const eligible = this.count("SELECT COUNT(*) AS count FROM memories WHERE status='verified' AND privacy_level IN ('public','internal')");
+    const indexed = this.count("SELECT COUNT(*) AS count FROM memories_fts");
+    return eligible === 0 ? 1 : Number((indexed / eligible).toFixed(4));
+  }
+  private tableExists(name: string): boolean {
+    return (
+      (
+        this.database
+          .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type IN ('table','view') AND name = ?")
+          .get(name) as { ok?: number } | undefined
+      )?.ok === 1
+    );
   }
 }

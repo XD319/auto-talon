@@ -26,6 +26,7 @@ export type TuiRuntimeService = Pick<
   | "ensureRuntimeSession"
   | "explainMemoryRecall"
   | "forgetMemory"
+  | "resolveMemoryConflict"
   | "getLongTermMemoryStatus"
   | "getSessionTodos"
   | "requestManualCompact"

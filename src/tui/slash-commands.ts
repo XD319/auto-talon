@@ -53,6 +53,7 @@ export const STATIC_SLASH_SUGGESTIONS: SlashSuggestion[] = [
   suggestion("/memory add ", "memory-add", "Add memory to profile or project scope"),
   suggestion("/memory forget ", "memory-forget", "Forget a memory by prefix"),
   suggestion("/memory why", "memory-why", "Explain recalled memories"),
+  suggestion("/memory resolve-conflict ", "memory-resolve-conflict", "Keep one memory and archive its rival"),
   suggestion("/cost", "cost", "Show token and cost estimate"),
   suggestion("/diff", "diff", "Show file write summary"),
   suggestion("/transcript", "transcript", "Print current transcript to terminal scrollback"),

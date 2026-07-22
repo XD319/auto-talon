@@ -195,6 +195,7 @@ export class ExperiencePlane {
               traceEventId: current.provenance.traceEventId
             },
             status: "verified",
+            tier: current.confidence >= 0.85 ? "core" : "retrieval",
             summary: current.summary,
             title: current.title
           });

@@ -55,4 +55,6 @@ Relevant configuration defaults:
 }
 ```
 
-The optional `openai_compatible` search provider accepts `endpoint`, `model`, `apiKeyEnv`, `dimensions`, `timeoutMs`, and `batchSize`. Restricted, rejected, archived, stale, or expired memory is never sent to an external embedding endpoint. Provider failures fall back to FTS.
+Search defaults to local SQLite **FTS5** (`memories_fts`), Hermes-style full-text recall fused with keyword ranking. Set `"provider": "openai_compatible"` to also index embeddings (requires the env named by `apiKeyEnv`); failures fall back to FTS. Restricted, rejected, archived, stale, or expired memory is never sent to an external embedding endpoint.
+
+`talon memory doctor` reports `ftsCoverage` (local index) and `embeddingCoverage` (optional vectors).

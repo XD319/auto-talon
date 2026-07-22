@@ -5,6 +5,8 @@ import type { ContextPolicy } from "../policy/context-policy.js";
 import { RecallEngine, overlapRatio, uniqueStrings } from "../recall/recall-engine.js";
 import type { TraceService } from "../tracing/trace-service.js";
 import { CompactTriggerPolicy } from "./compact-policy.js";
+import { rrf, type MemorySearchHit, type MemorySearchProvider } from "./search-provider.js";
+import { asSqliteFtsProvider } from "./create-memory-search-provider.js";
 import type {
   ContextFragment,
   MemoryDraft,
@@ -36,6 +38,7 @@ export interface MemoryPlaneDependencies {
   memoryRepository: MemoryRepository;
   memorySnapshotRepository: MemorySnapshotRepository;
   traceService: TraceService;
+  searchProvider?: MemorySearchProvider;
 }
 
 export interface BuildContextResult {
@@ -184,7 +187,7 @@ export class MemoryPlane {
       throw new Error(`Memory ${parsed.memoryId} was not found.`);
     }
 
-    return this.dependencies.memoryRepository.update(parsed.memoryId, {
+    const updated = this.dependencies.memoryRepository.update(parsed.memoryId, {
       confidence:
         parsed.status === "verified"
           ? Math.max(current.confidence, 0.9)
@@ -200,6 +203,61 @@ export class MemoryPlane {
       },
       status: parsed.status
     });
+    this.syncSearchIndex(updated);
+    return updated;
+  }
+
+  public resolveConflict(input: {
+    keepMemoryId: string;
+    archiveMemoryId: string;
+    reviewerId: string;
+    note?: string;
+  }): { kept: MemoryRecord; archived: MemoryRecord } {
+    const kept = this.dependencies.memoryRepository.findById(input.keepMemoryId);
+    const rival = this.dependencies.memoryRepository.findById(input.archiveMemoryId);
+    if (kept === null) {
+      throw new Error(`Memory ${input.keepMemoryId} was not found.`);
+    }
+    if (rival === null) {
+      throw new Error(`Memory ${input.archiveMemoryId} was not found.`);
+    }
+    const note =
+      input.note ??
+      `Conflict resolved: kept ${input.keepMemoryId}, archived ${input.archiveMemoryId}`;
+    const archived = this.reviewMemory({
+      memoryId: rival.memoryId,
+      note,
+      reviewerId: input.reviewerId,
+      status: "archived"
+    });
+    const updatedKept = this.dependencies.memoryRepository.update(kept.memoryId, {
+      conflictsWith: kept.conflictsWith.filter((id) => id !== rival.memoryId),
+      confidence: Math.max(kept.confidence, 0.9),
+      lastVerifiedAt: new Date().toISOString(),
+      metadata: {
+        ...kept.metadata,
+        conflictResolvedAgainst: rival.memoryId,
+        reviewNote: note,
+        reviewedBy: input.reviewerId
+      },
+      status: "verified"
+    });
+    this.syncSearchIndex(updatedKept);
+    this.dependencies.traceService.record({
+      actor: `reviewer.${input.reviewerId}`,
+      eventType: "memory_written",
+      payload: {
+        memoryId: updatedKept.memoryId,
+        privacyLevel: updatedKept.privacyLevel,
+        scope: updatedKept.scope,
+        sourceType: updatedKept.sourceType,
+        status: updatedKept.status
+      },
+      stage: "memory",
+      summary: `Resolved memory conflict; kept ${updatedKept.memoryId}, archived ${archived.memoryId}`,
+      taskId: "memory-admin"
+    });
+    return { archived, kept: updatedKept };
   }
 
   public createSnapshot(input: {
@@ -264,7 +322,7 @@ export class MemoryPlane {
   }
 
   public recall(request: MemoryRecallRequest): MemoryRecallResult {
-    const candidates = [
+    const listed = [
       ...this.dependencies.memoryRepository.list({
         includeExpired: false,
         limit: request.limit * 3,
@@ -278,7 +336,9 @@ export class MemoryPlane {
         scopeKey: request.profileScopeKey
       })
     ];
-    const rankedCandidates = this.recallEngine.rankMemory(candidates, request.query, request.limit);
+    const keywordRanked = this.recallEngine.rankMemory(listed, request.query, request.limit);
+    const ftsHits = this.searchSync(request);
+    const rankedCandidates = mergeKeywordAndFtsCandidates(keywordRanked, ftsHits, request.limit);
 
     const fragments = rankedCandidates.map((candidate) => candidateToFragment(candidate));
     const filtered = this.dependencies.contextPolicy.filterForModelContext({
@@ -291,6 +351,50 @@ export class MemoryPlane {
       query: request.query,
       selectedFragments: filtered.allowedFragments
     };
+  }
+
+  public searchMemories(query: string, limit = 5): MemorySearchHit[] {
+    const fts = asSqliteFtsProvider(this.dependencies.searchProvider);
+    if (fts !== null) {
+      return fts.searchSync(query, limit);
+    }
+    return this.recallEngine.rankMemory(this.list({ includeExpired: false }), query, limit).map((candidate) => ({
+      memory: candidate.memory,
+      provider: "keyword",
+      score: candidate.finalScore
+    }));
+  }
+
+  private searchSync(request: MemoryRecallRequest): MemorySearchHit[] {
+    const fts = asSqliteFtsProvider(this.dependencies.searchProvider);
+    if (fts === null) {
+      return [];
+    }
+    return fts.searchSync(request.query, request.limit, [
+      { scope: "project", scopeKey: request.projectScopeKey },
+      { scope: "profile", scopeKey: request.profileScopeKey }
+    ]);
+  }
+
+  private syncSearchIndex(memory: MemoryRecord): void {
+    const provider = this.dependencies.searchProvider;
+    if (provider === undefined) {
+      return;
+    }
+    const fts = asSqliteFtsProvider(provider);
+    if (fts !== null) {
+      if (memory.status === "verified") {
+        fts.upsertSync(memory);
+      } else {
+        fts.removeSync(memory.memoryId);
+      }
+    }
+    // Keep optional embedding primary in sync (non-blocking).
+    if (provider.name.includes("openai") || provider.name.includes("+")) {
+      void (memory.status === "verified" ? provider.upsert(memory) : provider.remove(memory.memoryId)).catch(
+        () => undefined
+      );
+    }
   }
 
   private persistMemoryIfAllowed(record: MemoryDraft): MemoryRecord | null {
@@ -364,6 +468,7 @@ export class MemoryPlane {
       taskId: persisted.source.taskId ?? "memory-admin"
     });
 
+    this.syncSearchIndex(persisted);
     return persisted;
   }
 
@@ -374,9 +479,10 @@ export class MemoryPlane {
       includeRejected: true
     })) {
       if (memory.expiresAt !== null && memory.expiresAt <= now && memory.status !== "rejected") {
-        this.dependencies.memoryRepository.update(memory.memoryId, {
+        const updated = this.dependencies.memoryRepository.update(memory.memoryId, {
           status: "stale"
         });
+        this.syncSearchIndex(updated);
       }
     }
   }
@@ -407,6 +513,42 @@ export function createProfileScopeKey(task: Pick<TaskRecord, "agentProfileId" | 
 
 /** @deprecated use createProfileScopeKey */
 export const createAgentScopeKey = createProfileScopeKey;
+
+function mergeKeywordAndFtsCandidates(
+  keywordRanked: MemoryRecallCandidate[],
+  ftsHits: MemorySearchHit[],
+  limit: number
+): MemoryRecallCandidate[] {
+  if (ftsHits.length === 0) {
+    return keywordRanked.slice(0, limit);
+  }
+  const keywordAsHits: MemorySearchHit[] = keywordRanked.map((candidate, index) => ({
+    memory: candidate.memory,
+    provider: "keyword",
+    score: candidate.finalScore > 0 ? candidate.finalScore : 1 / (61 + index)
+  }));
+  const fused = rrf(ftsHits, keywordAsHits, limit);
+  const byId = new Map(keywordRanked.map((candidate) => [candidate.memory.memoryId, candidate]));
+  return fused.map((hit, index) => {
+    const existing = byId.get(hit.memory.memoryId);
+    if (existing !== undefined) {
+      return {
+        ...existing,
+        finalScore: Number((existing.finalScore + hit.score).toFixed(4)),
+        explanation: `${existing.explanation}; fts=${hit.score.toFixed(3)}; provider=${hit.provider}`
+      };
+    }
+    return {
+      confidenceScore: hit.memory.confidence,
+      downrankReasons: [],
+      explanation: `fts=${hit.score.toFixed(3)}; provider=${hit.provider}; scope=${hit.memory.scope}; source=${hit.memory.source.label}`,
+      finalScore: Number((hit.score + 1 / (61 + index)).toFixed(4)),
+      freshnessScore: hit.memory.status === "verified" ? 1 : 0.5,
+      keywordScore: hit.score,
+      memory: hit.memory
+    };
+  });
+}
 
 function candidateToFragment(candidate: MemoryRecallCandidate): ContextFragment {
   return {

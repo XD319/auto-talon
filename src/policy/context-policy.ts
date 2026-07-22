@@ -68,7 +68,8 @@ export class ContextPolicy {
     }
 
     const compact = request.content.replace(/\s+/gu, " ").trim();
-    if (compact.length < 20) {
+    const minLength = computeMinLongTermContentLength(compact);
+    if (compact.length < minLength) {
       return {
         allowed: false,
         reason: "Content is too short to justify long-term memory persistence.",
@@ -106,4 +107,16 @@ export class ContextPolicy {
 
     return "[REDACTED: restricted content]";
   }
+}
+
+/** CJK-heavy text packs more meaning per character; lower the character floor. */
+export function computeMinLongTermContentLength(content: string): number {
+  const cjkCount = [...content.matchAll(/[\u4e00-\u9fa5]/gu)].length;
+  if (content.length === 0) {
+    return 20;
+  }
+  if (cjkCount / content.length >= 0.4) {
+    return 8;
+  }
+  return 20;
 }

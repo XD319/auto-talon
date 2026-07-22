@@ -84,6 +84,7 @@ import type {
 } from "../types/index.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
 import type { MemoryFlushService } from "../memory/memory-flush-service.js";
+import type { MemoryBackgroundReviewService } from "../memory/memory-background-review-service.js";
 import {
   DeterministicCompactSummarizer,
   type CompactSummarizer,
@@ -111,6 +112,7 @@ export interface ExecutionKernelDependencies {
   manualCompactCoordinator?: ManualCompactCoordinator;
   memoryPlane: MemoryPlane;
   memoryFlushService?: MemoryFlushService;
+  memoryBackgroundReviewService?: MemoryBackgroundReviewService;
   recallPlanner: RecallPlanner;
   provider: Provider;
   runMetadataRepository: RunMetadataRepository;
@@ -1126,6 +1128,15 @@ export class ExecutionKernel {
     }
 
     this.projectSessionMessages(completedTask, finalOutput);
+
+    this.dependencies.memoryBackgroundReviewService?.schedule({
+      iteration: state.task.currentIteration,
+      messages,
+      provider: this.dependencies.provider,
+      signal: state.managedAbortController.abortController.signal,
+      task: completedTask,
+      tokenBudget: state.tokenBudget
+    });
 
     return {
       output: finalOutput,

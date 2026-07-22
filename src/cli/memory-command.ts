@@ -17,6 +17,7 @@ import {
   formatSkillList,
   formatSnapshot
 } from "./formatters.js";
+import { formatCuratedMemorySearchHits, formatSessionMessageSearchHits } from "./memory-search-formatters.js";
 import { parsePositiveIntegerOption } from "./cli-helpers.js";
 import { MemoryMaintenanceService } from "../memory/memory-maintenance.js";
 
@@ -208,10 +209,12 @@ export function registerMemoryCommands(program: Command): void {
 
   memoryCommand
     .command("search")
-    .argument("<query>", "Session memory search query")
-    .option("--session <sessionId>", "Search within specific session")
-    .option("--global", "Search across all sessions")
-    .option("--exclude-session <sessionId>", "Exclude one session from global search")
+    .argument("<query>", "Search query")
+    .option("--session <sessionId>", "Search session summaries within a session")
+    .option("--global", "Search session summaries across all sessions")
+    .option("--exclude-session <sessionId>", "Exclude one session from global summary search")
+    .option("--messages", "Search session message transcripts via FTS")
+    .option("--curated", "Search approved long-term memories via FTS")
     .option("--limit <number>", "Max hit count", parsePositiveIntegerOption("--limit"), 5)
     .action(
       (
@@ -220,13 +223,34 @@ export function registerMemoryCommands(program: Command): void {
           session?: string;
           global?: boolean;
           excludeSession?: string;
+          messages?: boolean;
+          curated?: boolean;
           limit: number;
         }
       ) => {
         const handle = createApplication(process.cwd());
         try {
+          if (commandOptions.curated === true) {
+            const hits = handle.service.searchCuratedMemories({
+              limit: commandOptions.limit,
+              query
+            });
+            console.log(formatCuratedMemorySearchHits(hits));
+            return;
+          }
+          if (commandOptions.messages === true) {
+            const hits = handle.service.searchSessionMessages({
+              limit: commandOptions.limit,
+              query,
+              ...(commandOptions.session !== undefined
+                ? { sessionIdPrefix: commandOptions.session }
+                : {})
+            });
+            console.log(formatSessionMessageSearchHits(hits));
+            return;
+          }
           if (commandOptions.global !== true && commandOptions.session === undefined) {
-            throw new Error("Provide --session <sessionId> or use --global.");
+            throw new Error("Provide --session <sessionId>, --global, --messages, or --curated.");
           }
           if (commandOptions.global === true && commandOptions.session !== undefined) {
             throw new Error("Use either --global or --session, not both.");
@@ -434,4 +458,32 @@ export function registerMemoryCommands(program: Command): void {
       handle.close();
     }
   });
+
+  memoryCommand
+    .command("resolve-conflict")
+    .description("Keep one memory and archive its conflicting rival")
+    .requiredOption("--keep <memoryId>", "Memory id to keep")
+    .requiredOption("--archive <memoryId>", "Conflicting memory id to archive")
+    .option("--reviewer <reviewer>", "Reviewer id")
+    .option("--note <note>", "Resolution note")
+    .action(
+      (commandOptions: { keep: string; archive: string; reviewer?: string; note?: string }) => {
+        const handle = createApplication(process.cwd());
+        try {
+          const reviewer = commandOptions.reviewer ?? resolveDefaultReviewerId();
+          const result = handle.service.resolveMemoryConflict({
+            archiveMemoryId: commandOptions.archive,
+            keepMemoryId: commandOptions.keep,
+            reviewerId: reviewer,
+            ...(commandOptions.note !== undefined ? { note: commandOptions.note } : {})
+          });
+          console.log("Kept:");
+          console.log(formatMemoryList([result.kept]));
+          console.log("Archived:");
+          console.log(formatMemoryList([result.archived]));
+        } finally {
+          handle.close();
+        }
+      }
+    );
 }

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { formatTraceContextDebug } from "../src/cli/formatters.js";
 import { MemoryPlane } from "../src/memory/memory-plane.js";
+import { createMemorySearchProvider } from "../src/memory/create-memory-search-provider.js";
 import { ContextPolicy } from "../src/policy/context-policy.js";
 import { ExecutionContextAssembler } from "../src/runtime/context-assembler.js";
 import { createApplication, createDefaultRunOptions } from "../src/runtime/index.js";
@@ -577,10 +578,25 @@ function createMemoryHarness() {
     databasePath: ":memory:"
   });
   const traceService = new TraceService(storage.traces);
+  const searchProvider = createMemorySearchProvider({
+    database: storage.database,
+    memoryEmbeddings: storage.memoryEmbeddings,
+    memoryRepository: storage.memories,
+    openaiCompatible: {
+      apiKeyEnv: "OPENAI_API_KEY",
+      batchSize: 32,
+      dimensions: 1536,
+      endpoint: "https://api.openai.com/v1/embeddings",
+      model: "text-embedding-3-small",
+      timeoutMs: 10_000
+    },
+    provider: "fts"
+  });
   const memoryPlane = new MemoryPlane({
     contextPolicy: new ContextPolicy(),
     memoryRepository: storage.memories,
     memorySnapshotRepository: storage.memorySnapshots,
+    searchProvider,
     traceService
   });
 

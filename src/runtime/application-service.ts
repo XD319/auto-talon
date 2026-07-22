@@ -79,6 +79,7 @@ import type {
 import type { TraceService } from "../tracing/trace-service.js";
 import type { RuntimeOutputService } from "./runtime-output-service.js";
 import type { MemoryPlane } from "../memory/memory-plane.js";
+import { extractMemoryKeywords } from "../memory/memory-keywords.js";
 import type { SkillAttachmentKind } from "../types/skill.js";
 import type { SkillDraftManager, SkillRegistry } from "../skills/index.js";
 import type { TodoItem, TodoSessionStore } from "../tools/todo-session-store.js";
@@ -519,6 +520,13 @@ export class AgentApplicationService {
     return this.dependencies.sessionMessageSearchService.search(input);
   }
 
+  public searchCuratedMemories(input: {
+    limit?: number;
+    query: string;
+  }): Array<{ memory: MemoryRecord; score: number; provider: string }> {
+    return this.dependencies.memoryPlane.searchMemories(input.query, input.limit ?? 5);
+  }
+
   public async migrateLegacyTranscripts(): Promise<TranscriptMigrationResult> {
     return migrateLegacyTranscriptFiles({
       sessionRepository: {
@@ -844,6 +852,15 @@ export class AgentApplicationService {
 
   public forgetMemory(memoryId: string, reviewerId: string, note: string): MemoryRecord {
     return this.reviewMemory(memoryId, "archived", reviewerId, note);
+  }
+
+  public resolveMemoryConflict(input: {
+    keepMemoryId: string;
+    archiveMemoryId: string;
+    reviewerId: string;
+    note?: string;
+  }): { kept: MemoryRecord; archived: MemoryRecord } {
+    return this.dependencies.memoryPlane.resolveConflict(input);
   }
 
   public explainMemoryRecall(taskId: string, memoryId?: string): {
@@ -1645,18 +1662,17 @@ function summarizeText(value: string, maxLength: number): string {
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3)}...`;
 }
 
-function extractMemoryKeywords(content: string): string[] {
-  const matches = content.toLowerCase().match(/[a-z0-9_./:-]{3,}/gu) ?? [];
-  return [...new Set(matches)].slice(0, 16);
-}
-
 function isJsonObject(value: JsonValue | undefined): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseMemorySuggestionDraft(metadata: JsonObject): MemorySuggestionDraftShape | null {
-  const raw = metadata.memorySuggestionDraft;
-  if (!isJsonObject(raw)) {
+  const raw = isJsonObject(metadata.memorySuggestionDraft)
+    ? metadata.memorySuggestionDraft
+    : isJsonObject(metadata.draft)
+      ? metadata.draft
+      : null;
+  if (raw === null) {
     return null;
   }
   if (

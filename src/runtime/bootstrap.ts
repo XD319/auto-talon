@@ -14,7 +14,9 @@ import { PromotionAdvisor } from "../experience/promotion/promotion-advisor.js";
 import { MemoryPlane } from "../memory/memory-plane.js";
 import { CoreMemoryService } from "../memory/core-memory-service.js";
 import { MemoryFlushService } from "../memory/memory-flush-service.js";
+import { MemoryBackgroundReviewService } from "../memory/memory-background-review-service.js";
 import { CompactTriggerPolicy } from "../memory/compact-policy.js";
+import { createMemorySearchProvider } from "../memory/create-memory-search-provider.js";
 import { McpClientManager } from "../mcp/index.js";
 import { ContextPolicy } from "../policy/context-policy.js";
 import { DEFAULT_LOCAL_POLICY_CONFIG } from "../policy/default-policy-config.js";
@@ -731,10 +733,18 @@ function buildApplicationRuntime(
     toolRegistry,
     traceService
   });
+  const memorySearchProvider = createMemorySearchProvider({
+    database: storage.database,
+    memoryEmbeddings: storage.memoryEmbeddings,
+    memoryRepository: storage.memories,
+    openaiCompatible: config.memory.search.openaiCompatible,
+    provider: config.memory.search.provider
+  });
   const memoryPlane = new MemoryPlane({
     contextPolicy,
     memoryRepository: storage.memories,
     memorySnapshotRepository: storage.memorySnapshots,
+    searchProvider: memorySearchProvider,
     traceService
   });
   const experiencePlane = new ExperiencePlane({
@@ -908,6 +918,12 @@ function buildApplicationRuntime(
     toolOrchestrator,
     workspaceRoot: config.workspaceRoot
   });
+  const memoryBackgroundReviewService = new MemoryBackgroundReviewService({
+    enabled: () => resolveRuntimeConfig(config.workspaceRoot).memory.enabled,
+    maxSuggestions: config.memory.flush.maxSuggestions,
+    toolOrchestrator,
+    workspaceRoot: config.workspaceRoot
+  });
   const executionKernel = new ExecutionKernel({
     auditService,
     auxiliaryProviderResolver,
@@ -923,6 +939,7 @@ function buildApplicationRuntime(
     manualCompactCoordinator,
     memoryPlane,
     memoryFlushService,
+    memoryBackgroundReviewService,
     recallPlanner,
     provider,
     providerRouter,

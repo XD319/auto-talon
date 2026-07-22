@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { scanMemoryContent } from "../memory/memory-safety.js";
+import { extractMemoryKeywords } from "../memory/memory-keywords.js";
 import type {
   InboxRepository,
   JsonObject,
@@ -136,7 +137,7 @@ export class MemoryTool implements ToolDefinition<typeof memoryToolSchema, Memor
         sourceSessionId: sessionId,
         sourceMessageId,
         reason: input.reason,
-        draft: input.action === "add" ? buildAddDraft(input, context, scopeKey) : null
+        memorySuggestionDraft: input.action === "add" ? buildAddDraft(input, context, scopeKey) : null
       }
     });
     const output: JsonObject = {
@@ -179,7 +180,7 @@ function buildAddDraft(input: MemoryToolInput, context: ToolExecutionContext, sc
   return {
     confidence: 0.9,
     content,
-    keywords: content.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(Boolean).slice(0, 12),
+    keywords: extractMemoryKeywords(content, 12),
     metadata: { memorySuggestionAction: "add" },
     privacyLevel: "internal",
     retentionPolicy: {

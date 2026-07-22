@@ -1910,7 +1910,38 @@ function handleMemoryCommand(
     );
     return true;
   }
-  controller.addSystemMessage("Usage: /memory <on|off|status> | /memory review | /memory add <profile|project> <text> | /memory forget <memory-id-prefix> | /memory why [memory-id-prefix]");
+  if (sub === "resolve-conflict") {
+    const keepPrefix = parsed.args[1] ?? "";
+    const archivePrefix = parsed.args[2] ?? "";
+    if (keepPrefix.length === 0 || archivePrefix.length === 0) {
+      controller.addSystemMessage("Usage: /memory resolve-conflict <keep-id-prefix> <archive-id-prefix>");
+      return true;
+    }
+    const keep = resolveMemoryByPrefix(keepPrefix, service);
+    const archive = resolveMemoryByPrefix(archivePrefix, service);
+    if (keep.kind !== "one") {
+      controller.addSystemMessage(`Keep target: ${keep.message}`);
+      return true;
+    }
+    if (archive.kind !== "one") {
+      controller.addSystemMessage(`Archive target: ${archive.message}`);
+      return true;
+    }
+    try {
+      const result = service.resolveMemoryConflict({
+        archiveMemoryId: archive.item.memoryId,
+        keepMemoryId: keep.item.memoryId,
+        reviewerId
+      });
+      controller.addSystemMessage(
+        ["Kept:", formatMemoryList([result.kept]), "Archived:", formatMemoryList([result.archived])].join("\n")
+      );
+    } catch (error) {
+      controller.addSystemMessage(error instanceof Error ? error.message : String(error));
+    }
+    return true;
+  }
+  controller.addSystemMessage("Usage: /memory <on|off|status> | /memory review | /memory add <profile|project> <text> | /memory forget <memory-id-prefix> | /memory why [memory-id-prefix] | /memory resolve-conflict <keep> <archive>");
   return true;
 }
 
