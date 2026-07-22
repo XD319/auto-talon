@@ -2,7 +2,7 @@
 
 ## Setup script (`setup.ps1`)
 
-`./scripts/setup.ps1` installs dependencies, builds the project, and bootstraps workspace config. By default it also checks whether **ripgrep** (`rg`) is on `PATH` after the build (use `-CheckRipgrep:$false` to skip). If `rg` is missing, the script prints install hints and links here; it does not auto-install ripgrep.
+`./scripts/setup.ps1` installs dependencies, builds the project, and bootstraps workspace config. By default it also checks whether **ripgrep** (`rg`) and **git** are on `PATH` after the build (use `-CheckRipgrep:$false` or `-CheckGit:$false` to skip). If either tool is missing, the script prints install hints and links here; it does not auto-install them.
 
 ## Code search (`rg` / ripgrep)
 
@@ -17,7 +17,7 @@ Run `talon doctor` (or `talon config doctor`) after installing; the report shoul
 
 ## Git
 
-Several workspace commands rely on `git` (for example `git status`). On Windows, `talon doctor` warns when `git` is not on `PATH`. Install [Git for Windows](https://git-scm.com/download/win) and confirm `git --version` works in your shell.
+Several workspace commands rely on `git` (for example `git status`). On Windows, `talon doctor` and `./scripts/setup.ps1` warn when `git` is not on `PATH`. Install [Git for Windows](https://git-scm.com/download/win) (or `winget install Git.Git`) and confirm `git --version` works in your shell.
 
 ## PowerShell execution policy
 

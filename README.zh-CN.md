@@ -207,4 +207,4 @@ MIT. See [LICENSE](LICENSE).
 
 ### 长期记忆
 
-长期记忆默认关闭。使用 /memory on、/memory off 或 	alon memory on|off 手动开关；详见 [docs/user/memory.md](docs/user/memory.md)。
+长期记忆默认关闭。使用 /memory on、/memory off 或 talon memory on|off 手动开关；详见 [docs/user/memory.md](docs/user/memory.md)。

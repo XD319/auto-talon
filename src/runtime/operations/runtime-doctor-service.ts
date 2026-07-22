@@ -206,12 +206,12 @@ export function collectPlatformToolIssues(
   if (platform === "win32") {
     if (!isAvailable("rg")) {
       issues.push(
-        "ripgrep (rg) is not on PATH. Code search falls back to a slower Node walker; install rg for faster search (see docs/user/windows-troubleshooting.md)."
+        "ripgrep (rg) is not on PATH. Code search falls back to a slower Node walker; install with `winget install BurntSushi.ripgrep.MSVC` or `choco install ripgrep` (see docs/user/windows-troubleshooting.md)."
       );
     }
     if (!isAvailable("git")) {
       issues.push(
-        "git is not on PATH. Workspace commands that rely on git status may fail; install Git for Windows and ensure git --version works in your shell."
+        "git is not on PATH. Workspace commands that rely on git status may fail; install with `winget install Git.Git` or from https://git-scm.com/download/win and ensure `git --version` works in your shell (see docs/user/windows-troubleshooting.md)."
       );
     }
   }

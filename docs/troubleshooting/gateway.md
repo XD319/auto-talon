@@ -2,6 +2,7 @@
 
 - Webhook port in use: choose another port.
 - Feishu auth invalid: verify `appId/appSecret/domain`.
+- Feishu end-to-end failures: run the manual checklist in [Gateway](../user/gateway.md#feishu-manual-e2e-checklist); set `AGENT_FEISHU_DEBUG=1` for adapter/SDK logs.
 - Requests denied: check gateway allowlist/denylist/rate limits.
 - Adapter mismatch: verify adapter capability declarations.
 - `401 unauthorized` on local webhook or session API: pass `Authorization: Bearer <token>` using `.auto-talon/http.token` or `AGENT_HTTP_TOKEN`. Run `talon init` to generate a workspace token.

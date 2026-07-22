@@ -240,4 +240,4 @@ MIT. See [LICENSE](LICENSE).
 
 ### Long-term memory
 
-Long-term memory is off by default. Use /memory on, /memory off, or 	alon memory on|off; see [docs/user/memory.md](docs/user/memory.md).
+Long-term memory is off by default. Use /memory on, /memory off, or talon memory on|off; see [docs/user/memory.md](docs/user/memory.md).

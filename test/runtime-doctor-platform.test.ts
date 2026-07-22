@@ -9,7 +9,10 @@ describe("runtime doctor platform issues", () => {
       platform: "win32"
     });
     expect(issues).toEqual(
-      expect.arrayContaining([expect.stringContaining("ripgrep (rg) is not on PATH")])
+      expect.arrayContaining([
+        expect.stringContaining("ripgrep (rg) is not on PATH"),
+        expect.stringContaining("winget install BurntSushi.ripgrep.MSVC")
+      ])
     );
   });
 
@@ -19,7 +22,10 @@ describe("runtime doctor platform issues", () => {
       platform: "win32"
     });
     expect(issues).toEqual(
-      expect.arrayContaining([expect.stringContaining("git is not on PATH")])
+      expect.arrayContaining([
+        expect.stringContaining("git is not on PATH"),
+        expect.stringContaining("winget install Git.Git")
+      ])
     );
   });
 

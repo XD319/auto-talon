@@ -4,14 +4,15 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { startLocalWebhookGateway } from "../gateway/index.js";
+import { FeishuAdapter, startLocalWebhookGateway } from "../gateway/index.js";
 import { resolveHttpAuthToken } from "../core/http-auth.js";
 import { hasFeishuGatewayConfig, resolveFeishuGatewayConfig } from "../gateway/feishu/feishu-config.js";
+import type { FeishuGatewayConfig } from "../gateway/feishu/feishu-config.js";
 import { ProviderError } from "../providers/index.js";
 import { createApplication, createDefaultRunOptions } from "../runtime/index.js";
 import type { SupportedProviderName } from "../providers/index.js";
 import { runEvalReport } from "./eval.js";
-import type { Provider, ProviderInput, ProviderResponse } from "../types/index.js";
+import type { GatewayRuntimeApi, Provider, ProviderInput, ProviderResponse } from "../types/index.js";
 
 export interface BetaChecklistItem {
   details: string;
@@ -41,7 +42,7 @@ export async function runBetaReadinessCheck(
   const denyPath = await verifyApprovalDenyPath();
   const providerDiagnostics = await verifyProviderFailureDiagnostics();
   const gatewayPath = await verifyGatewayAdapterPath();
-  const feishuConfig = verifyOptionalFeishuConfig();
+  const feishuConfig = await verifyOptionalFeishuConfig();
 
   const checklist: BetaChecklistItem[] = [
     {
@@ -84,7 +85,7 @@ export async function runBetaReadinessCheck(
       details: feishuConfig.details,
       id: "feishu-config-shape",
       ok: feishuConfig.ok,
-      title: "Feishu config is valid when present"
+      title: "Feishu config and adapter wiring are valid when present"
     }
   ];
 
@@ -95,7 +96,9 @@ export async function runBetaReadinessCheck(
   };
 }
 
-export function verifyOptionalFeishuConfig(cwd = process.cwd()): { details: string; ok: boolean } {
+export async function verifyOptionalFeishuConfig(
+  cwd = process.cwd()
+): Promise<{ details: string; ok: boolean }> {
   const hasFileConfig = existsSync(join(cwd, ".auto-talon", "feishu.config.json"));
   let hasCredentials = false;
   try {
@@ -115,12 +118,10 @@ export function verifyOptionalFeishuConfig(cwd = process.cwd()): { details: stri
       ok: true
     };
   }
+
+  let config;
   try {
-    resolveFeishuGatewayConfig(cwd);
-    return {
-      details: "feishu config found and parsed",
-      ok: true
-    };
+    config = resolveFeishuGatewayConfig(cwd);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {
@@ -128,6 +129,56 @@ export function verifyOptionalFeishuConfig(cwd = process.cwd()): { details: stri
       ok: false
     };
   }
+
+  try {
+    await verifyFeishuAdapterWiring(config);
+    return {
+      details: "feishu config found, parsed, and adapter wiring verified with mock clients",
+      ok: true
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      details: `feishu adapter wiring failed: ${reason}`,
+      ok: false
+    };
+  }
+}
+
+async function verifyFeishuAdapterWiring(config: FeishuGatewayConfig): Promise<void> {
+  const adapter = new FeishuAdapter(config, {
+    createClients: async () => ({
+      client: {
+        im: {
+          message: {
+            create: async () => ({ data: { message_id: "beta-wiring-message" } }),
+            patch: async () => ({})
+          }
+        }
+      },
+      createEventDispatcher: () => ({
+        register: (handlers) => ({ handlers })
+      }),
+      wsClient: {
+        start: async () => undefined,
+        stop: () => undefined
+      }
+    })
+  });
+
+  const runtimeApi = {
+    getTaskSnapshot: () => null,
+    registerOutboundAdapter: () => undefined,
+    resolveApproval: async () => null,
+    submitTask: async () => {
+      throw new Error("beta Feishu wiring check must not submit tasks");
+    },
+    subscribeToCompletion: () => () => undefined,
+    subscribeToTaskEvents: () => () => undefined
+  } as unknown as GatewayRuntimeApi;
+
+  await adapter.start({ runtimeApi });
+  await adapter.stop();
 }
 
 class ScriptedProvider implements Provider {

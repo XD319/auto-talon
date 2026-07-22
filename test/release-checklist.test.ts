@@ -158,6 +158,7 @@ describe("release checklist helpers", () => {
     const result = validatePackContents([
       "package.json",
       "README.md",
+      "README.zh-CN.md",
       "SECURITY.md",
       "CHANGELOG.md",
       "LICENSE",
@@ -166,7 +167,7 @@ describe("release checklist helpers", () => {
     ]);
 
     expect(result).toEqual({
-      details: "7 release files",
+      details: "8 release files",
       ok: true
     });
   });

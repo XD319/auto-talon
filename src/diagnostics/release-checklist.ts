@@ -321,6 +321,7 @@ export function validatePackContents(files: string[]): { details: string; ok: bo
     "dist/cli/bin.js",
     "dist/cli/index.js",
     "README.md",
+    "README.zh-CN.md",
     "SECURITY.md",
     "CHANGELOG.md",
     "LICENSE",

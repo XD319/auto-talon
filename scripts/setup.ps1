@@ -1,5 +1,6 @@
 param(
-  [switch]$CheckRipgrep = $true
+  [switch]$CheckRipgrep = $true,
+  [switch]$CheckGit = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +42,19 @@ if ($CheckRipgrep) {
     Write-Host "  See docs/user/windows-troubleshooting.md"
   } else {
     Write-Host "[auto-talon] ripgrep is available."
+  }
+}
+
+if ($CheckGit) {
+  Write-Host "[auto-talon] Checking git..."
+  git --version *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[auto-talon] WARNING: git is not on PATH. Workspace commands that rely on git status may fail." -ForegroundColor Yellow
+    Write-Host "  winget install Git.Git"
+    Write-Host "  Install Git for Windows: https://git-scm.com/download/win"
+    Write-Host "  See docs/user/windows-troubleshooting.md"
+  } else {
+    Write-Host "[auto-talon] git is available."
   }
 }
 

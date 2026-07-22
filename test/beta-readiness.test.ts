@@ -37,6 +37,7 @@ describe("beta readiness", () => {
     expect(report.checklist.every((item) => typeof item.ok === "boolean")).toBe(true);
     expect(report.checklist.some((item) => item.id === "provider-errors-diagnosable")).toBe(true);
     expect(report.checklist.some((item) => item.id === "external-adapter-path")).toBe(true);
+    expect(report.checklist.some((item) => item.id === "feishu-config-shape")).toBe(true);
   }, 40000);
 
   it("fails feishu shape check when config is present but invalid", async () => {
@@ -44,7 +45,7 @@ describe("beta readiness", () => {
     await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
     await fs.writeFile(join(workspaceRoot, ".auto-talon", "feishu.config.json"), "{invalid json", "utf8");
 
-    const result = verifyOptionalFeishuConfig(workspaceRoot);
+    const result = await verifyOptionalFeishuConfig(workspaceRoot);
     expect(result.ok).toBe(false);
     expect(result.details).toContain("invalid");
   });
@@ -59,13 +60,13 @@ describe("beta readiness", () => {
     );
 
     expect(hasFeishuGatewayConfig(workspaceRoot)).toBe(false);
-    expect(verifyOptionalFeishuConfig(workspaceRoot)).toEqual({
+    expect(await verifyOptionalFeishuConfig(workspaceRoot)).toEqual({
       details: "feishu credentials not provided; adapter remains optional",
       ok: true
     });
   });
 
-  it("lets environment credentials override empty feishu config files", async () => {
+  it("lets environment credentials override empty feishu config files and verifies wiring", async () => {
     const workspaceRoot = await createTempWorkspace();
     await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
     await fs.writeFile(
@@ -82,7 +83,25 @@ describe("beta readiness", () => {
       appSecret: "env-secret",
       domain: "lark"
     });
-    expect(verifyOptionalFeishuConfig(workspaceRoot).ok).toBe(true);
+    expect(await verifyOptionalFeishuConfig(workspaceRoot)).toEqual({
+      details: "feishu config found, parsed, and adapter wiring verified with mock clients",
+      ok: true
+    });
+  });
+
+  it("verifies adapter wiring when feishu credentials are present in config", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "feishu.config.json"),
+      JSON.stringify({ version: 1, appId: "file-app", appSecret: "file-secret", domain: "feishu" }, null, 2),
+      "utf8"
+    );
+
+    expect(await verifyOptionalFeishuConfig(workspaceRoot)).toEqual({
+      details: "feishu config found, parsed, and adapter wiring verified with mock clients",
+      ok: true
+    });
   });
 });
 
