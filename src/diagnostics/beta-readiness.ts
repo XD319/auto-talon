@@ -147,32 +147,31 @@ export async function verifyOptionalFeishuConfig(
 
 async function verifyFeishuAdapterWiring(config: FeishuGatewayConfig): Promise<void> {
   const adapter = new FeishuAdapter(config, {
-    createClients: async () => ({
-      client: {
-        im: {
-          message: {
-            create: async () => ({ data: { message_id: "beta-wiring-message" } }),
-            patch: async () => ({})
+    createClients: () =>
+      Promise.resolve({
+        client: {
+          im: {
+            message: {
+              create: () => Promise.resolve({ data: { message_id: "beta-wiring-message" } }),
+              patch: () => Promise.resolve({})
+            }
           }
+        },
+        createEventDispatcher: () => ({
+          register: (handlers) => ({ handlers })
+        }),
+        wsClient: {
+          start: () => Promise.resolve(),
+          stop: () => undefined
         }
-      },
-      createEventDispatcher: () => ({
-        register: (handlers) => ({ handlers })
-      }),
-      wsClient: {
-        start: async () => undefined,
-        stop: () => undefined
-      }
-    })
+      })
   });
 
   const runtimeApi = {
     getTaskSnapshot: () => null,
     registerOutboundAdapter: () => undefined,
-    resolveApproval: async () => null,
-    submitTask: async () => {
-      throw new Error("beta Feishu wiring check must not submit tasks");
-    },
+    resolveApproval: () => Promise.resolve(null),
+    submitTask: () => Promise.reject(new Error("beta Feishu wiring check must not submit tasks")),
     subscribeToCompletion: () => () => undefined,
     subscribeToTaskEvents: () => () => undefined
   } as unknown as GatewayRuntimeApi;
