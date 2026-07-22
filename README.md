@@ -1,50 +1,75 @@
-# AutoTalon v0.1.0
+# AutoTalon
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/XD319/auto-talon/actions/workflows/ci.yml/badge.svg)](https://github.com/XD319/auto-talon/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/auto-talon?logo=npm)](https://www.npmjs.com/package/auto-talon)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22.13.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![pnpm](https://img.shields.io/badge/pnpm-10.11.0-F69220?logo=pnpm&logoColor=white)](https://pnpm.io/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**AutoTalon is a local-first personal agent for governed, memory-aware daily execution.**
+**AutoTalon is a local-first, long-running personal agent: it can automatically
+run your programming, office, and everyday tasks on a schedule, call real tools
+under sandbox and approval control, accumulate memory and experience across
+tasks, and connect through gateways such as Feishu while leaving execution
+traces you can inspect anytime.**
 
-It is not just a prompt runner and not a hosted assistant. AutoTalon gives a
-single operator a long-lived agent that can talk, use tools, remember work, run
-schedules, enter through chat gateways, and leave behind traces you can inspect.
-The primary interactive surface is `talon tui`; the CLI is the automation and
-diagnostics surface; Feishu/Lark and local webhook gateways connect external
-conversations to the same runtime.
+<!-- TODO: add a `talon tui` demo GIF/screenshot here, e.g. ![AutoTalon TUI demo](docs/assets/tui-demo.gif) -->
+
+## Table of contents
+
+- [Why AutoTalon](#why-autotalon)
+- [Install](#install)
+- [Common commands](#common-commands)
+- [TUI slash commands](#tui-slash-commands)
+- [Capabilities](#capabilities)
+- [Security model](#security-model)
+- [Scope and limits](#scope-and-limits)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Why AutoTalon
 
 - **A long-lived operator agent**: `talon tui` brings conversation, sessions,
-  inbox, todos, memory review, approvals, and runtime status into one terminal
-  surface for the same agent.
+  inbox, todos, memory review, approvals, and runtime status into a single
+  terminal for one agent.
 - **Governed tool use by default**: shell, process, network, and file tools run
-  through sandbox policy, approval rules, trace events, audit logs, and rollback
-  artifacts.
-- **Memory that compounds**: layered memory keeps profile, project, working,
-  experience, and skill references available across tasks without hiding where
-  recall came from.
+  under sandbox policy and approval rules, and every call is captured as trace
+  events, audit logs, and rollback artifacts.
+- **Memory that compounds**: layered memory keeps profile, project, and working
+  memory, plus experience and skill references, available across tasks without
+  hiding where a recall came from.
 - **Provider freedom**: configure OpenAI-compatible, Anthropic-compatible,
   Ollama, OpenRouter, GLM, Moonshot, Qwen, xAI, Gemini, MiniMax, iFLYTEK, mock,
   or custom compatible endpoints through one provider catalog.
-- **Multiple entry points, one runtime**: use the same sessions and governance
-  from TUI, CLI, Feishu/Lark, local webhooks, and MCP surfaces.
+- **Multiple entry points, one runtime**: TUI, CLI, Feishu/Lark, local webhooks,
+  and MCP surfaces share the same sessions, memory, and governance.
 - **Maintainer-grade diagnostics**: replay, deterministic smoke fixtures, blind
-  real-model evals, baselines, release checks, and package dry-runs are built into the source
-  checkout.
+  real-model evals, baselines, release checks, and package dry-runs ship with
+  the source checkout.
 
 ## Install
 
 Requirements:
 
 - Node.js `>=22.13.0`
-- A provider API key for real assistant runs
-- Corepack only when running from source
+- A provider API key for real assistant runs (skip it to try the mock provider first)
 
-Install the published package:
+### Try it in two minutes (no credentials)
+
+Use the built-in mock provider to see the CLI and TUI work before wiring a real key:
+
+```bash
+npm install -g auto-talon
+talon init --yes
+talon provider setup mock
+talon provider test
+talon tui
+```
+
+### Full setup (real provider)
+
+Point AutoTalon at a real provider and open the interactive agent:
 
 ```bash
 npm install -g auto-talon
@@ -60,89 +85,70 @@ PowerShell users can set the provider key for the current session with:
 $env:OPENAI_API_KEY = "your-api-key"
 ```
 
-To verify the CLI before configuring a real provider:
+### Windows
+
+Native Windows is supported: the CLI, TUI, and gateways run without WSL.
+`./scripts/setup.ps1` builds and bootstraps a source checkout and warns if `git`
+or ripgrep (`rg`) are missing from `PATH`. See
+[Windows troubleshooting](docs/user/windows-troubleshooting.md) for ripgrep,
+Git, and PowerShell execution-policy tips.
+
+### Upgrading
+
+Upgrading from a preview checkout that still uses the legacy thread→session
+schema requires running `talon doctor --fix` once.
+
+To run from source, see [Contributing](CONTRIBUTING.md#develop-from-source).
+
+## Common commands
 
 ```bash
-talon init --yes
-talon provider setup mock
-talon provider test
-talon --version
-```
-
-Run from source:
-
-```bash
-corepack pnpm install
-corepack pnpm build
-corepack pnpm dev init --yes
-corepack pnpm dev provider setup openai --api-key "$OPENAI_API_KEY"
-corepack pnpm dev provider test
-corepack pnpm dev tui
-```
-
-## Workflows
-
-Daily agent surface:
-
-```bash
-talon tui
-talon ops
-```
-
-Scriptable terminal execution:
-
-```bash
-talon run "review the changed files"
-talon continue --last
-talon task list
-talon trace <task_id> --summary
-talon audit <task_id> --summary
-```
-
-Provider operations:
-
-```bash
-talon provider list
-talon provider setup openai --api-key "$OPENAI_API_KEY"
-talon provider use ollama
-talon provider status
-talon provider test
-talon provider route "large coding task"
-```
-
-External entry points:
-
-```bash
+talon tui                              # daily interactive agent surface
+talon run "review the changed files"   # scriptable one-shot execution
+talon continue --last                  # resume the previous task
+talon trace <task_id> --summary        # inspect what the agent did
+talon provider use ollama              # switch the active provider
+talon schedule create "Review my inbox" --name "Daily review" --every 1d
 talon gateway serve-webhook --port 7070
-talon gateway serve-feishu --cwd .
-talon gateway list-adapters
 ```
 
-Automation and continuity:
+See the [Commands reference](docs/user/commands.md) for the full CLI/TUI
+surface, including sessions, audit, memory, inbox, commitments, skills, and
+gateway adapters.
 
-```bash
-talon schedule create "Review my inbox and summarize blockers" --name "Daily inbox review" --every 1d
-talon inbox list
-talon commitments list
-talon next list
-talon memory review-queue list
-```
+## TUI slash commands
 
-## v0.1.0 Capabilities
+Inside `talon tui`, slash commands drive sessions, models, memory, and scheduling:
 
-| Area | What is included |
+| Command | What it does |
 | --- | --- |
-| Agent experience | TUI chat, session browsing, transcript view, status line, approvals, memory, todos, and operational panels |
-| CLI execution | `run`, `continue`, task/session inspection, trace/audit views, workspace map, rollback, doctor |
-| Governance | Policy engine, sandbox scopes, approval prompts, persisted allow rules, audit log, rollback snapshots |
-| Memory | Profile/project/working memory, experience refs, skill refs, recall explanation, review queue, snapshots |
-| Scheduling | One-shot, interval, cron, natural-language timing, execution modes, run queue, inbox/origin/webhook delivery |
-| Providers | Provider catalog, setup/use/promote, health checks, smoke tests, route diagnostics, usage statistics |
-| Gateways | Local webhook and Feishu/Lark adapters sharing the same runtime, identity mapping, and session commands |
-| MCP and skills | MCP client/server surfaces, skill registry, skill assets, drafts, promotion, enable/disable overrides |
-| Diagnostics | Scripted smoke suite, 30-task blind capability eval, scorer evidence, stability metrics, baselines, replay, release checklist |
+| `/new [title]`, `/clear [name]` | Start a fresh named session |
+| `/sessions`, `/resume` | Pick or resume a session |
+| `/model [provider:model]` | Show or switch the active model |
+| `/memory`, `/memory review` | Inspect memory and the review queue |
+| `/schedule create`, `/schedule list` | Schedule and manage work from chat |
+| `/next list`, `/commitments list` | Track todos and commitments |
 
-## Security Model
+See the [Commands reference](docs/user/commands.md) for the full slash-command list.
+
+## Capabilities
+
+| Area | What you get |
+| --- | --- |
+| Agent experience | TUI chat with sessions, transcripts, approvals, memory, todos, and status panels |
+| CLI execution | `run`/`continue`, task and session inspection, trace/audit, workspace map, rollback, doctor |
+| Governance | Sandbox scopes, approval prompts, persisted allow rules, audit log, and rollback snapshots |
+| Memory | Profile/project/working memory with experience and skill refs, plus recall explanations |
+| Scheduling | One-shot, interval, cron, and natural-language timing with inbox/webhook delivery |
+| Providers | One catalog to set up, switch, health-check, and diagnose many providers |
+| Gateways | Feishu/Lark and local webhook adapters sharing the same runtime and sessions |
+| MCP and skills | MCP client/server surfaces plus a skill registry with drafts and promotion |
+| Diagnostics | Smoke suite, blind capability eval, replay, baselines, and a release checklist |
+
+> Long-term memory is off by default. Turn it on with `/memory on` in the TUI or
+> `talon memory on`; see [docs/user/memory.md](docs/user/memory.md).
+
+## Security model
 
 AutoTalon is designed for a local operator who wants an agent with real tool
 access and visible guardrails.
@@ -161,10 +167,10 @@ access and visible guardrails.
 Read [SECURITY.md](SECURITY.md) before exposing gateways or running AutoTalon
 against sensitive project directories.
 
-## Scope and Limits
+## Scope and limits
 
-- Node.js 20 is not supported. AutoTalon requires Node.js `>=22.13.0` because
-  runtime storage uses the built-in `node:sqlite` module.
+- AutoTalon requires Node.js `>=22.13.0` because runtime storage uses the
+  built-in `node:sqlite` module. Node.js 20 is not supported.
 - AutoTalon is local-first and single-operator oriented. It is not a hosted
   SaaS, team control plane, or multi-tenant agent service.
 - Real provider runs require user-supplied credentials. Mock and scripted smoke
@@ -172,13 +178,8 @@ against sensitive project directories.
 - v0.1.0 includes Feishu/Lark and local webhook gateway adapters. Slack,
   Telegram, Discord, voice, browser automation, image generation, and companion
   mobile/desktop apps are outside this release.
-- `talon release check`, `talon eval run`, `talon eval acceptance`, and
-  `talon smoke run` are maintainer diagnostics for source checkouts.
-  Installed-package users should start with `talon doctor` and
-  `talon provider test`. Upgrading from a preview checkout that still uses the
-  legacy thread→session schema should run `talon doctor --fix` once.
 
-## Docs by Goal
+## Documentation
 
 | Goal | Start here |
 | --- | --- |
@@ -192,52 +193,14 @@ against sensitive project directories.
 | Validate a release | [Replay and eval](docs/user/replay-and-eval.md), [Compatibility matrix](docs/compatibility-matrix.md) |
 | Develop AutoTalon | [Architecture](docs/dev/architecture.md), [Module boundaries](docs/dev/module-boundaries.md), [Testing](docs/dev/testing.md) |
 
-## Release Validation
+See the [Changelog](CHANGELOG.md) for release history.
 
-Run these checks before tagging or publishing v0.1.0:
+## Contributing
 
-```bash
-corepack pnpm check
-npm run release:check
-npm pack --dry-run --json
-```
-
-The full suite can take several minutes. `release check` prints its current
-stage and gives each child command a ten-minute timeout. If `corepack pnpm
-check` has already passed in the same clean checkout, avoid repeating lint,
-tests, and build with:
-
-```bash
-npm run release:check -- --skip-quality-checks
-```
-
-Before publishing, verify the npm identity and then validate the exact version
-from the registry after publication:
-
-```bash
-npm whoami
-npm publish --access public
-npm install -g auto-talon@0.1.0
-talon --version
-talon doctor
-```
-
-After installing or updating a local project:
-
-```bash
-talon doctor
-talon provider test
-```
-
-The release checklist covers lint, tests, build, smoke/eval threshold, beta
-readiness, schema baseline, Node version policy, npm metadata, lockfile policy,
-setup scripts, and package contents.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for developing
+from source, running quality checks, and validating a release. Report issues at
+the [issue tracker](https://github.com/XD319/auto-talon/issues).
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-
-### Long-term memory
-
-Long-term memory is off by default. Use /memory on, /memory off, or talon memory on|off; see [docs/user/memory.md](docs/user/memory.md).
