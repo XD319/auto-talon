@@ -35,7 +35,7 @@ export class SqliteFtsMemorySearchProvider implements MemorySearchProvider {
     return Promise.resolve({ healthy: true, detail: `${count} memories indexed in FTS` });
   }
 
-  public async rebuild(memories: MemoryRecord[]): Promise<void> {
+  public rebuild(memories: MemoryRecord[]): Promise<void> {
     this.database.exec("DELETE FROM memories_fts");
     if (this.hasTrigram()) {
       this.database.exec("DELETE FROM memories_trigram");
@@ -43,6 +43,7 @@ export class SqliteFtsMemorySearchProvider implements MemorySearchProvider {
     for (const memory of memories) {
       this.upsertSync(memory);
     }
+    return Promise.resolve();
   }
 
   public upsertSync(memory: MemoryRecord): void {

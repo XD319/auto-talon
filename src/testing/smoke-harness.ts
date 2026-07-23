@@ -465,7 +465,8 @@ async function evaluateScenarioFiles(
       return snapshot.output?.includes("whoami returned") === true ? null : "shell_output_not_explained";
 
     case "long_memory_recall_followup":
-      return snapshot.output?.includes("[project] Task outcome") === true
+      return snapshot.output?.includes("pnpm and vitest") === true &&
+        (snapshot.output.includes("PROJECT MEMORY") || snapshot.output.includes("[project]"))
         ? null
         : "memory_recall_not_reflected";
 
