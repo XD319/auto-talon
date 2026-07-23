@@ -977,12 +977,88 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
     []
   );
 
+  const handleRunOutputEvent = React.useCallback(
+    (event: RuntimeOutputEvent) => {
+      input.onOutputEvent?.(event);
+      if (event.eventType === "assistant_turn_started") {
+        cancelPendingDelta();
+        // Only the still-streaming placeholder for the previous turn (if any)
+        // should be cleared here; an intermediate turn that already produced
+        // visible reasoning was frozen into history below and must stay.
+        removeStreamingMessage(streamingAgentIdRef.current);
+        streamedAnyRef.current = false;
+        currentAssistantDraftRef.current = "";
+        streamingAgentIdRef.current = `agent:stream:${event.payload.turnId}`;
+        return;
+      }
+      if (event.eventType === "assistant_turn_delta") {
+        streamedAnyRef.current = true;
+        if (streamingAgentIdRef.current === null) {
+          return;
+        }
+        currentAssistantDraftRef.current += event.payload.delta;
+        pendingDeltaRef.current += event.payload.delta;
+        if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
+          flushPendingDelta();
+          return;
+        }
+        if (flushTimerRef.current === null) {
+          flushTimerRef.current = setTimeout(flushPendingDelta, STREAM_FLUSH_INTERVAL_MS);
+        }
+        return;
+      }
+      if (event.eventType === "assistant_turn_completed" && event.payload.display === "intermediate") {
+        flushPendingDelta();
+        cancelPendingDelta();
+        const intermediateStreamId = streamingAgentIdRef.current;
+        streamingAgentIdRef.current = null;
+        streamedAnyRef.current = false;
+        if (intermediateStreamId !== null) {
+          if (event.payload.transcriptVisibility === "hidden") {
+            hiddenAssistantProgressRef.current = appendAssistantProgress(
+              hiddenAssistantProgressRef.current,
+              event.payload.text
+            );
+            removeStreamingMessage(intermediateStreamId);
+          } else {
+            freezeIntermediateAgentMessage(intermediateStreamId, event.payload.text);
+          }
+        }
+        currentAssistantDraftRef.current = "";
+        return;
+      }
+      if (event.eventType === "assistant_turn_completed" && event.payload.display === "final") {
+        currentAssistantDraftRef.current = "";
+        return;
+      }
+      if (event.eventType === "provider_status") {
+        setUiStatus((current) => ({
+          ...current,
+          primaryLabel: event.payload.message,
+          primaryTone: providerStatusTone(event.payload.message)
+        }));
+      }
+    },
+    [cancelPendingDelta, flushPendingDelta, freezeIntermediateAgentMessage, input, removeStreamingMessage]
+  );
+
+  const beginInterruptibleRun = React.useCallback((): AbortSignal => {
+    const abortController = new AbortController();
+    activeAbortControllerRef.current = abortController;
+    return abortController.signal;
+  }, []);
+
+  const endInterruptibleRun = React.useCallback(() => {
+    activeAbortControllerRef.current = null;
+  }, []);
+
   const executePrompt = React.useCallback(
     (text: string): void => {
       submitInFlightRef.current = true;
       beginBusy();
       startedAtRef.current = Date.now();
       const taskId = randomUUID();
+      const runSignal = beginInterruptibleRun();
       setUiStatus({
         primaryLabel: "running task",
         primaryTone: "accent",
@@ -1013,9 +1089,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           runOptions.maxIterations = TUI_INTERACTIVE_MAX_ITERATIONS;
           runOptions.timeoutMode = "activity";
           runOptions.timeoutMs = TUI_ACTIVITY_TIMEOUT_MS;
-          const abortController = new AbortController();
-          activeAbortControllerRef.current = abortController;
-          runOptions.signal = abortController.signal;
+          runOptions.signal = runSignal;
           runOptions.taskId = taskId;
           const effectiveMode = interactionModeRef.current;
           if (effectiveMode === "plan") {
@@ -1029,70 +1103,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
             interactivePromptMode: "tui",
             sessionApprovalFingerprints
           };
-          runOptions.onOutputEvent = (event) => {
-            input.onOutputEvent?.(event);
-            if (event.eventType === "assistant_turn_started") {
-              cancelPendingDelta();
-              // Only the still-streaming placeholder for the previous turn (if any)
-              // should be cleared here; an intermediate turn that already produced
-              // visible reasoning was frozen into history below and must stay.
-              removeStreamingMessage(streamingAgentIdRef.current);
-              streamedAnyRef.current = false;
-              currentAssistantDraftRef.current = "";
-              streamingAgentIdRef.current = `agent:stream:${event.payload.turnId}`;
-              return;
-            }
-            if (event.eventType === "assistant_turn_delta") {
-              streamedAnyRef.current = true;
-              if (streamingAgentIdRef.current === null) {
-                return;
-              }
-              currentAssistantDraftRef.current += event.payload.delta;
-              pendingDeltaRef.current += event.payload.delta;
-              if (pendingDeltaRef.current.length >= STREAM_FLUSH_MAX_CHARS) {
-                flushPendingDelta();
-                return;
-              }
-              if (flushTimerRef.current === null) {
-                flushTimerRef.current = setTimeout(flushPendingDelta, STREAM_FLUSH_INTERVAL_MS);
-              }
-              return;
-            }
-            if (
-              event.eventType === "assistant_turn_completed" &&
-              event.payload.display === "intermediate"
-            ) {
-              flushPendingDelta();
-              cancelPendingDelta();
-              const intermediateStreamId = streamingAgentIdRef.current;
-              streamingAgentIdRef.current = null;
-              streamedAnyRef.current = false;
-              if (intermediateStreamId !== null) {
-                if (event.payload.transcriptVisibility === "hidden") {
-                  hiddenAssistantProgressRef.current = appendAssistantProgress(
-                    hiddenAssistantProgressRef.current,
-                    event.payload.text
-                  );
-                  removeStreamingMessage(intermediateStreamId);
-                } else {
-                  freezeIntermediateAgentMessage(intermediateStreamId, event.payload.text);
-                }
-              }
-              currentAssistantDraftRef.current = "";
-              return;
-            }
-            if (event.eventType === "assistant_turn_completed" && event.payload.display === "final") {
-              currentAssistantDraftRef.current = "";
-              return;
-            }
-            if (event.eventType === "provider_status") {
-              setUiStatus((current) => ({
-                ...current,
-                primaryLabel: event.payload.message,
-                primaryTone: providerStatusTone(event.payload.message)
-              }));
-            }
-          };
+          runOptions.onOutputEvent = handleRunOutputEvent;
 
           const activeSessionId = activeSessionIdRef.current;
           if (activeSessionId !== null) {
@@ -1118,6 +1129,18 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
 
           const runError = result.error;
           if (runError !== undefined) {
+            if (runError.code === "interrupt" || runSignal.aborted) {
+              cancelPendingDelta();
+              removeStreamingMessage(activeStreamId);
+              addSystemMessage("Interrupted current task.");
+              setUiStatus({
+                primaryLabel: "interrupted",
+                primaryTone: "warn",
+                runState: "interrupted",
+                taskLabel: result.task.taskId.slice(0, 8)
+              });
+              return;
+            }
             const failedProgressText = buildFailedAssistantProgressText(
               hiddenAssistantProgressRef.current,
               currentAssistantDraftRef.current
@@ -1223,7 +1246,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           });
         } finally {
           submitInFlightRef.current = false;
-          activeAbortControllerRef.current = null;
+          endInterruptibleRun();
           streamingAgentIdRef.current = null;
           streamedAnyRef.current = false;
           cancelPendingDelta();
@@ -1256,11 +1279,14 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       addSystemMessage,
       appendNewTraceEvents,
       beginBusy,
+      beginInterruptibleRun,
       cancelPendingDelta,
       endBusy,
+      endInterruptibleRun,
       ensureRuntimeSession,
       finalizeStreamingAgentMessage,
       flushPendingDelta,
+      handleRunOutputEvent,
       input.config,
       input.cwd,
       input.onInteractionModeChange,
@@ -1379,6 +1405,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       approvalInFlightRef.current = true;
       beginBusy();
       const approval = pendingApproval;
+      const runSignal = beginInterruptibleRun();
       setPendingApproval(null);
       setUiStatus({
         primaryLabel: "running task",
@@ -1387,12 +1414,19 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         taskLabel: approval.taskId.slice(0, 8)
       });
       startTraceSubscription(approval.taskId);
+      streamedAnyRef.current = false;
+      streamingAgentIdRef.current = `agent:stream:${approval.taskId}`;
+      resetAssistantProgressBuffers();
       try {
         const result = await input.service.resolveApproval(
           approval.approvalId,
           action,
           input.reviewerId,
-          allowScope
+          allowScope,
+          {
+            onOutputEvent: handleRunOutputEvent,
+            signal: runSignal
+          }
         );
         if (action === "allow" && allowScope === "session" && approval.fingerprint !== null) {
           setSessionApprovalFingerprints((current) =>
@@ -1407,6 +1441,16 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         );
         const resultError = result.error;
         if (resultError !== undefined) {
+          if (resultError.code === "interrupt" || runSignal.aborted) {
+            addSystemMessage("Interrupted current task.");
+            setUiStatus({
+              primaryLabel: "interrupted",
+              primaryTone: "warn",
+              runState: "interrupted",
+              taskLabel: result.task.taskId.slice(0, 8)
+            });
+            return;
+          }
           setMessages((current) => [
             ...current,
             {
@@ -1456,6 +1500,16 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           taskLabel: result.task.taskId.slice(0, 8)
         });
       } catch (error) {
+        if (runSignal.aborted) {
+          addSystemMessage("Interrupted current task.");
+          setUiStatus({
+            primaryLabel: "interrupted",
+            primaryTone: "warn",
+            runState: "interrupted",
+            taskLabel: approval.taskId.slice(0, 8)
+          });
+          return;
+        }
         setMessages((current) => [
           ...current,
           {
@@ -1475,20 +1529,31 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         });
       } finally {
         approvalInFlightRef.current = false;
+        endInterruptibleRun();
+        streamingAgentIdRef.current = null;
+        streamedAnyRef.current = false;
+        cancelPendingDelta();
+        resetAssistantProgressBuffers();
         endBusy();
         stopTraceSubscription();
         refresh();
       }
     },
     [
+      addSystemMessage,
       appendNewTraceEvents,
       beginBusy,
+      beginInterruptibleRun,
+      cancelPendingDelta,
       endBusy,
+      endInterruptibleRun,
+      handleRunOutputEvent,
       input.reviewerId,
       input.service,
       pendingApproval,
       setSessionApprovalFingerprints,
       refresh,
+      resetAssistantProgressBuffers,
       startTraceSubscription,
       stopTraceSubscription
     ]
@@ -1508,6 +1573,7 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
       approvalInFlightRef.current = true;
       beginBusy();
       const prompt = pendingClarifyPrompt;
+      const runSignal = beginInterruptibleRun();
       setPendingClarifyPrompt(null);
       setUiStatus({
         primaryLabel: "answering clarification",
@@ -1516,13 +1582,29 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         taskLabel: prompt.taskId.slice(0, 8)
       });
       startTraceSubscription(prompt.taskId);
+      streamedAnyRef.current = false;
+      streamingAgentIdRef.current = `agent:stream:${prompt.taskId}`;
+      resetAssistantProgressBuffers();
       try {
-        const result = await input.service.answerClarifyPrompt(prompt.promptId, input.reviewerId, clarifyInput);
+        const result = await input.service.answerClarifyPrompt(prompt.promptId, input.reviewerId, clarifyInput, {
+          onOutputEvent: handleRunOutputEvent,
+          signal: runSignal
+        });
         appendNewTraceEvents(result.task.taskId);
         activeTaskIdRef.current = result.task.taskId;
         setActiveTaskId(result.task.taskId);
         const resultError = result.error;
         if (resultError !== undefined) {
+          if (resultError.code === "interrupt" || runSignal.aborted) {
+            addSystemMessage("Interrupted current task.");
+            setUiStatus({
+              primaryLabel: "interrupted",
+              primaryTone: "warn",
+              runState: "interrupted",
+              taskLabel: result.task.taskId.slice(0, 8)
+            });
+            return;
+          }
           setMessages((current) => [
             ...current,
             {
@@ -1561,6 +1643,16 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
           taskLabel: result.task.taskId.slice(0, 8)
         });
       } catch (error) {
+        if (runSignal.aborted) {
+          addSystemMessage("Interrupted current task.");
+          setUiStatus({
+            primaryLabel: "interrupted",
+            primaryTone: "warn",
+            runState: "interrupted",
+            taskLabel: prompt.taskId.slice(0, 8)
+          });
+          return;
+        }
         setMessages((current) => [
           ...current,
           {
@@ -1580,19 +1672,30 @@ export function useChatController(input: UseChatControllerOptions): ChatControll
         });
       } finally {
         approvalInFlightRef.current = false;
+        endInterruptibleRun();
+        streamingAgentIdRef.current = null;
+        streamedAnyRef.current = false;
+        cancelPendingDelta();
+        resetAssistantProgressBuffers();
         endBusy();
         stopTraceSubscription();
         refresh();
       }
     },
     [
+      addSystemMessage,
       appendNewTraceEvents,
       beginBusy,
+      beginInterruptibleRun,
+      cancelPendingDelta,
       endBusy,
+      endInterruptibleRun,
+      handleRunOutputEvent,
       input.reviewerId,
       input.service,
       pendingClarifyPrompt,
       refresh,
+      resetAssistantProgressBuffers,
       startTraceSubscription,
       stopTraceSubscription
     ]

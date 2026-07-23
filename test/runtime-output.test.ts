@@ -273,6 +273,38 @@ describe("runtime output events", () => {
       handle.close();
     }
   });
+
+  it("cancels a running task when the upstream abort signal fires (Ctrl+C /stop path)", async () => {
+    const workspace = await fs.mkdtemp(join(tmpdir(), "talon-output-interrupt-"));
+    tempPaths.push(workspace);
+    const handle = createApplication(workspace, {
+      config: { databasePath: join(workspace, "runtime.db") },
+      provider: new IdleProvider()
+    });
+    const abortController = new AbortController();
+
+    try {
+      const options = createDefaultRunOptions("interrupt idle provider", workspace, handle.config);
+      options.timeoutMode = "activity";
+      options.timeoutMs = 60_000;
+      options.signal = abortController.signal;
+
+      const runPromise = handle.service.runTask(options);
+      await delay(30);
+      abortController.abort();
+      const result = await runPromise;
+      const interruptEvent = handle.service
+        .traceTask(result.task.taskId)
+        .find((event) => event.eventType === "interrupt");
+
+      expect(result.error?.code).toBe("interrupt");
+      expect(result.error?.message).toBe("Task interrupted by signal.");
+      expect(result.task.status).toBe("cancelled");
+      expect(interruptEvent).toBeDefined();
+    } finally {
+      handle.close();
+    }
+  });
 });
 
 async function delay(ms: number): Promise<void> {

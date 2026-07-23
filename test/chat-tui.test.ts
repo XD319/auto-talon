@@ -53,6 +53,7 @@ import type { AgentApplicationService, AppConfig } from "../src/runtime/index.js
 import { createDefaultRunOptions } from "../src/runtime/index.js";
 import { AppError } from "../src/runtime/app-error.js";
 import type {
+  ApprovalAllowScope,
   ApprovalRecord,
   ClarifyPromptRecord,
   InboxItem,
@@ -697,6 +698,328 @@ describe("use-chat-controller helpers", () => {
       expect(
         messages.filter((message) => message.kind === "agent").map((message) => message.text)
       ).toEqual(["reply-one", "reply-two"]);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("requestInterrupt aborts the active run signal and stops busy state", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const tasks = new Map<string, TaskRecord>();
+    let capturedSignal: AbortSignal | null = null;
+    let runStarted = false;
+
+    const runTask = vi.fn(async (options: RuntimeRunOptions) => {
+      const task = createControllerTask(options);
+      tasks.set(task.taskId, task);
+      capturedSignal = options.signal ?? null;
+      runStarted = true;
+      options.onAssistantTextDelta?.("streaming before interrupt");
+
+      await new Promise<never>((_resolve, reject) => {
+        const signal = options.signal;
+        if (signal === undefined) {
+          reject(new Error("expected abort signal on run options"));
+          return;
+        }
+        if (signal.aborted) {
+          reject(new DOMException("Task interrupted by signal.", "AbortError"));
+          return;
+        }
+        signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Task interrupted by signal.", "AbortError")),
+          { once: true }
+        );
+      });
+    });
+
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      runTask,
+      listTasks() {
+        return [...tasks.values()];
+      },
+      showTask(taskId: string) {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: tasks.get(taskId) ?? null,
+          toolCalls: [],
+          trace: []
+        };
+      }
+    };
+
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      expect(getController().submitPrompt("please keep talking")).toBe(true);
+      await waitFor(() => runStarted && capturedSignal !== null && getController().busy === true);
+
+      expect(getController().requestInterrupt()).toBe(true);
+      expect(capturedSignal?.aborted).toBe(true);
+
+      await waitFor(() => getController().busy === false);
+      expect(getController().uiStatus.runState).toBe("interrupted");
+      expect(
+        getController().messages.some(
+          (message) => message.kind === "system" && message.text === "Interrupted current task."
+        )
+      ).toBe(true);
+      expect(runTask).toHaveBeenCalledTimes(1);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("surfaces returned interrupt errors as interrupted when runtime does not throw", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    const tasks = new Map<string, TaskRecord>();
+    let capturedSignal: AbortSignal | null = null;
+    let runStarted = false;
+
+    const runTask = vi.fn(async (options: RuntimeRunOptions) => {
+      const task = createControllerTask(options);
+      tasks.set(task.taskId, task);
+      capturedSignal = options.signal ?? null;
+      runStarted = true;
+
+      await new Promise<void>((resolve, reject) => {
+        const signal = options.signal;
+        if (signal === undefined) {
+          reject(new Error("expected abort signal on run options"));
+          return;
+        }
+        if (signal.aborted) {
+          resolve();
+          return;
+        }
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+
+      task.status = "cancelled";
+      task.errorCode = "interrupt";
+      task.errorMessage = "Task interrupted by signal.";
+      task.finishedAt = new Date().toISOString();
+      return {
+        error: new AppError({
+          code: "interrupt",
+          details: { taskId: task.taskId },
+          message: "Task interrupted by signal."
+        }),
+        output: null,
+        task
+      };
+    });
+
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      runTask,
+      listTasks() {
+        return [...tasks.values()];
+      },
+      showTask(taskId: string) {
+        return {
+          approvals: [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: tasks.get(taskId) ?? null,
+          toolCalls: [],
+          trace: []
+        };
+      }
+    };
+
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      await waitFor(() => controller !== null);
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      expect(getController().submitPrompt("please keep talking")).toBe(true);
+      await waitFor(() => runStarted && capturedSignal !== null && getController().busy === true);
+
+      expect(getController().requestInterrupt()).toBe(true);
+      expect(capturedSignal?.aborted).toBe(true);
+
+      await waitFor(() => getController().busy === false);
+      expect(getController().uiStatus.runState).toBe("interrupted");
+      expect(
+        getController().messages.some(
+          (message) => message.kind === "system" && message.text === "Interrupted current task."
+        )
+      ).toBe(true);
+    } finally {
+      await unmountInkApp(app);
+    }
+  });
+
+  it("requestInterrupt aborts approval resume runs", async () => {
+    const stdout = new PassThrough();
+    const config = createControllerConfig();
+    let capturedSignal: AbortSignal | null = null;
+    let resumeStarted = false;
+    let approvalPending = true;
+    const approval = createApprovalRecord();
+    const waitingTask: TaskRecord = {
+      ...createControllerTask({
+        ...createDefaultRunOptions("needs approval", process.cwd(), config),
+        sessionId: "session-123",
+        taskId: approval.taskId
+      }),
+      status: "waiting_approval"
+    };
+
+    const resolveApproval = vi.fn(
+      async (
+        _approvalId: string,
+        _action: "allow" | "deny",
+        _reviewerId: string,
+        _allowScope?: ApprovalAllowScope,
+        resumeOptions?: { signal?: AbortSignal }
+      ) => {
+        approvalPending = false;
+        waitingTask.status = "running";
+        capturedSignal = resumeOptions?.signal ?? null;
+        resumeStarted = true;
+        await new Promise<never>((_resolve, reject) => {
+          const signal = resumeOptions?.signal;
+          if (signal === undefined) {
+            reject(new Error("expected abort signal on approval resume"));
+            return;
+          }
+          if (signal.aborted) {
+            waitingTask.status = "cancelled";
+            reject(new DOMException("Task interrupted by signal.", "AbortError"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              waitingTask.status = "cancelled";
+              reject(new DOMException("Task interrupted by signal.", "AbortError"));
+            },
+            { once: true }
+          );
+        });
+      }
+    );
+
+    const service: ControllerServiceStub = {
+      ...createIdleControllerService(),
+      listPendingApprovals() {
+        return approvalPending ? [approval] : [];
+      },
+      listTasks() {
+        return [waitingTask];
+      },
+      resolveApproval,
+      showTask(taskId: string) {
+        return {
+          approvals: taskId === approval.taskId && approvalPending ? [approval] : [],
+          artifacts: [],
+          inboxItems: [],
+          scheduleRuns: [],
+          task: taskId === approval.taskId ? waitingTask : null,
+          toolCalls: [],
+          trace: []
+        };
+      }
+    };
+
+    let controller: ChatController | null = null;
+
+    function Harness(): React.ReactElement | null {
+      const instance = useChatController({
+        config,
+        cwd: process.cwd(),
+        initialSessionId: "session-123",
+        reviewerId: "reviewer",
+        service: asControllerService(service)
+      });
+      React.useEffect(() => {
+        controller = instance;
+      }, [instance]);
+      return null;
+    }
+
+    const app = render(React.createElement(Harness), {
+      interactive: false,
+      patchConsole: false,
+      stdout: stdout as unknown as NodeJS.WriteStream
+    });
+
+    try {
+      const getController = (): ChatController => {
+        if (controller === null) {
+          throw new Error("Controller did not initialize.");
+        }
+        return controller;
+      };
+      await waitFor(() => getController().pendingApproval !== null);
+      void getController().resolvePendingApproval("allow");
+      await waitFor(() => resumeStarted && capturedSignal !== null && getController().busy === true);
+
+      expect(getController().requestInterrupt()).toBe(true);
+      expect(capturedSignal?.aborted).toBe(true);
+      await waitFor(() => getController().busy === false);
+      expect(getController().uiStatus.runState).toBe("interrupted");
+      expect(resolveApproval).toHaveBeenCalledTimes(1);
     } finally {
       await unmountInkApp(app);
     }

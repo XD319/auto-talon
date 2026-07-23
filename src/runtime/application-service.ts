@@ -989,10 +989,20 @@ export class AgentApplicationService {
     approvalId: string,
     action: "allow" | "deny",
     reviewerId: string,
-    allowScope?: ApprovalAllowScope
+    allowScope?: ApprovalAllowScope,
+    resumeOptions?: {
+      onOutputEvent?: (event: RuntimeOutputEvent) => void;
+      signal?: AbortSignal;
+    }
   ): Promise<ApprovalActionResult> {
     this.reconcileExpiredApprovals();
-    return this.approvalResolutionFacade.resolveApproval(approvalId, action, reviewerId, allowScope);
+    return this.approvalResolutionFacade.resolveApproval(
+      approvalId,
+      action,
+      reviewerId,
+      allowScope,
+      resumeOptions
+    );
   }
 
   public async answerClarifyPrompt(
@@ -1003,10 +1013,14 @@ export class AgentApplicationService {
       answerText?: string;
       answers?: Record<string, string | string[]>;
       response?: string;
+    },
+    resumeOptions?: {
+      onOutputEvent?: (event: RuntimeOutputEvent) => void;
+      signal?: AbortSignal;
     }
   ): Promise<ClarifyActionResult> {
     this.reconcileExpiredApprovals();
-    return this.clarifyResolutionFacade.answerClarifyPrompt(promptId, reviewerId, input);
+    return this.clarifyResolutionFacade.answerClarifyPrompt(promptId, reviewerId, input, resumeOptions);
   }
 
   public cancelClarifyPrompt(promptId: string, reviewerId: string): ClarifyActionResult {

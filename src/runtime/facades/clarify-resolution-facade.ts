@@ -1,12 +1,17 @@
 import { z } from "zod";
 
 import type { ClarifyService } from "../../approvals/clarify-service.js";
-import type { ClarifyPromptRecord, ExecutionCheckpointRecord, TaskRecord } from "../../types/index.js";
+import type { ClarifyPromptRecord, ExecutionCheckpointRecord, RuntimeOutputEvent, TaskRecord } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type { ExecutionKernel } from "../execution-kernel.js";
 import type { ScheduleRunLifecycle } from "../scheduler/index.js";
 import { AppError, toAppError } from "../app-error.js";
 import type { ClarifyActionResult } from "../application-service.js";
+
+export interface ClarifyResumeOptions {
+  onOutputEvent?: (event: RuntimeOutputEvent) => void;
+  signal?: AbortSignal;
+}
 
 const clarifyAnswerSchema = z
   .object({
@@ -57,7 +62,8 @@ export class ClarifyResolutionFacade {
       answerText?: string;
       answers?: Record<string, string | string[]>;
       response?: string;
-    }
+    },
+    resumeOptions: ClarifyResumeOptions = {}
   ): Promise<ClarifyActionResult> {
     const parsed = clarifyAnswerSchema.parse({
       ...input,
@@ -120,7 +126,7 @@ export class ClarifyResolutionFacade {
       if (taskBeforeResume !== null) {
         this.dependencies.scheduleRunLifecycle.markResuming(taskBeforeResume);
       }
-      const result = await this.dependencies.executionKernel.resumeTask(prompt.taskId);
+      const result = await this.dependencies.executionKernel.resumeTask(prompt.taskId, resumeOptions);
       this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
       this.callbacks.releaseSessionLockIfTerminal(result.task);
       this.callbacks.projectAssistantOutput(

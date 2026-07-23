@@ -7,7 +7,7 @@ import {
   readSessionApprovalFingerprints
 } from "../../approvals/session-approval-fingerprints.js";
 import type { AuditService } from "../../audit/audit-service.js";
-import type { ApprovalAllowScope, ApprovalRecord, TaskRecord } from "../../types/index.js";
+import type { ApprovalAllowScope, ApprovalRecord, RuntimeOutputEvent, TaskRecord } from "../../types/index.js";
 import type { TraceService } from "../../tracing/trace-service.js";
 import type { ExecutionKernel } from "../execution-kernel.js";
 import type { ScheduleRunLifecycle } from "../scheduler/index.js";
@@ -17,6 +17,11 @@ import type {
 } from "../sessions/session-ui-state-service.js";
 import { AppError, toAppError } from "../app-error.js";
 import type { ApprovalActionResult } from "../application-service.js";
+
+export interface ApprovalResumeOptions {
+  onOutputEvent?: (event: RuntimeOutputEvent) => void;
+  signal?: AbortSignal;
+}
 
 const approvalActionSchema = z.object({
   action: z.enum(["allow", "deny"]),
@@ -54,7 +59,8 @@ export class ApprovalResolutionFacade {
     approvalId: string,
     action: "allow" | "deny",
     reviewerId: string,
-    allowScope?: ApprovalAllowScope
+    allowScope?: ApprovalAllowScope,
+    resumeOptions: ApprovalResumeOptions = {}
   ): Promise<ApprovalActionResult> {
     const parsed = approvalActionSchema.parse({
       action,
@@ -65,7 +71,7 @@ export class ApprovalResolutionFacade {
     const existingApproval = this.dependencies.approvalService.findById(parsed.approvalId);
     if (existingApproval !== null && existingApproval.status !== "pending") {
       if (existingApproval.status === "denied" || existingApproval.status === "timed_out") {
-        return this.resumeApprovalFailureOnce(existingApproval);
+        return this.resumeApprovalFailureOnce(existingApproval, resumeOptions);
       }
       return this.toCompletedApprovalActionResult(existingApproval);
     }
@@ -151,7 +157,7 @@ export class ApprovalResolutionFacade {
             this.persistSessionApprovalFingerprint(taskBeforeResume.sessionId, approval.fingerprint);
           }
         }
-        const result = await this.dependencies.executionKernel.resumeTask(approval.taskId);
+        const result = await this.dependencies.executionKernel.resumeTask(approval.taskId, resumeOptions);
         this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
         this.callbacks.releaseSessionLockIfTerminal(result.task);
         this.callbacks.projectAssistantOutput(
@@ -180,23 +186,29 @@ export class ApprovalResolutionFacade {
       }
     }
 
-    return this.resumeApprovalFailureOnce(approval);
+    return this.resumeApprovalFailureOnce(approval, resumeOptions);
   }
 
-  public resumeApprovalFailureOnce(approval: ApprovalRecord): Promise<ApprovalActionResult> {
+  public resumeApprovalFailureOnce(
+    approval: ApprovalRecord,
+    resumeOptions: ApprovalResumeOptions = {}
+  ): Promise<ApprovalActionResult> {
     const existing = this.approvalFailureContinuations.get(approval.approvalId);
     if (existing !== undefined) {
       return existing;
     }
 
-    const continuation = this.resumeApprovalFailure(approval).finally(() => {
+    const continuation = this.resumeApprovalFailure(approval, resumeOptions).finally(() => {
       this.approvalFailureContinuations.delete(approval.approvalId);
     });
     this.approvalFailureContinuations.set(approval.approvalId, continuation);
     return continuation;
   }
 
-  private async resumeApprovalFailure(approval: ApprovalRecord): Promise<ApprovalActionResult> {
+  private async resumeApprovalFailure(
+    approval: ApprovalRecord,
+    resumeOptions: ApprovalResumeOptions = {}
+  ): Promise<ApprovalActionResult> {
     const task = this.dependencies.findTask(approval.taskId);
     if (task === null || task.status !== "waiting_approval") {
       return this.toCompletedApprovalActionResult(approval);
@@ -205,7 +217,8 @@ export class ApprovalResolutionFacade {
     try {
       const result = await this.dependencies.executionKernel.resumeTaskAfterApprovalFailure(
         approval.taskId,
-        approval.toolCallId
+        approval.toolCallId,
+        resumeOptions
       );
       this.dependencies.scheduleRunLifecycle.syncRunFromTask(result.task);
       this.callbacks.releaseSessionLockIfTerminal(result.task);

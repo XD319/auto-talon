@@ -931,7 +931,13 @@ export function ChatTuiApp({
 
       if (text === "/stop") {
         const requested = controller.requestInterrupt();
-        controller.addSystemMessage(requested ? "Stop requested for current task." : "No running task to stop.");
+        controller.addSystemMessage(
+          requested
+            ? "Stop requested for current task."
+            : controller.busy
+              ? "A task appears busy, but this phase has no interrupt handle yet. Wait a moment and try again."
+              : "No running task to stop."
+        );
         return true;
       }
 
@@ -1310,9 +1316,15 @@ export function ChatTuiApp({
     },
     onInterruptRequest: () => {
       const requested = controller.requestInterrupt();
+      if (requested) {
+        controller.addSystemMessage(
+          "Interrupt requested. Press Ctrl+C again within 2s to force exit if shutdown is needed."
+        );
+        return;
+      }
       controller.addSystemMessage(
-        requested
-          ? "Interrupt requested. Press Ctrl+C again within 2s to force exit if shutdown is needed."
+        controller.busy
+          ? "A task appears busy, but this phase has no interrupt handle yet. Wait a moment and try again, or use /stop after the run becomes interruptible."
           : "No running task to interrupt."
       );
     },
