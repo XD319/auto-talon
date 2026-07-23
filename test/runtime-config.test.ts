@@ -597,6 +597,43 @@ describe("runtime config", () => {
     expect(config.workspaceRoot).toBe(explicitWorkspace);
     await expect(fs.stat(join(nestedCwd, ".auto-talon"))).rejects.toThrow();
   });
+
+  it("loads skills config from runtime.config.json and lets env override it", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify(
+        {
+          skills: {
+            builtinRoot: "C:/tmp/builtin-skills",
+            precedence: ["builtin", "local", "project", "team"],
+            teamRoots: ["C:/tmp/team-skills"]
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const fileConfig = resolveRuntimeConfig(workspaceRoot);
+    expect(fileConfig.skills).toEqual({
+      builtinRoot: "C:/tmp/builtin-skills",
+      precedence: ["builtin", "local", "project", "team"],
+      teamRoots: ["C:/tmp/team-skills"]
+    });
+
+    vi.stubEnv("AGENT_TEAM_SKILLS_HOME", "C:/tmp/team-skills-from-env");
+    vi.stubEnv("AGENT_BUILTIN_SKILLS_ROOT", "C:/tmp/builtin-from-env");
+    vi.stubEnv("AGENT_SKILLS_PRECEDENCE", "team,project,local,builtin");
+    const envConfig = resolveRuntimeConfig(workspaceRoot);
+
+    expect(envConfig.configSource).toBe("env");
+    expect(envConfig.skills.builtinRoot).toBe("C:/tmp/builtin-from-env");
+    expect(envConfig.skills.precedence).toEqual(["team", "project", "local", "builtin"]);
+    expect(envConfig.skills.teamRoots).toEqual(["C:/tmp/team-skills-from-env"]);
+  });
 });
 
 async function createTempWorkspace(): Promise<string> {

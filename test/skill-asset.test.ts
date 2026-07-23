@@ -99,6 +99,7 @@ describe("skill asset model", () => {
       disabled: false,
       name: "release-notes",
       namespace: "default",
+      required: false,
       version: "0.1.0"
     });
   });

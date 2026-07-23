@@ -35,6 +35,7 @@
   "files": [
     "dist/",
     "docs/",
+    "skills/",
     "scripts/setup.sh",
     "scripts/setup.ps1",
     "README.md",

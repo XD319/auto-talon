@@ -212,6 +212,13 @@ const runtimeConfigFileSchema = z.object({
       riskDenyKeywords: z.array(z.string().min(1)).optional()
     })
     .optional(),
+  skills: z
+    .object({
+      builtinRoot: z.string().min(1).optional(),
+      precedence: z.array(z.enum(["builtin", "local", "project", "team"])).optional(),
+      teamRoots: z.array(z.string().min(1)).optional()
+    })
+    .optional(),
   routing: z
     .object({
       helpers: z
@@ -420,6 +427,11 @@ export interface RuntimeConfig {
     maxHumanJudgmentWeight: number;
     riskDenyKeywords: string[];
   };
+  skills: {
+    builtinRoot: string | null;
+    precedence: Array<"builtin" | "local" | "project" | "team">;
+    teamRoots: string[];
+  };
   routing: {
     mode: RoutingMode;
     providers: {
@@ -579,6 +591,11 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     minSuccessCount: 3,
     minSuccessRate: 0.8,
     riskDenyKeywords: ["rm", "delete", "password", "secret", "drop table", "approval_required"]
+  },
+  skills: {
+    builtinRoot: null,
+    precedence: ["builtin", "local", "project", "team"],
+    teamRoots: []
   },
   tokenBudget: {
     inputLimit: 64_000,
@@ -890,6 +907,20 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         envConfig.promotion?.riskDenyKeywords ??
         fileConfig?.promotion?.riskDenyKeywords ??
         DEFAULT_RUNTIME_CONFIG.promotion.riskDenyKeywords
+    },
+    skills: {
+      builtinRoot:
+        envConfig.skills?.builtinRoot ??
+        fileConfig?.skills?.builtinRoot ??
+        DEFAULT_RUNTIME_CONFIG.skills.builtinRoot,
+      precedence:
+        envConfig.skills?.precedence ??
+        fileConfig?.skills?.precedence ??
+        DEFAULT_RUNTIME_CONFIG.skills.precedence,
+      teamRoots:
+        envConfig.skills?.teamRoots ??
+        fileConfig?.skills?.teamRoots ??
+        DEFAULT_RUNTIME_CONFIG.skills.teamRoots
     },
     routing: {
       mode:
@@ -1278,6 +1309,34 @@ function readEnvRuntimeConfig(): Partial<RuntimeConfigFile> {
     config.promotion = {
       ...(config.promotion ?? {}),
       riskDenyKeywords
+    };
+  }
+
+  const teamSkillsHome = process.env.AGENT_TEAM_SKILLS_HOME?.trim();
+  if (teamSkillsHome !== undefined && teamSkillsHome.length > 0) {
+    const existing = config.skills?.teamRoots ?? [];
+    config.skills = {
+      ...(config.skills ?? {}),
+      teamRoots: [...new Set([...existing, teamSkillsHome])]
+    };
+  }
+
+  const builtinSkillsRoot = process.env.AGENT_BUILTIN_SKILLS_ROOT?.trim();
+  if (builtinSkillsRoot !== undefined && builtinSkillsRoot.length > 0) {
+    config.skills = {
+      ...(config.skills ?? {}),
+      builtinRoot: builtinSkillsRoot
+    };
+  }
+
+  const skillsPrecedence = splitList(process.env.AGENT_SKILLS_PRECEDENCE).filter(
+    (entry): entry is "builtin" | "local" | "project" | "team" =>
+      entry === "builtin" || entry === "local" || entry === "project" || entry === "team"
+  );
+  if (skillsPrecedence.length > 0) {
+    config.skills = {
+      ...(config.skills ?? {}),
+      precedence: skillsPrecedence
     };
   }
 

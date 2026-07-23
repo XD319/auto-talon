@@ -104,6 +104,7 @@ function normalizeSkillFrontmatter(value: unknown): Record<string, unknown> {
             notes: []
           },
     relatedSkills: Array.isArray(source.relatedSkills) ? source.relatedSkills : [],
+    required: typeof source.required === "boolean" ? source.required : false,
     tags: Array.isArray(source.tags) ? source.tags : [],
     version: typeof source.version === "string" ? source.version : "0.1.0"
   };

@@ -83,6 +83,73 @@ describe("SkillDraftManager", () => {
     ).toEqual(["project:team/sqlite_migration"]);
     expect(() => manager.promoteDraft(draft.draftId)).toThrow(/already exists/u);
   });
+
+  it("promotes drafts to user and team layers and rolls them back", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "auto-talon-skill-draft-"));
+    const localRoot = await mkdtemp(join(tmpdir(), "auto-talon-local-skills-"));
+    const teamRoot = await mkdtemp(join(tmpdir(), "auto-talon-team-skills-"));
+    const manager = new SkillDraftManager({
+      localSkillsRoot: localRoot,
+      teamSkillRoots: [teamRoot],
+      workspaceRoot
+    });
+
+    const userDraft = manager.createDraftFromExperience(
+      createExperience({ title: "User Prefer Flow" }),
+      { namespace: "prefs", skillName: "user_prefer" }
+    );
+    const userPromoted = manager.promoteDraft(userDraft.draftId, "user");
+    expect(userPromoted.targetSkillId).toBe("local:prefs/user_prefer");
+    expect(existsSync(join(localRoot, "prefs", "user_prefer", "SKILL.md"))).toBe(true);
+    expect(
+      new SkillRegistry({
+        localSkillsRoot: localRoot,
+        workspaceRoot
+      }).listSkills().skills.map((skill) => skill.id)
+    ).toContain("local:prefs/user_prefer");
+
+    const teamDraft = manager.createDraftFromExperience(
+      createExperience({ experienceId: "exp-2", title: "Team Gate Flow" }),
+      { namespace: "gates", skillName: "team_gate" }
+    );
+    const teamPromoted = manager.promoteDraft(teamDraft.draftId, "team");
+    expect(teamPromoted.targetSkillId).toBe("team:gates/team_gate");
+    expect(existsSync(join(teamRoot, "gates", "team_gate", "SKILL.md"))).toBe(true);
+    expect(
+      new SkillRegistry({
+        teamSkillRoots: [teamRoot],
+        workspaceRoot
+      }).listSkills().skills.map((skill) => skill.id)
+    ).toContain("team:gates/team_gate");
+
+    manager.rollbackPromotion("local:prefs/user_prefer", "cleanup user");
+    manager.rollbackPromotion("team:gates/team_gate", "cleanup team");
+    expect(existsSync(join(localRoot, "prefs", "user_prefer", "SKILL.md"))).toBe(false);
+    expect(existsSync(join(teamRoot, "gates", "team_gate", "SKILL.md"))).toBe(false);
+    expect(
+      new SkillRegistry({
+        localSkillsRoot: localRoot,
+        teamSkillRoots: [teamRoot],
+        workspaceRoot
+      }).listSkills().skills.map((skill) => skill.id)
+    ).toEqual([]);
+  });
+
+  it("rejects team promotion when no team skill root is configured", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "auto-talon-skill-draft-"));
+    const manager = new SkillDraftManager({
+      teamSkillRoots: [],
+      workspaceRoot
+    });
+    const draft = manager.createDraftFromExperience(
+      createExperience({ title: "Org Rule Flow" }),
+      { namespace: "shared", skillName: "org_rule" }
+    );
+
+    expect(() => manager.promoteDraft(draft.draftId, "team")).toThrow(
+      /teamRoots|AGENT_TEAM_SKILLS_HOME/u
+    );
+  });
 });
 
 function createExperience(overrides: Partial<ExperienceRecord> = {}): ExperienceRecord {

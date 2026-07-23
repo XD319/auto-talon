@@ -1,11 +1,15 @@
 # Skills
 
-Skill roots:
+Skill layers (precedence high → low; later layers override earlier when `namespace/name` collide):
 
-- Project: `.auto-talon/skills`
-- Repository: `.agents/skills` from the workspace and parent directories
-- Local: `~/.auto-talon/skills` (or `AGENT_SKILLS_HOME`)
-- Plugin bundles: `.auto-talon/plugins/<plugin>/skills`
+1. **Team** (enforced): configured via `skills.teamRoots` or `AGENT_TEAM_SKILLS_HOME`. Skills with `required: true` cannot be disabled.
+2. **Project / repo**: `.auto-talon/skills` and `.agents/skills` (workspace + parent directories)
+3. **User global**: `~/.auto-talon/skills` (or `AGENT_SKILLS_HOME`)
+4. **Builtin**: package-shipped skills under `<package>/skills` (or `skills.builtinRoot` / `AGENT_BUILTIN_SKILLS_ROOT`)
+
+**Plugins** live under `.auto-talon/plugins/<plugin>/skills` and are **namespaced** as `plugin:<plugin>/<namespace>/<name>`, so they do not shadow other layers.
+
+Default precedence (low → high merge order): `builtin` → `local` → `project` → `team`. Override with `skills.precedence` or `AGENT_SKILLS_PRECEDENCE`.
 
 Each skill folder contains `SKILL.md` and optional attachments:
 
@@ -27,6 +31,8 @@ AutoTalon-specific metadata remains supported. Missing fields are normalized to
 safe defaults. A skill can opt out of implicit invocation with
 `disable-model-invocation: true`; explicit `$skill-name` invocation still works.
 
+Set `required: true` on team skills that must stay available (disable overrides are ignored).
+
 Explicit invocation supports simple argument replacement:
 
 - `$ARGUMENTS` and `$0` expand to the full argument string.
@@ -43,7 +49,14 @@ Commands:
 - `talon skills enable <skill_id>`
 - `talon skills disable <skill_id>`
 - `talon skills draft --from-experience <experience_id>`
-- `talon skills promote <draft_id>`
+- `talon skills promote <draft_id> [--target project|user|team]`
+- `talon skill rollback <skill_id> --reason "<text>"`
+
+Promotion target layers:
+
+- `project` (default) → `.auto-talon/skills` (`project:...`)
+- `user` → `~/.auto-talon/skills` (`local:...`)
+- `team` → first configured team root (`team:...`)
 
 Local plugin bundles can package skills and MCP server declarations under
 `.auto-talon/plugins/<plugin>`. The skill registry reads bundled skills from

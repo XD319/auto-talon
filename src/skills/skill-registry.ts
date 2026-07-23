@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, platform as currentPlatform } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   attachmentKindFromDirectory,
@@ -14,6 +15,8 @@ import type {
   SkillAttachment,
   SkillAttachmentKind,
   SkillAttachmentManifest,
+  SkillLayerPrecedence,
+  SkillLayerSource,
   SkillListResult,
   SkillMetadata,
   SkillPlatform,
@@ -21,6 +24,7 @@ import type {
   SkillSource,
   SkillView
 } from "../types/index.js";
+import { DEFAULT_SKILL_LAYER_PRECEDENCE } from "../types/index.js";
 
 export interface RemoteSkillSource {
   listMetadata(): SkillListResult;
@@ -28,10 +32,13 @@ export interface RemoteSkillSource {
 }
 
 export interface SkillRegistryOptions {
+  builtinSkillsRoot?: string;
   env?: Record<string, string | undefined>;
   localSkillsRoot?: string;
   platform?: NodeJS.Platform;
+  precedence?: SkillLayerPrecedence;
   remoteSources?: RemoteSkillSource[];
+  teamSkillRoots?: string[];
   workspaceRoot: string;
 }
 
@@ -41,17 +48,21 @@ interface SkillOverrideFile {
 
 interface RegistryCandidate {
   asset: SkillAsset;
+  pluginName?: string;
   sourceRoot: string;
 }
 
 export class SkillRegistry {
+  private readonly builtinSkillsRoot: string;
   private readonly env: Record<string, string | undefined>;
   private readonly localSkillsRoot: string;
   private readonly platform: NodeJS.Platform;
+  private readonly precedence: SkillLayerPrecedence;
   private readonly projectSkillsRoot: string;
   private readonly repoSkillRoots: string[];
-  private readonly pluginSkillRoots: string[];
+  private readonly pluginSkillRoots: Array<{ pluginName: string; root: string }>;
   private readonly remoteSources: RemoteSkillSource[];
+  private readonly teamSkillRoots: string[];
   private readonly workspaceRoot: string;
 
   public constructor(options: SkillRegistryOptions) {
@@ -62,6 +73,9 @@ export class SkillRegistry {
     this.localSkillsRoot = resolve(
       options.localSkillsRoot ?? process.env.AGENT_SKILLS_HOME ?? join(homedir(), ".auto-talon", "skills")
     );
+    this.builtinSkillsRoot = resolve(options.builtinSkillsRoot ?? defaultBuiltinSkillsRoot());
+    this.teamSkillRoots = resolveTeamSkillRoots(options.teamSkillRoots);
+    this.precedence = normalizePrecedence(options.precedence);
     this.platform = options.platform ?? currentPlatform();
     this.env = options.env ?? process.env;
     this.remoteSources = options.remoteSources ?? [];
@@ -101,6 +115,24 @@ export class SkillRegistry {
   }
 
   public disableSkill(skillId: string): SkillListResult {
+    const scan = this.scan({ includeDisabled: true });
+    const candidate = scan.skills.find((entry) => entry.asset.metadata.id === skillId);
+    if (candidate?.asset.metadata.required === true) {
+      const issues = [
+        ...scan.issues,
+        {
+          code: "required_locked" as const,
+          detail: `Skill ${skillId} is required and cannot be disabled.`,
+          path: candidate.asset.rootPath,
+          skillId
+        }
+      ];
+      return {
+        issues,
+        skills: this.listSkills().skills
+      };
+    }
+
     const overrides = this.readOverrides();
     if (!overrides.disabledSkillIds.includes(skillId)) {
       overrides.disabledSkillIds.push(skillId);
@@ -118,67 +150,54 @@ export class SkillRegistry {
     return this.listSkills();
   }
 
-  private scan(): { issues: SkillRegistryIssue[]; skills: RegistryCandidate[] } {
+  private scan(options: { includeDisabled?: boolean } = {}): {
+    issues: SkillRegistryIssue[];
+    skills: RegistryCandidate[];
+  } {
     const issues: SkillRegistryIssue[] = [];
     const overrides = this.readOverrides();
-    const local = this.scanRoot(this.localSkillsRoot, "local", issues);
-    const repo = this.repoSkillRoots.flatMap((root) => this.scanRoot(root, "project", issues));
-    const plugins = this.pluginSkillRoots.flatMap((root) => this.scanRoot(root, "project", issues));
-    const project = this.scanRoot(this.projectSkillsRoot, "project", issues);
+    const layerCandidates = this.collectLayerCandidates(issues);
     const selected = new Map<string, RegistryCandidate>();
 
-    for (const candidate of local) {
-      selected.set(logicalSkillKey(candidate.asset.metadata), candidate);
-    }
-    for (const candidate of repo) {
-      const key = logicalSkillKey(candidate.asset.metadata);
-      const existing = selected.get(key);
-      if (existing !== undefined) {
-        issues.push({
-          code: "duplicate_shadowed",
-          detail: `Repo skill ${candidate.asset.metadata.id} shadows ${existing.asset.metadata.id}.`,
-          path: existing.asset.rootPath,
-          skillId: existing.asset.metadata.id
-        });
+    for (const layer of this.precedence) {
+      for (const candidate of layerCandidates.get(layer) ?? []) {
+        const key = logicalSkillKey(candidate.asset.metadata);
+        const existing = selected.get(key);
+        if (existing !== undefined) {
+          issues.push({
+            code: "duplicate_shadowed",
+            detail: `${layer} skill ${candidate.asset.metadata.id} shadows ${existing.asset.metadata.id}.`,
+            path: existing.asset.rootPath,
+            skillId: existing.asset.metadata.id
+          });
+        }
+        selected.set(key, candidate);
       }
-      selected.set(key, candidate);
     }
-    for (const candidate of plugins) {
-      const key = logicalSkillKey(candidate.asset.metadata);
-      const existing = selected.get(key);
-      if (existing !== undefined) {
-        issues.push({
-          code: "duplicate_shadowed",
-          detail: `Plugin skill ${candidate.asset.metadata.id} shadows ${existing.asset.metadata.id}.`,
-          path: existing.asset.rootPath,
-          skillId: existing.asset.metadata.id
-        });
-      }
-      selected.set(key, candidate);
-    }
-    for (const candidate of project) {
-      const key = logicalSkillKey(candidate.asset.metadata);
-      const existing = selected.get(key);
-      if (existing !== undefined) {
-        issues.push({
-          code: "duplicate_shadowed",
-          detail: `Project skill ${candidate.asset.metadata.id} shadows ${existing.asset.metadata.id}.`,
-          path: existing.asset.rootPath,
-          skillId: existing.asset.metadata.id
-        });
-      }
+
+    const pluginCandidates = this.pluginSkillRoots.flatMap(({ pluginName, root }) =>
+      this.scanRoot(root, "plugin", issues, pluginName)
+    );
+    for (const candidate of pluginCandidates) {
+      const key = pluginLogicalSkillKey(candidate.pluginName ?? "unknown", candidate.asset.metadata);
       selected.set(key, candidate);
     }
 
     const filtered = [...selected.values()].filter((candidate) =>
-      this.isUsable(candidate.asset.metadata, overrides, candidate.asset.rootPath, issues)
+      this.isUsable(
+        candidate.asset.metadata,
+        overrides,
+        candidate.asset.rootPath,
+        issues,
+        options.includeDisabled === true
+      )
     );
 
     for (const remote of this.remoteSources) {
       const remoteResult = remote.listMetadata();
       issues.push(...remoteResult.issues);
       for (const metadata of remoteResult.skills) {
-        if (this.isUsable(metadata, overrides, metadata.id, issues)) {
+        if (this.isUsable(metadata, overrides, metadata.id, issues, options.includeDisabled === true)) {
           filtered.push({
             asset: {
               attachments: createEmptyAttachmentManifest(),
@@ -199,10 +218,31 @@ export class SkillRegistry {
     };
   }
 
+  private collectLayerCandidates(
+    issues: SkillRegistryIssue[]
+  ): Map<SkillLayerSource, RegistryCandidate[]> {
+    const map = new Map<SkillLayerSource, RegistryCandidate[]>();
+    map.set("builtin", this.scanRoot(this.builtinSkillsRoot, "builtin", issues));
+    map.set("local", this.scanRoot(this.localSkillsRoot, "local", issues));
+    map.set(
+      "project",
+      [
+        ...this.repoSkillRoots.flatMap((root) => this.scanRoot(root, "project", issues)),
+        ...this.scanRoot(this.projectSkillsRoot, "project", issues)
+      ]
+    );
+    map.set(
+      "team",
+      this.teamSkillRoots.flatMap((root) => this.scanRoot(root, "team", issues))
+    );
+    return map;
+  }
+
   private scanRoot(
     sourceRoot: string,
-    source: Extract<SkillSource, "local" | "project">,
-    issues: SkillRegistryIssue[]
+    source: Extract<SkillSource, "local" | "project" | "team" | "builtin" | "plugin">,
+    issues: SkillRegistryIssue[],
+    pluginName?: string
   ): RegistryCandidate[] {
     const root = resolve(sourceRoot);
     if (!existsSync(root)) {
@@ -210,43 +250,48 @@ export class SkillRegistry {
     }
 
     return listSkillDirectories(root).flatMap((skillRoot) => {
-        try {
-          assertWithinRoot(skillRoot, root);
-          const skillPath = join(skillRoot, "SKILL.md");
-          if (!existsSync(skillPath)) {
-            issues.push({
-              code: "invalid_skill",
-              detail: "Skill directory does not contain SKILL.md.",
-              path: skillRoot,
-              skillId: null
-            });
-            return [];
-          }
-
-          const asset = parseSkillAsset({
-            attachments: this.discoverAttachments(skillRoot, issues),
-            markdown: readFileSync(skillPath, "utf8"),
-            rootPath: skillRoot,
-            skillPath,
-            source
-          });
-
-          return [
-            {
-              asset,
-              sourceRoot: root
-            }
-          ];
-        } catch (error) {
+      try {
+        assertWithinRoot(skillRoot, root);
+        const skillPath = join(skillRoot, "SKILL.md");
+        if (!existsSync(skillPath)) {
           issues.push({
             code: "invalid_skill",
-            detail: error instanceof Error ? error.message : String(error),
+            detail: "Skill directory does not contain SKILL.md.",
             path: skillRoot,
             skillId: null
           });
           return [];
         }
-      });
+
+        const asset = parseSkillAsset({
+          attachments: this.discoverAttachments(skillRoot, issues),
+          markdown: readFileSync(skillPath, "utf8"),
+          rootPath: skillRoot,
+          skillPath,
+          source
+        });
+
+        if (source === "plugin" && pluginName !== undefined) {
+          asset.metadata.id = `plugin:${pluginName}/${asset.metadata.namespace}/${asset.metadata.name}`;
+        }
+
+        return [
+          {
+            asset,
+            ...(pluginName !== undefined ? { pluginName } : {}),
+            sourceRoot: root
+          }
+        ];
+      } catch (error) {
+        issues.push({
+          code: "invalid_skill",
+          detail: error instanceof Error ? error.message : String(error),
+          path: skillRoot,
+          skillId: null
+        });
+        return [];
+      }
+    });
   }
 
   private discoverAttachments(skillRoot: string, issues: SkillRegistryIssue[]): SkillAttachmentManifest {
@@ -277,16 +322,20 @@ export class SkillRegistry {
     metadata: SkillMetadata,
     overrides: SkillOverrideFile,
     path: string,
-    issues: SkillRegistryIssue[]
+    issues: SkillRegistryIssue[],
+    includeDisabled = false
   ): boolean {
-    if (metadata.disabled || overrides.disabledSkillIds.includes(metadata.id)) {
+    const overrideDisabled = overrides.disabledSkillIds.includes(metadata.id);
+    if ((metadata.disabled || overrideDisabled) && !metadata.required) {
       issues.push({
         code: "disabled",
         detail: `Skill ${metadata.id} is disabled.`,
         path,
         skillId: metadata.id
       });
-      return false;
+      if (!includeDisabled) {
+        return false;
+      }
     }
 
     if (!isPlatformCompatible(metadata.platforms, this.platform)) {
@@ -310,6 +359,15 @@ export class SkillRegistry {
         skillId: metadata.id
       });
       return false;
+    }
+
+    if ((metadata.disabled || overrideDisabled) && metadata.required) {
+      // Required skills ignore disable overrides and remain usable.
+      return true;
+    }
+
+    if (metadata.disabled || overrideDisabled) {
+      return includeDisabled;
     }
 
     return true;
@@ -388,6 +446,10 @@ function logicalSkillKey(metadata: SkillMetadata): string {
   return `${metadata.namespace}/${metadata.name}`;
 }
 
+function pluginLogicalSkillKey(pluginName: string, metadata: SkillMetadata): string {
+  return `plugin:${pluginName}/${metadata.namespace}/${metadata.name}`;
+}
+
 function isPlatformCompatible(platforms: SkillPlatform[], platform: NodeJS.Platform): boolean {
   return platforms.includes("any") || platforms.includes(toSkillPlatform(platform));
 }
@@ -419,12 +481,58 @@ function collectAgentsSkillRoots(workspaceRoot: string): string[] {
   return roots.reverse();
 }
 
-function collectPluginSkillRoots(workspaceRoot: string): string[] {
+function collectPluginSkillRoots(workspaceRoot: string): Array<{ pluginName: string; root: string }> {
   const pluginsRoot = join(workspaceRoot, ".auto-talon", "plugins");
   if (!existsSync(pluginsRoot)) {
     return [];
   }
   return listDirectories(pluginsRoot)
-    .map((pluginRoot) => join(pluginRoot, "skills"))
-    .filter((skillsRoot) => existsSync(skillsRoot));
+    .map((pluginRoot) => ({
+      pluginName: relative(pluginsRoot, pluginRoot).replace(/\\/gu, "/"),
+      root: join(pluginRoot, "skills")
+    }))
+    .filter((entry) => existsSync(entry.root));
+}
+
+function resolveTeamSkillRoots(configured?: string[]): string[] {
+  const fromEnv = process.env.AGENT_TEAM_SKILLS_HOME?.trim();
+  const roots = [
+    ...(configured ?? []),
+    ...(fromEnv !== undefined && fromEnv.length > 0 ? [fromEnv] : [])
+  ];
+  return [...new Set(roots.map((root) => resolve(root)))];
+}
+
+function normalizePrecedence(precedence?: SkillLayerPrecedence): SkillLayerPrecedence {
+  if (precedence === undefined || precedence.length === 0) {
+    return [...DEFAULT_SKILL_LAYER_PRECEDENCE];
+  }
+  const unique: SkillLayerSource[] = [];
+  for (const layer of precedence) {
+    if (!unique.includes(layer)) {
+      unique.push(layer);
+    }
+  }
+  for (const layer of DEFAULT_SKILL_LAYER_PRECEDENCE) {
+    if (!unique.includes(layer)) {
+      unique.push(layer);
+    }
+  }
+  return unique;
+}
+
+function defaultBuiltinSkillsRoot(): string {
+  // src/skills -> package root /skills (or dist/skills sibling when running compiled)
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(here, "..", "..", "skills"),
+    join(here, "..", "..", "assets", "builtin-skills"),
+    join(here, "..", "skills")
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0]!;
 }

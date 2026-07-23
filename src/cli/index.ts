@@ -363,14 +363,22 @@ export async function main(argv = process.argv): Promise<void> {
       }
     });
 
-  skillsCommand.command("promote").argument("<draft_id>", "Skill draft identifier").action((draftId: string) => {
-    const handle = createApplication(process.cwd());
-    try {
-      console.log(formatSkillDraft(handle.service.promoteSkillDraft(draftId)));
-    } finally {
-      handle.close();
-    }
-  });
+  skillsCommand
+    .command("promote")
+    .argument("<draft_id>", "Skill draft identifier")
+    .option("--target <layer>", "Promotion layer: project, user, or team", "project")
+    .action((draftId: string, commandOptions: { target: string }) => {
+      const handle = createApplication(process.cwd());
+      try {
+        const target = commandOptions.target;
+        if (target !== "project" && target !== "user" && target !== "team") {
+          throw new Error(`Invalid promotion target: ${target}. Use project, user, or team.`);
+        }
+        console.log(formatSkillDraft(handle.service.promoteSkillDraft(draftId, target)));
+      } finally {
+        handle.close();
+      }
+    });
 
   const registerSkillRollbackCommand = (command: ReturnType<typeof program.command>) => {
     command

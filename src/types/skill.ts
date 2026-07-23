@@ -11,9 +11,20 @@ export const SKILL_ATTACHMENT_KINDS = [
 
 export type SkillAttachmentKind = (typeof SKILL_ATTACHMENT_KINDS)[number];
 
-export const SKILL_SOURCES = ["local", "project", "remote", "draft"] as const;
+export const SKILL_SOURCES = ["builtin", "local", "project", "team", "remote", "draft", "plugin"] as const;
 
 export type SkillSource = (typeof SKILL_SOURCES)[number];
+
+/** Ordered low→high; later entries override earlier ones when keys collide. */
+export const DEFAULT_SKILL_LAYER_PRECEDENCE = ["builtin", "local", "project", "team"] as const;
+
+export type SkillLayerSource = (typeof DEFAULT_SKILL_LAYER_PRECEDENCE)[number];
+
+export type SkillLayerPrecedence = SkillLayerSource[];
+
+export const SKILL_PROMOTION_TARGETS = ["project", "user", "team"] as const;
+
+export type SkillPromotionTarget = (typeof SKILL_PROMOTION_TARGETS)[number];
 
 export const SKILL_PLATFORMS = ["any", "windows", "linux", "darwin"] as const;
 
@@ -36,6 +47,8 @@ export interface SkillFrontmatter {
   platforms: SkillPlatform[];
   prerequisites: SkillPrerequisites;
   relatedSkills: string[];
+  /** When true (typically on team skills), the skill cannot be disabled via overrides. */
+  required: boolean;
   tags: string[];
   version: string;
 }
@@ -82,7 +95,8 @@ export interface SkillRegistryIssue {
     | "duplicate_shadowed"
     | "invalid_skill"
     | "path_unsafe"
-    | "platform_incompatible";
+    | "platform_incompatible"
+    | "required_locked";
   detail: string;
   path: string;
   skillId: string | null;
@@ -192,9 +206,14 @@ export const skillFrontmatterSchema = z.object({
   platforms: z.array(z.enum(SKILL_PLATFORMS)).min(1),
   prerequisites: skillPrerequisitesSchema,
   relatedSkills: z.array(z.string().min(1)),
+  required: z.boolean(),
   tags: z.array(z.string().min(1)),
   version: z.string().min(1)
 });
+
+export const skillLayerPrecedenceSchema = z.array(
+  z.enum(["builtin", "local", "project", "team"])
+);
 
 export const skillAttachmentSchema = z.object({
   kind: z.enum(SKILL_ATTACHMENT_KINDS),

@@ -132,6 +132,177 @@ describe("SkillRegistry", () => {
     expect(registry.enableSkill("project:project/demo").skills).toHaveLength(1);
     expect(readSkill(skillPath)).toBe(before);
   });
+
+  it("lets team skills shadow project skills and refuses to disable required team skills", () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "auto-talon-skill-registry-"));
+    const teamRoot = mkdtempSync(join(tmpdir(), "auto-talon-team-skills-"));
+    writeSkill(workspaceRoot, ".auto-talon/skills/shared/demo", {
+      description: "Project copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"]
+    });
+    writeSkill(teamRoot, "shared/demo", {
+      description: "Team copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"],
+      required: true
+    });
+
+    const registry = new SkillRegistry({
+      teamSkillRoots: [teamRoot],
+      workspaceRoot
+    });
+    const listed = registry.listSkills();
+    expect(listed.skills.map((skill) => skill.id)).toEqual(["team:shared/demo"]);
+    expect(listed.issues).toContainEqual(
+      expect.objectContaining({
+        code: "duplicate_shadowed",
+        skillId: "project:shared/demo"
+      })
+    );
+
+    const disableResult = registry.disableSkill("team:shared/demo");
+    expect(disableResult.skills.map((skill) => skill.id)).toEqual(["team:shared/demo"]);
+    expect(disableResult.issues).toContainEqual(
+      expect.objectContaining({
+        code: "required_locked",
+        skillId: "team:shared/demo"
+      })
+    );
+  });
+
+  it("uses builtin skills as fallback and respects configurable precedence", () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "auto-talon-skill-registry-"));
+    const builtinRoot = mkdtempSync(join(tmpdir(), "auto-talon-builtin-skills-"));
+    const localRoot = mkdtempSync(join(tmpdir(), "auto-talon-local-skills-"));
+    writeSkill(builtinRoot, "core/demo", {
+      description: "Builtin copy.",
+      name: "demo",
+      namespace: "core",
+      platforms: ["any"]
+    });
+    writeSkill(localRoot, "core/demo", {
+      description: "Local copy.",
+      name: "demo",
+      namespace: "core",
+      platforms: ["any"]
+    });
+
+    const defaultOrder = new SkillRegistry({
+      builtinSkillsRoot: builtinRoot,
+      localSkillsRoot: localRoot,
+      workspaceRoot
+    }).listSkills();
+    expect(defaultOrder.skills.map((skill) => skill.id)).toEqual(["local:core/demo"]);
+
+    const reversed = new SkillRegistry({
+      builtinSkillsRoot: builtinRoot,
+      localSkillsRoot: localRoot,
+      precedence: ["local", "builtin", "project", "team"],
+      workspaceRoot
+    }).listSkills();
+    expect(reversed.skills.map((skill) => skill.id)).toEqual(["builtin:core/demo"]);
+  });
+
+  it("namespaces plugin skills so they do not shadow project skills", () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "auto-talon-skill-registry-"));
+    writeSkill(workspaceRoot, ".auto-talon/skills/shared/demo", {
+      description: "Project copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"]
+    });
+    writeSkill(workspaceRoot, ".auto-talon/plugins/ops/skills/shared/demo", {
+      description: "Plugin copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"]
+    });
+
+    const result = new SkillRegistry({ workspaceRoot }).listSkills();
+    expect(result.skills.map((skill) => skill.id).sort()).toEqual([
+      "plugin:ops/shared/demo",
+      "project:shared/demo"
+    ]);
+    expect(result.issues.some((issue) => issue.code === "duplicate_shadowed")).toBe(false);
+  });
+
+  it("picks the team winner when the same skill exists in all four layers", () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "auto-talon-skill-registry-"));
+    const builtinRoot = mkdtempSync(join(tmpdir(), "auto-talon-builtin-skills-"));
+    const localRoot = mkdtempSync(join(tmpdir(), "auto-talon-local-skills-"));
+    const teamRoot = mkdtempSync(join(tmpdir(), "auto-talon-team-skills-"));
+
+    writeSkill(builtinRoot, "shared/demo", {
+      description: "Builtin copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"]
+    });
+    writeSkill(localRoot, "shared/demo", {
+      description: "Local copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"]
+    });
+    writeSkill(workspaceRoot, ".auto-talon/skills/shared/demo", {
+      description: "Project copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"]
+    });
+    writeSkill(teamRoot, "shared/demo", {
+      description: "Team copy.",
+      name: "demo",
+      namespace: "shared",
+      platforms: ["any"],
+      required: true
+    });
+
+    const result = new SkillRegistry({
+      builtinSkillsRoot: builtinRoot,
+      localSkillsRoot: localRoot,
+      teamSkillRoots: [teamRoot],
+      workspaceRoot
+    }).listSkills();
+
+    expect(result.skills.map((skill) => skill.id)).toEqual(["team:shared/demo"]);
+    const shadowed = result.issues.filter((issue) => issue.code === "duplicate_shadowed");
+    expect(shadowed).toHaveLength(3);
+    expect(shadowed.map((issue) => issue.skillId).sort()).toEqual([
+      "builtin:shared/demo",
+      "local:shared/demo",
+      "project:shared/demo"
+    ]);
+  });
+
+  it("keeps required team skills listed even when override file already disables them", () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "auto-talon-skill-registry-"));
+    const teamRoot = mkdtempSync(join(tmpdir(), "auto-talon-team-skills-"));
+    writeSkill(teamRoot, "shared/org_rule", {
+      description: "Org enforced rule.",
+      name: "org_rule",
+      namespace: "shared",
+      platforms: ["any"],
+      required: true
+    });
+    mkdirSync(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    writeFileSync(
+      join(workspaceRoot, ".auto-talon", "skill-overrides.json"),
+      `${JSON.stringify({ disabledSkillIds: ["team:shared/org_rule"] }, null, 2)}\n`,
+      "utf8"
+    );
+
+    const result = new SkillRegistry({
+      teamSkillRoots: [teamRoot],
+      workspaceRoot
+    }).listSkills();
+
+    expect(result.skills.map((skill) => skill.id)).toEqual(["team:shared/org_rule"]);
+    expect(result.issues.some((issue) => issue.code === "disabled")).toBe(false);
+  });
 });
 
 function writeSkill(
@@ -149,6 +320,7 @@ function writeSkill(
       env: string[];
       notes: string[];
     };
+    required: boolean;
   }>
 ): string {
   const skillRoot = join(root, ...relativeSkillRoot.split("/"));
@@ -170,6 +342,7 @@ function writeSkill(
       notes: []
     },
     relatedSkills: [],
+    required: overrides.required ?? false,
     tags: ["registry"],
     version: "1.0.0"
   };

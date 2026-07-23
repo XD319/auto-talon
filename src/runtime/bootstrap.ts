@@ -276,6 +276,11 @@ export interface AppConfig {
     maxHumanJudgmentWeight: number;
     riskDenyKeywords: string[];
   };
+  skills: {
+    builtinRoot: string | null;
+    precedence: Array<"builtin" | "local" | "project" | "team">;
+    teamRoots: string[];
+  };
   routing: {
     mode: "cheap_first" | "balanced" | "quality_first";
     providers: {
@@ -363,6 +368,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     memory: runtimeConfig.memory,
     recall: runtimeConfig.recall,
     promotion: runtimeConfig.promotion,
+    skills: runtimeConfig.skills,
     routing: runtimeConfig.routing,
     auxiliary: runtimeConfig.auxiliary,
     budget: runtimeConfig.budget,
@@ -525,6 +531,14 @@ function mergeCreateApplicationConfig(
       ...resolvedConfig.recall,
       ...options.config?.recall
     },
+    promotion: {
+      ...resolvedConfig.promotion,
+      ...options.config?.promotion
+    },
+    skills: {
+      ...resolvedConfig.skills,
+      ...options.config?.skills
+    },
     routing: {
       ...resolvedConfig.routing,
       ...options.config?.routing,
@@ -655,6 +669,9 @@ function buildApplicationRuntime(
         ? createCustomShellExecutor(config.workflow.customShell)
         : new ShellExecutor({ shellBackend: config.workflow.shellBackend });
   const skillRegistry = new SkillRegistry({
+    ...(config.skills.builtinRoot !== null ? { builtinSkillsRoot: config.skills.builtinRoot } : {}),
+    precedence: config.skills.precedence,
+    teamSkillRoots: config.skills.teamRoots,
     workspaceRoot: config.workspaceRoot
   });
   const mcpClientManager = new McpClientManager(config.workspaceRoot);
@@ -667,6 +684,7 @@ function buildApplicationRuntime(
   const skillDraftManager = new SkillDraftManager({
     auditService,
     skillVersionRegistry,
+    teamSkillRoots: config.skills.teamRoots,
     workspaceRoot: config.workspaceRoot
   });
   const skillContextService = new SkillContextService({

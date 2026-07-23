@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { parseSkillMarkdown } from "./skill-asset.js";
@@ -10,13 +11,17 @@ import type {
   SkillCandidateGroup,
   SkillDraftRecord,
   SkillFrontmatter,
+  SkillPromotionTarget,
+  SkillSource,
   SkillVersionEntry
 } from "../types/index.js";
 
 export interface SkillDraftManagerOptions {
   workspaceRoot: string;
   auditService?: AuditService;
+  localSkillsRoot?: string;
   skillVersionRegistry?: SkillVersionRegistry;
+  teamSkillRoots?: string[];
 }
 
 export interface CreateSkillDraftOptions {
@@ -28,6 +33,8 @@ export class SkillDraftManager {
   private readonly workspaceRoot: string;
   private readonly draftsRoot: string;
   private readonly projectSkillsRoot: string;
+  private readonly localSkillsRoot: string;
+  private readonly teamSkillRoots: string[];
   private readonly auditService: AuditService | undefined;
   private readonly skillVersionRegistry: SkillVersionRegistry | undefined;
 
@@ -35,6 +42,10 @@ export class SkillDraftManager {
     this.workspaceRoot = resolve(options.workspaceRoot);
     this.draftsRoot = join(this.workspaceRoot, ".auto-talon", "skill-drafts");
     this.projectSkillsRoot = join(this.workspaceRoot, ".auto-talon", "skills");
+    this.localSkillsRoot = resolve(
+      options.localSkillsRoot ?? process.env.AGENT_SKILLS_HOME ?? join(homedir(), ".auto-talon", "skills")
+    );
+    this.teamSkillRoots = (options.teamSkillRoots ?? []).map((root) => resolve(root));
     this.auditService = options.auditService;
     this.skillVersionRegistry = options.skillVersionRegistry;
   }
@@ -144,7 +155,10 @@ export class SkillDraftManager {
       .sort((left, right) => right.sourceExperienceIds.length - left.sourceExperienceIds.length);
   }
 
-  public promoteDraft(draftId: string): SkillDraftRecord {
+  public promoteDraft(
+    draftId: string,
+    target: SkillPromotionTarget = "project"
+  ): SkillDraftRecord {
     const rootPath = resolve(this.draftsRoot, draftId);
     assertWithinRoot(rootPath, this.draftsRoot);
     const draftPath = join(rootPath, "SKILL.md");
@@ -153,13 +167,14 @@ export class SkillDraftManager {
     }
 
     const frontmatter = parseSkillMarkdown(readFileSync(draftPath, "utf8")).frontmatter;
-    const targetRoot = join(this.projectSkillsRoot, frontmatter.namespace, frontmatter.name);
-    assertWithinRoot(targetRoot, this.projectSkillsRoot);
+    const destination = this.resolvePromotionRoot(target);
+    const targetRoot = join(destination.root, frontmatter.namespace, frontmatter.name);
+    assertWithinRoot(targetRoot, destination.root);
     if (existsSync(targetRoot)) {
       throw new Error(`Target skill already exists: ${targetRoot}`);
     }
 
-    mkdirSync(this.projectSkillsRoot, { recursive: true });
+    mkdirSync(destination.root, { recursive: true });
     cpSync(rootPath, targetRoot, { recursive: true });
 
     return {
@@ -167,7 +182,7 @@ export class SkillDraftManager {
       draftPath,
       rootPath,
       sourceExperienceIds: readSourceExperienceIds(frontmatter),
-      targetSkillId: `project:${frontmatter.namespace}/${frontmatter.name}`
+      targetSkillId: `${destination.source}:${frontmatter.namespace}/${frontmatter.name}`
     };
   }
 
@@ -188,7 +203,8 @@ export class SkillDraftManager {
 
   public rollbackPromotion(skillId: string, reason: string): SkillVersionEntry {
     const parts = parseSkillId(skillId);
-    const targetRoot = join(this.projectSkillsRoot, parts.namespace, parts.name);
+    const destination = this.resolvePromotionRoot(sourceToPromotionTarget(parts.source));
+    const targetRoot = join(destination.root, parts.namespace, parts.name);
     if (!existsSync(targetRoot)) {
       throw new Error(`Skill not found for rollback: ${skillId}`);
     }
@@ -233,6 +249,25 @@ export class SkillDraftManager {
   public listVersions(skillId: string): SkillVersionEntry[] {
     return this.skillVersionRegistry?.listVersions(skillId) ?? [];
   }
+
+  private resolvePromotionRoot(target: SkillPromotionTarget): {
+    root: string;
+    source: Extract<SkillSource, "project" | "local" | "team">;
+  } {
+    if (target === "project") {
+      return { root: this.projectSkillsRoot, source: "project" };
+    }
+    if (target === "user") {
+      return { root: this.localSkillsRoot, source: "local" };
+    }
+    const teamRoot = this.teamSkillRoots[0];
+    if (teamRoot === undefined) {
+      throw new Error(
+        "No team skill root configured. Set skills.teamRoots in runtime.config.json or AGENT_TEAM_SKILLS_HOME."
+      );
+    }
+    return { root: teamRoot, source: "team" };
+  }
 }
 
 function renderSkillDraftMarkdown(
@@ -262,6 +297,7 @@ function renderSkillDraftMarkdown(
       notes: []
     },
     relatedSkills: [],
+    required: false,
     tags: primary.keywords.slice(0, 6),
     version: "0.1.0"
   };
@@ -315,6 +351,7 @@ function renderAdviceSkillDraftMarkdown(
       notes: []
     },
     relatedSkills: [],
+    required: false,
     tags: [],
     version: versionMetadata.version
   };
@@ -399,16 +436,31 @@ function assertWithinRoot(candidatePath: string, rootPath: string): void {
   }
 }
 
-function parseSkillId(skillId: string): { namespace: string; name: string } {
-  if (!skillId.startsWith("project:")) {
-    throw new Error(`Only project skills can be rolled back: ${skillId}`);
+function parseSkillId(skillId: string): {
+  name: string;
+  namespace: string;
+  source: Extract<SkillSource, "project" | "local" | "team">;
+} {
+  const match = /^(project|local|team):([^/]+)\/(.+)$/u.exec(skillId);
+  if (match === null) {
+    throw new Error(
+      `Only project, local (user), or team skills can be rolled back: ${skillId}`
+    );
   }
-  const raw = skillId.slice("project:".length);
-  const split = raw.split("/");
-  const namespace = split[0];
-  const name = split[1];
+  const source = match[1] as Extract<SkillSource, "project" | "local" | "team">;
+  const namespace = match[2];
+  const name = match[3];
   if (namespace === undefined || name === undefined) {
     throw new Error(`Invalid skill id: ${skillId}`);
   }
-  return { name, namespace };
+  return { name, namespace, source };
+}
+
+function sourceToPromotionTarget(
+  source: Extract<SkillSource, "project" | "local" | "team">
+): SkillPromotionTarget {
+  if (source === "local") {
+    return "user";
+  }
+  return source;
 }

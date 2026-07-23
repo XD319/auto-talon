@@ -738,8 +738,8 @@ export class AgentApplicationService {
     return this.dependencies.skillDraftManager.createDraftFromExperience(experience);
   }
 
-  public promoteSkillDraft(draftId: string) {
-    return this.dependencies.skillDraftManager.promoteDraft(draftId);
+  public promoteSkillDraft(draftId: string, target: "project" | "user" | "team" = "project") {
+    return this.dependencies.skillDraftManager.promoteDraft(draftId, target);
   }
 
   public rollbackSkillPromotion(skillId: string, reason: string) {

@@ -353,6 +353,25 @@ Local HTTP authentication:
 - Set `AGENT_HTTP_INSECURE=1` to disable auth for local development. `talon doctor` warns when loopback services run without a token.
 - Non-loopback binds require a token unless `--insecure` is passed explicitly.
 
+Skill layers (`.auto-talon/runtime.config.json` `skills`):
+
+```json
+{
+  "skills": {
+    "teamRoots": ["/path/to/org/skills"],
+    "precedence": ["builtin", "local", "project", "team"],
+    "builtinRoot": null
+  }
+}
+```
+
+- Precedence is merge order low → high; later layers override earlier when `namespace/name` collide. Default: team > project > user (`local`) > builtin.
+- `teamRoots` lists filesystem roots for enforced team skills. Env: `AGENT_TEAM_SKILLS_HOME`.
+- `builtinRoot` overrides the package builtin skills directory. Env: `AGENT_BUILTIN_SKILLS_ROOT`.
+- `AGENT_SKILLS_PRECEDENCE` accepts a comma-separated list of `builtin,local,project,team`.
+- Plugin skills are namespaced (`plugin:<plugin>/...`) and do not participate in layer shadowing.
+- See `docs/user/skills.md` for roots, promotion targets (`--target project|user|team`), and `required` skills.
+
 Runtime token budget defaults (`.auto-talon/runtime.config.json`):
 
 ```json

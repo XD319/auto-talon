@@ -782,7 +782,7 @@ export function formatSkillList(result: SkillListResult): string {
       ? ["No enabled skills found."]
       : result.skills.map(
           (skill) =>
-            `${skill.id} | ${skill.namespace}/${skill.name} | ${skill.version} | category=${skill.category} | tags=${skill.tags.join(",") || "-"} | source=${skill.source} | experiences=${skill.sourceExperienceIds.join(",") || "-"}`
+            `${skill.id} | ${skill.namespace}/${skill.name} | ${skill.version} | layer=${skill.source} | category=${skill.category} | tags=${skill.tags.join(",") || "-"} | required=${skill.required ? "yes" : "no"} | experiences=${skill.sourceExperienceIds.join(",") || "-"}`
         );
   const issueLines =
     result.issues.length === 0
@@ -819,8 +819,10 @@ export function formatSkillView(skill: SkillView | null): string {
     `Skill ID: ${skill.metadata.id}`,
     `Name: ${skill.metadata.namespace}/${skill.metadata.name}`,
     `Version: ${skill.metadata.version}`,
+    `Layer: ${skill.metadata.source}`,
     `Category: ${skill.metadata.category}`,
     `Disabled: ${skill.metadata.disabled ? "yes" : "no"}`,
+    `Required: ${skill.metadata.required ? "yes" : "no"}`,
     `Platforms: ${skill.metadata.platforms.join(", ")}`,
     `Tags: ${skill.metadata.tags.join(", ") || "-"}`,
     `Related: ${skill.metadata.relatedSkills.join(", ") || "-"}`,
