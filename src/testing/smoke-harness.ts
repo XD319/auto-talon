@@ -432,32 +432,35 @@ async function evaluateScenarioFiles(
 ): Promise<string | null> {
   switch (taskId) {
     case "single_generate_file": {
-      const content = await fs.readFile(join(workspaceRoot, "docs/generated/release-note.md"), "utf8");
-      return content.includes("Release Note") ? null : "missing_release_note_content";
+      const content = await readWorkspaceText(workspaceRoot, "docs/generated/release-note.md");
+      return content?.includes("Release Note") === true ? null : "missing_release_note_content";
     }
 
     case "single_update_config": {
-      const content = await fs.readFile(join(workspaceRoot, "config/app.json"), "utf8");
-      return content.includes("\"featureFlag\": true") ? null : "feature_flag_not_updated";
+      const content = await readWorkspaceText(workspaceRoot, "config/app.json");
+      return content?.includes("\"featureFlag\": true") === true ? null : "feature_flag_not_updated";
     }
 
     case "multi_read_then_plan_write": {
-      const content = await fs.readFile(join(workspaceRoot, "docs/runtime-overview.md"), "utf8");
-      return content.includes("Runtime Overview") ? null : "overview_not_created";
+      const content = await readWorkspaceText(workspaceRoot, "docs/runtime-overview.md");
+      return content?.includes("Runtime Overview") === true ? null : "overview_not_created";
     }
 
     case "multi_write_then_verify": {
-      const content = await fs.readFile(join(workspaceRoot, "config/feature.flag.json"), "utf8");
-      return content.includes("\"enabled\": true") ? null : "feature_flag_file_invalid";
+      const content = await readWorkspaceText(workspaceRoot, "config/feature.flag.json");
+      return content?.includes("\"enabled\": true") === true ? null : "feature_flag_file_invalid";
     }
 
     case "multi_fix_after_failed_verification": {
-      const content = await fs.readFile(join(workspaceRoot, "config/verification.txt"), "utf8");
-      return content.includes("PASS") ? null : "verification_not_fixed";
+      const content = await readWorkspaceText(workspaceRoot, "config/verification.txt");
+      return content?.includes("PASS") === true ? null : "verification_not_fixed";
     }
 
     case "multi_search_patch_verify": {
-      const content = await fs.readFile(join(workspaceRoot, "src/app.ts"), "utf8");
+      const content = await readWorkspaceText(workspaceRoot, "src/app.ts");
+      if (content === null) {
+        return "todo_not_removed";
+      }
       return content.includes("TODO: clean up bootstrap") ? "todo_not_removed" : null;
     }
 
@@ -472,6 +475,17 @@ async function evaluateScenarioFiles(
 
     default:
       return snapshot.task.status === "succeeded" ? null : "task_not_succeeded";
+  }
+}
+
+async function readWorkspaceText(workspaceRoot: string, relativePath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(join(workspaceRoot, relativePath), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
   }
 }
 
