@@ -198,7 +198,8 @@ See the [Changelog](CHANGELOG.md) for release history.
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for developing
-from source, running quality checks, and validating a release. Report issues at
+from source, running quality checks, and validating a release. The next-release
+plan and claimable work items are in [ROADMAP.md](ROADMAP.md). Report issues at
 the [issue tracker](https://github.com/XD319/auto-talon/issues).
 
 ## License
