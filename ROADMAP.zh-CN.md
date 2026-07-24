@@ -6,7 +6,7 @@
 
 - 当前版本：`v0.1.0`（见 [CHANGELOG.md](CHANGELOG.md)）
 - 下一目标：`v0.2.0`
-- 主题：**可信的自我改进，更低成本** —— 能被测量的进化。
+- 主题：**可信的自我改进，更低成本** —— 能被测量的进化 —— **∥ 桌面 companion**（并行产品面）。
 
 ## 如何阅读本文档
 
@@ -30,6 +30,9 @@
 
 其余工作都建立在：先让这个闭环可测，再用同一套测量去证明成本与质量收益。
 
+第三个产品缺口是缺少图形化 companion。`v0.2.0` 增加一条**并行**桌面赛道（Tauri 壳 + session-api sidecar），不取代 TUI，也不取代测量/降本主线。见
+[docs/dev/desktop-companion.md](docs/dev/desktop-companion.md)。
+
 ## 依赖关系概览
 
 ```
@@ -37,9 +40,10 @@ M1 测量骨架 ─┬─→ M2 降本（用数字证明省了多少）
              └─→ 性能工作（用数字证明变强了）
 M3 硬化 = 贯穿各里程碑的卫生任务
 M4 降门槛 = 独立赛道，本版若冲采用量再做
+M5 桌面 companion = 并行赛道（Tauri + session-api；不取代 TUI）
 ```
 
-建议节奏：**M1 与 M2 并跑**（M1 立测量骨架，M2 先落地高 ROI 降本），M3 持续内化，M4 仅在本版要冲采用量时启动。
+建议节奏：**M1 与 M2 并跑**（M1 立测量骨架，M2 先落地高 ROI 降本），M3 持续内化，M4 在本版冲采用量时启动，**M5 并行推进**且不阻塞测量/降本的发版标准。
 
 ---
 
@@ -101,6 +105,30 @@ M4 降门槛 = 独立赛道，本版若冲采用量再做
 [docs/user/windows-troubleshooting.md](docs/user/windows-troubleshooting.md)、
 `scripts/setup.ps1`。
 
+## M5 — 桌面 companion（并行）
+
+目标：本地优先的图形化 companion，通过 `session-api` 驱动**现有** Node runtime，不另起第二套 kernel。
+
+锁定技术栈：Tauri 2 壳、Vite + React UI、`talon session-api serve` 作为 sidecar（loopback + Bearer）。
+
+| 阶段 | 工作项 | Ownership | Difficulty | Paid model | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| M5a | 落地 `apps/desktop`（Tauri 2 + Vite/React）、sidecar 拉起、健康检查、token 注入 | `mixed` | advanced | 否 | [#11](https://github.com/XD319/auto-talon/issues/11)。规格见 ADR；维护者确认后可认领。**必达**。 |
+| M5b | 只读会话浏览器与 transcript 查看 | `community` | intermediate | 否 | [#13](https://github.com/XD319/auto-talon/issues/13)。视需要依赖 API。**必达**。 |
+| M5b API | 在 session-api 暴露只读 ops 视图（tasks / trace / pending approvals） | `mixed` | intermediate | 否 | [#12](https://github.com/XD319/auto-talon/issues/12)。契约由维护者主导。 |
+| M5c | 审批队列 + allow/deny（经 API 走与 TUI 相同的 PolicyEngine） | `mixed` | advanced | 否 | [#14](https://github.com/XD319/auto-talon/issues/14)。安全敏感；v0.2 **尽力而为**。 |
+| M5d | 在 companion 内用 session `continue` / 新会话聊天（先非流式） | `community` | intermediate | 否 | [#15](https://github.com/XD319/auto-talon/issues/15)。stretch；流式另开。 |
+| M5e | Windows 打包 + 首次打开选 workspace | `mixed` | advanced | 否 | [#16](https://github.com/XD319/auto-talon/issues/16)。stretch；Windows 优先。 |
+| docs | 保持 companion ADR / 安全边界准确 | `community` | good-first-issue | 否 | [#10](https://github.com/XD319/auto-talon/issues/10)。ADR 已落地。 |
+
+**v0.2.0 对 M5 的成功标准：** M5a + M5b 必达；M5c 尽力而为；M5d/M5e 为 stretch，不得阻塞以测量/降本为主的发版。
+
+安全红线（不可认领）：公网绑定、弱化 HTTP 鉴权、绕过审批/沙箱、在壳内重写执行内核。
+
+参考：[docs/dev/desktop-companion.md](docs/dev/desktop-companion.md)、
+[docs/dev/session-api.md](docs/dev/session-api.md)、`src/session-api/server.ts`、
+`src/core/http-auth.ts`。
+
 ---
 
 ## 贡献者速览
@@ -113,11 +141,15 @@ M4 降门槛 = 独立赛道，本版若冲采用量再做
 4. 缓存配置文档（M2）—— `good-first-issue`，文档。
 5. OpenAI-compatible 缓存 token 计量核对（M2）—— `intermediate`。
 6. `doctor --fix` 迁移体验（M4）—— `intermediate`。
-7. Compounding eval 数据集扩充（M1，runner 落地后）—— `intermediate`。
-8. Anthropic `cache_control` 发火（M2）—— `advanced`，需维护者先确认规格。
+7. 桌面只读会话浏览器（M5b，API 就绪后）—— `intermediate`。
+8. 桌面聊天（经 `continue`，M5d）—— `intermediate`。
+9. Compounding eval 数据集扩充（M1，runner 落地后）—— `intermediate`。
+10. Anthropic `cache_control` 发火（M2）—— `advanced`，需维护者先确认规格。
+11. 桌面 Tauri 脚手架 / 打包（M5a/M5e）—— `advanced`，ADR 确认后。
 
-维护者主导（请勿开成可认领的社区 issue）：
+维护者主导（请勿开成会削弱这些边界的社区认领 issue）：
 
 - 性能指标定义与 gate 阈值（M1）。
 - Compounding eval runner 架构（M1）。
-- 任何 sandbox / approval / policy 改动（M3）。
+- 任何绕过治理的 sandbox / approval / policy 改动（M3 / M5）。
+- 公网 HTTP 绑定、取消鉴权，或在 companion 内另起第二套执行内核。

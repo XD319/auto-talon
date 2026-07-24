@@ -176,8 +176,11 @@ against sensitive project directories.
 - Real provider runs require user-supplied credentials. Mock and scripted smoke
   providers are for tests and diagnostics.
 - v0.1.0 includes Feishu/Lark and local webhook gateway adapters. Slack,
-  Telegram, Discord, voice, browser automation, image generation, and companion
-  mobile/desktop apps are outside this release.
+  Telegram, Discord, voice, browser automation, image generation, and mobile
+  companion apps remain outside this release. A **desktop companion** (Tauri +
+  local `session-api`) is planned for `v0.2.0` and is **not shipped yet** — see
+  [ROADMAP.md](ROADMAP.md) and
+  [docs/dev/desktop-companion.md](docs/dev/desktop-companion.md).
 
 ## Documentation
 
@@ -191,7 +194,7 @@ against sensitive project directories.
 | Use memory and skills | [Skills](docs/user/skills.md), [Memory troubleshooting](docs/troubleshooting/memory.md) |
 | Integrate MCP | [MCP](docs/user/mcp.md) |
 | Validate a release | [Replay and eval](docs/user/replay-and-eval.md), [Compatibility matrix](docs/compatibility-matrix.md) |
-| Develop AutoTalon | [Architecture](docs/dev/architecture.md), [Module boundaries](docs/dev/module-boundaries.md), [Testing](docs/dev/testing.md) |
+| Develop AutoTalon | [Architecture](docs/dev/architecture.md), [Module boundaries](docs/dev/module-boundaries.md), [Testing](docs/dev/testing.md), [Desktop companion](docs/dev/desktop-companion.md) |
 
 See the [Changelog](CHANGELOG.md) for release history.
 

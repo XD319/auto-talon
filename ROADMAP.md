@@ -7,7 +7,8 @@ living document: priorities may shift as evals and user feedback arrive.
 
 - Current release: `v0.1.0` (see [CHANGELOG.md](CHANGELOG.md))
 - Next target: `v0.2.0`
-- Theme: **Trustworthy self-improvement, at lower cost** — evolution you can measure.
+- Theme: **Trustworthy self-improvement, at lower cost** — evolution you can
+  measure — **∥ desktop companion** (parallel product surface).
 
 ## How to read this document
 
@@ -45,6 +46,11 @@ this release:
 Everything else follows from making that loop measurable, then using the same
 measurement to prove cost and quality wins.
 
+A third product gap is the lack of a graphical companion. `v0.2.0` adds a
+**parallel** desktop track (Tauri shell + session-api sidecar) that does not
+replace the TUI or the measurement/cost headline. See
+[docs/dev/desktop-companion.md](docs/dev/desktop-companion.md).
+
 ## Dependency overview
 
 ```
@@ -52,11 +58,13 @@ M1 measurement backbone ─┬─→ M2 lower cost (prove savings with numbers)
                          └─→ performance work (prove gains with numbers)
 M3 hardening = hygiene folded into every milestone
 M4 adoption  = independent track, run if this release targets growth
+M5 desktop companion = parallel track (Tauri + session-api; does not replace TUI)
 ```
 
 Recommended sequencing: **run M1 and M2 in parallel** (M1 lays the backbone, M2
-ships the high-ROI cost win), fold M3 in continuously, and take on M4 only if this
-release is meant to drive adoption.
+ships the high-ROI cost win), fold M3 in continuously, take on M4 if this release
+targets adoption, and run **M5 in parallel** without blocking measurement/cost
+release criteria.
 
 ---
 
@@ -122,6 +130,34 @@ References: [docs/user/quickstart.md](docs/user/quickstart.md),
 [docs/user/windows-troubleshooting.md](docs/user/windows-troubleshooting.md),
 `scripts/setup.ps1`.
 
+## M5 — Desktop companion (parallel)
+
+Goal: a local-first graphical companion that drives the **existing** Node
+runtime through `session-api`, without a second kernel.
+
+Stack (locked): Tauri 2 shell, Vite + React UI, `talon session-api serve` as
+sidecar over loopback Bearer auth.
+
+| Phase | Item | Ownership | Difficulty | Paid model | Notes |
+| --- | --- | --- | --- | --- | --- |
+| M5a | Scaffold `apps/desktop` (Tauri 2 + Vite/React), sidecar spawn, health check, token injection | `mixed` | advanced | no | [#11](https://github.com/XD319/auto-talon/issues/11). Spec in ADR; claim after maintainer confirmation. **Required**. |
+| M5b | Read-only session browser and transcript viewer | `community` | intermediate | no | [#13](https://github.com/XD319/auto-talon/issues/13). Depends on API where needed. **Required**. |
+| M5b API | Expose read-only ops views (tasks / trace / pending approvals) on session-api | `mixed` | intermediate | no | [#12](https://github.com/XD319/auto-talon/issues/12). Contract led by maintainer. |
+| M5c | Approval queue + allow/deny via API (same PolicyEngine path as TUI) | `mixed` | advanced | no | [#14](https://github.com/XD319/auto-talon/issues/14). Security-sensitive; best-effort for v0.2. |
+| M5d | Chat compose via session `continue` / new session (non-streaming first) | `community` | intermediate | no | [#15](https://github.com/XD319/auto-talon/issues/15). Stretch; streaming is a follow-up. |
+| M5e | Windows packaging + first-run workspace picker | `mixed` | advanced | no | [#16](https://github.com/XD319/auto-talon/issues/16). Stretch; Windows first. |
+| docs | Keep companion ADR / security boundaries accurate | `community` | good-first-issue | no | [#10](https://github.com/XD319/auto-talon/issues/10). ADR already landed. |
+
+**v0.2.0 success bar for M5:** M5a + M5b required; M5c best-effort; M5d/M5e stretch
+and must not block a measurement/cost-focused release.
+
+Security red lines (not claimable): public binds, weakening HTTP auth, bypassing
+approvals/sandbox, rewriting the kernel inside the shell.
+
+References: [docs/dev/desktop-companion.md](docs/dev/desktop-companion.md),
+[docs/dev/session-api.md](docs/dev/session-api.md), `src/session-api/server.ts`,
+`src/core/http-auth.ts`.
+
 ---
 
 ## Contributor summary
@@ -134,11 +170,16 @@ Good places to start, roughly by increasing difficulty:
 4. Cache configuration docs (M2) — `good-first-issue`, docs.
 5. OpenAI-compatible cached-token accounting audit (M2) — `intermediate`.
 6. `doctor --fix` migration experience (M4) — `intermediate`.
-7. Compounding eval dataset expansion (M1, after the runner lands) — `intermediate`.
-8. Anthropic `cache_control` emission (M2) — `advanced`, spec confirmed by a maintainer first.
+7. Desktop read-only session browser (M5b, after API) — `intermediate`.
+8. Desktop chat compose via `continue` (M5d) — `intermediate`.
+9. Compounding eval dataset expansion (M1, after the runner lands) — `intermediate`.
+10. Anthropic `cache_control` emission (M2) — `advanced`, spec confirmed by a maintainer first.
+11. Desktop Tauri scaffold / packaging (M5a/M5e) — `advanced`, after ADR confirmation.
 
-Maintainer-led (please do not open as claimable community issues):
+Maintainer-led (please do not open as claimable community issues that weaken
+these boundaries):
 
 - Performance-metric definition and gate thresholds (M1).
 - Compounding eval runner architecture (M1).
-- Any sandbox / approval / policy change (M3).
+- Any sandbox / approval / policy change that bypasses governance (M3 / M5).
+- Public HTTP binds, auth removal, or a second execution kernel in the companion.
