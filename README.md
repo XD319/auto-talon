@@ -69,7 +69,13 @@ talon tui
 
 ### Full setup (real provider)
 
-Point AutoTalon at a real provider and open the interactive agent:
+`talon provider setup` and `talon provider custom add` write **user-level
+(global) config** by default (`~/.auto-talon/provider.config.json`), so the
+provider is available in every workspace. Add `--workspace` only when you want
+a project-local override (`.auto-talon/provider.config.json`). Check the active
+layer with `talon provider status`.
+
+**Built-in providers** (OpenAI example):
 
 ```bash
 npm install -g auto-talon
@@ -79,10 +85,31 @@ talon provider test
 talon tui
 ```
 
-PowerShell users can set the provider key for the current session with:
+Other built-ins use the same flow, for example
+`talon provider setup anthropic|gemini|openrouter|ollama|glm|moonshot|minimax|qwen|xai|xfyun-coding ...`.
+
+**OpenAI-compatible endpoints** (DeepSeek, local gateways, vendor proxies, and
+similar). Pass `--base-url` and `--model` explicitly:
+
+```bash
+talon provider setup openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key "$DEEPSEEK_API_KEY"
+talon provider test
+```
+
+Or register a named custom provider (handy for `/model deepseek:deepseek-chat`):
+
+```bash
+talon provider custom add deepseek --transport openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key "$DEEPSEEK_API_KEY" --display-name DeepSeek
+talon provider use deepseek
+talon provider test
+```
+
+PowerShell: put the whole command on one line (do not use bash `\` line
+continuations), or break lines with a backtick `` ` ``. Set a session key with:
 
 ```powershell
-$env:OPENAI_API_KEY = "your-api-key"
+$env:DEEPSEEK_API_KEY = "your-api-key"
+talon provider setup openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key $env:DEEPSEEK_API_KEY
 ```
 
 ### Windows

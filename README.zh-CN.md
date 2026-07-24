@@ -60,7 +60,12 @@ talon tui
 
 ### 完整配置（真实 provider）
 
-让 AutoTalon 接入真实 provider 并打开交互式 agent：
+`talon provider setup` 与 `talon provider custom add` **默认写入用户级（全局）配置**
+（`~/.auto-talon/provider.config.json`），在任意工作区都可用。只有加 `--workspace`
+时才会写入当前项目的 `.auto-talon/provider.config.json`。可用
+`talon provider status` 查看当前生效的是哪一层。
+
+**内置 provider**（以 OpenAI 为例）：
 
 ```bash
 npm install -g auto-talon
@@ -70,10 +75,31 @@ talon provider test
 talon tui
 ```
 
-PowerShell 用户可以为当前会话设置 provider key：
+其他内置 provider 流程相同，例如
+`talon provider setup anthropic|gemini|openrouter|ollama|glm|moonshot|minimax|qwen|xai|xfyun-coding ...`。
+
+**OpenAI 兼容 endpoint**（DeepSeek、本地网关、厂商代理等）需显式传入
+`--base-url` 与 `--model`：
+
+```bash
+talon provider setup openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key "$DEEPSEEK_API_KEY"
+talon provider test
+```
+
+也可以注册命名自定义 provider（方便在 TUI 里用 `/model deepseek:deepseek-chat`）：
+
+```bash
+talon provider custom add deepseek --transport openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key "$DEEPSEEK_API_KEY" --display-name DeepSeek
+talon provider use deepseek
+talon provider test
+```
+
+PowerShell：请把整条命令写在一行（不要用 bash 的 `\` 换行），或用反引号 `` ` ``
+换行。为当前会话设置 key：
 
 ```powershell
-$env:OPENAI_API_KEY = "your-api-key"
+$env:DEEPSEEK_API_KEY = "your-api-key"
+talon provider setup openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key $env:DEEPSEEK_API_KEY
 ```
 
 
