@@ -85,11 +85,15 @@ describe("cached token telemetry path", () => {
 
     expect(snapshot.tokenUsage.cachedInputTokens).toBe(70);
     expect(
-      computeCostUsd(snapshot.tokenUsage, {
-        cachedInputPerMillion: 0.5,
-        inputPerMillion: 1,
-        outputPerMillion: 2
-      })
-    ).toBeCloseTo(0.000155, 8);
+      computeCostUsd(
+        snapshot.tokenUsage,
+        {
+          cachedInputPerMillion: 0.5,
+          inputPerMillion: 1,
+          outputPerMillion: 2
+        },
+        "inclusive"
+      )
+    ).toBeCloseTo(0.000085, 8);
   });
 });

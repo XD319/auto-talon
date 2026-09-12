@@ -25,7 +25,10 @@ Relevant code:
 
 ### Cost formula
 
-USD cost for a turn is:
+USD cost for a turn depends on how the provider reports cache hits:
+
+**Exclusive** (Anthropic-compatible: `input_tokens` does not include
+`cache_read_input_tokens`):
 
 ```
 (inputTokens / 1e6) * inputPerMillion
@@ -33,9 +36,21 @@ USD cost for a turn is:
 + (cachedInputTokens / 1e6) * cachedInputPerMillion   # only when both are set
 ```
 
+**Inclusive** (OpenAI-compatible: `prompt_tokens` already includes
+`cached_tokens`):
+
+```
+((inputTokens - cachedInputTokens) / 1e6) * inputPerMillion
++ (outputTokens / 1e6) * outputPerMillion
++ (cachedInputTokens / 1e6) * cachedInputPerMillion   # only when both are set
+```
+
+`BudgetRecorder` selects inclusive vs exclusive from the provider catalog
+transport. The default for `computeCostUsd` remains exclusive.
+
 If `cachedInputPerMillion` is omitted, or `cachedInputTokens` is absent, the
-cached component is treated as `0`. Missing provider pricing still allows token
-accounting; USD is skipped for that call.
+cached component is treated as `0` and input tokens are billed in full. Missing
+provider pricing still allows token accounting; USD is skipped for that call.
 
 Configure pricing under `.auto-talon/runtime.config.json`:
 

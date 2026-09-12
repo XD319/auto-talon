@@ -294,8 +294,8 @@ against sensitive project directories.
 - v0.1.0 includes Feishu/Lark and local webhook gateway adapters. Slack,
   Telegram, Discord, voice, browser automation, image generation, and mobile
   companion apps remain outside this release. A **desktop companion** (Tauri +
-  local `session-api`) is planned for `v0.2.0` and is **not shipped yet** — see
-  [ROADMAP.md](ROADMAP.md) and
+  local `session-api`) is planned for a later release and is **not part of
+  v0.2.0** — see [ROADMAP.md](ROADMAP.md) and
   [docs/dev/desktop-companion.md](docs/dev/desktop-companion.md).
 
 ## Documentation

@@ -1,5 +1,5 @@
 import { AppError } from "../app-error.js";
-import { computeCostUsd } from "../budget/cost-calculator.js";
+import { cachedInputAccountingForProvider, computeCostUsd } from "../budget/cost-calculator.js";
 import type { BudgetService } from "../budget/budget-service.js";
 import type {
   BudgetPricingEntry,
@@ -35,7 +35,11 @@ export class BudgetRecorder {
 
   public record(input: BudgetRecorderInput): BudgetRecorderResult {
     const pricing = this.dependencies.budgetPricing?.[input.providerName];
-    const costUsd = computeCostUsd(input.providerResponse.usage, pricing);
+    const costUsd = computeCostUsd(
+      input.providerResponse.usage,
+      pricing,
+      cachedInputAccountingForProvider(input.providerName)
+    );
     const tokenBudget = {
       ...input.tokenBudget,
       usedCostUsd: (input.tokenBudget.usedCostUsd ?? 0) + (costUsd ?? 0),

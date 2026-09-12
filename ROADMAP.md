@@ -2,13 +2,13 @@
 
 [English](ROADMAP.md) | [简体中文](ROADMAP.zh-CN.md)
 
-This roadmap describes the direction for the next release after `v0.1.0`. It is a
+This roadmap describes the direction after `v0.2.0`. It is a
 living document: priorities may shift as evals and user feedback arrive.
 
-- Current release: `v0.1.1` (see [CHANGELOG.md](CHANGELOG.md))
-- Next target: `v0.2.0`
+- Current release: `v0.2.0` (see [CHANGELOG.md](CHANGELOG.md))
+- Next target: post-`v0.2.0`
 - Theme: **Trustworthy self-improvement, at lower cost** — evolution you can
-  measure — **∥ desktop companion** (parallel product surface).
+  measure — **∥ desktop companion** (parallel product surface, not shipped in 0.2.0).
 
 ## How to read this document
 
@@ -45,9 +45,10 @@ this release:
 Everything else follows from making that loop measurable, then using the same
 measurement to prove cost and quality wins.
 
-A third product gap is the lack of a graphical companion. `v0.2.0` adds a
-**parallel** desktop track (Tauri shell + session-api sidecar) that does not
-replace the TUI or the measurement/cost headline. See
+A third product gap is the lack of a graphical companion. A **parallel**
+desktop track (Tauri shell + session-api sidecar) remains planned and **is not
+part of the v0.2.0 delivery**. It does not replace the TUI or the
+measurement/cost headline. See
 [docs/dev/desktop-companion.md](docs/dev/desktop-companion.md).
 
 ## Dependency overview
@@ -140,16 +141,16 @@ sidecar over loopback Bearer auth.
 
 | Phase | Item | Ownership | Difficulty | Paid model | Notes |
 | --- | --- | --- | --- | --- | --- |
-| M5a | Scaffold `apps/desktop` (Tauri 2 + Vite/React), sidecar spawn, health check, token injection | `mixed` | advanced | no | [#11](https://github.com/XD319/auto-talon/issues/11). Spec in ADR; claim after maintainer confirmation. **Required**. |
-| M5b | Read-only session browser and transcript viewer | `community` | intermediate | no | [#13](https://github.com/XD319/auto-talon/issues/13). Depends on API where needed. **Required**. |
+| M5a | Scaffold `apps/desktop` (Tauri 2 + Vite/React), sidecar spawn, health check, token injection | `mixed` | advanced | no | [#11](https://github.com/XD319/auto-talon/issues/11). Spec in ADR; claim after maintainer confirmation. **Post-0.2**. |
+| M5b | Read-only session browser and transcript viewer | `community` | intermediate | no | [#13](https://github.com/XD319/auto-talon/issues/13). Depends on API where needed. **Post-0.2**. |
 | M5b API | Expose read-only ops views (tasks / trace / pending approvals) on session-api | `mixed` | intermediate | no | [#12](https://github.com/XD319/auto-talon/issues/12). Contract led by maintainer. |
 | M5c | Approval queue + allow/deny via API (same PolicyEngine path as TUI) | `mixed` | advanced | no | [#14](https://github.com/XD319/auto-talon/issues/14). Security-sensitive; best-effort for v0.2. |
 | M5d | Chat compose via session `continue` / new session (non-streaming first) | `community` | intermediate | no | [#15](https://github.com/XD319/auto-talon/issues/15). Stretch; streaming is a follow-up. |
 | M5e | Windows packaging + first-run workspace picker | `mixed` | advanced | no | [#16](https://github.com/XD319/auto-talon/issues/16). Stretch; Windows first. |
 | docs | Keep companion ADR / security boundaries accurate | `community` | good-first-issue | no | [#10](https://github.com/XD319/auto-talon/issues/10). ADR already landed. |
 
-**v0.2.0 success bar for M5:** M5a + M5b required; M5c best-effort; M5d/M5e stretch
-and must not block a measurement/cost-focused release.
+**Post-0.2 success bar for M5:** M5a + M5b first; M5c best-effort; M5d/M5e stretch.
+This track did **not** ship in `v0.2.0` and must not be treated as a 0.2 required gate.
 
 Security red lines (not claimable): public binds, weakening HTTP auth, bypassing
 approvals/sandbox, rewriting the kernel inside the shell.

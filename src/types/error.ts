@@ -6,6 +6,7 @@ export const RUNTIME_ERROR_CODES = [
   "cancelled",
   "clarification_cancelled",
   "interrupt",
+  "internal_error",
   "invalid_state",
   "max_rounds_exceeded",
   "policy_denied",

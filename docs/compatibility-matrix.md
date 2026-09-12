@@ -1,4 +1,4 @@
-# Compatibility Matrix (v0.1.0)
+# Compatibility Matrix
 
 ## Runtime
 
@@ -33,7 +33,7 @@
 
 ## Memory / Storage
 
-- Runtime schema baseline: `PRAGMA user_version = 23`.
+- Runtime schema baseline: `PRAGMA user_version = 26`.
 - Legacy DBs below v23 upgrade via migration pipeline; pre-v22 thread/transcript data requires `talon doctor --fix`.
 - Schema upgrades from legacy unversioned DB: supported via migration pipeline.
 - Config files without `version`: auto-migrated to `version: 1`.

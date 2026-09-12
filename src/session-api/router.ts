@@ -838,7 +838,11 @@ function startTaskEventStream(
     connection: "keep-alive",
     "content-type": "text/event-stream; charset=utf-8"
   });
+  let closed = false;
   const send = (event: string, payload: unknown): void => {
+    if (closed) {
+      return;
+    }
     response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
   for (const output of service.outputTask(taskId)) {
@@ -872,6 +876,7 @@ function startTaskEventStream(
     );
   }
   const close = (): void => {
+    closed = true;
     unsubscribeOutput();
     unsubscribeTrace();
   };

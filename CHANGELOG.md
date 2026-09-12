@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Classified unknown runtime errors as `internal_error` instead of
+  `provider_error`.
+- Priced OpenAI-compatible cached tokens as a subset of `prompt_tokens`
+  (`inclusive` accounting) so `cost_report` no longer double-counts cache hits.
+- Stopped writing SSE task events after the client disconnects.
+- Wired the Web workspace to existing session-api surfaces: memory, schedules,
+  todos, FTS session search, next actions, commitments, skill enable/disable,
+  and session budget. Fixed today/inbox counts, rollback refresh, clarification
+  cancel/free-text, `/clear` title save, and interaction-mode restore.
+
 ## v0.2.0
 
 - Improved the local Web workspace with concurrent session-run tracking,

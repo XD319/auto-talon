@@ -2,11 +2,11 @@
 
 [English](ROADMAP.md) | [简体中文](ROADMAP.zh-CN.md)
 
-本文档说明 `v0.1.0` 之后下一版本的方向。这是一份会随 eval 与用户反馈调整的活文档。
+本文档说明 `v0.2.0` 之后的方向。这是一份会随 eval 与用户反馈调整的活文档。
 
-- 当前版本：`v0.1.1`（见 [CHANGELOG.md](CHANGELOG.md)）
-- 下一目标：`v0.2.0`
-- 主题：**可信的自我改进，更低成本** —— 能被测量的进化 —— **∥ 桌面 companion**（并行产品面）。
+- 当前版本：`v0.2.0`（见 [CHANGELOG.md](CHANGELOG.md)）
+- 下一目标：post-`v0.2.0`
+- 主题：**可信的自我改进，更低成本** —— 能被测量的进化 —— **∥ 桌面 companion**（并行产品面，**未在 0.2.0 交付**）。
 
 ## 如何阅读本文档
 
@@ -30,7 +30,7 @@
 
 其余工作都建立在：先让这个闭环可测，再用同一套测量去证明成本与质量收益。
 
-第三个产品缺口是缺少图形化 companion。`v0.2.0` 增加一条**并行**桌面赛道（Tauri 壳 + session-api sidecar），不取代 TUI，也不取代测量/降本主线。见
+第三个产品缺口是缺少图形化 companion。一条**并行**桌面赛道（Tauri 壳 + session-api sidecar）仍在规划中，**不属于 v0.2.0 交付范围**；不取代 TUI，也不取代测量/降本主线。见
 [docs/dev/desktop-companion.md](docs/dev/desktop-companion.md)。
 
 ## 依赖关系概览
@@ -113,15 +113,15 @@ M5 桌面 companion = 并行赛道（Tauri + session-api；不取代 TUI）
 
 | 阶段 | 工作项 | Ownership | Difficulty | Paid model | 说明 |
 | --- | --- | --- | --- | --- | --- |
-| M5a | 落地 `apps/desktop`（Tauri 2 + Vite/React）、sidecar 拉起、健康检查、token 注入 | `mixed` | advanced | 否 | [#11](https://github.com/XD319/auto-talon/issues/11)。规格见 ADR；维护者确认后可认领。**必达**。 |
-| M5b | 只读会话浏览器与 transcript 查看 | `community` | intermediate | 否 | [#13](https://github.com/XD319/auto-talon/issues/13)。视需要依赖 API。**必达**。 |
+| M5a | 落地 `apps/desktop`（Tauri 2 + Vite/React）、sidecar 拉起、健康检查、token 注入 | `mixed` | advanced | 否 | [#11](https://github.com/XD319/auto-talon/issues/11)。规格见 ADR；维护者确认后可认领。**post-0.2**。 |
+| M5b | 只读会话浏览器与 transcript 查看 | `community` | intermediate | 否 | [#13](https://github.com/XD319/auto-talon/issues/13)。视需要依赖 API。**post-0.2**。 |
 | M5b API | 在 session-api 暴露只读 ops 视图（tasks / trace / pending approvals） | `mixed` | intermediate | 否 | [#12](https://github.com/XD319/auto-talon/issues/12)。契约由维护者主导。 |
 | M5c | 审批队列 + allow/deny（经 API 走与 TUI 相同的 PolicyEngine） | `mixed` | advanced | 否 | [#14](https://github.com/XD319/auto-talon/issues/14)。安全敏感；v0.2 **尽力而为**。 |
 | M5d | 在 companion 内用 session `continue` / 新会话聊天（先非流式） | `community` | intermediate | 否 | [#15](https://github.com/XD319/auto-talon/issues/15)。stretch；流式另开。 |
 | M5e | Windows 打包 + 首次打开选 workspace | `mixed` | advanced | 否 | [#16](https://github.com/XD319/auto-talon/issues/16)。stretch；Windows 优先。 |
 | docs | 保持 companion ADR / 安全边界准确 | `community` | good-first-issue | 否 | [#10](https://github.com/XD319/auto-talon/issues/10)。ADR 已落地。 |
 
-**v0.2.0 对 M5 的成功标准：** M5a + M5b 必达；M5c 尽力而为；M5d/M5e 为 stretch，不得阻塞以测量/降本为主的发版。
+**post-0.2 对 M5 的成功标准：** 先做 M5a + M5b；M5c 尽力而为；M5d/M5e 为 stretch。该赛道**未随 v0.2.0 发布**，不要再当成 0.2 必达门禁。
 
 安全红线（不可认领）：公网绑定、弱化 HTTP 鉴权、绕过审批/沙箱、在壳内重写执行内核。
 

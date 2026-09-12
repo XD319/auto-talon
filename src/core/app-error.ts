@@ -1,4 +1,9 @@
-import type { ProviderErrorShape, RuntimeErrorCode, RuntimeErrorShape } from "../types/index.js";
+import {
+  RUNTIME_ERROR_CODES,
+  type ProviderErrorShape,
+  type RuntimeErrorCode,
+  type RuntimeErrorShape
+} from "../types/index.js";
 
 export class AppError extends Error implements RuntimeErrorShape {
   public readonly code: RuntimeErrorCode;
@@ -37,19 +42,42 @@ export function toAppError(error: unknown): AppError {
     });
   }
 
+  const coded = readRuntimeErrorCode(error);
+  if (coded !== null) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new AppError({
+      cause: error,
+      code: coded,
+      message
+    });
+  }
+
   if (error instanceof Error) {
     return new AppError({
       cause: error,
-      code: "provider_error",
+      code: "internal_error",
       message: error.message
     });
   }
 
   return new AppError({
     cause: error,
-    code: "provider_error",
+    code: "internal_error",
     message: "Unknown error"
   });
+}
+
+function readRuntimeErrorCode(error: unknown): RuntimeErrorCode | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return null;
+  }
+  const code = error.code;
+  if (typeof code !== "string") {
+    return null;
+  }
+  return (RUNTIME_ERROR_CODES as readonly string[]).includes(code)
+    ? (code as RuntimeErrorCode)
+    : null;
 }
 
 function readProviderError(error: unknown): ProviderErrorShape | null {

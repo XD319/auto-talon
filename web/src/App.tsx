@@ -4,14 +4,43 @@ import {
   api,
   type ApprovalRecord,
   type BootstrapResponse,
+  type BudgetReport,
   type ChatMessage,
   type ClarifyPrompt,
+  type CommitmentItem,
+  type ExperienceItem,
   type FileChange,
+  type InboxItem,
+  type MemoryItem,
+  type MemoryStatus,
+  type NextItem,
+  type ScheduleItem,
+  type SearchHit,
   type SessionIndexEntry,
-  type TaskListEntry
+  type SessionMessagesResponse,
+  type SkillItem,
+  type TaskListEntry,
+  type TodoItem
 } from "./api";
-import { initialLocale, translate, type Locale } from "./i18n";
-import { SLASH_COMMANDS } from "./slash";
+import { formatTodayLine, initialLocale, translate, type Locale, type TranslationKey } from "./i18n";
+import {
+  ActionPanel,
+  ApprovalCard,
+  BudgetLine,
+  ChangeList,
+  ClarifyCard,
+  ExperiencePanel,
+  InboxPanel,
+  MemoryPanel,
+  SchedulePanel,
+  SettingsPanel,
+  SkillPanel,
+  TaskPanel,
+  TodayCard,
+  TodoPanel,
+  TracePanel
+} from "./panels";
+import { matchingSlashCommands, parseSlashIntent, SLASH_COMMANDS, type InteractionMode } from "./slash";
 import {
   activityTrace,
   dialogMessages,
@@ -21,7 +50,7 @@ import {
   sessionLabel
 } from "./transcript";
 
-type Mode = "agent" | "plan" | "acceptEdits";
+type Mode = InteractionMode;
 type RailTab =
   | "changes"
   | "trace"
@@ -29,12 +58,10 @@ type RailTab =
   | "memory"
   | "schedule"
   | "tasks"
+  | "todos"
+  | "actions"
   | "skills"
   | "experience";
-
-interface UiState {
-  messages?: unknown[];
-}
 
 interface RunState { sessionId: string; taskId: string; }
 const ACTIVE_TASK_STATUSES = new Set(["pending", "running", "waiting_tool", "waiting_approval", "waiting_clarification"]);
@@ -53,17 +80,24 @@ export function App(): React.ReactElement {
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [clarifies, setClarifies] = useState<ClarifyPrompt[]>([]);
   const [changes, setChanges] = useState<FileChange[]>([]);
-  const [inbox, setInbox] = useState<Array<{ inboxId: string; title: string; summary?: string }>>([]);
-  const [memories, setMemories] = useState<Array<{ memoryId: string; title: string; content?: string }>>([]);
-  const [schedules, setSchedules] = useState<Array<{ scheduleId: string; name: string; status?: string }>>([]);
-  const [tasks, setTasks] = useState<Array<{ taskId: string; status: string; input?: string }>>([]);
-  const [skills, setSkills] = useState<Array<{ id?: string; metadata?: { id?: string; name?: string } }>>([]);
-  const [experiences, setExperiences] = useState<Array<{ experienceId: string; title?: string }>>([]);
+  const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
+  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [tasks, setTasks] = useState<TaskListEntry[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [nextItems, setNextItems] = useState<NextItem[]>([]);
+  const [commitments, setCommitments] = useState<CommitmentItem[]>([]);
+  const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [experiences, setExperiences] = useState<ExperienceItem[]>([]);
   const [trace, setTrace] = useState<Array<{ eventType: string; summary: string }>>([]);
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [budget, setBudget] = useState<BudgetReport | null>(null);
   const [query, setQuery] = useState("");
   const [locale, setLocale] = useState<Locale>(initialLocale);
   const [drawer, setDrawer] = useState<"sessions" | "tools" | null>(null);
   const [showToday, setShowToday] = useState(false);
+  const [todayLine, setTodayLine] = useState("");
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -87,9 +121,12 @@ export function App(): React.ReactElement {
   }, []);
 
   const loadMessages = useCallback(async (id: string) => {
-    const data = await api<UiState>(`/v1/sessions/${id}/messages`);
+    const data = await api<SessionMessagesResponse>(`/v1/sessions/${id}/messages`);
     if (sessionIdRef.current !== id) {
       return;
+    }
+    if (data.interactionMode === "agent" || data.interactionMode === "plan" || data.interactionMode === "acceptEdits") {
+      setMode(data.interactionMode);
     }
     const next = normalizeChatMessages(data.messages ?? []);
     setMessages((current) => mergeTranscript(next, current));
@@ -105,41 +142,72 @@ export function App(): React.ReactElement {
     setApprovals(approvalData.approvals);
     setClarifies(clarifyData.prompts);
     if (id !== null) {
-      const changeData = await api<{ changes: FileChange[] }>(`/v1/sessions/${id}/changes`);
+      const [changeData, todoData, budgetData] = await Promise.all([
+        api<{ changes: FileChange[] }>(`/v1/sessions/${id}/changes`),
+        api<{ todos: TodoItem[] }>(`/v1/sessions/${id}/todos`),
+        api<BudgetReport>(`/v1/sessions/${id}/budget`)
+      ]);
       setChanges(changeData.changes);
+      setTodos(todoData.todos ?? []);
+      setBudget(budgetData);
     }
   }, []);
 
-  const loadRail = useCallback(async (tab: RailTab) => {
+  const loadRail = useCallback(async (tab: RailTab, id: string | null) => {
     if (tab === "changes" || tab === "trace") {
       return;
     }
     if (tab === "inbox") {
-      const data = await api<{ items: Array<{ inboxId: string; title: string; summary?: string }> }>("/v1/inbox");
+      const data = await api<{ items: InboxItem[] }>("/v1/inbox");
       setInbox(data.items ?? []);
       return;
     }
     if (tab === "memory") {
-      const data = await api<{ memories: Array<{ memoryId: string; title: string; content?: string }> }>("/v1/memory");
+      const data = await api<{ memories: MemoryItem[]; status?: MemoryStatus }>("/v1/memory");
       setMemories(data.memories ?? []);
+      setMemoryStatus(data.status ?? null);
       return;
     }
     if (tab === "schedule") {
-      const data = await api<{ schedules: Array<{ scheduleId: string; name: string; status?: string }> }>("/v1/schedules");
+      const data = await api<{ schedules: ScheduleItem[] }>("/v1/schedules");
       setSchedules(data.schedules ?? []);
       return;
     }
     if (tab === "tasks") {
-      const data = await api<{ tasks: Array<{ taskId: string; status: string; input?: string }> }>("/v1/tasks");
+      const data = await api<{ tasks: TaskListEntry[] }>("/v1/tasks");
       setTasks(data.tasks ?? []);
       return;
     }
-    if (tab === "skills") {
-      const data = await api<{ skills: Array<{ id?: string; metadata?: { id?: string; name?: string } }> }>("/v1/skills");
-      setSkills(data.skills ?? []);
+    if (tab === "todos") {
+      if (id === null) {
+        setTodos([]);
+        return;
+      }
+      const data = await api<{ todos: TodoItem[] }>(`/v1/sessions/${id}/todos`);
+      setTodos(data.todos ?? []);
       return;
     }
-    const data = await api<{ experiences: Array<{ experienceId: string; title?: string }> }>("/v1/experiences");
+    if (tab === "actions") {
+      const suffix = id === null ? "" : `?sessionId=${encodeURIComponent(id)}`;
+      const [nextData, commitmentData] = await Promise.all([
+        api<{ items: NextItem[] }>(`/v1/next${suffix}`),
+        api<{ items: CommitmentItem[] }>(`/v1/commitments${suffix}`)
+      ]);
+      setNextItems(nextData.items ?? []);
+      setCommitments(commitmentData.items ?? []);
+      return;
+    }
+    if (tab === "skills") {
+      const data = await api<{ skills: SkillItem[] | { skills?: SkillItem[] } }>("/v1/skills");
+      const list = Array.isArray(data.skills) ? data.skills : data.skills.skills ?? [];
+      setSkills(list.map((skill) => ({
+        disabled: skill.disabled,
+        id: skill.id,
+        name: skill.name
+      })));
+      return;
+    }
+    const data = await api<{ experiences: ExperienceItem[] }>("/v1/experiences");
     setExperiences(data.experiences ?? []);
   }, []);
 
@@ -175,8 +243,22 @@ export function App(): React.ReactElement {
   }, [loadMessages, loadTurnState, sessionId]);
 
   useEffect(() => {
-    void loadRail(rail).catch(() => undefined);
+    void loadRail(rail, sessionId).catch(() => undefined);
   }, [loadRail, rail, sessionId]);
+
+  useEffect(() => {
+    const needle = query.trim();
+    if (needle.length < 2) {
+      setSearchHits([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void api<{ hits: SearchHit[] }>(`/v1/sessions/search?q=${encodeURIComponent(needle)}`)
+        .then((data) => setSearchHits(data.hits ?? []))
+        .catch(() => setSearchHits([]));
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   useEffect(() => {
     const sources = Object.values(runsBySession).map((run) => {
@@ -208,9 +290,7 @@ export function App(): React.ReactElement {
     return sessions.filter((session) => sessionLabel(session).toLowerCase().includes(needle) || session.sessionId.toLowerCase().includes(needle));
   }, [query, sessions]);
 
-  const slashHints = draft.startsWith("/")
-    ? SLASH_COMMANDS.filter((item) => item.insert.startsWith(draft.trim()) || item.label.toLowerCase().includes(draft.slice(1).toLowerCase()))
-    : [];
+  const slashHints = matchingSlashCommands(draft);
 
   async function ensureSession(): Promise<string> {
     if (sessionId !== null) {
@@ -236,49 +316,88 @@ export function App(): React.ReactElement {
     await loadSessions();
   }
 
+  async function clearChat(title?: string): Promise<void> {
+    if (sessionId !== null && title !== undefined && title.length > 0) {
+      await api(`/v1/sessions/${sessionId}`, {
+        body: JSON.stringify({ title }),
+        method: "PATCH"
+      });
+    }
+    await newChat();
+  }
+
+  async function openToday(): Promise<void> {
+    const [inboxData, taskData] = await Promise.all([
+      api<{ items: InboxItem[] }>("/v1/inbox"),
+      api<{ tasks: TaskListEntry[] }>("/v1/tasks")
+    ]);
+    setInbox(inboxData.items ?? []);
+    const running = (taskData.tasks ?? []).filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
+    const cost = budget?.state?.usedCostUsd;
+    setTodayLine(formatTodayLine(
+      locale,
+      inboxData.items?.length ?? 0,
+      running,
+      cost !== undefined ? `$${cost.toFixed(3)}` : null
+    ));
+    setShowToday(true);
+  }
+
   async function handleSlash(text: string): Promise<boolean> {
-    const value = text.trim();
-    if (value === "/new" || value === "/clear") {
+    const intent = parseSlashIntent(text);
+    if (intent === null) {
+      return false;
+    }
+    if (intent.kind === "new") {
       await newChat();
       return true;
     }
-    if (value === "/sessions") {
+    if (intent.kind === "clear") {
+      await clearChat(intent.title);
+      return true;
+    }
+    if (intent.kind === "sessions") {
       setDrawer("sessions");
       return true;
     }
-    if (value.startsWith("/mode ")) {
-      const next = value.slice(6).trim();
-      if (next === "agent" || next === "plan" || next === "acceptEdits") {
-        setMode(next);
-      }
+    if (intent.kind === "mode") {
+      setMode(intent.mode);
       return true;
     }
-    if (value === "/stop" && activeRun !== undefined) {
+    if (intent.kind === "stop" && activeRun !== undefined) {
       await api(`/v1/tasks/${activeRun.taskId}/stop`, { method: "POST" });
       setRunsBySession((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== activeRun.sessionId)));
       return true;
     }
-    if (value === "/diff") {
+    if (intent.kind === "diff") {
       setRail("changes");
       return true;
     }
-    if (value === "/inbox") {
+    if (intent.kind === "inbox") {
       setRail("inbox");
       return true;
     }
-    if (value === "/memory") {
+    if (intent.kind === "memory") {
       setRail("memory");
       return true;
     }
-    if (value === "/schedule") {
+    if (intent.kind === "schedule") {
       setRail("schedule");
       return true;
     }
-    if (value === "/compact" && sessionId !== null) {
+    if (intent.kind === "todos") {
+      setRail("todos");
+      return true;
+    }
+    if (intent.kind === "next") {
+      setRail("actions");
+      return true;
+    }
+    if (intent.kind === "compact" && sessionId !== null) {
       await api(`/v1/sessions/${sessionId}/compact`, { body: JSON.stringify({}), method: "POST" });
       return true;
     }
-    if (value === "/help") {
+    if (intent.kind === "help") {
       setShowSettings(false);
       setMessages((current) => [
         ...current,
@@ -290,26 +409,23 @@ export function App(): React.ReactElement {
       ]);
       return true;
     }
-    if (value === "/sandbox" || value === "/model") {
+    if (intent.kind === "sandbox" || (intent.kind === "model" && intent.selection === undefined)) {
       setShowSettings(true);
       return true;
     }
-    if (value === "/today") {
-      setShowToday(true);
+    if (intent.kind === "today") {
+      await openToday();
       return true;
     }
-    if (value.startsWith("/model ")) {
-      const selection = value.slice(7).trim();
-      if (sessionId !== null && selection.length > 0) {
-        await api(`/v1/sessions/${sessionId}/model`, {
-          body: JSON.stringify({ selection }),
-          method: "PATCH"
-        });
-        await loadBootstrap();
-      }
+    if (intent.kind === "model" && intent.selection !== undefined && sessionId !== null) {
+      await api(`/v1/sessions/${sessionId}/model`, {
+        body: JSON.stringify({ selection: intent.selection }),
+        method: "PATCH"
+      });
+      await loadBootstrap();
       return true;
     }
-    return false;
+    return intent.kind !== "unknown";
   }
 
   async function send(): Promise<void> {
@@ -367,14 +483,6 @@ export function App(): React.ReactElement {
     };
   }, [runsBySession]);
 
-  async function resolveApproval(approvalId: string, action: "allow" | "deny", allowScope?: "once" | "session" | "always"): Promise<void> {
-    await api(`/v1/approvals/${approvalId}/resolve`, {
-      body: JSON.stringify({ action, ...(allowScope !== undefined ? { allowScope } : {}) }),
-      method: "POST"
-    });
-    await loadTurnState(sessionId);
-  }
-
   function reportError(caught: unknown): void {
     setError(caught instanceof Error ? caught.message : String(caught));
   }
@@ -382,6 +490,19 @@ export function App(): React.ReactElement {
   if (bootstrap === null) {
     return <div className="empty">{error ?? "Loading workspace…"}</div>;
   }
+
+  const railTabs: Array<[RailTab, TranslationKey]> = [
+    ["changes", "changes"],
+    ["trace", "trace"],
+    ["todos", "todos"],
+    ["inbox", "inbox"],
+    ["memory", "memory"],
+    ["schedule", "schedule"],
+    ["actions", "next"],
+    ["tasks", "tasks"],
+    ["skills", "skills"],
+    ["experience", "experience"]
+  ];
 
   return (
     <div className={`app ${drawer === "sessions" ? "show-sessions" : ""} ${drawer === "tools" ? "show-tools" : ""}`}>
@@ -391,6 +512,7 @@ export function App(): React.ReactElement {
           {bootstrap.workspaceRoot}
         </span>
         <span className="spacer" />
+        <BudgetLine budget={budget} t={t} />
         <button className="ghost drawer-trigger" type="button" onClick={() => setDrawer(drawer === "sessions" ? null : "sessions")}>
           {t("sessions")}
         </button>
@@ -443,6 +565,22 @@ export function App(): React.ReactElement {
           <input id="session-search" placeholder={t("searchSessions")} value={query} onChange={(event) => setQuery(event.target.value)} />
         </div>
         <div className="list">
+          {searchHits.length > 0 ? (
+            <>
+              <div className="tab-group">{t("searchHits")}</div>
+              {searchHits.map((hit) => (
+                <button
+                  className="session"
+                  key={hit.messageId}
+                  type="button"
+                  onClick={() => setSessionId(hit.sessionId)}
+                >
+                  <span className="title">{hit.sessionTitle || hit.sessionId}</span>
+                  <span className="meta">{hit.preview}</span>
+                </button>
+              ))}
+            </>
+          ) : null}
           {filteredSessions.map((session) => (
             <button
               className={session.sessionId === sessionId ? "session active" : "session"}
@@ -467,12 +605,10 @@ export function App(): React.ReactElement {
           <>
             <div className="transcript" ref={transcriptRef}>
               {busy ? <div className="run-status" role="status">{t("running")}: {taskId}</div> : null}
-              {showToday ? <div className="today card"><strong>{t("today")}</strong><p>{inbox.length} {t("inbox")} · {Object.keys(runsBySession).length} {t("tasks")}</p><button className="ghost" type="button" onClick={() => setShowToday(false)}>{t("close")}</button></div> : null}
+              {showToday ? <TodayCard line={todayLine} title={t("today")} t={t} onClose={() => setShowToday(false)} /> : null}
               {visibleMessages.length === 0 ? (
                 <div className="empty">
-                  {messages.some((message) => message.kind === "activity")
-                    ? "This session has tool traces but no chat turns. Open the Trace tab for the logs."
-                    : "Start a task. The agent can edit this workspace under sandbox and approval rules."}
+                  {messages.some((message) => message.kind === "activity") ? t("traceOnly") : t("startTask")}
                 </div>
               ) : (
                 visibleMessages.map((message) => (
@@ -483,55 +619,22 @@ export function App(): React.ReactElement {
                 ))
               )}
               {approvals.map((approval) => (
-                <div className="card" key={approval.approvalId}>
-                  <h4>Approval required · {approval.toolName ?? "tool"}</h4>
-                  <p>{approval.summary ?? approval.reason ?? approval.approvalId}</p>
-                  <div className="row">
-                    <button type="button" onClick={() => void resolveApproval(approval.approvalId, "allow", "once").catch(reportError)}>
-                      Allow once
-                    </button>
-                    <button type="button" onClick={() => void resolveApproval(approval.approvalId, "allow", "session").catch(reportError)}>
-                      Allow session
-                    </button>
-                    <button type="button" onClick={() => {
-                      if (window.confirm("Allow this command permanently?")) void resolveApproval(approval.approvalId, "allow", "always").catch(reportError);
-                    }}>
-                      Allow always
-                    </button>
-                    <button className="danger" type="button" onClick={() => void resolveApproval(approval.approvalId, "deny").catch(reportError)}>
-                      Deny
-                    </button>
-                  </div>
-                </div>
+                <ApprovalCard
+                  approval={approval}
+                  key={approval.approvalId}
+                  onError={reportError}
+                  onResolved={() => loadTurnState(sessionId)}
+                  t={t}
+                />
               ))}
               {clarifies.map((prompt) => (
-                <div className="card" key={prompt.promptId}>
-                  <h4>Clarification</h4>
-                  <p>{prompt.question ?? prompt.prompt ?? prompt.promptId}</p>
-                  <div className="row">
-                    {(prompt.options ?? []).map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() =>
-                          void api(`/v1/clarify/${prompt.promptId}/answer`, {
-                            body: JSON.stringify({ answerOptionId: option.id }),
-                            method: "POST"
-                          }).then(() => void loadTurnState(sessionId))
-                        }
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                    <button
-                      className="ghost"
-                      type="button"
-                      onClick={() => void api(`/v1/clarify/${prompt.promptId}/cancel`, { method: "POST" })}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
+                <ClarifyCard
+                  key={prompt.promptId}
+                  onError={reportError}
+                  onResolved={() => loadTurnState(sessionId)}
+                  prompt={prompt}
+                  t={t}
+                />
               ))}
               {error !== null ? <div className="card error-card" role="alert">{error}<div className="row"><button type="button" onClick={() => retryAction?.()}>{t("retry")}</button><button className="ghost" type="button" onClick={() => setError(null)}>{t("dismiss")}</button></div></div> : null}
             </div>
@@ -559,7 +662,7 @@ export function App(): React.ReactElement {
               />
               <div className="composer-foot">
                 <span className="meta">
-                  {busy ? `${t("running")}…` : bootstrap.provider.configured ? bootstrap.provider.displayName : "Configure a provider"}
+                  {busy ? `${t("running")}…` : bootstrap.provider.configured ? bootstrap.provider.displayName : t("configureProvider")}
                 </span>
                 <div className="row">
                   {busy && taskId !== null ? (
@@ -579,220 +682,25 @@ export function App(): React.ReactElement {
       <aside className="rail">
         <div className="tabs">
           <span className="tab-group">{t("activity")}</span>
-          {(
-            [
-              ["changes", "Changes"],
-              ["trace", "Trace"],
-              ["inbox", "Inbox"],
-              ["memory", "Memory"],
-              ["schedule", "Schedule"],
-              ["tasks", "Tasks"],
-              ["skills", "Skills"],
-              ["experience", "Experience"]
-            ] as Array<[RailTab, string]>
-          ).map(([id, label]) => (
+          {railTabs.map(([id, label]) => (
             <button className={rail === id ? "active" : ""} key={id} type="button" onClick={() => setRail(id)}>
-              {label}
+              {t(label)}
             </button>
           ))}
         </div>
         <div className="rail-body">
-          {rail === "changes" ? <ChangeList changes={changes} /> : null}
-          {rail === "trace" ? (
-            trace.length === 0 ? (
-              <div className="empty">No trace yet.</div>
-            ) : (
-              trace.map((event, index) => (
-                <div className="card" key={`${event.eventType}-${index}`}>
-                  <strong>{event.eventType}</strong>
-                  <div>{event.summary}</div>
-                </div>
-              ))
-            )
-          ) : null}
-          {rail === "inbox" ? (
-            inbox.length === 0 ? (
-              <div className="empty">Inbox is empty.</div>
-            ) : (
-              inbox.map((item) => (
-                <div className="card" key={item.inboxId}>
-                  <strong>{item.title}</strong>
-                  <div>{item.summary}</div>
-                  <div className="row">
-                    <button type="button" onClick={() => void api(`/v1/inbox/${item.inboxId}/done`, { method: "POST" }).then(() => loadRail("inbox"))}>
-                      Done
-                    </button>
-                    <button className="ghost" type="button" onClick={() => void api(`/v1/inbox/${item.inboxId}/dismiss`, { method: "POST" }).then(() => loadRail("inbox"))}>
-                      Dismiss
-                    </button>
-                  </div>
-                </div>
-              ))
-            )
-          ) : null}
-          {rail === "memory" ? (
-            memories.length === 0 ? (
-              <div className="empty">No memories.</div>
-            ) : (
-              memories.map((memory) => (
-                <div className="card" key={memory.memoryId}>
-                  <strong>{memory.title}</strong>
-                  <div>{memory.content}</div>
-                </div>
-              ))
-            )
-          ) : null}
-          {rail === "schedule" ? (
-            schedules.length === 0 ? (
-              <div className="empty">No schedules.</div>
-            ) : (
-              schedules.map((schedule) => (
-                <div className="card" key={schedule.scheduleId}>
-                  <strong>{schedule.name}</strong>
-                  <div>{schedule.status}</div>
-                </div>
-              ))
-            )
-          ) : null}
-          {rail === "tasks" ? (
-            tasks.length === 0 ? <div className="empty">{t("noTasks")}</div> : tasks.map((task) => (
-              <div className="card" key={task.taskId}>
-                <strong>{task.status}</strong>
-                <div>{task.input ?? task.taskId}</div>
-              </div>
-            ))
-          ) : null}
-          {rail === "skills" ? (
-            skills.length === 0 ? <div className="empty">{t("noSkills")}</div> : skills.map((skill, index) => (
-              <div className="card" key={skill.metadata?.id ?? skill.id ?? String(index)}>
-                {skill.metadata?.name ?? skill.metadata?.id ?? skill.id ?? "skill"}
-              </div>
-            ))
-          ) : null}
-          {rail === "experience" ? (
-            experiences.length === 0 ? <div className="empty">{t("noExperience")}</div> : experiences.map((experience) => (
-              <div className="card" key={experience.experienceId}>
-                {experience.title ?? experience.experienceId}
-              </div>
-            ))
-          ) : null}
+          {rail === "changes" ? <ChangeList changes={changes} t={t} onChanged={() => loadTurnState(sessionId)} /> : null}
+          {rail === "trace" ? <TracePanel t={t} trace={trace} /> : null}
+          {rail === "inbox" ? <InboxPanel items={inbox} t={t} onReload={() => loadRail("inbox", sessionId)} /> : null}
+          {rail === "memory" ? <MemoryPanel memories={memories} status={memoryStatus} t={t} onReload={() => loadRail("memory", sessionId)} /> : null}
+          {rail === "schedule" ? <SchedulePanel schedules={schedules} t={t} onReload={() => loadRail("schedule", sessionId)} /> : null}
+          {rail === "todos" ? <TodoPanel t={t} todos={todos} /> : null}
+          {rail === "actions" ? <ActionPanel commitments={commitments} nextItems={nextItems} t={t} onReload={() => loadRail("actions", sessionId)} /> : null}
+          {rail === "tasks" ? <TaskPanel t={t} tasks={tasks} /> : null}
+          {rail === "skills" ? <SkillPanel skills={skills} t={t} onReload={() => loadRail("skills", sessionId)} /> : null}
+          {rail === "experience" ? <ExperiencePanel experiences={experiences} t={t} /> : null}
         </div>
       </aside>
     </div>
-  );
-}
-
-function ChangeList({ changes }: { changes: FileChange[] }): React.ReactElement {
-  if (changes.length === 0) {
-    return <div className="empty">No file changes in this session.</div>;
-  }
-  return (
-    <>
-      {changes.map((change) => {
-        const path = change.content?.path ?? change.uri ?? change.artifactId;
-        const diff = change.content?.unifiedDiff ?? "";
-        return (
-          <div className="card" key={change.artifactId}>
-            <strong>{path}</strong>
-            <div>{change.content?.operation}</div>
-            <div className="diff">
-              {diff.split("\n").slice(0, 40).map((line, index) => (
-                <div className={line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : ""} key={`${change.artifactId}-${index}`}>
-                  {line}
-                </div>
-              ))}
-            </div>
-            <button
-              className="ghost"
-              type="button"
-              onClick={() => void api(`/v1/artifacts/${change.artifactId}/rollback`, { method: "POST" })}
-            >
-              Rollback
-            </button>
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
-function SettingsPanel({
-  bootstrap,
-  onClose,
-  onSaved
-}: {
-  bootstrap: BootstrapResponse;
-  onClose?: () => void;
-  onSaved: () => void;
-}): React.ReactElement {
-  const [name, setName] = useState(bootstrap.provider.configured ? bootstrap.provider.name : "mock");
-  const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState(bootstrap.provider.model ?? "");
-  const [message, setMessage] = useState<string | null>(null);
-
-  async function save(): Promise<void> {
-    await api("/v1/providers/setup", {
-      body: JSON.stringify({
-        name,
-        ...(apiKey.length > 0 ? { apiKey } : {}),
-        ...(baseUrl.length > 0 ? { baseUrl } : {}),
-        ...(model.length > 0 ? { model } : {})
-      }),
-      method: "POST"
-    });
-    setMessage("Provider saved.");
-    onSaved();
-  }
-
-  return (
-    <section className="settings">
-      <h2>Provider setup</h2>
-      {onClose !== undefined ? (
-        <p>
-          <button className="ghost" type="button" onClick={onClose}>
-            Back to chat
-          </button>
-        </p>
-      ) : null}
-      <p className={bootstrap.provider.configured ? "status-ok" : "status-warn"}>
-        {bootstrap.provider.configured
-          ? `Active: ${bootstrap.provider.displayName} (${bootstrap.provider.model ?? "no model"})`
-          : "No provider configured. Choose Mock to try without an API key."}
-      </p>
-      <label className="field">
-        <span>Provider</span>
-        <select value={name} onChange={(event) => setName(event.target.value)}>
-          {bootstrap.catalog.map((entry) => (
-            <option key={entry} value={entry}>
-              {entry}
-            </option>
-          ))}
-        </select>
-      </label>
-      {name !== "mock" ? (
-        <>
-          <label className="field">
-            <span>API key</span>
-            <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" />
-          </label>
-          <label className="field">
-            <span>Base URL (for openai-compatible)</span>
-            <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>Model</span>
-            <input value={model} onChange={(event) => setModel(event.target.value)} />
-          </label>
-        </>
-      ) : null}
-      <div className="row">
-        <button className="primary" type="button" onClick={() => void save()}>
-          Save and use
-        </button>
-      </div>
-      {message !== null ? <p>{message}</p> : null}
-      <p className="meta">Workspace: {bootstrap.workspaceRoot}</p>
-    </section>
   );
 }

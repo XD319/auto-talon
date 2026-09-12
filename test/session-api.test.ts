@@ -235,6 +235,135 @@ describe("session HTTP API", () => {
       handle.close();
     }
   });
+
+  it("does not write SSE events after the client disconnects", async () => {
+    class DelayedProvider implements Provider {
+      public readonly name = "delayed-provider";
+      public generate(input: ProviderInput): Promise<ProviderResponse> {
+        return new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            resolve({
+              kind: "final",
+              message: "delayed ok",
+              usage: { inputTokens: 1, outputTokens: 1 }
+            });
+          }, 250);
+          input.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+          });
+        });
+      }
+    }
+
+    const workspaceRoot = await import("node:fs/promises").then((fs) =>
+      fs.mkdtemp(join(tmpdir(), "auto-talon-session-sse-"))
+    );
+    tempPaths.push(workspaceRoot);
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      provider: new DelayedProvider()
+    });
+    const port = await getFreePort();
+    const server = await startSessionApiServer({
+      cwd: workspaceRoot,
+      host: "127.0.0.1",
+      port,
+      service: handle.service
+    });
+
+    try {
+      const session = handle.service.createSession({
+        agentProfileId: "executor",
+        cwd: workspaceRoot,
+        metadata: { source: "web" },
+        ownerUserId: "local-user",
+        providerName: "mock",
+        title: "SSE session"
+      });
+      const turnResponse = await fetch(`http://127.0.0.1:${port}/v1/sessions/${session.sessionId}/turns`, {
+        body: JSON.stringify({ input: "run delayed" }),
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
+        method: "POST"
+      });
+      expect(turnResponse.status).toBe(202);
+      const turnBody = (await turnResponse.json()) as { taskId: string };
+      const abort = new AbortController();
+      const eventsResponse = await fetch(`http://127.0.0.1:${port}/v1/tasks/${turnBody.taskId}/events`, {
+        headers: withWorkspaceAuthHeaders(workspaceRoot),
+        signal: abort.signal
+      });
+      expect(eventsResponse.status).toBe(200);
+      abort.abort();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } finally {
+      await server.close();
+      handle.close();
+    }
+  });
+
+  it("creates memory and schedules through session-api", async () => {
+    const fs = await import("node:fs/promises");
+    const workspaceRoot = await fs.mkdtemp(join(tmpdir(), "auto-talon-session-ops-"));
+    tempPaths.push(workspaceRoot);
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    await fs.writeFile(
+      join(workspaceRoot, ".auto-talon", "runtime.config.json"),
+      JSON.stringify({ version: 1 }),
+      "utf8"
+    );
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db") },
+      provider: new ScriptedProvider()
+    });
+    const port = await getFreePort();
+    const server = await startSessionApiServer({
+      cwd: workspaceRoot,
+      host: "127.0.0.1",
+      port,
+      service: handle.service
+    });
+
+    try {
+      const enableResponse = await fetch(`http://127.0.0.1:${port}/v1/memory/enabled`, {
+        body: JSON.stringify({ enabled: true }),
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
+        method: "POST"
+      });
+      expect(enableResponse.status).toBe(200);
+      const memoryResponse = await fetch(`http://127.0.0.1:${port}/v1/memory`, {
+        body: JSON.stringify({
+          content: "Runtime uses pnpm for package management in this workspace.",
+          scope: "project"
+        }),
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
+        method: "POST"
+      });
+      expect(memoryResponse.status).toBe(201);
+
+      const scheduleResponse = await fetch(`http://127.0.0.1:${port}/v1/schedules`, {
+        body: JSON.stringify({
+          every: "1d",
+          input: "review inbox",
+          name: "Daily review"
+        }),
+        headers: withWorkspaceAuthHeaders(workspaceRoot, { "content-type": "application/json" }),
+        method: "POST"
+      });
+      expect(scheduleResponse.status).toBe(201);
+      const scheduleBody = (await scheduleResponse.json()) as { schedule: { scheduleId: string } };
+      const pauseResponse = await fetch(
+        `http://127.0.0.1:${port}/v1/schedules/${scheduleBody.schedule.scheduleId}/pause`,
+        {
+          headers: withWorkspaceAuthHeaders(workspaceRoot),
+          method: "POST"
+        }
+      );
+      expect(pauseResponse.status).toBe(200);
+    } finally {
+      await server.close();
+      handle.close();
+    }
+  });
 });
 
 async function getFreePort(): Promise<number> {

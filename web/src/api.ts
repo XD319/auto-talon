@@ -94,3 +94,74 @@ export interface TaskListEntry {
   status: string;
   taskId: string;
 }
+
+export interface MemoryItem {
+  content?: string;
+  memoryId: string;
+  title: string;
+}
+
+export interface MemoryStatus {
+  configPath?: string;
+  enabled: boolean;
+}
+
+export interface ScheduleItem {
+  name: string;
+  scheduleId: string;
+  status?: string;
+}
+
+export interface TodoItem {
+  content: string;
+  id: string;
+  status: string;
+}
+
+export interface SearchHit {
+  messageId: string;
+  preview: string;
+  sessionId: string;
+  sessionTitle: string;
+}
+
+export interface NextItem {
+  nextActionId: string;
+  status: string;
+  title: string;
+}
+
+export interface CommitmentItem {
+  commitmentId: string;
+  status: string;
+  title: string;
+}
+
+export interface SkillItem {
+  disabled?: boolean;
+  id: string;
+  name: string;
+}
+
+export interface ExperienceItem {
+  experienceId: string;
+  title?: string;
+}
+
+export interface BudgetReport {
+  id: string;
+  scope: string;
+  state: { usedCostUsd?: number; usedInput?: number; usedOutput?: number } | null;
+}
+
+export interface SessionMessagesResponse {
+  interactionMode?: "agent" | "plan" | "acceptEdits";
+  messages?: unknown[];
+}
+
+export interface InboxItem {
+  inboxId: string;
+  summary?: string;
+  title: string;
+}
+

@@ -1,6 +1,6 @@
 # Desktop Companion (ADR)
 
-Status: accepted for `v0.2.0` planning  
+Status: accepted; desktop companion is **post-0.2 / not shipped in v0.2.0**
 Date: 2026-07-24
 
 ## Context
@@ -8,8 +8,8 @@ Date: 2026-07-24
 AutoTalon’s daily surface today is the Ink-based terminal UI (`talon tui` /
 `talon ops`). Users who want a graphical companion need a desktop shell that
 still respects local-first governance. `v0.1.0` explicitly left companion apps
-out of release scope. For `v0.2.0`, a **parallel** desktop-companion track runs
-alongside measurement and cost work without replacing the TUI.
+out of release scope. A **parallel** desktop-companion track remains planned
+and does **not** ship in `v0.2.0`. It does not replace the TUI.
 
 ## Decision
 
@@ -54,28 +54,28 @@ Planned monorepo location: `apps/desktop/` (scaffold lands in M5a).
 
 ## Phases (M5)
 
-| Phase | Goal | Ownership | v0.2.0 bar |
+| Phase | Goal | Ownership | Post-0.2 bar |
 | --- | --- | --- | --- |
-| M5a | Tauri + Vite scaffold, sidecar spawn, health check, token injection | maintainer → mixed | **required** |
-| M5b | Read-only session browser / transcript (ops-aligned) | community | **required** |
+| M5a | Tauri + Vite scaffold, sidecar spawn, health check, token injection | maintainer → mixed | first |
+| M5b | Read-only session browser / transcript (ops-aligned) | community | first |
 | M5c | Approval queue + allow/deny via API | mixed | best-effort |
 | M5d | Chat compose via `continue` / new session (non-streaming first) | mixed | stretch |
 | M5e | Windows packaging + first-run workspace picker | mixed | stretch |
 
-Measurement (M1) and cost (M2) remain the quality/cost headline. Missing M5d/M5e
-must not block a measurement/cost-focused `v0.2.0` tag.
+Measurement (M1) and cost (M2) were the v0.2.0 quality/cost headline. Missing M5
+must not be treated as a v0.2.0 release blocker.
 
 ## API gaps
 
 Already available on session-api: session list/detail/messages, search,
-`POST .../continue`, model PATCH.
+`POST .../continue`, model PATCH, tasks, traces, pending approvals, inbox,
+memory, schedules, commitments, next actions, skills, experiences, rollback,
+clarify, and SSE task events.
 
 Still needed for the companion track:
 
-- Read-only ops views (tasks, trace summaries, pending approvals, inbox signals)
-- Approval allow/deny actions (scoped like TUI/ops)
 - Health / readiness for sidecar lifecycle
-- Optional later: streaming / long-task progress (SSE or equivalent)
+- Optional later: token-by-token streaming / long-task progress (SSE currently refreshes the transcript)
 
 ## Bandwidth rules
 

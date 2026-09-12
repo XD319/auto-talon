@@ -1,7 +1,12 @@
 import type { ProviderUsage } from "../types/index.js";
+import {
+  cachedInputAccountingForProvider,
+  computeCostUsd
+} from "../runtime/budget/cost-calculator.js";
 import { contextWindowPercentFromPrompt } from "../runtime/context/token-counter.js";
 
 export interface TokenPricingEntry {
+  cachedInputPerMillion?: number | undefined;
   inputPerMillion: number;
   outputPerMillion: number;
 }
@@ -13,13 +18,11 @@ export function estimateSessionCostUsd(
   usage: ProviderUsage,
   pricing?: Record<string, TokenPricingEntry>
 ): number {
-  const input = usage.inputTokens;
-  const output = usage.outputTokens;
   const key = `${providerName}:${modelName ?? ""}`.toLowerCase();
-
+  const accounting = cachedInputAccountingForProvider(providerName);
   const configured = resolveConfiguredPricing(pricing, providerName, modelName);
   if (configured !== null) {
-    return (input * configured.inputPerMillion + output * configured.outputPerMillion) / 1_000_000;
+    return computeCostUsd(usage, configured, accounting) ?? 0;
   }
 
   let inPerM = 3;
@@ -76,7 +79,18 @@ export function estimateSessionCostUsd(
     outPerM = Number(customOut);
   }
 
-  return (input * inPerM + output * outPerM) / 1_000_000;
+  const cachedInputPerMillion = usage.cachedInputTokens !== undefined ? inPerM * 0.1 : undefined;
+  return (
+    computeCostUsd(
+      usage,
+      {
+        inputPerMillion: inPerM,
+        outputPerMillion: outPerM,
+        ...(cachedInputPerMillion !== undefined ? { cachedInputPerMillion } : {})
+      },
+      accounting
+    ) ?? 0
+  );
 }
 
 function resolveConfiguredPricing(

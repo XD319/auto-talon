@@ -259,7 +259,7 @@ AutoTalon 面向需要真实工具权限、同时也需要可见护栏的本地�
 - AutoTalon 是本地优先、面向单个操作者的 agent，不是托管 SaaS、团队控制平面或多租户 agent 服务。
 - 本机 Web UI 已可用于测试和收集本地操作者反馈，但当前仍是测试版，功能和交互会继续迭代；稳定使用路径仍是 CLI/TUI。
 - 真实 provider 运行需要用户自行提供凭据。Mock 和 scripted smoke provider 只用于测试和诊断。
-- v0.1.0 包含飞书/Lark 与本地 webhook gateway adapter；Slack、Telegram、Discord、语音、浏览器自动化、图像生成、移动 companion app 仍不在本次发布范围内。**桌面 companion**（Tauri + 本地 `session-api`）已列入 `v0.2.0` 规划，**尚未发布** —— 见 [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) 与 [docs/dev/desktop-companion.md](docs/dev/desktop-companion.md)。
+- v0.1.0 包含飞书/Lark 与本地 webhook gateway adapter；Slack、Telegram、Discord、语音、浏览器自动化、图像生成、移动 companion app 仍不在本次发布范围内。**桌面 companion**（Tauri + 本地 `session-api`）仍在规划中，**不属于 v0.2.0 交付范围** —— 见 [ROADMAP.zh-CN.md](ROADMAP.zh-CN.md) 与 [docs/dev/desktop-companion.md](docs/dev/desktop-companion.md)。
 
 
 
