@@ -1,3 +1,5 @@
+
+
 # AutoTalon
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -54,7 +56,7 @@ Requirements:
 
 - Node.js `>=22.13.0`
 - A provider API key for real assistant runs (skip it to try the mock provider first)
-- **Developers only:** Corepack (bundled with Node.js) for the pinned pnpm version
+- **Developers only:** Corepack (bundled with Node.js) for the pinned pnpm version (10.11.0)
 
 Pick one path:
 
