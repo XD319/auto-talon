@@ -1,0 +1,16 @@
+{
+  "tokenBudget": { "inputLimit": 64000, "outputLimit": 4096, "reservedOutput": 500 },
+  "budget": {
+    "task": { "hardCostUsd": 0.20 },
+    "pricing": {
+      "qwen": {
+        "inputPerMillion": 0.178311391,
+        "outputPerMillion": 0.713245565,
+        "tiers": [
+          { "maxInputTokens": 32000, "inputPerMillion": 0.029718565, "outputPerMillion": 0.118874261 },
+          { "maxInputTokens": 256000, "inputPerMillion": 0.089155696, "outputPerMillion": 0.356622782 }
+        ]
+      }
+    }
+  }
+}
