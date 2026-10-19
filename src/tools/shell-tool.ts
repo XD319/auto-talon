@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import type { PreparedShellInput, SandboxService } from "../sandbox/sandbox-service.js";
+import type {
+  PreparedShellInput,
+  SandboxService,
+  SandboxShellPolicy
+} from "../sandbox/sandbox-service.js";
 import type {
   ToolAvailabilityResult,
   ToolDefinition,
@@ -25,8 +29,7 @@ type PreparedShellToolInput = PreparedShellInput & {
 
 export class ShellTool implements ToolDefinition<typeof shellToolSchema, PreparedShellToolInput> {
   public readonly name = "shell";
-  public readonly description =
-    "Execute a restricted shell command inside the workspace. A non-zero exit code is reported as failure unless allowNonZeroExit is set to true.";
+  public readonly description: string;
   public readonly capability = "shell.execute" as const;
   public readonly riskLevel = "high" as const;
   public readonly privacyLevel = "restricted" as const;
@@ -38,7 +41,9 @@ export class ShellTool implements ToolDefinition<typeof shellToolSchema, Prepare
   public constructor(
     private readonly executor: ShellCommandExecutor,
     private readonly sandboxService: SandboxService
-  ) {}
+  ) {
+    this.description = describeShellTool(sandboxService.describeShellPolicy());
+  }
 
   public checkAvailability(): ToolAvailabilityResult {
     const hasShell = process.platform === "win32"
@@ -159,6 +164,28 @@ export class ShellTool implements ToolDefinition<typeof shellToolSchema, Prepare
           : `Executed shell command "${input.command}" (exit 0).`
     };
   }
+}
+
+function describeShellTool(policy: SandboxShellPolicy): string {
+  const deniedFlags = Object.entries(policy.deniedExecutableFlags)
+    .map(([executable, flags]) => `${executable} ${flags.join("/")}`)
+    .join(", ");
+  const lines = [
+    "Execute one sandboxed shell command inside the workspace. A non-zero exit code is reported as",
+    "failure unless allowNonZeroExit is set to true.",
+    `Allowed executables: ${policy.allowedExecutables.join(", ")}.`,
+    `Rejected before execution: chaining or eval syntax (${policy.forbiddenSyntax.join(" ")}); send`,
+    "one command per call and set cwd instead of chaining a directory change.",
+    "A relative cwd is resolved from the workspace root, not the process directory.",
+    `Default and maximum timeout is ${Math.round(policy.maxTimeoutMs / 1000)}s, so do not start`,
+    "servers or watchers here; use the process tool for those."
+  ];
+  if (deniedFlags.length > 0) {
+    lines.push(
+      `Inline-code flags are denied (${deniedFlags}); write a script file and execute the file instead.`
+    );
+  }
+  return lines.join(" ");
 }
 
 function summarizeStderr(stderr: string): string {

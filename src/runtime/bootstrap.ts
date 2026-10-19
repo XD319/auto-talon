@@ -265,6 +265,7 @@ export interface AppConfig {
   context: RuntimeConfig["context"];
   contextRetention: ContextRetentionConfig;
   memory: RuntimeConfig["memory"];
+  experience: RuntimeConfig["experience"];
   recall: {
     enabled: boolean;
     budgetRatio: number;
@@ -368,6 +369,7 @@ export function resolveAppConfig(cwd = process.cwd(), options: ResolveAppConfigO
     context: runtimeConfig.context,
     contextRetention: runtimeConfig.contextRetention,
     memory: runtimeConfig.memory,
+    experience: runtimeConfig.experience,
     recall: runtimeConfig.recall,
     promotion: runtimeConfig.promotion,
     skills: runtimeConfig.skills,
@@ -529,6 +531,10 @@ function mergeCreateApplicationConfig(
         }
       }
     },
+    experience: {
+      ...resolvedConfig.experience,
+      ...options.config?.experience
+    },
     recall: {
       ...resolvedConfig.recall,
       ...options.config?.recall
@@ -584,6 +590,10 @@ function mergeCreateApplicationConfig(
     workflow: {
       ...resolvedConfig.workflow,
       ...options.config?.workflow,
+      completionVerification: {
+        ...resolvedConfig.workflow.completionVerification,
+        ...options.config?.workflow?.completionVerification
+      },
       failureGuidedRetry: {
         ...resolvedConfig.workflow.failureGuidedRetry,
         ...options.config?.workflow?.failureGuidedRetry
@@ -776,7 +786,9 @@ function buildApplicationRuntime(
     experiencePlane,
     traceService
   });
-  experienceCollector.start();
+  if (config.experience.enabled) {
+    experienceCollector.start();
+  }
   const promotionAdvisor = new PromotionAdvisor({
     auditService,
     config: config.promotion,

@@ -110,7 +110,7 @@ export interface ExecutionLoopCallbacks {
       | "post_completion_verification_exhausted"
       | "empty_final_output"
       | "unpolished_final_output"
-  ) => Promise<RuntimeRunResult>;
+  ) => Promise<RuntimeRunResult | { kind: "resume_tool_loop" }>;
   resolveActiveMainProvider: (task: TaskRecord) => Provider;
   resolvePinnedUserMessages: (sessionId: string) => string[];
   resolveSessionTodos: (sessionId: string) => TodoItem[];
@@ -680,7 +680,7 @@ export class ExecutionLoopRunner {
                   : `Unpolished final response redirected (${acceptance.reason ?? "unknown"})`,
               taskId: task.taskId
             });
-            return this.callbacks.requestFinalSummaryWithoutTools(
+            const summary = await this.callbacks.requestFinalSummaryWithoutTools(
               state,
               messages,
               availableTools,
@@ -688,6 +688,8 @@ export class ExecutionLoopRunner {
               iteration,
               acceptance.reason === "empty" ? "empty_final_output" : "unpolished_final_output"
             );
+            if ("kind" in summary) continue;
+            return summary;
           }
           const verificationDecision = this.dependencies.completionController.evaluateFinalVerification(
             state,
@@ -714,7 +716,7 @@ export class ExecutionLoopRunner {
           providerResponse
         );
         if (postCompletionDecision === "summarize") {
-          return this.callbacks.requestFinalSummaryWithoutTools(
+          const summary = await this.callbacks.requestFinalSummaryWithoutTools(
             state,
             messages,
             availableTools,
@@ -722,6 +724,8 @@ export class ExecutionLoopRunner {
             iteration,
             "post_completion_verification_exhausted"
           );
+          if ("kind" in summary) continue;
+          return summary;
         }
 
         task = this.dependencies.taskRepository.update(task.taskId, {
@@ -1186,7 +1190,7 @@ export class ExecutionLoopRunner {
       taskId: task.taskId
     });
 
-    return this.callbacks.requestFinalSummaryWithoutTools(
+    const summary = await this.callbacks.requestFinalSummaryWithoutTools(
       state,
       messages,
       availableTools,
@@ -1194,5 +1198,9 @@ export class ExecutionLoopRunner {
       state.maxIterations,
       "max_iterations_exhausted"
     );
+    if ("kind" in summary) {
+      throw new Error("Cannot resume tool loop after iteration budget is exhausted.");
+    }
+    return summary;
   }
 }

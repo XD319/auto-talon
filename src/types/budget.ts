@@ -15,6 +15,12 @@ export interface BudgetPricingEntry {
   inputPerMillion: number;
   outputPerMillion: number;
   cachedInputPerMillion?: number | undefined;
+  tiers?: Array<{
+    maxInputTokens: number;
+    inputPerMillion: number;
+    outputPerMillion: number;
+    cachedInputPerMillion?: number | undefined;
+  }> | undefined;
 }
 
 export interface BudgetState {

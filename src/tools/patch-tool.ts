@@ -49,50 +49,41 @@ const patchEntrySchema = z
     }
   });
 
-const patchSchema = z
-  .object({
-    action: z.enum(["apply_patch", "apply_unified_diff", "delete_file", "rename_file", "update_file"]),
-    diff: z.string().optional(),
+const patchSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("update_file"),
     dryRun: z.boolean().default(false),
-    newText: z.string().optional(),
+    newText: z.string(),
+    path: z.string().min(1),
+    replaceAll: z.boolean().default(false),
+    targetText: z.string().min(1)
+  }),
+  z.object({
+    action: z.literal("apply_patch"),
+    dryRun: z.boolean().default(false),
+    patches: z.array(patchEntrySchema).min(1),
+    path: z.string().min(1)
+  }),
+  z.object({
+    action: z.literal("apply_unified_diff"),
+    diff: z.string().min(1),
+    dryRun: z.boolean().default(false),
+    // Paths come from the diff headers; this is only a fallback scope anchor.
+    path: z.string().min(1).optional()
+  }),
+  z.object({
+    action: z.literal("delete_file"),
+    dryRun: z.boolean().default(false),
+    path: z.string().min(1)
+  }),
+  z.object({
+    action: z.literal("rename_file"),
+    dryRun: z.boolean().default(false),
     overwrite: z.boolean().default(true),
     path: z.string().min(1),
-    patches: z.array(patchEntrySchema).optional(),
-    replaceAll: z.boolean().default(false),
-    targetText: z.string().optional(),
-    toPath: z.string().min(1).optional()
+    toPath: z.string().min(1)
   })
-  .superRefine((value, context) => {
-    if (value.action === "update_file") {
-      if (value.targetText === undefined || value.newText === undefined) {
-        context.addIssue({
-          code: "custom",
-          message: "targetText and newText are required for update_file."
-        });
-      }
-    }
-
-    if (value.action === "apply_patch" && value.patches === undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "patches are required for apply_patch."
-      });
-    }
-
-    if (value.action === "apply_unified_diff" && value.diff === undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "diff is required for apply_unified_diff."
-      });
-    }
-
-    if (value.action === "rename_file" && value.toPath === undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "toPath is required for rename_file."
-      });
-    }
-  });
+]);
 
 type PreparedPatchInput =
   | {
@@ -144,9 +135,9 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
 
   public prepare(input: unknown, context: ToolExecutionContext): ToolPreparation<PreparedPatchInput> {
     const parsedInput = this.inputSchema.parse(input);
-    const plan = this.sandboxService.prepareFileWrite(parsedInput.path, context.cwd);
 
     if (parsedInput.action === "update_file") {
+      const plan = this.sandboxService.prepareFileWrite(parsedInput.path, context.cwd);
       return {
         governance: {
           pathScope: plan.pathScope,
@@ -155,16 +146,17 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
         preparedInput: {
           action: parsedInput.action,
           dryRun: parsedInput.dryRun,
-          newText: parsedInput.newText ?? "",
+          newText: parsedInput.newText,
           plan,
           replaceAll: parsedInput.replaceAll,
-          targetText: parsedInput.targetText ?? ""
+          targetText: parsedInput.targetText
         },
         sandbox: plan
       };
     }
 
     if (parsedInput.action === "delete_file") {
+      const plan = this.sandboxService.prepareFileWrite(parsedInput.path, context.cwd);
       return {
         governance: {
           pathScope: plan.pathScope,
@@ -180,7 +172,8 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
     }
 
     if (parsedInput.action === "rename_file") {
-      const toPlan = this.sandboxService.prepareFileWrite(parsedInput.toPath ?? "", context.cwd);
+      const plan = this.sandboxService.prepareFileWrite(parsedInput.path, context.cwd);
+      const toPlan = this.sandboxService.prepareFileWrite(parsedInput.toPath, context.cwd);
       return {
         governance: {
           pathScope:
@@ -201,15 +194,19 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
     }
 
     if (parsedInput.action === "apply_unified_diff") {
-      const filePatches = parseUnifiedDiff(parsedInput.diff ?? "");
+      const filePatches = parseUnifiedDiff(parsedInput.diff);
       const plans = filePatches.map((filePatch) =>
         this.sandboxService.prepareFileWrite(resolveUnifiedPatchPath(filePatch), context.cwd)
+      );
+      const fallbackPlan = this.sandboxService.prepareFileWrite(
+        parsedInput.path ?? ".",
+        context.cwd
       );
       return {
         governance: {
           pathScope: plans.every((item) => item.pathScope === "workspace")
             ? "workspace"
-            : (plans[0]?.pathScope ?? plan.pathScope),
+            : (plans[0]?.pathScope ?? fallbackPlan.pathScope),
           summary: `Apply unified diff to ${plans.length} files`
         },
         preparedInput: {
@@ -218,10 +215,11 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
           filePatches,
           plans
         },
-        sandbox: plans[0] ?? plan
+        sandbox: plans[0] ?? fallbackPlan
       };
     }
 
+    const plan = this.sandboxService.prepareFileWrite(parsedInput.path, context.cwd);
     return {
       governance: {
         pathScope: plan.pathScope,
@@ -230,27 +228,26 @@ export class PatchTool implements ToolDefinition<typeof patchSchema, PreparedPat
       preparedInput: {
         action: parsedInput.action,
         dryRun: parsedInput.dryRun,
-        patches:
-          parsedInput.patches?.map((patch) => {
-            const normalized = normalizePatchAliases(patch) as Record<string, unknown>;
-            const find = normalized.find;
-            const replace = normalized.replace;
-            const preparedPatch: PreparedPatchEntry = {
-              find: typeof find === "string" ? find : "",
-              replace: typeof replace === "string" ? replace : "",
-              replaceAll: patch.replaceAll
-            };
-            if (patch.afterContext !== undefined) {
-              preparedPatch.afterContext = patch.afterContext;
-            }
-            if (patch.beforeContext !== undefined) {
-              preparedPatch.beforeContext = patch.beforeContext;
-            }
-            if (patch.expectedOccurrences !== undefined) {
-              preparedPatch.expectedOccurrences = patch.expectedOccurrences;
-            }
-            return preparedPatch;
-          }) ?? [],
+        patches: parsedInput.patches.map((patch) => {
+          const normalized = normalizePatchAliases(patch) as Record<string, unknown>;
+          const find = normalized.find;
+          const replace = normalized.replace;
+          const preparedPatch: PreparedPatchEntry = {
+            find: typeof find === "string" ? find : "",
+            replace: typeof replace === "string" ? replace : "",
+            replaceAll: patch.replaceAll
+          };
+          if (patch.afterContext !== undefined) {
+            preparedPatch.afterContext = patch.afterContext;
+          }
+          if (patch.beforeContext !== undefined) {
+            preparedPatch.beforeContext = patch.beforeContext;
+          }
+          if (patch.expectedOccurrences !== undefined) {
+            preparedPatch.expectedOccurrences = patch.expectedOccurrences;
+          }
+          return preparedPatch;
+        }),
         plan
       },
       sandbox: plan

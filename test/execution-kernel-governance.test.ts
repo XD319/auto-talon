@@ -112,6 +112,55 @@ describe("execution kernel governance in parallel batches", () => {
 });
 
 describe("execution kernel provider error mapping", () => {
+  it.each([2, 1])("handles two reasoning-only summaries with maxIterations=%i", async (maxIterations) => {
+    const workspaceRoot = await createTempWorkspace();
+    let calls = 0;
+    let resumedWithTools = false;
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db"), workflow: { completionVerification: { enabled: false } } as never },
+      provider: new ScriptedProvider((input) => {
+        calls += 1;
+        if (calls === 4) resumedWithTools = input.availableTools.length > 0;
+        return { kind: "final", message: calls === 4 ? "Completed the task." : "Let me think. I need to inspect this. Wait, let me re-read.",
+          usage: { inputTokens: 1, outputTokens: 1 } };
+      })
+    });
+    try {
+      const options = createDefaultRunOptions("finish task", workspaceRoot, handle.config);
+      options.maxIterations = maxIterations;
+      const result = await handle.service.runTask(options);
+      const events = handle.service.showTask(result.task.taskId).trace.map((event) => event.eventType);
+      if (maxIterations === 2) {
+        expect(result.task.status).toBe("succeeded");
+        expect(result.output).toBe("Completed the task.");
+        expect(resumedWithTools).toBe(true);
+        expect(events).toContain("reasoning_only_final_resumed");
+      } else {
+        expect(result.task.status).not.toBe("succeeded");
+        expect(resumedWithTools).toBe(false);
+        expect(events).toContain("final_summary_exhausted");
+      }
+      expect(result.task.currentIteration).toBeLessThanOrEqual(maxIterations);
+    } finally { handle.close(); }
+  });
+
+  it("accepts a normal final without summary retries", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    let calls = 0;
+    const handle = createApplication(workspaceRoot, {
+      config: { databasePath: join(workspaceRoot, "runtime.db"), workflow: { completionVerification: { enabled: false } } as never },
+      provider: new ScriptedProvider(() => {
+        calls += 1;
+        return { kind: "final", message: "The requested work is complete.", usage: { inputTokens: 1, outputTokens: 1 } };
+      })
+    });
+    try {
+      const result = await handle.service.runTask(createDefaultRunOptions("finish task", workspaceRoot, handle.config));
+      expect(result.task.status).toBe("succeeded");
+      expect(calls).toBe(1);
+    } finally { handle.close(); }
+  });
+
   it("preserves provider errors during final summary instead of mapping to max_rounds_exceeded", async () => {
     const workspaceRoot = await createTempWorkspace();
     let generation = 0;

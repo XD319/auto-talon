@@ -12,7 +12,10 @@ interface ZodDefNode {
   keyType?: ZodSchemaNode;
   valueType?: ZodSchemaNode;
   entries?: Record<string, string>;
-  options?: string[];
+  /** Enum member names, or union member schemas. */
+  options?: unknown[];
+  /** Literal member values. */
+  values?: unknown[];
 }
 
 interface ZodSchemaNode {
@@ -88,9 +91,13 @@ function convertNode(node: ZodSchemaNode): ToolSchemaDescriptor {
       return { type: "boolean" };
     case "enum":
       return {
-        enum: def?.options ?? Object.values(def?.entries ?? {}),
+        enum: asStringList(def?.options) ?? Object.values(def?.entries ?? {}),
         type: "string"
       };
+    case "literal":
+      return literalDescriptor(def?.values ?? []);
+    case "union":
+      return unionDescriptor(def?.options ?? []);
     case "record":
       return {
         additionalProperties:
@@ -116,6 +123,47 @@ function convertNode(node: ZodSchemaNode): ToolSchemaDescriptor {
     default:
       return { type: "string" };
   }
+}
+
+function literalDescriptor(values: unknown[]): ToolSchemaDescriptor {
+  const jsonValues = values.filter(
+    (value): value is boolean | number | string =>
+      typeof value === "boolean" || typeof value === "number" || typeof value === "string"
+  );
+  const first = jsonValues[0];
+  if (first === undefined) {
+    return { type: "string" };
+  }
+  return {
+    enum: jsonValues,
+    type: typeof first === "string" ? "string" : typeof first
+  };
+}
+
+/**
+ * Discriminated unions reach here too; zod reports both as `union`. Emitting `anyOf`
+ * keeps each variant's own `required` list, which a flattened object would lose.
+ */
+function unionDescriptor(options: unknown[]): ToolSchemaDescriptor {
+  const variants = options.map((option) => convertNode(unwrapNode(option as ZodSchemaNode)));
+  const first = variants[0];
+  if (first === undefined) {
+    return { type: "string" };
+  }
+  if (variants.length === 1) {
+    return first;
+  }
+  return {
+    anyOf: variants,
+    type: variants.every((variant) => variant.type === "object") ? "object" : first.type
+  };
+}
+
+function asStringList(values: unknown[] | undefined): string[] | undefined {
+  if (values === undefined || !values.every((value) => typeof value === "string")) {
+    return undefined;
+  }
+  return values;
 }
 
 function unwrapNode(node: ZodSchemaNode): ZodSchemaNode {
@@ -165,21 +213,30 @@ function isOptionalNode(node: ZodSchemaNode): boolean {
 }
 
 function withStringBounds(descriptor: ToolSchemaDescriptor, node: ZodSchemaNode): ToolSchemaDescriptor {
-  if (typeof node.minLength === "number" && node.minLength > 0) {
-    descriptor.minLength = node.minLength;
+  const minLength = finiteNumber(node.minLength);
+  if (minLength !== undefined && minLength > 0) {
+    descriptor.minLength = minLength;
   }
-  if (typeof node.maxLength === "number") {
-    descriptor.maxLength = node.maxLength;
+  const maxLength = finiteNumber(node.maxLength);
+  if (maxLength !== undefined) {
+    descriptor.maxLength = maxLength;
   }
   return descriptor;
 }
 
+// Unbounded zod numbers report ±Infinity, which JSON.stringify turns into null.
 function withNumberBounds(descriptor: ToolSchemaDescriptor, node: ZodSchemaNode): ToolSchemaDescriptor {
-  if (typeof node.minValue === "number") {
-    descriptor.minimum = node.minValue;
+  const minimum = finiteNumber(node.minValue);
+  if (minimum !== undefined) {
+    descriptor.minimum = minimum;
   }
-  if (typeof node.maxValue === "number") {
-    descriptor.maximum = node.maxValue;
+  const maximum = finiteNumber(node.maxValue);
+  if (maximum !== undefined) {
+    descriptor.maximum = maximum;
   }
   return descriptor;
+}
+
+function finiteNumber(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

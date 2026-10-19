@@ -930,6 +930,93 @@ describe("Provider integration", () => {
     expect(assistantMessage?.reasoning_content).toBe("Need to inspect README first.");
   });
 
+  it("sends empty reasoning_content on a post-tool-call final when none was stored", async () => {
+    const provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "compat-test-key",
+        baseUrl: "https://compat.example.test/v1",
+        maxRetries: 0,
+        model: "deepseek-v4-pro",
+        name: "deepseek",
+        timeoutMs: 5_000
+      },
+      {
+        defaultBaseUrl: null,
+        defaultDisplayName: "DeepSeek",
+        defaultModel: "deepseek-v4-pro"
+      }
+    );
+
+    let capturedBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        if (typeof init?.body !== "string") {
+          throw new Error("Expected JSON request body");
+        }
+        capturedBody = JSON.parse(init.body) as Record<string, unknown>;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  finish_reason: "stop",
+                  index: 0,
+                  message: { content: "verified.", role: "assistant" }
+                }
+              ],
+              id: "resp-thinking-followup",
+              model: "deepseek-v4-pro",
+              usage: { completion_tokens: 2, prompt_tokens: 20, total_tokens: 22 }
+            }),
+            { status: 200 }
+          )
+        );
+      })
+    );
+
+    await provider.generate({
+      ...createProviderInput(),
+      messages: [
+        { content: "read README.md", role: "user" },
+        {
+          content: "Let me read the file.",
+          role: "assistant",
+          toolCalls: [
+            {
+              input: { path: "README.md" },
+              reason: "read",
+              toolCallId: "call-1",
+              toolName: "read_file"
+            }
+          ]
+        },
+        {
+          content: "README contents",
+          role: "tool",
+          toolCallId: "call-1",
+          toolName: "read_file"
+        },
+        { content: "Done.", role: "assistant" },
+        {
+          content: "Completion verification required.",
+          metadata: { sourceType: "system_prompt" },
+          role: "system"
+        }
+      ]
+    });
+
+    const replayedMessages = (capturedBody?.messages ?? []) as Array<Record<string, unknown>>;
+    const finals = replayedMessages.filter(
+      (message) => message.role === "assistant" && !Array.isArray(message.tool_calls)
+    );
+    expect(finals.at(-1)?.reasoning_content).toBe("");
+    const toolCallAssistant = replayedMessages.find(
+      (message) => message.role === "assistant" && Array.isArray(message.tool_calls)
+    );
+    expect(toolCallAssistant?.reasoning_content).toBe("");
+  });
+
   it("uses non-streaming requests when OpenAI-compatible streaming is disabled", async () => {
     const provider = new OpenAiCompatibleProvider(
       {

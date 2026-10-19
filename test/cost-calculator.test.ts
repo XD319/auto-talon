@@ -43,6 +43,19 @@ describe("cost calculator", () => {
     expect(computeCostUsd({ inputTokens: 1, outputTokens: 1 }, null)).toBeNull();
   });
 
+  it("uses the price tier selected by each request's input size", () => {
+    const pricing = {
+      inputPerMillion: 1.2,
+      outputPerMillion: 4.8,
+      tiers: [
+        { maxInputTokens: 32_000, inputPerMillion: 0.2, outputPerMillion: 0.8 },
+        { maxInputTokens: 256_000, inputPerMillion: 0.6, outputPerMillion: 2.4 }
+      ]
+    };
+    expect(computeCostUsd({ inputTokens: 32_000, outputTokens: 10_000 }, pricing)).toBeCloseTo(0.0144, 6);
+    expect(computeCostUsd({ inputTokens: 32_001, outputTokens: 10_000 }, pricing)).toBeCloseTo(0.0432006, 6);
+  });
+
   it("uses exclusive accounting for Anthropic-compatible providers", () => {
     expect(cachedInputAccountingForProvider("anthropic")).toBe("exclusive");
     expect(cachedInputAccountingForProvider("minimax")).toBe("exclusive");

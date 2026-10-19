@@ -258,6 +258,7 @@ export function registerProviderCommands(program: Command): void {
     .option("--base-url <url>", "Provider base URL")
     .option("--model <model>", "Default model")
     .option("--display-name <name>", "Display name")
+    .option("--context-window-tokens <number>", "Provider/model context window in tokens", parsePositiveIntegerOption("--context-window-tokens"))
     .option("--workspace", "Write to workspace config instead of user config")
     .action(
       (
@@ -265,6 +266,7 @@ export function registerProviderCommands(program: Command): void {
         commandOptions: {
           apiKey?: string;
           baseUrl?: string;
+          contextWindowTokens?: number;
           displayName?: string;
           model?: string;
           transport: "anthropic-compatible" | "openai-compatible";
@@ -277,6 +279,9 @@ export function registerProviderCommands(program: Command): void {
           ...(commandOptions.baseUrl !== undefined ? { baseUrl: commandOptions.baseUrl } : {}),
           ...(commandOptions.model !== undefined ? { model: commandOptions.model } : {}),
           ...(commandOptions.displayName !== undefined ? { displayName: commandOptions.displayName } : {}),
+          ...(commandOptions.contextWindowTokens !== undefined
+            ? { contextWindowTokens: commandOptions.contextWindowTokens }
+            : {}),
           ...resolveProviderConfigTarget(commandOptions.workspace === true)
         });
         console.log(formatProviderConfigWrite("Configured custom", result));

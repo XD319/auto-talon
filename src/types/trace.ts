@@ -40,6 +40,8 @@ export const TRACE_EVENT_TYPES = [
   "empty_final_guarded",
   "unpolished_final_guarded",
   "invalid_final_output_rejected",
+  "reasoning_only_final_resumed",
+  "final_summary_exhausted",
   "read_only_analysis_guard",
   "duplicate_tool_replayed",
   "no_tools_tool_calls_ignored",
@@ -693,6 +695,8 @@ export interface ScheduleCreatedPayload extends JsonObject {
   scheduleId: string;
   status: "active" | "paused";
   nextFireAt: string | null;
+  /** Task that asked for the schedule, when an agent or gateway created it. */
+  originTaskId?: string | null;
 }
 
 export interface ScheduleUpdatedPayload extends JsonObject {
@@ -1096,6 +1100,8 @@ export type TraceEvent =
   | TraceEventBase<"empty_final_guarded">
   | TraceEventBase<"unpolished_final_guarded">
   | TraceEventBase<"invalid_final_output_rejected">
+  | TraceEventBase<"reasoning_only_final_resumed">
+  | TraceEventBase<"final_summary_exhausted">
   | TraceEventBase<"read_only_analysis_guard">
   | TraceEventBase<"duplicate_tool_replayed">
   | TraceEventBase<"no_tools_tool_calls_ignored", NoToolsToolCallsIgnoredPayload>

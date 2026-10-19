@@ -21,11 +21,11 @@ export function shouldReplayReasoningContent(
   if (message.role !== "assistant") {
     return false;
   }
+  // DeepSeek thinking mode requires `reasoning_content` on every later assistant
+  // turn once a tool-call round has happened, including verification follow-ups
+  // whose stored reasoning field is empty.
   if ((message.toolCalls?.length ?? 0) > 0) {
     return true;
-  }
-  if (message.reasoningContent === undefined) {
-    return false;
   }
   return conversationHadToolCallsBefore(messages, messageIndex);
 }

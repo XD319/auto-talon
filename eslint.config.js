@@ -24,6 +24,7 @@ export default tseslint.config(
       ".tmp-tests/**",
       "eslint.config.js",
       "web/**",
+      "test/web-slash.test.ts",
       "test/web-transcript.test.ts"
     ]
   },

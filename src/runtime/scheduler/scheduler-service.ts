@@ -154,12 +154,13 @@ export class SchedulerService {
       eventType: "schedule_created",
       payload: {
         nextFireAt: schedule.nextFireAt,
+        originTaskId: input.originTaskId ?? null,
         scheduleId: schedule.scheduleId,
         status: schedule.status === "paused" ? "paused" : "active"
       },
       stage: "control",
       summary: `Schedule ${schedule.scheduleId} created`,
-      taskId: `schedule:${schedule.scheduleId}`
+      taskId: input.originTaskId ?? `schedule:${schedule.scheduleId}`
     });
     return schedule;
   }

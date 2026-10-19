@@ -19,32 +19,33 @@ interface LongRunningCommandConfig {
 }
 
 const processSchema = z
-  .object({
-    action: z.enum(["start", "read", "write", "stop"]),
-    command: z.string().min(1).optional(),
-    cwd: z.string().min(1).optional(),
-    data: z.string().optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    name: z.string().min(1).optional(),
-    sessionId: z.string().min(1).optional()
-  })
+  .discriminatedUnion("action", [
+    z.object({
+      action: z.literal("start"),
+      command: z.string().min(1).optional(),
+      cwd: z.string().min(1).optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      name: z.string().min(1).optional()
+    }),
+    z.object({
+      action: z.literal("read"),
+      sessionId: z.string().min(1)
+    }),
+    z.object({
+      action: z.literal("write"),
+      data: z.string(),
+      sessionId: z.string().min(1)
+    }),
+    z.object({
+      action: z.literal("stop"),
+      sessionId: z.string().min(1)
+    })
+  ])
   .superRefine((input, ctx) => {
     if (input.action === "start" && input.command === undefined && input.name === undefined) {
       ctx.addIssue({
         code: "custom",
         message: "process start requires either command or name."
-      });
-    }
-    if (input.action !== "start" && input.sessionId === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        message: `process ${input.action} requires sessionId.`
-      });
-    }
-    if (input.action === "write" && input.data === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        message: "process write requires data."
       });
     }
   });
@@ -60,7 +61,9 @@ type PreparedProcessInput =
 export class ProcessTool implements ToolDefinition<typeof processSchema, PreparedProcessInput> {
   public readonly name = "process";
   public readonly description =
-    "Manage long-running terminal processes: start, read buffered output, write stdin, or stop a session.";
+    "Manage long-running terminal processes: start, read buffered output, write stdin, or stop a session. " +
+    "read, write, and stop need a sessionId returned by an earlier start in this task; there are no " +
+    "pre-existing sessions. For one-shot commands that finish on their own, use the shell tool instead.";
   public readonly capability = "shell.execute" as const;
   public readonly riskLevel = "high" as const;
   public readonly privacyLevel = "restricted" as const;
@@ -115,7 +118,7 @@ export class ProcessTool implements ToolDefinition<typeof processSchema, Prepare
       };
     }
 
-    const sessionId = parsedInput.sessionId!;
+    const sessionId = parsedInput.sessionId;
     const summary = summarizeAction(parsedInput.action, sessionId);
     return {
       governance: {
@@ -124,7 +127,7 @@ export class ProcessTool implements ToolDefinition<typeof processSchema, Prepare
       },
       preparedInput:
         parsedInput.action === "write"
-          ? { action: "write", data: parsedInput.data!, sessionId }
+          ? { action: "write", data: parsedInput.data, sessionId }
           : parsedInput.action === "read"
             ? { action: "read", sessionId }
             : { action: "stop", sessionId },

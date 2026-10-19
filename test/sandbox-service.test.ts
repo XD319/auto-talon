@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { SandboxService } from "../src/sandbox/sandbox-service.js";
@@ -29,6 +33,37 @@ describe("SandboxService", () => {
         cwd: process.cwd()
       })
     ).toThrow(/violate sandbox policy/i);
+  });
+
+  it("resolves a relative shell cwd from the workspace root", () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "auto-talon-sandbox-cwd-"));
+    try {
+      const sandboxService = new SandboxService({
+        allowedShellCommands: ["node"],
+        workspaceRoot
+      });
+
+      const dot = sandboxService.prepareShellExecution({
+        command: "node -v",
+        cwd: "."
+      });
+      const nested = sandboxService.prepareShellExecution({
+        command: "node -v",
+        cwd: join("src", "app")
+      });
+
+      expect(dot.cwd).toBe(resolve(workspaceRoot));
+      expect(dot.cwd).not.toBe(resolve("."));
+      expect(nested.cwd).toBe(resolve(workspaceRoot, "src", "app"));
+      expect(() =>
+        sandboxService.prepareShellExecution({
+          command: "node -v",
+          cwd: ".."
+        })
+      ).toThrow(/outside the workspace root/i);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
   it("allows pwd as a safe cwd inspection command by default", () => {

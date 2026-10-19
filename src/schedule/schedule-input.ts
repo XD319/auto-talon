@@ -26,6 +26,8 @@ export interface CreateScheduleInput {
   metadata?: JsonObject;
   deliveryTargets?: ScheduleDeliveryTarget[];
   executionMode?: ScheduleExecutionMode;
+  /** Task that requested the schedule, so schedule_created lands on the caller's trace. */
+  originTaskId?: string;
   allowDelegate?: boolean;
   noAgent?: ScheduleNoAgentConfig | null;
   repeatRemaining?: number | null;

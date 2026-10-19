@@ -58,6 +58,55 @@ describe("zodSchemaToDescriptor", () => {
       type: "object"
     });
   });
+
+  it("converts literals to a single-member enum", () => {
+    expect(zodSchemaToDescriptor(z.object({ action: z.literal("create") }))).toEqual({
+      properties: {
+        action: { enum: ["create"], type: "string" }
+      },
+      required: ["action"],
+      type: "object"
+    });
+  });
+
+  it("converts discriminated unions to anyOf variants instead of a bare string", () => {
+    const schema = z.discriminatedUnion("action", [
+      z.object({ action: z.literal("create"), name: z.string().min(1) }),
+      z.object({ action: z.literal("remove"), scheduleId: z.string().min(1) })
+    ]);
+
+    expect(zodSchemaToDescriptor(schema)).toEqual({
+      anyOf: [
+        {
+          properties: {
+            action: { enum: ["create"], type: "string" },
+            name: { minLength: 1, type: "string" }
+          },
+          required: ["action", "name"],
+          type: "object"
+        },
+        {
+          properties: {
+            action: { enum: ["remove"], type: "string" },
+            scheduleId: { minLength: 1, type: "string" }
+          },
+          required: ["action", "scheduleId"],
+          type: "object"
+        }
+      ],
+      type: "object"
+    });
+  });
+
+  it("keeps scalar unions addressable through the value wrapper", () => {
+    expect(zodSchemaToDescriptor(z.union([z.string(), z.number()]))).toEqual({
+      properties: {
+        value: { anyOf: [{ type: "string" }, { type: "number" }], type: "string" }
+      },
+      required: ["value"],
+      type: "object"
+    });
+  });
 });
 
 describe("getToolInputSchemaDescriptor", () => {

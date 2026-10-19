@@ -30,6 +30,8 @@ export interface CompletionControllerState {
 }
 
 export interface CompletionControllerDependencies {
+  /** Ablation switch; when false a write-tool final answer is never held back for verification. */
+  completionVerificationEnabled?: boolean;
   describeTool(toolName: string): ProviderToolDescriptor | null;
   recordTrace(event: TraceEventDraft): void;
   testCommands?: string[];
@@ -181,7 +183,11 @@ export class CompletionController {
     options: { allowGuard?: boolean } = {}
   ): { finalOutput: string; kind: "complete" } | { kind: "guard" } {
     const allowGuard = options.allowGuard !== false;
-    if (!state.writeToolSucceeded || state.completionVerificationSatisfied) {
+    if (
+      this.dependencies.completionVerificationEnabled === false ||
+      !state.writeToolSucceeded ||
+      state.completionVerificationSatisfied
+    ) {
       return {
         finalOutput,
         kind: "complete"

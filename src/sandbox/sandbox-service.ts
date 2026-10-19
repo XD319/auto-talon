@@ -39,6 +39,25 @@ export interface PreparedShellInput {
   sandboxPlan: SandboxShellPlan;
 }
 
+/** Shell constraints rendered into the shell tool description so the model stops retrying denials. */
+export interface SandboxShellPolicy {
+  allowedExecutables: string[];
+  deniedExecutableFlags: Record<string, string[]>;
+  forbiddenSyntax: string[];
+  maxTimeoutMs: number;
+  networkAccess: "disabled" | "unrestricted";
+}
+
+const FORBIDDEN_SHELL_SYNTAX = ["&&", "||", ";", "newlines", "$(", "`"];
+
+/** Inline-code flags are denied because they route around the executable allowlist. */
+const DENIED_EXECUTABLE_FLAGS: Record<string, string[]> = {
+  node: ["--eval", "-e", "--print", "-p"],
+  powershell: ["-command", "-encodedcommand", "-enc"],
+  pwsh: ["-command", "-encodedcommand", "-enc"],
+  python: ["-c"]
+};
+
 export class SandboxService {
   private readonly workspaceRoot: string;
   private readonly readRoots: string[];
@@ -172,6 +191,24 @@ export class SandboxService {
     };
   }
 
+  public describeShellPolicy(): SandboxShellPolicy {
+    const allowedExecutables = [...this.allowedShellCommands].sort();
+    const deniedExecutableFlags: Record<string, string[]> = {};
+    for (const executable of allowedExecutables) {
+      const flags = DENIED_EXECUTABLE_FLAGS[executable];
+      if (flags !== undefined) {
+        deniedExecutableFlags[executable] = flags;
+      }
+    }
+    return {
+      allowedExecutables,
+      deniedExecutableFlags,
+      forbiddenSyntax: [...FORBIDDEN_SHELL_SYNTAX],
+      maxTimeoutMs: this.maxShellTimeoutMs,
+      networkAccess: this.shellNetworkAccess
+    };
+  }
+
   public prepareShellExecution(request: ShellSandboxRequest): PreparedShellInput {
     assertNoShellChaining(request.command);
     for (const pattern of this.deniedShellPatterns) {
@@ -200,7 +237,10 @@ export class SandboxService {
     }
     assertExecutableArgsPolicy(executable, request.command);
 
-    const cwd = resolve(request.cwd);
+    // Relative cwd is workspace-relative. Resolving it against process.cwd()
+    // treats "." as the harness process directory, which is outside the task
+    // workspace when evaluation runs in a temporary directory.
+    const cwd = resolve(this.workspaceRoot, request.cwd);
     const pathScope = this.classifyReadScope(cwd);
     if (pathScope === "outside_workspace") {
       throw this.createSandboxError(
@@ -468,29 +508,33 @@ function assertNoShellChaining(command: string): void {
   if (forbiddenSyntaxPatterns.some((pattern) => pattern.test(command))) {
     throw new AppError({
       code: "sandbox_denied",
-      message: "Shell command contains chaining or eval syntax that is not allowed in sandbox mode."
+      message:
+        `Shell command contains chaining or eval syntax that is not allowed in sandbox mode. ` +
+        `Forbidden: ${FORBIDDEN_SHELL_SYNTAX.join(" ")}. Issue one command per shell call instead, ` +
+        `and pass cwd rather than chaining a directory change.`
     });
   }
 }
 
 function assertExecutableArgsPolicy(executable: string, command: string): void {
   const lowered = command.toLowerCase();
-  const deniedByExecutable: Record<string, RegExp[]> = {
-    node: [/\s--eval\b/u, /\s-e\b/u, /\s--print\b/u, /\s-p\b/u],
-    powershell: [/\s-command\b/u, /\s-encodedcommand\b/u, /\s-enc\b/u],
-    pwsh: [/\s-command\b/u, /\s-encodedcommand\b/u, /\s-enc\b/u],
-    python: [/\s-c\b/u]
-  };
-
-  const deniedPatterns = deniedByExecutable[executable] ?? [];
-  for (const pattern of deniedPatterns) {
-    if (pattern.test(lowered)) {
+  const deniedFlags = DENIED_EXECUTABLE_FLAGS[executable] ?? [];
+  for (const flag of deniedFlags) {
+    if (buildFlagPattern(flag).test(lowered)) {
       throw new AppError({
         code: "sandbox_denied",
-        message: `Shell arguments for ${executable} violate sandbox policy.`
+        message:
+          `Shell arguments for ${executable} violate sandbox policy: ${deniedFlags.join(", ")} ` +
+          `run inline code and are denied. Write the code to a file first, then execute the file.`
       });
     }
   }
+}
+
+function buildFlagPattern(flag: string): RegExp {
+  // Hyphens are literal outside character classes, and `\-` is an invalid escape under /u.
+  const escaped = flag.toLowerCase().replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`\\s${escaped}\\b`, "u");
 }
 
 function extractExecutable(command: string): string {

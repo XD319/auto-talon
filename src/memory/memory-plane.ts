@@ -124,7 +124,11 @@ export class MemoryPlane {
         reason: null,
         replacementMessages: input.messages.map((message) => ({
           content: message.content,
-          role: toConversationRole(message.role)
+          role: toConversationRole(message.role),
+          ...(message.reasoningContent !== undefined ? { reasoningContent: message.reasoningContent } : {}),
+          ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
+          ...(message.toolName !== undefined ? { toolName: message.toolName } : {}),
+          ...(message.toolCalls !== undefined ? { toolCalls: message.toolCalls } : {})
         })),
         summaryMemory: null,
         triggered: false
@@ -146,7 +150,11 @@ export class MemoryPlane {
         },
         ...input.messages.slice(-3).map((message) => ({
           content: message.content,
-          role: toConversationRole(message.role)
+          role: toConversationRole(message.role),
+          ...(message.reasoningContent !== undefined ? { reasoningContent: message.reasoningContent } : {}),
+          ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
+          ...(message.toolName !== undefined ? { toolName: message.toolName } : {}),
+          ...(message.toolCalls !== undefined ? { toolCalls: message.toolCalls } : {})
         }))
       ],
       summaryMemory: null,

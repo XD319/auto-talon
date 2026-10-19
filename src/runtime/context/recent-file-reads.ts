@@ -12,9 +12,12 @@ export interface ContextRetentionConfig {
   maxTotalBytesUnderGuard: number;
   toolOutputMaxTokens: number;
   toolResultKeepGroups: number;
+  /** Ablation switch: when false the kernel runs without re-injecting recent file reads. */
+  fileReadCacheEnabled: boolean;
 }
 
 export const DEFAULT_CONTEXT_RETENTION: ContextRetentionConfig = {
+  fileReadCacheEnabled: true,
   maxBytesPerFile: 24_000,
   maxBytesPerFileUnderGuard: 24_000,
   maxFiles: 8,

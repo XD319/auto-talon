@@ -16,7 +16,7 @@ import {
   formatSessionSummary,
   formatSessionSummaryList
 } from "./formatters.js";
-import { parseApprovalAllowScope, parsePositiveIntegerOption } from "./cli-helpers.js";
+import { finishCliProcess, parseApprovalAllowScope, parsePositiveIntegerOption } from "./cli-helpers.js";
 
 interface InboxListOptions {
   category?:
@@ -434,6 +434,7 @@ export function registerSessionCommands(program: Command): void {
     } finally {
       handle.close();
     }
+    finishCliProcess();
   });
 
   approveCommand
@@ -465,6 +466,7 @@ export function registerSessionCommands(program: Command): void {
       } finally {
         handle.close();
       }
+      finishCliProcess();
     });
 
   approveCommand
@@ -483,6 +485,7 @@ export function registerSessionCommands(program: Command): void {
       } finally {
         handle.close();
       }
+      finishCliProcess();
     });
 }
 

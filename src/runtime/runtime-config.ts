@@ -158,6 +158,7 @@ const runtimeConfigFileSchema = z.object({
   context: contextConfigSchema.optional(),
   contextRetention: z
     .object({
+      fileReadCacheEnabled: z.boolean().optional(),
       maxBytesPerFile: z.number().int().positive().optional(),
       maxBytesPerFileUnderGuard: z.number().int().positive().optional(),
       maxFiles: z.number().int().positive().optional(),
@@ -203,6 +204,11 @@ const runtimeConfigFileSchema = z.object({
       budgetRatio: z.number().positive().max(1).optional(),
       enabled: z.boolean().optional(),
       maxCandidatesPerScope: z.number().int().positive().optional()
+    })
+    .optional(),
+  experience: z
+    .object({
+      enabled: z.boolean().optional()
     })
     .optional(),
   promotion: z
@@ -259,7 +265,13 @@ const runtimeConfigFileSchema = z.object({
           z.object({
             cachedInputPerMillion: z.number().nonnegative().optional(),
             inputPerMillion: z.number().nonnegative(),
-            outputPerMillion: z.number().nonnegative()
+            outputPerMillion: z.number().nonnegative(),
+            tiers: z.array(z.object({
+              maxInputTokens: z.number().int().positive(),
+              inputPerMillion: z.number().nonnegative(),
+              outputPerMillion: z.number().nonnegative(),
+              cachedInputPerMillion: z.number().nonnegative().optional()
+            })).optional()
           })
         )
         .optional(),
@@ -288,6 +300,11 @@ const runtimeConfigFileSchema = z.object({
   tokenBudget: tokenBudgetConfigSchema.optional(),
   workflow: z
     .object({
+      completionVerification: z
+        .object({
+          enabled: z.boolean().optional()
+        })
+        .optional(),
       failureGuidedRetry: z
         .object({
           enabled: z.boolean().optional(),
@@ -322,6 +339,9 @@ const runtimeConfigFileSchema = z.object({
 export type { TuiStatusLineConfig } from "./tui-status-line-config.js";
 
 export interface WorkflowRuntimeConfig {
+  completionVerification: {
+    enabled: boolean;
+  };
   failureGuidedRetry: {
     enabled: boolean;
     maxRepairAttempts: number;
@@ -423,6 +443,10 @@ export interface RuntimeConfig {
     enabled: boolean;
     budgetRatio: number;
     maxCandidatesPerScope: number;
+  };
+  /** Ablation switch for the experience capture loop that feeds promotion and recall. */
+  experience: {
+    enabled: boolean;
   };
   promotion: {
     enabled: boolean;
@@ -558,6 +582,7 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     engine: "hermes_compressor"
   },
   contextRetention: {
+    fileReadCacheEnabled: true,
     maxBytesPerFile: 24_000,
     maxBytesPerFileUnderGuard: 24_000,
     maxFiles: 8,
@@ -591,6 +616,9 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     budgetRatio: 0.25,
     enabled: true,
     maxCandidatesPerScope: 10
+  },
+  experience: {
+    enabled: true
   },
   promotion: {
     enabled: true,
@@ -635,6 +663,9 @@ const DEFAULT_RUNTIME_CONFIG: Omit<RuntimeConfig, "configPath" | "configSource">
     statusLine: DEFAULT_TUI_STATUS_LINE_CONFIG
   },
   workflow: {
+    completionVerification: {
+      enabled: true
+    },
     failureGuidedRetry: {
       enabled: true,
       maxRepairAttempts: 2
@@ -689,6 +720,12 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     fileConfig?.tokenBudget?.unknownContextWindowFallback ??
     DEFAULT_RUNTIME_CONFIG.unknownContextWindowFallback;
   const workflow: WorkflowRuntimeConfig = {
+    completionVerification: {
+      enabled:
+        envConfig.workflow?.completionVerification?.enabled ??
+        fileConfig?.workflow?.completionVerification?.enabled ??
+        DEFAULT_RUNTIME_CONFIG.workflow.completionVerification.enabled
+    },
     failureGuidedRetry: {
       enabled:
         envConfig.workflow?.failureGuidedRetry?.enabled ??
@@ -898,6 +935,12 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         fileConfig?.recall?.maxCandidatesPerScope ??
         DEFAULT_RUNTIME_CONFIG.recall.maxCandidatesPerScope
     },
+    experience: {
+      enabled:
+        envConfig.experience?.enabled ??
+        fileConfig?.experience?.enabled ??
+        DEFAULT_RUNTIME_CONFIG.experience.enabled
+    },
     promotion: {
       enabled:
         envConfig.promotion?.enabled ??
@@ -983,6 +1026,10 @@ export function resolveRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
         )
     },
     contextRetention: {
+      fileReadCacheEnabled:
+        envConfig.contextRetention?.fileReadCacheEnabled ??
+        fileConfig?.contextRetention?.fileReadCacheEnabled ??
+        DEFAULT_RUNTIME_CONFIG.contextRetention.fileReadCacheEnabled,
       maxFiles:
         envConfig.contextRetention?.maxFiles ??
         fileConfig?.contextRetention?.maxFiles ??
@@ -1695,10 +1742,7 @@ function normalizeBudgetLimits(limits: BudgetLimits): BudgetLimits {
 }
 
 function normalizeBudgetPricing(
-  pricing: Record<
-    string,
-    { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number | undefined }
-  >
+  pricing: Record<string, BudgetPricingEntry>
 ): Record<string, BudgetPricingEntry> {
   const normalized: Record<string, BudgetPricingEntry> = {};
   for (const [providerName, entry] of Object.entries(pricing)) {
@@ -1707,7 +1751,8 @@ function normalizeBudgetPricing(
       outputPerMillion: entry.outputPerMillion,
       ...(entry.cachedInputPerMillion !== undefined
         ? { cachedInputPerMillion: entry.cachedInputPerMillion }
-        : {})
+        : {}),
+      ...(entry.tiers !== undefined ? { tiers: entry.tiers.map((tier) => ({ ...tier })) } : {})
     };
   }
   return normalized;

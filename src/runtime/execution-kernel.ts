@@ -171,6 +171,7 @@ export class ExecutionKernel {
       toolOrchestrator: dependencies.toolOrchestrator
     });
     this.completionController = new CompletionController({
+      completionVerificationEnabled: dependencies.workflow.completionVerification.enabled,
       describeTool: (toolName) => dependencies.toolOrchestrator.describeTool(toolName),
       recordTrace: (event) => dependencies.traceService.record(event),
       testCommands: formatWorkflowTestCommandHints(dependencies.workflow.testCommands)
@@ -841,7 +842,7 @@ export class ExecutionKernel {
       | "post_completion_verification_exhausted"
       | "empty_final_output"
       | "unpolished_final_output"
-  ): Promise<RuntimeRunResult> {
+  ): Promise<RuntimeRunResult | { kind: "resume_tool_loop" }> {
     const activeProvider = this.resolveActiveMainProvider(task);
     const baseSummaryPrompt =
       reason === "max_iterations_exhausted"
@@ -922,6 +923,14 @@ export class ExecutionKernel {
       }
       lastProviderResponse = providerResponse;
       state.managedAbortController.touchActivity("no_tools_final_summary");
+      const budgetResult = this.budgetRecorder.record({
+        providerName: providerResponse.metadata?.providerName ?? activeProvider.name,
+        providerResponse,
+        task,
+        tokenBudget: state.tokenBudget
+      });
+      task = budgetResult.task;
+      state.tokenBudget = budgetResult.tokenBudget;
 
       this.dependencies.traceService.record({
         actor: `provider.${activeProvider.name}`,
@@ -993,13 +1002,46 @@ export class ExecutionKernel {
     }
 
     if (finalMessage.length === 0) {
+      if (
+        reason === "unpolished_final_output" &&
+        iteration < state.maxIterations &&
+        (lastRejectionReason === "reasoning_only_final" ||
+          lastRejectionReason === "internal_reasoning_detected")
+      ) {
+        state.turnProviderMessages.push({
+          role: "system",
+          content: "The prior final responses contained internal reasoning only. Continue the task using available tools if needed, then provide a direct user-facing answer.",
+          metadata: { privacyLevel: "internal", retentionKind: "session", sourceType: "system_prompt" }
+        });
+        this.dependencies.traceService.record({
+          actor: "runtime.kernel",
+          eventType: "reasoning_only_final_resumed",
+          payload: { iteration, remainingIterations: state.maxIterations - iteration },
+          stage: "completion",
+          summary: "Returned to tool-enabled loop after two reasoning-only finals",
+          taskId: task.taskId
+        });
+        return { kind: "resume_tool_loop" };
+      }
+      this.dependencies.traceService.record({
+        actor: "runtime.kernel",
+        eventType: "final_summary_exhausted",
+        payload: { iteration, maxIterations: state.maxIterations, reason: lastRejectionReason },
+        stage: "completion",
+        summary: "No acceptable final answer after two summary attempts",
+        taskId: task.taskId
+      });
       throw new AppError({
-        code: lastRejectionReason === "empty" ? "max_rounds_exceeded" : "provider_error",
+        code: lastRejectionReason === "empty" || iteration >= state.maxIterations
+          ? "max_rounds_exceeded"
+          : "provider_error",
         message:
           lastRejectionReason === "tool_markup"
             ? "No-tools final summary returned tool-call markup instead of a user-facing answer."
-            : lastRejectionReason === "empty"
-              ? `Task exceeded ${state.maxIterations} iterations.`
+            : iteration >= state.maxIterations
+              ? `Task reached ${state.maxIterations} iterations without an acceptable user-facing answer (last rejection: ${lastRejectionReason ?? "unknown"}).`
+              : lastRejectionReason === "empty"
+                ? "No-tools final summary was empty after two attempts."
               : "No-tools final summary did not produce an acceptable user-facing answer."
       });
     }
@@ -1227,7 +1269,8 @@ export class ExecutionKernel {
       compactCooldownRemaining: 0,
       microPrunedCount: 0,
       recentFileReadCache:
-        this.dependencies.contextRetention === undefined
+        this.dependencies.contextRetention === undefined ||
+        !this.dependencies.contextRetention.fileReadCacheEnabled
           ? null
           : new RecentFileReadCache(this.dependencies.contextRetention),
       tokenCounter: createHybridTokenCounterState(),
@@ -1757,6 +1800,7 @@ function readInteractionModeFromMetadata(metadata: Record<string, unknown> | und
 function mapCompactConversationMessage(message: {
   role: string;
   content: string;
+  reasoningContent?: string;
   toolCallId?: string;
   toolName?: string;
   toolCalls?: Array<{ toolCallId: string; toolName: string }>;
@@ -1766,6 +1810,9 @@ function mapCompactConversationMessage(message: {
     content: message.content,
     role: toConversationRole(message.role)
   };
+  if (message.reasoningContent !== undefined) {
+    mapped.reasoningContent = message.reasoningContent;
+  }
   if (message.toolCallId !== undefined) {
     mapped.toolCallId = message.toolCallId;
   }

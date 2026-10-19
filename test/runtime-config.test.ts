@@ -21,6 +21,16 @@ afterEach(async () => {
 });
 
 describe("runtime config", () => {
+  it("preserves per-request pricing tiers from the Harbor arm config", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    await fs.mkdir(join(workspaceRoot, ".auto-talon"), { recursive: true });
+    const arm = JSON.parse(await fs.readFile(join(process.cwd(), "scripts", "harbor", "arms", "governed.json"), "utf8")) as Record<string, unknown>;
+    await fs.writeFile(join(workspaceRoot, ".auto-talon", "runtime.config.json"), JSON.stringify(arm));
+    const pricing = resolveRuntimeConfig(workspaceRoot).budget.pricing.qwen;
+    expect(pricing?.tiers?.map((tier) => tier.maxInputTokens)).toEqual([32_000, 256_000]);
+    expect(pricing?.tiers?.[0]?.inputPerMillion).toBeCloseTo(0.2 / 6.7298, 8);
+  });
+
   it("defaults fetch hosts to open web_extract and uses larger coding budgets", async () => {
     const workspaceRoot = await createTempWorkspace();
     const config = resolveRuntimeConfig(workspaceRoot);

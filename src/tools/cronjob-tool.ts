@@ -190,6 +190,7 @@ export class CronjobTool implements ToolDefinition<typeof cronjobSchema, Prepare
             executionMode: execution.executionMode,
             input: preparedInput.prompt,
             name: preparedInput.name,
+            originTaskId: context.taskId,
             ownerUserId: context.userId,
             ...(timing.cron !== undefined ? { cron: timing.cron } : {}),
             ...(timing.every !== undefined ? { every: timing.every } : {}),

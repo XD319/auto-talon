@@ -32,6 +32,7 @@ import {
 } from "./model-command.js";
 import {
   collectOption,
+  finishCliProcess,
   parseNonNegativeNumberOption,
   parsePositiveIntegerOption,
   resolveSandboxCliOptions,
@@ -159,6 +160,7 @@ export async function main(argv = process.argv): Promise<void> {
       } finally {
         handle.close();
       }
+      finishCliProcess();
     });
 
   program

@@ -43,6 +43,36 @@ describe("reasoning content replay", () => {
     expect(reasoningContentForReplay(message, [message], 0)).toBe("");
   });
 
+  it("replays empty reasoning on final assistant messages after tool calls when omitted", () => {
+    const messages: ConversationMessage[] = [
+      {
+        content: "",
+        role: "assistant",
+        toolCalls: [
+          {
+            input: {},
+            reason: "read",
+            toolCallId: "call-1",
+            toolName: "read_file"
+          }
+        ]
+      },
+      {
+        content: "ok",
+        role: "tool",
+        toolCallId: "call-1",
+        toolName: "read_file"
+      },
+      {
+        content: "Here is the summary.",
+        role: "assistant"
+      }
+    ];
+
+    expect(shouldReplayReasoningContent(messages[2]!, messages, 2)).toBe(true);
+    expect(reasoningContentForReplay(messages[2]!, messages, 2)).toBe("");
+  });
+
   it("replays reasoning on final assistant messages after tool calls", () => {
     const messages: ConversationMessage[] = [
       {

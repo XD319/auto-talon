@@ -92,17 +92,20 @@ describe("release checklist helpers", () => {
     });
   });
 
-  it("cleans stale dist files before builds", () => {
-    const stalePath = join(process.cwd(), "dist", "__stale-build-clean-test.txt");
-    mkdirSync(join(process.cwd(), "dist"), { recursive: true });
+  it("cleans stale dist files before builds without touching the repo dist", () => {
+    const workspace = createTempDir("auto-talon-release-clean-dist-");
+    const distDir = join(workspace, "dist");
+    mkdirSync(distDir, { recursive: true });
+    const stalePath = join(distDir, "__stale-build-clean-test.txt");
     writeFileSync(stalePath, "stale\n", "utf8");
 
     execFileSync(process.execPath, [join(process.cwd(), "scripts", "clean-dist.mjs")], {
-      cwd: process.cwd(),
+      cwd: workspace,
       stdio: "ignore"
     });
 
     expect(existsSync(stalePath)).toBe(false);
+    expect(existsSync(distDir)).toBe(false);
   });
 
   it("rejects setup script Node.js version drift", () => {
