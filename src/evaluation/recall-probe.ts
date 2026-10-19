@@ -8,6 +8,7 @@ import { RecallEngine } from "../recall/recall-engine.js";
 import type { ContextFragment, ConversationMessage } from "../types/index.js";
 import type { EvalMemoryState } from "./schema.js";
 import { materializeMemoryState, prepareMemoryEvalWorkspace } from "./memory-state.js";
+import { removeTempDir } from "./workspace.js";
 
 export interface RecallProbeResult {
   injected: boolean;
@@ -79,6 +80,6 @@ export async function runRecallProbe(input: {
     };
   } finally {
     handle.close();
-    await fs.rm(workspaceRoot, { force: true, recursive: true });
+    await removeTempDir(workspaceRoot);
   }
 }

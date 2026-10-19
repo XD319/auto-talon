@@ -70,7 +70,13 @@ const suite = {
               "import test from 'node:test'; import assert from 'node:assert/strict'; import { add } from '../src/math.mjs'; test('adds', () => assert.equal(add(2, 3), 5));\n"
           }
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "src/math.mjs": "export function add(a, b) {\n  return a + b;\n}\n"
+        },
+        output: "Inspected src/util/numbers.mjs and src/util/strings.mjs, then added src/math.mjs."
+      }
     },
     {
       id: "lc_slug_cross_file_fix",
@@ -106,7 +112,13 @@ const suite = {
               "import test from 'node:test'; import assert from 'node:assert/strict'; import { slugify } from '../src/slug.mjs'; test('slug', () => assert.equal(slugify('  Hello   Agent  '), 'hello-agent'));\n"
           }
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "src/slug.mjs": `${notesArrayJs("slug_pad", 70)}export const slugify = (value) => value.trim().toLowerCase().replace(/\\s+/g, "-");\n`
+        },
+        output: "Fixed slugify to trim, lowercase, and collapse spaces to dashes."
+      }
     },
     {
       id: "lc_config_flag_from_notes",
@@ -138,7 +150,13 @@ const suite = {
           path: "config/app.json",
           contains: ["\"featureFlag\": true", "\"mode\": \"safe\""]
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "config/app.json": "{\n  \"featureFlag\": true,\n  \"mode\": \"safe\"\n}\n"
+        },
+        output: "Enabled featureFlag and kept mode safe."
+      }
     },
     {
       id: "lc_parse_port_from_limits",
@@ -174,7 +192,13 @@ const suite = {
               "import test from 'node:test'; import assert from 'node:assert/strict'; import { parsePort } from '../src/parse.mjs'; test('valid', () => assert.equal(parsePort('443'), 443)); test('invalid', () => assert.throws(() => parsePort('0'))); test('high', () => assert.throws(() => parsePort('70000')));\n"
           }
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "src/parse.mjs": `${notesArrayJs("parse_pad", 60)}export function parsePort(value) {\n  const n = Number(value);\n  if (!Number.isInteger(n) || n < 1 || n > 65535) {\n    throw new Error("invalid port");\n  }\n  return n;\n}\n`
+        },
+        output: "parsePort now accepts integers from MIN_PORT through MAX_PORT."
+      }
     },
     {
       id: "lc_merge_constants",
@@ -210,7 +234,13 @@ const suite = {
               "import test from 'node:test'; import assert from 'node:assert/strict'; import { SERVICE_NAME, RETRY_LIMIT } from '../src/merged.mjs'; test('merged', () => { assert.equal(SERVICE_NAME, 'auto-talon'); assert.equal(RETRY_LIMIT, 3); });\n"
           }
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "src/merged.mjs": "export const SERVICE_NAME = \"auto-talon\";\nexport const RETRY_LIMIT = 3;\n"
+        },
+        output: "Created src/merged.mjs with SERVICE_NAME and RETRY_LIMIT from the source modules."
+      }
     },
     {
       id: "lc_format_currency",
@@ -246,7 +276,13 @@ const suite = {
               "import test from 'node:test'; import assert from 'node:assert/strict'; import { formatUsd } from '../src/format.mjs'; test('usd', () => assert.equal(formatUsd(12.5), '$12.50'));\n"
           }
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "src/format.mjs": `${notesArrayJs("fmt", 65)}export function formatUsd(value) { return "$" + Number(value).toFixed(2); }\n`
+        },
+        output: "formatUsd now prefixes $ and keeps two decimal places."
+      }
     },
     {
       id: "lc_mode_from_policy",
@@ -280,7 +316,13 @@ const suite = {
           contains: ["export const MODE = \"production\""],
           notContains: ["export const MODE = \"development\""]
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "src/runtime-mode.mjs": `${notesArrayJs("mode_pad", 55)}export const MODE = "production";\n`
+        },
+        output: "Set MODE to production as required by the policy."
+      }
     },
     {
       id: "lc_clamp_with_bounds",
@@ -316,7 +358,13 @@ const suite = {
               "import test from 'node:test'; import assert from 'node:assert/strict'; import { clamp } from '../src/math-ops.mjs'; test('mid', () => assert.equal(clamp(50), 50)); test('low', () => assert.equal(clamp(-5), 0)); test('high', () => assert.equal(clamp(200), 100));\n"
           }
         }
-      ]
+      ],
+      oracle: {
+        files: {
+          "src/math-ops.mjs": `${notesArrayJs("ops", 70)}export function clamp(value) { return Math.min(100, Math.max(0, value)); }\n`
+        },
+        output: "clamp now clamps to [LOWER, UPPER] from bounds."
+      }
     }
   ]
 };

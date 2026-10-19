@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import type { Command } from "commander";
@@ -111,6 +111,7 @@ export function registerEvalCommands(program: Command): void {
       suite: string;
       tasks?: string;
     }) => {
+      const resumeDirectory = commandOptions.resume ?? commandOptions.output;
       const report = await runCapabilityEval({
         ...(commandOptions.arm !== undefined ? { arm: parseArm(commandOptions.arm) } : {}),
         concurrency: commandOptions.concurrency,
@@ -121,7 +122,7 @@ export function registerEvalCommands(program: Command): void {
         ...(commandOptions.passAtK !== undefined ? { passAtK: commandOptions.passAtK } : {}),
         providerName: commandOptions.provider,
         repetitions: commandOptions.repetitions,
-        ...(commandOptions.resume !== undefined ? { resumeDirectory: commandOptions.resume } : {}),
+        ...(resumeDirectory !== undefined ? { resumeDirectory } : {}),
         suitePath: commandOptions.suite,
         taskIds: parseTaskIds(commandOptions.tasks)
       });
@@ -130,7 +131,7 @@ export function registerEvalCommands(program: Command): void {
         console.error(`Eval artifacts: ${artifacts.jsonPath}, ${artifacts.junitPath}`);
       }
       console.log(commandOptions.json === true ? JSON.stringify(report, null, 2) : formatCapabilityEvalReport(report));
-      if (!report.gate.passed) process.exitCode = 1;
+      process.exit(report.gate.passed ? 0 : 1);
     });
 
   evalCommand
@@ -178,7 +179,7 @@ export function registerEvalCommands(program: Command): void {
         console.error(`Compounding artifacts: ${emptyArtifacts.jsonPath}, ${accumulatedArtifacts.jsonPath}`);
       }
       console.log(commandOptions.json === true ? JSON.stringify(report, null, 2) : formatCompoundingEvalReport(report));
-      if (!report.gate.passed) process.exitCode = 1;
+      process.exit(report.gate.passed ? 0 : 1);
     });
 
   evalCommand
@@ -222,13 +223,13 @@ export function registerEvalCommands(program: Command): void {
         console.error(`Eval artifacts: ${artifacts.jsonPath}, ${artifacts.junitPath}`);
       }
       console.log(commandOptions.json === true ? JSON.stringify(report, null, 2) : formatCapabilityEvalReport(report));
-      if (!report.gate.passed) process.exitCode = 1;
+      process.exit(report.gate.passed ? 0 : 1);
     });
 
   evalCommand
     .command("validate-suite")
     .description("Validate oracle solvability and null-agent failure without model calls")
-    .option("--suite <path>", "Suite to validate (repeatable). Defaults to the three first-party suites.")
+    .option("--suite <path>", "Suite to validate (repeatable). Defaults to the first-party eval suites.")
     .action(async (commandOptions: { suite?: string | string[] }) => {
       const suites = normalizeSuitePaths(commandOptions.suite);
       let failed = false;
@@ -289,15 +290,21 @@ export function registerEvalCommands(program: Command): void {
     .requiredOption("--report <path>", "Passing eval report")
     .requiredOption("--output <path>", "Baseline output path")
     .option("--min-success-rate <number>", "Minimum success rate required to approve", parseRatioOption("--min-success-rate"), 0.5)
-    .action((commandOptions: { minSuccessRate: number; output: string; report: string }) => {
+    .option("--allow-failed-gate", "Archive a measured report even when high-risk scorers failed the gate")
+    .action((commandOptions: { allowFailedGate?: boolean; minSuccessRate: number; output: string; report: string }) => {
       const report = readEvalReport(commandOptions.report);
-      if (!report.gate.passed) throw new Error("Cannot approve a failing eval report as baseline.");
+      if (!report.gate.passed && commandOptions.allowFailedGate !== true) {
+        throw new Error("Cannot approve a failing eval report as baseline.");
+      }
+      if (!report.gate.passed) {
+        console.warn("Warning: archiving a report whose eval gate failed.");
+      }
       if (report.metrics.successRate < commandOptions.minSuccessRate) {
         throw new Error(`Cannot approve a baseline below ${(commandOptions.minSuccessRate * 100).toFixed(0)}% success rate.`);
       }
       const outputPath = resolve(commandOptions.output);
       mkdirSync(dirname(outputPath), { recursive: true });
-      copyFileSync(resolve(commandOptions.report), outputPath);
+      writeFileSync(outputPath, `${JSON.stringify(stripEvalTraces(report), null, 2)}\n`, "utf8");
       console.log(`Baseline updated: ${outputPath}`);
     });
 
@@ -429,6 +436,16 @@ function readEvalReport(path: string): EvalRunReport {
   return JSON.parse(readFileSync(resolve(path), "utf8")) as EvalRunReport;
 }
 
+function stripEvalTraces(report: EvalRunReport): EvalRunReport {
+  return {
+    ...report,
+    tasks: report.tasks.map((task) => ({
+      ...task,
+      trials: task.trials.map((trial) => ({ ...trial, trace: [] }))
+    }))
+  };
+}
+
 function formatCapabilityEvalReport(report: EvalRunReport): string {
   return [
     `Suite: ${report.suite.id}@${report.suite.version}`,
@@ -442,6 +459,7 @@ function formatCapabilityEvalReport(report: EvalRunReport): string {
     `Pass^k: ${(report.metrics.passPowerK * 100).toFixed(1)}%`,
     `Duration p50/p95: ${report.metrics.durationMs.p50.toFixed(0)}ms/${report.metrics.durationMs.p95.toFixed(0)}ms`,
     `Average rounds/tools: ${report.metrics.averageRounds.toFixed(2)}/${report.metrics.averageToolCalls.toFixed(2)}`,
+    `Iteration cap hits: ${report.metrics.iterationCapHitCount ?? 0} (${((report.metrics.iterationCapHitRate ?? 0) * 100).toFixed(1)}%)`,
     report.metrics.verificationCompletionRate === undefined || report.metrics.verificationCompletionRate === null ? "Verification completion: unavailable" : `Verification completion: ${(report.metrics.verificationCompletionRate * 100).toFixed(1)}%`,
     report.metrics.workspaceScopeViolationRate === undefined ? "Workspace scope violations: unavailable" : `Workspace scope violations: ${(report.metrics.workspaceScopeViolationRate * 100).toFixed(1)}%`,
     report.metrics.providerRecovery === undefined ? "Provider recovery: unavailable" : `Provider recovery: ${report.metrics.providerRecovery.recovered}/${report.metrics.providerRecovery.attempted}`,
@@ -491,6 +509,8 @@ function normalizeSuitePaths(value: string | string[] | undefined): string[] {
     "fixtures/eval-suites/internal-blind.v1.json",
     "fixtures/eval-suites/internal-blind.v2.json",
     "fixtures/eval-suites/reliability-acceptance.v1.json",
-    "fixtures/eval-suites/memory-compounding.v1.json"
+    "fixtures/eval-suites/memory-compounding.v1.json",
+    "fixtures/eval-suites/long-context.v1.json",
+    "fixtures/eval-suites/compounding-self-evolution.v1.json"
   ];
 }

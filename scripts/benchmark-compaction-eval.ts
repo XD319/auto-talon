@@ -227,7 +227,8 @@ async function main(): Promise<void> {
     console.error(`Running ${arm.label} against ${options.suite}...`);
     const report = await runCapabilityEval({
       ...common,
-      compactOverride: arm.compactOverride
+      compactOverride: arm.compactOverride,
+      resumeDirectory: armDir
     });
     writeFileSync(join(armDir, "eval-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
     summaries[arm.label] = summarizeArm(arm.label, report);
@@ -280,7 +281,11 @@ async function main(): Promise<void> {
   console.error(`Wrote ${comparisonPath}`);
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });

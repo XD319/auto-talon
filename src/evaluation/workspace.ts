@@ -47,6 +47,27 @@ export async function copyWorkspaceForGrading(sourceRoot: string, gradingRoot: s
   });
 }
 
+const TRANSIENT_RM_CODES = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
+
+/** Best-effort recursive delete; retries Windows file-lock errors, then gives up without throwing. */
+export async function removeTempDir(path: string): Promise<void> {
+  const delaysMs = [0, 50, 150, 400, 1000];
+  for (const delayMs of delaysMs) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      await fs.rm(path, { force: true, recursive: true });
+      return;
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String(error.code) : "";
+      if (!TRANSIENT_RM_CODES.has(code)) {
+        throw error;
+      }
+    }
+  }
+}
+
 export function safeWorkspacePath(workspaceRoot: string, path: string): string {
   const absolute = resolve(workspaceRoot, path);
   const relativePath = relative(resolve(workspaceRoot), absolute);

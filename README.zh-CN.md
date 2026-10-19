@@ -275,7 +275,7 @@ AutoTalon 面向需要真实工具权限、同时也需要可见护栏的本地�
 | 接入外部入口           | [Gateway](docs/user/gateway.md)、[Gateway 排查](docs/troubleshooting/gateway.md)                  |
 | 使用记忆和 skills     | [Skills](docs/user/skills.md)、[Memory 排查](docs/troubleshooting/memory.md)                      |
 | 集成 MCP           | [MCP](docs/user/mcp.md)                                                                        |
-| 验证发布             | [Replay 与 eval](docs/user/replay-and-eval.md)、[兼容矩阵](docs/compatibility-matrix.md)             |
+| 验证发布             | [Replay 与 eval](docs/user/replay-and-eval.md)、[评测结果口径](docs/eval-results.md)、[兼容矩阵](docs/compatibility-matrix.md)             |
 | 开发 AutoTalon     | [架构](docs/dev/architecture.md)、[模块边界](docs/dev/module-boundaries.md)、[测试](docs/dev/testing.md)、[上下文窗口](docs/dev/context-window.md)、[桌面 companion](docs/dev/desktop-companion.md) |
 
 

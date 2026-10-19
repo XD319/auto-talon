@@ -10,8 +10,10 @@ import {
   loadEvalSuite,
   passAtK,
   passPowerK,
+  removeTempDir,
   runCapabilityEval,
   runRecallProbe,
+  toMarkdown,
   validateEvalSuite,
   wilsonInterval,
   writeEvalArtifacts,
@@ -22,13 +24,16 @@ import {
 import { TOOLSET_TOOLS } from "../src/tools/toolsets.js";
 import type { Provider, ProviderInput, ProviderResponse } from "../src/types/index.js";
 import { runSmokeSuite } from "../src/testing/index.js";
+import { evaluateScorer } from "../src/evaluation/scorers.js";
 
 const KNOWN_TOOLS = new Set(Object.values(TOOLSET_TOOLS).flat());
 const EVAL_SUITE_PATHS = [
   "fixtures/eval-suites/internal-blind.v1.json",
   "fixtures/eval-suites/internal-blind.v2.json",
   "fixtures/eval-suites/reliability-acceptance.v1.json",
-  "fixtures/eval-suites/memory-compounding.v1.json"
+  "fixtures/eval-suites/memory-compounding.v1.json",
+  "fixtures/eval-suites/long-context.v1.json",
+  "fixtures/eval-suites/compounding-self-evolution.v1.json"
 ] as const;
 
 const tempPaths: string[] = [];
@@ -41,6 +46,25 @@ afterEach(async () => {
 });
 
 describe("evaluation core", () => {
+  it("rejects modified tests while ignoring Python cache directories", async () => {
+    const scorer = evalSuiteManifestSchema.parse({
+      description: "scope test", id: "scope", schemaVersion: 1, version: "1",
+      tasks: [{ id: "task", title: "task", input: "task", category: "coding", capabilities: ["coding"],
+        scorers: [{ id: "scope", type: "workspace_diff", allowedPaths: ["solution.py"], requiredPaths: ["solution.py"],
+          ignoredDirectoryNames: [".pytest_cache", "__pycache__"] }] }]
+    }).tasks[0]!.scorers[0]!;
+    const context = { beforeFiles: new Map([["solution.py", "old"], ["test_solution.py", "test"]]),
+      afterFiles: new Map([["solution.py", "new"], ["test_solution.py", "changed"],
+        [".pytest_cache/v/cache/nodeids", "cache"], ["pkg/__pycache__/solution.pyc", "cache"]]),
+      output: null, toolCalls: [], trace: [], workspaceRoot: process.cwd() };
+    const rejected = await evaluateScorer(scorer, context);
+    expect(rejected.passed).toBe(false);
+    expect(rejected.evidence).toContain("test_solution.py");
+    context.afterFiles.set("test_solution.py", "test");
+    const accepted = await evaluateScorer(scorer, context);
+    expect(accepted.passed).toBe(true);
+  });
+
   it("loads the versioned thirty-task blind suite", () => {
     const suite = loadEvalSuite("fixtures/eval-suites/internal-blind.v1.json");
     expect(suite.schemaVersion).toBe(1);
@@ -154,6 +178,38 @@ describe("evaluation core", () => {
     }
   });
 
+  it("prices all provider calls in a budgeted trial", async () => {
+    const root = await makeTempDirectory("eval-priced-");
+    const suitePath = join(root, "suite.json");
+    await fs.writeFile(suitePath, JSON.stringify({ description: "priced", id: "priced", version: "1", schemaVersion: 1,
+      tasks: [{ id: "answer", title: "answer", input: "Reply READY", category: "test", capabilities: ["answer"],
+        scorers: [{ id: "output", type: "output", contains: ["READY"] }] }] }), "utf8");
+    const report = await runCapabilityEval({ suitePath, configCwd: process.cwd(), providerName: "test-provider",
+      providerFactory: () => new FinalProvider([]), repetitions: 1, maxCostUsd: 1,
+      configOverride: { budget: { pricing: {
+        mock: { inputPerMillion: 1, outputPerMillion: 1 },
+        "blind-test-provider": { inputPerMillion: 1, outputPerMillion: 1 }
+      } } as never } });
+    expect(report.gate.passed).toBe(true);
+    expect(report.metrics.costUsd.coverage).toBe(1);
+    expect(report.tasks[0]?.trials[0]?.costUsd).toBeCloseTo(0.000003);
+    let calls = 0;
+    const polished = await runCapabilityEval({ suitePath, configCwd: process.cwd(), providerName: "test-provider",
+      providerFactory: () => ({ name: "blind-test-provider", generate: async () => {
+        calls += 1;
+        return { kind: "final" as const,
+          message: calls === 1 ? "Let me think. I need to inspect this. Wait, let me re-read." : "READY",
+          usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 } };
+      } }), repetitions: 1, maxCostUsd: 1,
+      configOverride: { budget: { pricing: { mock: { inputPerMillion: 1, outputPerMillion: 1 },
+        "blind-test-provider": { inputPerMillion: 1, outputPerMillion: 1 } } } as never } });
+    expect(calls).toBe(2);
+    expect(polished.metrics.costUsd.coverage).toBe(1);
+    expect(polished.tasks[0]?.trials[0]?.costUsd).toBeCloseTo(0.000006);
+    await expect(runCapabilityEval({ suitePath, configCwd: process.cwd(), providerName: "test-provider",
+      providerFactory: () => new FinalProvider([]), repetitions: 1, maxCostUsd: 1 })).rejects.toThrow(/pricing/);
+  });
+
   it("keeps the run gate passing when a low-risk required scorer misses", async () => {
     const report = await runMissedOutputEval({
       capabilities: ["coding"],
@@ -164,6 +220,50 @@ describe("evaluation core", () => {
     expect(report.gate.passed).toBe(true);
     expect(report.metrics.successRate).toBe(0);
     expect(report.tasks[0]?.trials[0]?.success).toBe(false);
+  });
+
+  it("records iteration-cap hits without changing the gate", async () => {
+    const underCap = await runMissedOutputEval({
+      capabilities: ["coding"],
+      id: "under-cap",
+      risk: "low",
+      title: "Under cap"
+    });
+    expect(underCap.metrics.iterationCapHitCount).toBe(0);
+    expect(underCap.metrics.iterationCapHitRate).toBe(0);
+    expect(underCap.tasks[0]?.trials[0]?.maxIterations).toBeGreaterThan(0);
+    expect(underCap.tasks[0]?.trials[0]?.rounds).toBeLessThan(underCap.tasks[0]?.trials[0]?.maxIterations ?? 0);
+
+    const root = await makeTempDirectory("eval-cap-");
+    const suitePath = join(root, "suite.json");
+    await fs.writeFile(suitePath, JSON.stringify({
+      description: "cap suite",
+      id: "cap-test",
+      schemaVersion: 1,
+      tasks: [{
+        capabilities: ["coding"],
+        category: "test",
+        id: "cap-hit",
+        input: "Reply READY",
+        scorers: [{ contains: ["READY"], id: "output", type: "output" }],
+        title: "Cap hit",
+        workspace: { files: { "note.txt": "ok\n" } }
+      }],
+      version: "1"
+    }), "utf8");
+    const capped = await runCapabilityEval({
+      configCwd: process.cwd(),
+      configOverride: { defaultMaxIterations: 2 },
+      providerFactory: () => new LoopingToolProvider(),
+      providerName: "test-provider",
+      repetitions: 1,
+      suitePath
+    });
+    expect(capped.metrics.iterationCapHitCount).toBe(1);
+    expect(capped.metrics.iterationCapHitRate).toBe(1);
+    expect(capped.tasks[0]?.trials[0]?.rounds).toBeGreaterThanOrEqual(2);
+    expect(capped.gate.passed).toBe(true);
+    expect(toMarkdown(capped)).toContain("Iteration cap hits: 1 (100.0%)");
   });
 
   it("fails the run gate when a high-risk required scorer misses", async () => {
@@ -188,6 +288,13 @@ describe("evaluation core", () => {
     const paths = await writeEvalArtifacts(baseline, output);
     expect(await fs.readFile(paths.jsonPath, "utf8")).toContain("blind-test");
     expect(await fs.readFile(paths.junitPath, "utf8")).toContain("testsuite");
+  });
+
+  it("retries temp-dir cleanup without failing the caller", async () => {
+    const root = await makeTempDirectory("eval-rm-");
+    await fs.writeFile(join(root, "keep.txt"), "ok\n", "utf8");
+    await removeTempDir(root);
+    await expect(fs.access(root)).rejects.toThrow();
   });
 
   it("fails fast for unknown smoke task ids", async () => {
@@ -215,10 +322,10 @@ describe("evaluation core", () => {
   });
 
   it("validates oracles and rejects a null-agent-solvable task", async () => {
-    const report = await validateEvalSuite("fixtures/eval-suites/internal-blind.v2.json");
-    expect(report.passed, report.issues.map((issue) => `${issue.taskId}:${issue.kind}:${issue.evidence}`).join("\n")).toBe(true);
-    const memoryReport = await validateEvalSuite("fixtures/eval-suites/memory-compounding.v1.json");
-    expect(memoryReport.passed, memoryReport.issues.map((issue) => `${issue.taskId}:${issue.kind}:${issue.evidence}`).join("\n")).toBe(true);
+    for (const path of EVAL_SUITE_PATHS) {
+      const report = await validateEvalSuite(path);
+      expect(report.passed, `${path}: ${report.issues.map((issue) => `${issue.taskId}:${issue.kind}:${issue.evidence}`).join("\n")}`).toBe(true);
+    }
   });
 
   it("rejects baseline comparison when the suite version drifts", () => {
@@ -243,6 +350,27 @@ describe("evaluation core", () => {
     expect(probe.recallAtK).toBeGreaterThan(0);
   });
 });
+
+class LoopingToolProvider implements Provider {
+  public readonly name = "looping-test-provider";
+  public readonly model = "looping-test-model";
+  private calls = 0;
+
+  public generate(): Promise<ProviderResponse> {
+    this.calls += 1;
+    return Promise.resolve({
+      kind: "tool_calls",
+      message: "inspect",
+      toolCalls: [{
+        input: { path: "note.txt" },
+        reason: "loop",
+        toolCallId: `loop-${this.calls}`,
+        toolName: "read_file"
+      }],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+    });
+  }
+}
 
 class FinalProvider implements Provider {
   public readonly name = "blind-test-provider";

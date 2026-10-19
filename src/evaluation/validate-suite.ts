@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import type { JsonObject, ToolCallRecord, TraceEvent } from "../types/index.js";
 import { loadEvalSuite, type EvalOracle, type EvalTask } from "./schema.js";
 import { evaluateScorer } from "./scorers.js";
-import { seedWorkspace, snapshotWorkspace } from "./workspace.js";
+import { removeTempDir, seedWorkspace, snapshotWorkspace } from "./workspace.js";
 
 export interface SuiteValidationIssue {
   kind: "missing_oracle" | "oracle_failed" | "null_agent_passed";
@@ -118,6 +118,6 @@ async function gradeWithOracle(task: EvalTask, oracle: EvalOracle) {
     }
     return results;
   } finally {
-    await fs.rm(workspaceRoot, { force: true, recursive: true });
+    await removeTempDir(workspaceRoot);
   }
 }

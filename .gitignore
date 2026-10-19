@@ -4,6 +4,8 @@ node_modules/
 coverage/
 .tmp-tests/
 eval-artifacts/
+.tmp-benchmarks/
+fixtures/eval-suites/polyglot-python.v1.json
 *.log
 *.tsbuildinfo
 package-lock.json

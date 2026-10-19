@@ -1,0 +1,53 @@
+{
+  "ablatedDisables": [
+    "compact",
+    "toolResultPruning",
+    "fileReadCache",
+    "recall",
+    "memory",
+    "repoMap",
+    "promotion",
+    "experience",
+    "completionVerification"
+  ],
+  "deltas": {
+    "averageRounds": -0.22058823529411686,
+    "averageToolCalls": -0.35294117647058787,
+    "inputTokens": -212399,
+    "passAtK": 0,
+    "successRate": -0.014705882352941124,
+    "totalTokens": -209392
+  },
+  "generatedAt": "2026-09-25T07:40:48.006Z",
+  "governed": {
+    "averageRounds": 6.397058823529412,
+    "averageToolCalls": 6.970588235294118,
+    "gatePassed": true,
+    "inputTokens": 3949764,
+    "label": "governed",
+    "passAtK": 1,
+    "successRate": 0.9852941176470589,
+    "totalTokens": 4154337
+  },
+  "ablated": {
+    "averageRounds": 6.617647058823529,
+    "averageToolCalls": 7.323529411764706,
+    "gatePassed": true,
+    "inputTokens": 4162163,
+    "label": "ablated",
+    "passAtK": 1,
+    "successRate": 1,
+    "totalTokens": 4363729
+  },
+  "notDisabled": [
+    "sandbox",
+    "approval policy",
+    "tool schema",
+    "skills registry (empty workspace has none)",
+    "delegation tool registration"
+  ],
+  "provider": "deepseek",
+  "repetitions": 2,
+  "suite": "fixtures/eval-suites/polyglot-python.v1.json",
+  "taskIds": []
+}

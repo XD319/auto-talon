@@ -75,7 +75,10 @@ async function evaluateCommand(scorer: Extract<EvalScorer, { type: "command" }>,
 }
 
 function evaluateDiff(scorer: Extract<EvalScorer, { type: "workspace_diff" }>, context: EvalScorerContext): EvalScorerResult {
-  const changed = changedPaths(context.beforeFiles, context.afterFiles);
+  const ignored = new Set(scorer.ignoredDirectoryNames);
+  const changed = changedPaths(context.beforeFiles, context.afterFiles).filter(
+    (path) => !normalizePath(path).split("/").slice(0, -1).some((part) => ignored.has(part))
+  );
   const allowed = new Set(scorer.allowedPaths.map(normalizePath));
   const outside = changed.filter((path) => !allowed.has(path));
   const missing = scorer.requiredPaths.map(normalizePath).filter((path) => !changed.includes(path));

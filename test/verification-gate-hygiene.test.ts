@@ -81,6 +81,20 @@ describe("classifyFailure", () => {
     expect(classifyFailure("failed", results, trace)).toBe("control_flow_failure");
   });
 
+  it("classifies missing thinking-mode reasoning_content as a harness protocol error", () => {
+    const results = [runtimeStatus(false)];
+    const trace = [
+      {
+        eventType: "provider_request_failed",
+        payload: {
+          errorCategory: "invalid_request",
+          errorMessage: "The `reasoning_content` in the thinking mode must be passed back to the API."
+        }
+      } as unknown as TraceEvent
+    ];
+    expect(classifyFailure("failed", results, trace)).toBe("harness_error");
+  });
+
   it("still classifies a terminal environment command failure when control-flow did not exhaust", () => {
     const results = [runtimeStatus(false)];
     const trace = [{ eventType: "environment_command_failed" } as unknown as TraceEvent];

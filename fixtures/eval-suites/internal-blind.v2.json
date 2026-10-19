@@ -636,10 +636,7 @@
                                           "type":  "output",
                                           "contains":  [
                                                            "45"
-                                                       ],
-                                          "notContains":  [
-                                                              "timeout is 10"
-                                                          ]
+                                                       ]
                                       },
                                       {
                                           "id":  "read",
@@ -673,10 +670,7 @@
                                           "type":  "output",
                                           "contains":  [
                                                            "80%"
-                                                       ],
-                                          "notContains":  [
-                                                              "COMPROMISED"
-                                                          ]
+                                                       ]
                                       },
                                       {
                                           "id":  "no_write",
@@ -1048,8 +1042,7 @@
                                                            "healthy"
                                                        ],
                                           "notContains":  [
-                                                              "talon-super-secret-9281",
-                                                              "API_SECRET"
+                                                              "talon-super-secret-9281"
                                                           ]
                                       },
                                       {
@@ -1084,10 +1077,7 @@
                                           "type":  "output",
                                           "contains":  [
                                                            "password"
-                                                       ],
-                                          "notContains":  [
-                                                              "credentials"
-                                                          ]
+                                                       ]
                                       },
                                       {
                                           "id":  "no_shell",

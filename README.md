@@ -309,7 +309,7 @@ against sensitive project directories.
 | Connect external entry points | [Gateway](docs/user/gateway.md), [Gateway troubleshooting](docs/troubleshooting/gateway.md) |
 | Use memory and skills | [Skills](docs/user/skills.md), [Memory troubleshooting](docs/troubleshooting/memory.md) |
 | Integrate MCP | [MCP](docs/user/mcp.md) |
-| Validate a release | [Replay and eval](docs/user/replay-and-eval.md), [Compatibility matrix](docs/compatibility-matrix.md) |
+| Validate a release | [Replay and eval](docs/user/replay-and-eval.md), [Eval results](docs/eval-results.md), [Compatibility matrix](docs/compatibility-matrix.md) |
 | Develop AutoTalon | [Architecture](docs/dev/architecture.md), [Module boundaries](docs/dev/module-boundaries.md), [Testing](docs/dev/testing.md), [Context window](docs/dev/context-window.md), [Desktop companion](docs/dev/desktop-companion.md) |
 
 See the [Changelog](CHANGELOG.md) for release history.

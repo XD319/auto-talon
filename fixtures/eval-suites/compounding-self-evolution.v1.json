@@ -15,6 +15,12 @@
       "risk": "low",
       "capabilities": ["coding", "skill_reuse"],
       "workspace": { "files": { "package.json": "{\"type\":\"module\"}\n" } },
+      "oracle": {
+        "files": {
+          "src/slug.mjs": "export function slugify(value) {\n  return String(value).trim().toLowerCase().replace(/\\s+/g, \"-\");\n}\n"
+        },
+        "output": "Created src/slug.mjs with the project slug convention."
+      },
       "scorers": [
         { "id": "diff", "type": "workspace_diff", "allowedPaths": ["src/slug.mjs"], "requiredPaths": ["src/slug.mjs"] },
         { "id": "hidden_test", "type": "command", "command": "node --test .eval-hidden/slug.test.mjs", "hiddenFiles": { ".eval-hidden/slug.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { slugify } from '../src/slug.mjs'; test('slug',()=>assert.equal(slugify('  Hello   Agent  '),'hello-agent'));\n" } }
@@ -29,6 +35,12 @@
       "risk": "low",
       "capabilities": ["coding", "skill_reuse"],
       "workspace": { "files": { "package.json": "{\"type\":\"module\"}\n" } },
+      "oracle": {
+        "files": {
+          "src/retry.mjs": "export async function retryWithBackoff(fn, { attempts = 3, delayMs = 10 } = {}) {\n  let lastError;\n  for (let i = 1; i <= attempts; i += 1) {\n    try {\n      return await fn();\n    } catch (error) {\n      lastError = error;\n      if (i < attempts) {\n        await new Promise((resolve) => setTimeout(resolve, delayMs));\n      }\n    }\n  }\n  throw lastError;\n}\n"
+        },
+        "output": "Created src/retry.mjs with retryWithBackoff."
+      },
       "scorers": [
         { "id": "diff", "type": "workspace_diff", "allowedPaths": ["src/retry.mjs"], "requiredPaths": ["src/retry.mjs"] },
         { "id": "hidden_test", "type": "command", "command": "node --test .eval-hidden/retry.test.mjs", "hiddenFiles": { ".eval-hidden/retry.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { retryWithBackoff } from '../src/retry.mjs'; test('retries', async () => { let n=0; const started=Date.now(); const value=await retryWithBackoff(async()=>{ n+=1; if(n<3) throw new Error('flaky'); return 'ok'; }, {attempts:3, delayMs:10}); assert.equal(value,'ok'); assert.equal(n,3); assert.ok(Date.now()-started>=20); });\n" } }
@@ -43,6 +55,12 @@
       "risk": "low",
       "capabilities": ["coding", "configuration", "skill_reuse"],
       "workspace": { "files": { "config/app.json": "{\n  \"featureFlag\": false,\n  \"mode\": \"safe\",\n  \"extra\": {\"keep\": true}\n}\n" } },
+      "oracle": {
+        "files": {
+          "config/app.json": "{\n  \"featureFlag\": true,\n  \"mode\": \"safe\",\n  \"extra\": {\"keep\": true}\n}\n"
+        },
+        "output": "Enabled featureFlag and preserved extra keys."
+      },
       "scorers": [
         { "id": "diff", "type": "workspace_diff", "allowedPaths": ["config/app.json"], "requiredPaths": ["config/app.json"] },
         { "id": "state", "type": "file_state", "path": "config/app.json", "contains": ["\"featureFlag\": true", "\"mode\": \"safe\"", "\"keep\": true"] },
@@ -58,6 +76,12 @@
       "risk": "low",
       "capabilities": ["coding", "skill_reuse"],
       "workspace": { "files": { "package.json": "{\"type\":\"module\"}\n" } },
+      "oracle": {
+        "files": {
+          "src/errors.mjs": "export function classifyParseError(value) {\n  if (value === \"\") return \"empty_input\";\n  if (typeof value !== \"string\") return \"invalid_type\";\n  return \"out_of_range\";\n}\n"
+        },
+        "output": "Created src/errors.mjs with classifyParseError."
+      },
       "scorers": [
         { "id": "diff", "type": "workspace_diff", "allowedPaths": ["src/errors.mjs"], "requiredPaths": ["src/errors.mjs"] },
         { "id": "hidden_test", "type": "command", "command": "node --test .eval-hidden/errors.test.mjs", "hiddenFiles": { ".eval-hidden/errors.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { classifyParseError } from '../src/errors.mjs'; test('empty',()=>assert.equal(classifyParseError(''),'empty_input')); test('type',()=>assert.equal(classifyParseError(1),'invalid_type')); test('range',()=>assert.equal(classifyParseError('99999'),'out_of_range'));\n" } }
@@ -72,6 +96,12 @@
       "risk": "low",
       "capabilities": ["documentation", "skill_reuse"],
       "workspace": { "files": { "CHANGELOG.md": "# Changes\n\n- Added trace export.\n- Fixed approval retry.\n" } },
+      "oracle": {
+        "files": {
+          "docs/release-note.md": "# Release note\n\n## Summary\nAdded trace export and fixed approval retry.\n\n## Verification\nCovered trace export and approval retry in this note.\n"
+        },
+        "output": "Created docs/release-note.md with Summary and Verification headings."
+      },
       "scorers": [
         { "id": "diff", "type": "workspace_diff", "allowedPaths": ["docs/release-note.md"], "requiredPaths": ["docs/release-note.md"] },
         { "id": "content", "type": "file_state", "path": "docs/release-note.md", "contains": ["Summary", "Verification", "trace", "approval"] }
@@ -86,6 +116,12 @@
       "risk": "low",
       "capabilities": ["coding", "skill_reuse"],
       "workspace": { "files": { "package.json": "{\"type\":\"module\"}\n" } },
+      "oracle": {
+        "files": {
+          "src/unique.mjs": "export function unique(values) {\n  const seen = new Set();\n  const result = [];\n  for (const value of values) {\n    if (seen.has(value)) continue;\n    seen.add(value);\n    result.push(value);\n  }\n  return result;\n}\n"
+        },
+        "output": "Created src/unique.mjs with first-seen uniqueness."
+      },
       "scorers": [
         { "id": "diff", "type": "workspace_diff", "allowedPaths": ["src/unique.mjs"], "requiredPaths": ["src/unique.mjs"] },
         { "id": "hidden_test", "type": "command", "command": "node --test .eval-hidden/unique.test.mjs", "hiddenFiles": { ".eval-hidden/unique.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { unique } from '../src/unique.mjs'; test('stable',()=>assert.deepEqual(unique(['b','a','b','c','a']),['b','a','c']));\n" } }

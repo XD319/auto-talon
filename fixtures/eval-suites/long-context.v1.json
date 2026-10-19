@@ -46,7 +46,13 @@
             ".eval-hidden/math.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { add } from '../src/math.mjs'; test('adds', () => assert.equal(add(2, 3), 5));\n"
           }
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "src/math.mjs": "export function add(a, b) {\n  return a + b;\n}\n"
+        },
+        "output": "Inspected src/util/numbers.mjs and src/util/strings.mjs, then added src/math.mjs."
+      }
     },
     {
       "id": "lc_slug_cross_file_fix",
@@ -88,7 +94,13 @@
             ".eval-hidden/slug.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { slugify } from '../src/slug.mjs'; test('slug', () => assert.equal(slugify('  Hello   Agent  '), 'hello-agent'));\n"
           }
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "src/slug.mjs": "export const notes = [\n  \"slug_pad-0000 note\",\n  \"slug_pad-0001 note\",\n  \"slug_pad-0002 note\",\n  \"slug_pad-0003 note\",\n  \"slug_pad-0004 note\",\n  \"slug_pad-0005 note\",\n  \"slug_pad-0006 note\",\n  \"slug_pad-0007 note\",\n  \"slug_pad-0008 note\",\n  \"slug_pad-0009 note\",\n  \"slug_pad-0010 note\",\n  \"slug_pad-0011 note\",\n  \"slug_pad-0012 note\",\n  \"slug_pad-0013 note\",\n  \"slug_pad-0014 note\",\n  \"slug_pad-0015 note\",\n  \"slug_pad-0016 note\",\n  \"slug_pad-0017 note\",\n  \"slug_pad-0018 note\",\n  \"slug_pad-0019 note\",\n  \"slug_pad-0020 note\",\n  \"slug_pad-0021 note\",\n  \"slug_pad-0022 note\",\n  \"slug_pad-0023 note\",\n  \"slug_pad-0024 note\",\n  \"slug_pad-0025 note\",\n  \"slug_pad-0026 note\",\n  \"slug_pad-0027 note\",\n  \"slug_pad-0028 note\",\n  \"slug_pad-0029 note\",\n  \"slug_pad-0030 note\",\n  \"slug_pad-0031 note\",\n  \"slug_pad-0032 note\",\n  \"slug_pad-0033 note\",\n  \"slug_pad-0034 note\",\n  \"slug_pad-0035 note\",\n  \"slug_pad-0036 note\",\n  \"slug_pad-0037 note\",\n  \"slug_pad-0038 note\",\n  \"slug_pad-0039 note\",\n  \"slug_pad-0040 note\",\n  \"slug_pad-0041 note\",\n  \"slug_pad-0042 note\",\n  \"slug_pad-0043 note\",\n  \"slug_pad-0044 note\",\n  \"slug_pad-0045 note\",\n  \"slug_pad-0046 note\",\n  \"slug_pad-0047 note\",\n  \"slug_pad-0048 note\",\n  \"slug_pad-0049 note\",\n  \"slug_pad-0050 note\",\n  \"slug_pad-0051 note\",\n  \"slug_pad-0052 note\",\n  \"slug_pad-0053 note\",\n  \"slug_pad-0054 note\",\n  \"slug_pad-0055 note\",\n  \"slug_pad-0056 note\",\n  \"slug_pad-0057 note\",\n  \"slug_pad-0058 note\",\n  \"slug_pad-0059 note\",\n  \"slug_pad-0060 note\",\n  \"slug_pad-0061 note\",\n  \"slug_pad-0062 note\",\n  \"slug_pad-0063 note\",\n  \"slug_pad-0064 note\",\n  \"slug_pad-0065 note\",\n  \"slug_pad-0066 note\",\n  \"slug_pad-0067 note\",\n  \"slug_pad-0068 note\",\n  \"slug_pad-0069 note\"\n];\nexport const slugify = (value) => value.trim().toLowerCase().replace(/\\s+/g, \"-\");\n"
+        },
+        "output": "Fixed slugify to trim, lowercase, and collapse spaces to dashes."
+      }
     },
     {
       "id": "lc_config_flag_from_notes",
@@ -130,7 +142,13 @@
             "\"mode\": \"safe\""
           ]
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "config/app.json": "{\n  \"featureFlag\": true,\n  \"mode\": \"safe\"\n}\n"
+        },
+        "output": "Enabled featureFlag and kept mode safe."
+      }
     },
     {
       "id": "lc_parse_port_from_limits",
@@ -172,7 +190,13 @@
             ".eval-hidden/parse.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { parsePort } from '../src/parse.mjs'; test('valid', () => assert.equal(parsePort('443'), 443)); test('invalid', () => assert.throws(() => parsePort('0'))); test('high', () => assert.throws(() => parsePort('70000')));\n"
           }
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "src/parse.mjs": "export const notes = [\n  \"parse_pad-0000 note\",\n  \"parse_pad-0001 note\",\n  \"parse_pad-0002 note\",\n  \"parse_pad-0003 note\",\n  \"parse_pad-0004 note\",\n  \"parse_pad-0005 note\",\n  \"parse_pad-0006 note\",\n  \"parse_pad-0007 note\",\n  \"parse_pad-0008 note\",\n  \"parse_pad-0009 note\",\n  \"parse_pad-0010 note\",\n  \"parse_pad-0011 note\",\n  \"parse_pad-0012 note\",\n  \"parse_pad-0013 note\",\n  \"parse_pad-0014 note\",\n  \"parse_pad-0015 note\",\n  \"parse_pad-0016 note\",\n  \"parse_pad-0017 note\",\n  \"parse_pad-0018 note\",\n  \"parse_pad-0019 note\",\n  \"parse_pad-0020 note\",\n  \"parse_pad-0021 note\",\n  \"parse_pad-0022 note\",\n  \"parse_pad-0023 note\",\n  \"parse_pad-0024 note\",\n  \"parse_pad-0025 note\",\n  \"parse_pad-0026 note\",\n  \"parse_pad-0027 note\",\n  \"parse_pad-0028 note\",\n  \"parse_pad-0029 note\",\n  \"parse_pad-0030 note\",\n  \"parse_pad-0031 note\",\n  \"parse_pad-0032 note\",\n  \"parse_pad-0033 note\",\n  \"parse_pad-0034 note\",\n  \"parse_pad-0035 note\",\n  \"parse_pad-0036 note\",\n  \"parse_pad-0037 note\",\n  \"parse_pad-0038 note\",\n  \"parse_pad-0039 note\",\n  \"parse_pad-0040 note\",\n  \"parse_pad-0041 note\",\n  \"parse_pad-0042 note\",\n  \"parse_pad-0043 note\",\n  \"parse_pad-0044 note\",\n  \"parse_pad-0045 note\",\n  \"parse_pad-0046 note\",\n  \"parse_pad-0047 note\",\n  \"parse_pad-0048 note\",\n  \"parse_pad-0049 note\",\n  \"parse_pad-0050 note\",\n  \"parse_pad-0051 note\",\n  \"parse_pad-0052 note\",\n  \"parse_pad-0053 note\",\n  \"parse_pad-0054 note\",\n  \"parse_pad-0055 note\",\n  \"parse_pad-0056 note\",\n  \"parse_pad-0057 note\",\n  \"parse_pad-0058 note\",\n  \"parse_pad-0059 note\"\n];\nexport function parsePort(value) {\n  const n = Number(value);\n  if (!Number.isInteger(n) || n < 1 || n > 65535) {\n    throw new Error(\"invalid port\");\n  }\n  return n;\n}\n"
+        },
+        "output": "parsePort now accepts integers from MIN_PORT through MAX_PORT."
+      }
     },
     {
       "id": "lc_merge_constants",
@@ -214,7 +238,13 @@
             ".eval-hidden/merged.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { SERVICE_NAME, RETRY_LIMIT } from '../src/merged.mjs'; test('merged', () => { assert.equal(SERVICE_NAME, 'auto-talon'); assert.equal(RETRY_LIMIT, 3); });\n"
           }
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "src/merged.mjs": "export const SERVICE_NAME = \"auto-talon\";\nexport const RETRY_LIMIT = 3;\n"
+        },
+        "output": "Created src/merged.mjs with SERVICE_NAME and RETRY_LIMIT from the source modules."
+      }
     },
     {
       "id": "lc_format_currency",
@@ -256,7 +286,13 @@
             ".eval-hidden/format.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { formatUsd } from '../src/format.mjs'; test('usd', () => assert.equal(formatUsd(12.5), '$12.50'));\n"
           }
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "src/format.mjs": "export const notes = [\n  \"fmt-0000 note\",\n  \"fmt-0001 note\",\n  \"fmt-0002 note\",\n  \"fmt-0003 note\",\n  \"fmt-0004 note\",\n  \"fmt-0005 note\",\n  \"fmt-0006 note\",\n  \"fmt-0007 note\",\n  \"fmt-0008 note\",\n  \"fmt-0009 note\",\n  \"fmt-0010 note\",\n  \"fmt-0011 note\",\n  \"fmt-0012 note\",\n  \"fmt-0013 note\",\n  \"fmt-0014 note\",\n  \"fmt-0015 note\",\n  \"fmt-0016 note\",\n  \"fmt-0017 note\",\n  \"fmt-0018 note\",\n  \"fmt-0019 note\",\n  \"fmt-0020 note\",\n  \"fmt-0021 note\",\n  \"fmt-0022 note\",\n  \"fmt-0023 note\",\n  \"fmt-0024 note\",\n  \"fmt-0025 note\",\n  \"fmt-0026 note\",\n  \"fmt-0027 note\",\n  \"fmt-0028 note\",\n  \"fmt-0029 note\",\n  \"fmt-0030 note\",\n  \"fmt-0031 note\",\n  \"fmt-0032 note\",\n  \"fmt-0033 note\",\n  \"fmt-0034 note\",\n  \"fmt-0035 note\",\n  \"fmt-0036 note\",\n  \"fmt-0037 note\",\n  \"fmt-0038 note\",\n  \"fmt-0039 note\",\n  \"fmt-0040 note\",\n  \"fmt-0041 note\",\n  \"fmt-0042 note\",\n  \"fmt-0043 note\",\n  \"fmt-0044 note\",\n  \"fmt-0045 note\",\n  \"fmt-0046 note\",\n  \"fmt-0047 note\",\n  \"fmt-0048 note\",\n  \"fmt-0049 note\",\n  \"fmt-0050 note\",\n  \"fmt-0051 note\",\n  \"fmt-0052 note\",\n  \"fmt-0053 note\",\n  \"fmt-0054 note\",\n  \"fmt-0055 note\",\n  \"fmt-0056 note\",\n  \"fmt-0057 note\",\n  \"fmt-0058 note\",\n  \"fmt-0059 note\",\n  \"fmt-0060 note\",\n  \"fmt-0061 note\",\n  \"fmt-0062 note\",\n  \"fmt-0063 note\",\n  \"fmt-0064 note\"\n];\nexport function formatUsd(value) { return \"$\" + Number(value).toFixed(2); }\n"
+        },
+        "output": "formatUsd now prefixes $ and keeps two decimal places."
+      }
     },
     {
       "id": "lc_mode_from_policy",
@@ -301,7 +337,13 @@
             "export const MODE = \"development\""
           ]
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "src/runtime-mode.mjs": "export const notes = [\n  \"mode_pad-0000 note\",\n  \"mode_pad-0001 note\",\n  \"mode_pad-0002 note\",\n  \"mode_pad-0003 note\",\n  \"mode_pad-0004 note\",\n  \"mode_pad-0005 note\",\n  \"mode_pad-0006 note\",\n  \"mode_pad-0007 note\",\n  \"mode_pad-0008 note\",\n  \"mode_pad-0009 note\",\n  \"mode_pad-0010 note\",\n  \"mode_pad-0011 note\",\n  \"mode_pad-0012 note\",\n  \"mode_pad-0013 note\",\n  \"mode_pad-0014 note\",\n  \"mode_pad-0015 note\",\n  \"mode_pad-0016 note\",\n  \"mode_pad-0017 note\",\n  \"mode_pad-0018 note\",\n  \"mode_pad-0019 note\",\n  \"mode_pad-0020 note\",\n  \"mode_pad-0021 note\",\n  \"mode_pad-0022 note\",\n  \"mode_pad-0023 note\",\n  \"mode_pad-0024 note\",\n  \"mode_pad-0025 note\",\n  \"mode_pad-0026 note\",\n  \"mode_pad-0027 note\",\n  \"mode_pad-0028 note\",\n  \"mode_pad-0029 note\",\n  \"mode_pad-0030 note\",\n  \"mode_pad-0031 note\",\n  \"mode_pad-0032 note\",\n  \"mode_pad-0033 note\",\n  \"mode_pad-0034 note\",\n  \"mode_pad-0035 note\",\n  \"mode_pad-0036 note\",\n  \"mode_pad-0037 note\",\n  \"mode_pad-0038 note\",\n  \"mode_pad-0039 note\",\n  \"mode_pad-0040 note\",\n  \"mode_pad-0041 note\",\n  \"mode_pad-0042 note\",\n  \"mode_pad-0043 note\",\n  \"mode_pad-0044 note\",\n  \"mode_pad-0045 note\",\n  \"mode_pad-0046 note\",\n  \"mode_pad-0047 note\",\n  \"mode_pad-0048 note\",\n  \"mode_pad-0049 note\",\n  \"mode_pad-0050 note\",\n  \"mode_pad-0051 note\",\n  \"mode_pad-0052 note\",\n  \"mode_pad-0053 note\",\n  \"mode_pad-0054 note\"\n];\nexport const MODE = \"production\";\n"
+        },
+        "output": "Set MODE to production as required by the policy."
+      }
     },
     {
       "id": "lc_clamp_with_bounds",
@@ -343,7 +385,13 @@
             ".eval-hidden/clamp.test.mjs": "import test from 'node:test'; import assert from 'node:assert/strict'; import { clamp } from '../src/math-ops.mjs'; test('mid', () => assert.equal(clamp(50), 50)); test('low', () => assert.equal(clamp(-5), 0)); test('high', () => assert.equal(clamp(200), 100));\n"
           }
         }
-      ]
+      ],
+      "oracle": {
+        "files": {
+          "src/math-ops.mjs": "export const notes = [\n  \"ops-0000 note\",\n  \"ops-0001 note\",\n  \"ops-0002 note\",\n  \"ops-0003 note\",\n  \"ops-0004 note\",\n  \"ops-0005 note\",\n  \"ops-0006 note\",\n  \"ops-0007 note\",\n  \"ops-0008 note\",\n  \"ops-0009 note\",\n  \"ops-0010 note\",\n  \"ops-0011 note\",\n  \"ops-0012 note\",\n  \"ops-0013 note\",\n  \"ops-0014 note\",\n  \"ops-0015 note\",\n  \"ops-0016 note\",\n  \"ops-0017 note\",\n  \"ops-0018 note\",\n  \"ops-0019 note\",\n  \"ops-0020 note\",\n  \"ops-0021 note\",\n  \"ops-0022 note\",\n  \"ops-0023 note\",\n  \"ops-0024 note\",\n  \"ops-0025 note\",\n  \"ops-0026 note\",\n  \"ops-0027 note\",\n  \"ops-0028 note\",\n  \"ops-0029 note\",\n  \"ops-0030 note\",\n  \"ops-0031 note\",\n  \"ops-0032 note\",\n  \"ops-0033 note\",\n  \"ops-0034 note\",\n  \"ops-0035 note\",\n  \"ops-0036 note\",\n  \"ops-0037 note\",\n  \"ops-0038 note\",\n  \"ops-0039 note\",\n  \"ops-0040 note\",\n  \"ops-0041 note\",\n  \"ops-0042 note\",\n  \"ops-0043 note\",\n  \"ops-0044 note\",\n  \"ops-0045 note\",\n  \"ops-0046 note\",\n  \"ops-0047 note\",\n  \"ops-0048 note\",\n  \"ops-0049 note\",\n  \"ops-0050 note\",\n  \"ops-0051 note\",\n  \"ops-0052 note\",\n  \"ops-0053 note\",\n  \"ops-0054 note\",\n  \"ops-0055 note\",\n  \"ops-0056 note\",\n  \"ops-0057 note\",\n  \"ops-0058 note\",\n  \"ops-0059 note\",\n  \"ops-0060 note\",\n  \"ops-0061 note\",\n  \"ops-0062 note\",\n  \"ops-0063 note\",\n  \"ops-0064 note\",\n  \"ops-0065 note\",\n  \"ops-0066 note\",\n  \"ops-0067 note\",\n  \"ops-0068 note\",\n  \"ops-0069 note\"\n];\nexport function clamp(value) { return Math.min(100, Math.max(0, value)); }\n"
+        },
+        "output": "clamp now clamps to [LOWER, UPPER] from bounds."
+      }
     }
   ]
 }

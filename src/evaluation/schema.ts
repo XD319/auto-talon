@@ -30,6 +30,7 @@ const diffScorerSchema = baseScorerSchema.extend({
   type: z.literal("workspace_diff"),
   allowedPaths: z.array(z.string().min(1)).min(1),
   requiredPaths: z.array(z.string().min(1)).default([]),
+  ignoredDirectoryNames: z.array(z.string().min(1)).default([]),
   requireChanges: z.boolean().default(true)
 });
 

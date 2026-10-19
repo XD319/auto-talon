@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { resolveProviderConfigForProvider } from "../providers/index.js";
 import { RecallEngine } from "../recall/recall-engine.js";
 import { createApplication, createDefaultRunOptions, type AppConfig, type AppRuntimeHandle } from "../runtime/index.js";
+import { resolveRuntimeConfig } from "../runtime/runtime-config.js";
 import type { Provider, TraceEvent } from "../types/index.js";
 import { collectGroupedMetrics } from "./grouped.js";
 import { materializeMemoryState, prepareMemoryEvalWorkspace } from "./memory-state.js";
@@ -22,7 +23,7 @@ import type {
   EvalTaskResult,
   EvalTrialResult
 } from "./types.js";
-import { copyWorkspaceForGrading, listHygieneWrites, seedWorkspace, snapshotWorkspace } from "./workspace.js";
+import { copyWorkspaceForGrading, listHygieneWrites, removeTempDir, seedWorkspace, snapshotWorkspace } from "./workspace.js";
 
 export interface EvalGateThresholds {
   maxHarnessErrorRate?: number;
@@ -75,6 +76,9 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
     throw new Error("Eval concurrency must be an integer between 1 and 32.");
   }
+  if (options.maxCostUsd !== undefined && concurrency !== 1) {
+    throw new Error("Budgeted evals must run serially to enforce cost-coverage and spend gates.");
+  }
   if (options.providerFactory === undefined && ["scripted-smoke", "mock"].includes(options.providerName)) {
     throw new Error("Capability eval requires a configured real provider; use `talon smoke run` for scripted checks.");
   }
@@ -85,6 +89,11 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
   if (options.providerFactory === undefined && providerConfig.configured === false) {
     throw new Error(`Provider "${options.providerName}" is not configured.`);
   }
+  if (options.maxCostUsd !== undefined &&
+    resolveRuntimeConfig(configCwd).budget.pricing[providerConfig.name] === undefined &&
+    options.configOverride?.budget?.pricing?.[providerConfig.name] === undefined) {
+    throw new Error(`Paid eval requires budget.pricing.${providerConfig.name} before any trial can start.`);
+  }
   const passAtKSize = options.passAtK ?? repetitions;
   const completed = await loadCompletedTrials(options.resumeDirectory);
   const workItems = expandWorkItems(suite, tasks, repetitions, options.arm);
@@ -92,6 +101,7 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
   const trialResults: EvalTrialResult[] = [...completed.values()];
   let spent = trialResults.reduce((total, trial) => total + (trial.costUsd ?? 0), 0);
   let exhausted = options.maxCostUsd !== undefined && spent > options.maxCostUsd;
+  let missingCost = options.maxCostUsd !== undefined && trialResults.some((trial) => trial.costUsd === null);
   let cursor = 0;
   const workers = Array.from({ length: Math.min(concurrency, Math.max(1, pending.length)) }, async () => {
     while (cursor < pending.length) {
@@ -101,7 +111,7 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
       if (item === undefined) {
         return;
       }
-      if (exhausted) {
+      if (exhausted || missingCost) {
         return;
       }
       const trial = await runTrial(item, providerConfig, options);
@@ -110,6 +120,7 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
         await appendTrial(options.resumeDirectory, item, trial);
       }
       spent += trial.costUsd ?? 0;
+      if (options.maxCostUsd !== undefined && trial.costUsd === null) missingCost = true;
       if (options.maxCostUsd !== undefined && spent > options.maxCostUsd) {
         exhausted = true;
       }
@@ -120,7 +131,8 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
   const taskResults = assembleTaskResults(workItems, trialResults, repetitions, passAtKSize);
   const allTrials = taskResults.flatMap((task) => task.trials);
   const harnessTrials = allTrials.filter((trial) => trial.failureClassification === "harness_error");
-  const scorable = allTrials.filter((trial) => trial.failureClassification !== "harness_error");
+  const invalidClassifications = new Set(["harness_error", "provider_configuration_failure", "environment_failure"]);
+  const scorable = allTrials.filter((trial) => !invalidClassifications.has(trial.failureClassification ?? ""));
   const costValues = allTrials.flatMap((trial) => trial.costUsd === null ? [] : [trial.costUsd]);
   const totalCost = costValues.length === 0 ? null : costValues.reduce((total, value) => total + value, 0);
   const successes = scorable.filter((trial) => trial.success).length;
@@ -129,9 +141,10 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
   const totalTokens = sumTokens(allTrials);
   const failureClassificationCounts = countFailureClassifications(allTrials);
   const providerConfigurationFailures = allTrials.filter((trial) => trial.failureClassification === "provider_configuration_failure");
+  const environmentFailures = allTrials.filter((trial) => trial.failureClassification === "environment_failure");
   const harnessErrorRate = allTrials.length === 0 ? 0 : harnessTrials.length / allTrials.length;
   const maxHarnessErrorRate = options.gateThresholds?.maxHarnessErrorRate ?? 0.05;
-  let valid = providerConfigurationFailures.length === 0 && harnessErrorRate <= maxHarnessErrorRate;
+  let valid = providerConfigurationFailures.length === 0 && environmentFailures.length === 0 && harnessErrorRate <= maxHarnessErrorRate;
   if (providerConfigurationFailures.length > 0) {
     gateReasons = [`invalid_run: provider configuration failed in ${providerConfigurationFailures.length} trial(s)`, ...gateReasons];
   }
@@ -143,12 +156,20 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
     valid = false;
     gateReasons = [`invalid_run: max cost $${options.maxCostUsd} exceeded`, ...gateReasons];
   }
+  if (environmentFailures.length > 0) {
+    gateReasons = [`invalid_run: environment failed in ${environmentFailures.length} trial(s)`, ...gateReasons];
+  }
+  if (missingCost) {
+    valid = false;
+    gateReasons = ["invalid_run: cost coverage below 100%; paid batch stopped", ...gateReasons];
+  }
   const recoveryAttempts = scorable.filter((trial) => hasTraceEvent(trial.trace, "task_recovery_started"));
   const recoveredTrials = recoveryAttempts.filter((trial) => trial.success);
   const verificationTrials = scorable.filter((trial) => trial.changedPaths.length > 0);
   const verifiedTrials = verificationTrials.filter((trial) => hasTraceEvent(trial.trace, "completion_verification_satisfied"));
   const scopeFailures = scorable.filter((trial) => trial.failureClassification === "workspace_scope");
   const toolFailures = scorable.filter((trial) => hasTraceEvent(trial.trace, "tool_execution_failed") || trial.failureClassification === "tool_failure");
+  const iterationCapHits = scorable.filter((trial) => trial.maxIterations > 0 && trial.rounds >= trial.maxIterations);
   const unrecoveredToolFailures = toolFailures.filter((trial) => !trial.success);
   const verificationCompletionRate = verificationTrials.length === 0 ? null : verifiedTrials.length / verificationTrials.length;
   const workspaceScopeViolationRate = scorable.length === 0 ? 0 : scopeFailures.length / scorable.length;
@@ -183,7 +204,7 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
     metrics: {
       averageRounds: mean(scorable.map((trial) => trial.rounds)),
       costUsd: {
-        available: totalCost !== null,
+        available: allTrials.length > 0 && costValues.length === allTrials.length,
         average: allTrials.length === 0 || totalCost === null ? null : totalCost / allTrials.length,
         coverage: allTrials.length === 0 ? 0 : costValues.length / allTrials.length,
         total: totalCost
@@ -211,7 +232,9 @@ export async function runCapabilityEval(options: CapabilityEvalOptions): Promise
       toolFailureUnrecoveredRate: scorable.length === 0 ? 0 : unrecoveredToolFailures.length / scorable.length,
       verificationCompletionRate,
       workspaceScopeViolationRate,
-      invalidTrialCount: providerConfigurationFailures.length + harnessTrials.length,
+      invalidTrialCount: allTrials.length - scorable.length,
+      iterationCapHitCount: iterationCapHits.length,
+      iterationCapHitRate: scorable.length === 0 ? 0 : iterationCapHits.length / scorable.length,
       providerConfigurationFailureCount: providerConfigurationFailures.length,
       valid
     },
@@ -236,26 +259,21 @@ async function runTrial(
     await prepareMemoryEvalWorkspace(workspaceRoot, item.memoryState);
   }
   const beforeFiles = await snapshotWorkspace(workspaceRoot);
+  // Spread the arm's override first; createApplication deep-merges it. The three fields after it
+  // are pinned so no arm can break trial isolation by pointing at a shared db or workspace.
   const applicationConfig: Partial<AppConfig> = {
+    ...options.configOverride,
+    budget: {
+      ...options.configOverride?.budget,
+      pricing: {
+        ...resolveRuntimeConfig(options.configCwd ?? process.cwd()).budget.pricing,
+        ...options.configOverride?.budget?.pricing
+      }
+    } as AppConfig["budget"],
     databasePath: ":memory:",
     provider: providerConfig,
     workspaceRoot
   };
-  if (options.configOverride !== undefined) {
-    if (options.configOverride.compact !== undefined) {
-      applicationConfig.compact = options.configOverride.compact;
-    }
-    if (options.configOverride.contextRetention !== undefined) {
-      applicationConfig.contextRetention = options.configOverride.contextRetention;
-    }
-    if (options.configOverride.tokenBudget !== undefined) {
-      applicationConfig.tokenBudget = options.configOverride.tokenBudget;
-    }
-    if (options.configOverride.tokenBudgetInputLimitExplicit !== undefined) {
-      applicationConfig.tokenBudgetInputLimitExplicit =
-        options.configOverride.tokenBudgetInputLimitExplicit;
-    }
-  }
   if (options.compactOverride !== undefined) {
     // mergeCreateApplicationConfig deep-merges compact; partial overrides are intentional.
     applicationConfig.compact = {
@@ -318,18 +336,25 @@ async function runTrial(
       type: "runtime_status"
     }, ...scorerResults];
     const harnessError = results.some((score) => score.status === "error");
-    const trialCost = details.task?.tokenBudget.usedCostUsd;
+    const costEvents = details.trace.filter((event) => event.eventType === "cost_report");
+    const providerCalls = details.trace.filter((event) => event.eventType === "provider_request_succeeded");
+    const priced = costEvents.length === providerCalls.length && costEvents.length > 0 &&
+      costEvents.every((event) => typeof event.payload.costUsd === "number" && Number.isFinite(event.payload.costUsd));
+    const trialCost = priced
+      ? costEvents.reduce((total, event) => total + Number(event.payload.costUsd), 0)
+      : undefined;
     return {
       ...(item.arm !== undefined ? { arm: item.arm } : {}),
       durationMs: Date.now() - startedAt,
       failureClassification: harnessError ? "harness_error" : classifyFailure(run.task.status, results, details.trace),
       changedPaths: changedPaths(beforeFiles, afterFiles),
-      costUsd: trialCost !== undefined && trialCost > 0 ? trialCost : null,
+      costUsd: trialCost !== undefined && Number.isFinite(trialCost) ? trialCost : null,
       fixtureTaskId: task.id,
       hygieneWrites,
       output: run.output,
       recalledTitles,
       rounds: details.task?.currentIteration ?? run.task.currentIteration,
+      maxIterations: details.task?.maxIterations ?? run.task.maxIterations,
       scorerResults: results,
       success: !harnessError && results.filter((score) => score.required && score.status !== "skipped").every((score) => score.passed),
       taskId: run.task.taskId,
@@ -351,6 +376,7 @@ async function runTrial(
       output: null,
       recalledTitles: [],
       rounds: 0,
+      maxIterations: 0,
       scorerResults: [{
         evidence: error instanceof Error ? error.message : String(error),
         id: "harness",
@@ -370,15 +396,18 @@ async function runTrial(
     };
   } finally {
     handle?.close();
-    await fs.rm(workspaceRoot, { force: true, recursive: true });
-    await fs.rm(gradingRoot, { force: true, recursive: true });
+    await removeTempDir(workspaceRoot);
+    await removeTempDir(gradingRoot);
   }
 }
 
 export function classifyFailure(status: string, results: EvalTrialResult["scorerResults"], trace: TraceEvent[]): EvalFailureClassification | null {
   if (results.some((result) => result.status === "error")) return "harness_error";
+  if (trace.some((event) => event.eventType === "provider_request_failed" && isProviderProtocolError(event))) {
+    return "harness_error";
+  }
   if (results.filter((result) => result.required && result.status !== "skipped").every((result) => result.passed)) return null;
-  if (trace.some((event) => event.eventType === "provider_request_failed" && /auth|credential|api key/iu.test(String(event.payload.errorMessage ?? "")))) return "provider_configuration_failure";
+  if (trace.some((event) => event.eventType === "provider_request_failed" && /auth|credential|api key|insufficient.balance|quota|billing|payment/iu.test(String(event.payload.errorMessage ?? "")))) return "provider_configuration_failure";
   if (results.some((result) => result.required && !result.passed && result.type === "workspace_diff" && /outside=\[(?!\])/u.test(result.evidence))) return "workspace_scope";
   if (results.some((result) => result.required && !result.passed && result.type === "command")) return "verification_failure";
   if (results.some((result) => result.required && !result.passed && result.type === "workspace_diff")) return "verification_failure";
@@ -512,6 +541,13 @@ function countFailureClassifications(trials: EvalTrialResult[]): Partial<Record<
 
 function hasTraceEvent(trace: TraceEvent[], eventType: string): boolean {
   return trace.some((event) => event.eventType === eventType);
+}
+
+function isProviderProtocolError(event: TraceEvent): boolean {
+  if (event.eventType !== "provider_request_failed") {
+    return false;
+  }
+  return /reasoning_content/iu.test(event.payload.errorMessage ?? "");
 }
 
 function selectTasks(suite: EvalSuiteManifest, taskIds: string[] | undefined): EvalTask[] {

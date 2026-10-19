@@ -37,6 +37,7 @@ export function toMarkdown(report: EvalRunReport): string {
     `- Pass@k / pass^k: ${(report.metrics.passAtK * 100).toFixed(1)}% / ${(report.metrics.passPowerK * 100).toFixed(1)}%`,
     `- Gate: ${report.gate.passed ? "passed" : "failed"}`,
     `- Scorable trials: ${report.metrics.scorableTrialCount ?? "n/a"}; harness errors: ${((report.metrics.harnessErrorRate ?? 0) * 100).toFixed(1)}%`,
+    `- Iteration cap hits: ${report.metrics.iterationCapHitCount ?? 0} (${((report.metrics.iterationCapHitRate ?? 0) * 100).toFixed(1)}%)`,
     ""
   ];
   if (report.gate.reasons.length > 0) {

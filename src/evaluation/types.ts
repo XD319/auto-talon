@@ -24,6 +24,7 @@ export interface EvalTrialResult {
   output: string | null;
   recalledTitles: string[];
   rounds: number;
+  maxIterations: number;
   scorerResults: EvalScorerResult[];
   success: boolean;
   taskId: string;
@@ -129,6 +130,8 @@ export interface EvalRunReport {
     grouped: EvalGroupedMetrics[];
     harnessErrorRate: number;
     invalidTrialCount?: number;
+    iterationCapHitCount?: number;
+    iterationCapHitRate?: number;
     passAtK: number;
     passPowerK: number;
     paired?: EvalPairedMetrics;

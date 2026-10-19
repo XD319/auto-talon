@@ -96,6 +96,31 @@ export function parseRatioOption(optionName: string): (value: string) => number 
   };
 }
 
+/** One-shot automation must not wait on provider keep-alive sockets after the result is printed. */
+export function finishCliProcess(): void {
+  if (process.env.TALON_FORCE_EXIT !== "1") {
+    return;
+  }
+  const code = process.exitCode ?? 0;
+  let pending = 0;
+  const finish = (): void => {
+    if (pending === 0) {
+      process.exit(code);
+    }
+  };
+  for (const stream of [process.stdout, process.stderr]) {
+    if (stream.writableLength === 0) {
+      continue;
+    }
+    pending += 1;
+    stream.once("drain", () => {
+      pending -= 1;
+      finish();
+    });
+  }
+  finish();
+}
+
 export function parseApprovalAllowScope(value: string | undefined): "once" | "session" | "always" {
   if (value === undefined || value === "once") {
     return "once";

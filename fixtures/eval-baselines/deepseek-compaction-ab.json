@@ -1,0 +1,62 @@
+{
+  "arms": "on-off",
+  "compact": {
+    "on": {
+      "iterationThreshold": 6,
+      "messageThreshold": 16,
+      "minTokenPressureRatio": 0,
+      "protectFirstN": 1,
+      "protectLastN": 4,
+      "summarizer": "deterministic",
+      "tailMinMessages": 2,
+      "targetRatio": 0.15,
+      "thresholdRatio": 0.45,
+      "toolCallThreshold": 8
+    },
+    "off": {
+      "tokenThreshold": 1000000000,
+      "messageThreshold": 1000000000,
+      "iterationThreshold": 1000000000,
+      "toolCallThreshold": 1000000000,
+      "summarizer": "deterministic"
+    }
+  },
+  "deltas": {
+    "cacheHitRate": -0.26637786346107695,
+    "inputTokens": 736774,
+    "passAtK": 0,
+    "sessionCompactedEvents": 69,
+    "successRate": 0,
+    "totalTokens": 738169
+  },
+  "generatedAt": "2026-09-24T08:56:53.233Z",
+  "left": {
+    "cachedInputTokens": 551808,
+    "cacheHitRate": 0.3307424154515246,
+    "gatePassed": true,
+    "inputTokens": 1668392,
+    "label": "on",
+    "passAtK": 1,
+    "sessionCompactedEvents": 69,
+    "successRate": 1,
+    "tokenUsageAvailable": true,
+    "totalTokens": 1701729
+  },
+  "mode": "on-off",
+  "provider": "deepseek",
+  "repetitions": 2,
+  "right": {
+    "cachedInputTokens": 556288,
+    "cacheHitRate": 0.5971202789126016,
+    "gatePassed": true,
+    "inputTokens": 931618,
+    "label": "off",
+    "passAtK": 1,
+    "sessionCompactedEvents": 0,
+    "successRate": 1,
+    "tokenUsageAvailable": true,
+    "totalTokens": 963560
+  },
+  "suite": "fixtures/eval-suites/long-context.v1.json",
+  "taskIds": []
+}

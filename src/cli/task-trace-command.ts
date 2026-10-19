@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 
+import { finishCliProcess } from "./cli-helpers.js";
 import { createApplication } from "../runtime/index.js";
 import {
   formatAuditLog,
@@ -41,6 +42,22 @@ export function registerTaskTraceCommands(program: Command): void {
     } finally {
       handle.close();
     }
+  });
+
+  taskCommand.command("export").argument("<task_id>", "Task identifier").action((taskId: string) => {
+    const handle = createApplication(process.cwd());
+    try {
+      const result = handle.service.showTask(taskId);
+      if (result.task === null) {
+        console.error(`Task ${taskId} not found.`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(JSON.stringify({ task: result.task, toolCalls: result.toolCalls, trace: result.trace }));
+    } finally {
+      handle.close();
+    }
+    finishCliProcess();
   });
 
   taskCommand.command("timeline").argument("<task_id>", "Task identifier").action((taskId: string) => {

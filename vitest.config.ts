@@ -17,7 +17,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "threads",
-          exclude: [...configDefaults.exclude, ...forkPoolTests],
+          exclude: [...configDefaults.exclude, ".tmp-benchmarks/**", ...forkPoolTests],
           pool: "threads"
         }
       },
